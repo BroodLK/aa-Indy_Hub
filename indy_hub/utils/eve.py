@@ -204,7 +204,16 @@ def get_type_name(type_id: int | None) -> str:
         return ""
 
     if type_id in _TYPE_NAME_CACHE:
-        return _TYPE_NAME_CACHE[type_id]
+        cached = _TYPE_NAME_CACHE[type_id]
+        if cached != str(type_id) or ItemType is None:
+            return cached
+        # Cached fallback may be stale if SDE was loaded after process start.
+        try:
+            value = ItemType.objects.only("name").get(id=type_id).name
+        except ItemType.DoesNotExist:  # type: ignore[attr-defined]
+            return cached
+        _TYPE_NAME_CACHE[type_id] = value
+        return value
 
     if ItemType is None:
         value = str(type_id)
