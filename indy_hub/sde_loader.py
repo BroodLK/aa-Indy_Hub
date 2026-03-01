@@ -7,6 +7,7 @@ import csv
 import json
 import logging
 from pathlib import Path
+from typing import Iterable
 
 # Alliance Auth (External Libs)
 from eve_sde.sde_tasks import (
@@ -50,6 +51,22 @@ def _iter_jsonl_rows(file_path: Path):
                 yield json.loads(line)
             except json.JSONDecodeError:
                 continue
+
+
+def _as_activity_ids(activity_name: str | None) -> list[int]:
+    if not activity_name:
+        return []
+    normalized = str(activity_name).strip().lower()
+    mapping = {
+        "manufacturing": [1],
+        "research_time": [3],
+        "research_material": [4],
+        "copying": [5],
+        "invention": [8],
+        "reaction": [9, 11],
+        "reactions": [9, 11],
+    }
+    return mapping.get(normalized, [])
 
 
 def _bulk_flush(model_cls, buffer: list, *, batch_size: int) -> None:
@@ -198,6 +215,127 @@ def _load_industry_materials_from_jsonl(
     return created
 
 
+def _load_industry_from_blueprints_jsonl(
+    file_path: Path,
+    *,
+    batch_size: int,
+    cleanup: bool,
+) -> dict[str, int]:
+    if cleanup:
+        SdeIndustryActivityProduct.objects.all().delete()
+        SdeIndustryActivityMaterial.objects.all().delete()
+
+    existing_types = set(ItemType.objects.values_list("id", flat=True))
+    created_products = 0
+    created_materials = 0
+    skipped_products = 0
+    skipped_materials = 0
+    product_buffer: list[SdeIndustryActivityProduct] = []
+    material_buffer: list[SdeIndustryActivityMaterial] = []
+
+    def _flush_products() -> None:
+        if product_buffer:
+            _bulk_flush(SdeIndustryActivityProduct, product_buffer, batch_size=batch_size)
+
+    def _flush_materials() -> None:
+        if material_buffer:
+            _bulk_flush(
+                SdeIndustryActivityMaterial, material_buffer, batch_size=batch_size
+            )
+
+    for row in _iter_jsonl_rows(file_path):
+        eve_type_id = _as_int(row.get("_key")) or _as_int(
+            row.get("typeID") or row.get("blueprintTypeID")
+        )
+        if not eve_type_id:
+            continue
+        if eve_type_id not in existing_types:
+            continue
+
+        activities = row.get("activities") or {}
+        if not isinstance(activities, dict):
+            continue
+
+        for activity_name, activity_data in activities.items():
+            activity_ids = _as_activity_ids(activity_name)
+            if not activity_ids:
+                continue
+            if not isinstance(activity_data, dict):
+                continue
+
+            products: Iterable[dict] = activity_data.get("products") or []
+            materials: Iterable[dict] = activity_data.get("materials") or []
+
+            for product in products:
+                if not isinstance(product, dict):
+                    continue
+                product_type_id = _as_int(
+                    product.get("typeID") or product.get("productTypeID")
+                )
+                if not product_type_id:
+                    continue
+                if product_type_id not in existing_types:
+                    skipped_products += 1
+                    continue
+                quantity = _as_int(product.get("quantity"), 0) or 0
+                for activity_id in activity_ids:
+                    product_buffer.append(
+                        SdeIndustryActivityProduct(
+                            eve_type_id=eve_type_id,
+                            activity_id=activity_id,
+                            product_eve_type_id=product_type_id,
+                            quantity=quantity,
+                        )
+                    )
+                    created_products += 1
+                    if len(product_buffer) >= batch_size:
+                        _flush_products()
+
+            for material in materials:
+                if not isinstance(material, dict):
+                    continue
+                material_type_id = _as_int(
+                    material.get("typeID") or material.get("materialTypeID")
+                )
+                if not material_type_id:
+                    continue
+                if material_type_id not in existing_types:
+                    skipped_materials += 1
+                    continue
+                quantity = _as_int(material.get("quantity"), 0) or 0
+                for activity_id in activity_ids:
+                    material_buffer.append(
+                        SdeIndustryActivityMaterial(
+                            eve_type_id=eve_type_id,
+                            activity_id=activity_id,
+                            material_eve_type_id=material_type_id,
+                            quantity=quantity,
+                        )
+                    )
+                    created_materials += 1
+                    if len(material_buffer) >= batch_size:
+                        _flush_materials()
+
+    _flush_products()
+    _flush_materials()
+
+    if skipped_products:
+        logger.warning(
+            "Skipped %s product rows due to missing ItemType entries",
+            skipped_products,
+        )
+    if skipped_materials:
+        logger.warning(
+            "Skipped %s material rows due to missing ItemType entries",
+            skipped_materials,
+        )
+
+    return {
+        "industry_products": created_products,
+        "industry_materials": created_materials,
+    }
+
+
 def _load_industry_products_from_csv(
     file_path: Path,
     *,
@@ -278,6 +416,7 @@ def load_industry_sde(
         logger.warning("marketGroups.jsonl not found; skipping market group import.")
 
     products_file = folder / "industryActivityProducts.jsonl"
+    used_blueprints = False
     if products_file.exists():
         results["industry_products"] = _load_industry_products_from_jsonl(
             products_file,
@@ -285,21 +424,32 @@ def load_industry_sde(
             cleanup=cleanup,
         )
     else:
-        csv_fallback = Path("data") / "sde" / "industryActivityProducts.csv"
-        if csv_fallback.exists():
-            logger.warning(
-                "industryActivityProducts.jsonl not found, using %s fallback.",
-                csv_fallback,
+        blueprints_file = folder / "blueprints.jsonl"
+        if blueprints_file.exists():
+            results.update(
+                _load_industry_from_blueprints_jsonl(
+                    blueprints_file,
+                    batch_size=batch_size,
+                    cleanup=cleanup,
+                )
             )
-            results["industry_products"] = _load_industry_products_from_csv(
-                csv_fallback,
-                batch_size=batch_size,
-                cleanup=cleanup,
-            )
+            used_blueprints = True
         else:
-            raise SdeIndustryLoadError(
-                "industryActivityProducts.jsonl not found and no CSV fallback present."
-            )
+            csv_fallback = Path("data") / "sde" / "industryActivityProducts.csv"
+            if csv_fallback.exists():
+                logger.warning(
+                    "industryActivityProducts.jsonl not found, using %s fallback.",
+                    csv_fallback,
+                )
+                results["industry_products"] = _load_industry_products_from_csv(
+                    csv_fallback,
+                    batch_size=batch_size,
+                    cleanup=cleanup,
+                )
+            else:
+                raise SdeIndustryLoadError(
+                    "industryActivityProducts.jsonl not found and no CSV fallback present."
+                )
 
     materials_file = folder / "industryActivityMaterials.jsonl"
     if materials_file.exists():
@@ -308,7 +458,7 @@ def load_industry_sde(
             batch_size=batch_size,
             cleanup=cleanup,
         )
-    else:
+    elif not used_blueprints:
         logger.warning(
             "industryActivityMaterials.jsonl not found; material requirements will be missing."
         )
