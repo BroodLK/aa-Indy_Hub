@@ -117,13 +117,13 @@
                     <div class="bp-request-card__header">
                         <img
                             src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
-                            alt="{{ bp.type_name }}"
+                            alt="{{ bp.display_name }}"
                             loading="lazy"
                             class="bp-request-card__icon"
                             onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ bp.type_id }}/icon?size=64'"
                         >
                         <div class="bp-request-card__info flex-grow-1 min-w-0">
-                            <h3 class="bp-request-card__title text-truncate" title="{{ bp.type_name }}">{{ bp.type_name }}</h3>
+                            <h3 class="bp-request-card__title text-truncate" title="{{ bp.display_name }}">{{ bp.display_name }}</h3>
                             <div class="bp-request-card__specs d-flex gap-1 flex-wrap">
                                 <span class="spec-badge spec-badge--green spec-badge--compact">
                                     <i class="fas fa-industry"></i> {{ bp.material_efficiency }}

@@ -32,7 +32,7 @@
                 <a href="{{ back_to_overview_url }}" class="btn btn-outline-light">
                     <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
                 </a>
-                <button type="button" class="btn btn-light text-primary" onclick="refreshBlueprints()">
+                <button type="button" class="btn btn-outline-light text-primary" onclick="refreshBlueprints()">
                     <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh Data" %}
                 </button>
                 <button type="button" class="btn btn-success export-button" id="exportBtn">
@@ -151,16 +151,16 @@
                         {% comment %} Reaction BPs always show original icon {% endcomment %}
                         {% if bp.is_reaction %}
                         <img src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
-                            alt="{{ bp.type_name|default:blueprint_reaction_label }}" loading="lazy"
+                            alt="{{ bp.display_name|default:blueprint_reaction_label }}" loading="lazy"
                             onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
                         {% else %}
                             {% if bp.is_original %}
                             <img src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
-                                alt="{{ bp.type_name|default:blueprint_original_label }}" loading="lazy"
+                                alt="{{ bp.display_name|default:blueprint_original_label }}" loading="lazy"
                                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
                             {% else %}
                             <img src="https://images.evetech.net/types/{{ bp.type_id }}/bpc?size=64"
-                                alt="{{ bp.type_name|default:blueprint_copy_label }}" loading="lazy"
+                                alt="{{ bp.display_name|default:blueprint_copy_label }}" loading="lazy"
                                 onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
                             {% endif %}
                         {% endif %}
@@ -168,7 +168,7 @@
 
                 <div class="flex-grow-1 min-width-0 blueprint-list-content">
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-                        <h5 class="blueprint-title mb-0">{{ bp.type_name|default:unknown_blueprint_label }}</h5>
+                        <h5 class="blueprint-title mb-0">{{ bp.display_name|default:unknown_blueprint_label }}</h5>
                         <div class="blueprint-badges mb-0 ms-auto">
                             {% if bp.is_reaction %}
                                 <span class="type-badge reaction"><i class="fas fa-flask"></i> {% trans 'Reaction' %}</span>

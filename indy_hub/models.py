@@ -15,7 +15,11 @@ from django.utils.translation import ngettext
 # Alliance Auth (External Libs)
 from eve_sde.models import ItemType
 
-from .utils.eve import get_blueprint_product_type_id, is_reaction_blueprint
+from .utils.eve import (
+    get_blueprint_product_type_id,
+    get_type_name,
+    is_reaction_blueprint,
+)
 
 
 def generate_order_reference():
@@ -110,10 +114,17 @@ class Blueprint(models.Model):
 
     def __str__(self):
         if self.is_corporate:
-            anchor = self.corporation_name or self.corporation_id or "corp"
+            anchor = self.corporation_name or str(self.corporation_id) or "corp"
         else:
-            anchor = self.character_name or self.character_id or "character"
-        return f"{self.type_name or self.type_id} @ {anchor}"
+            anchor = self.character_name or str(self.character_id) or "character"
+        return f"{self.display_name} @ {anchor}"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name of the blueprint, falling back to ID string."""
+        if self.type_name and self.type_name != str(self.type_id):
+            return self.type_name
+        return get_type_name(self.type_id)
 
     @property
     def is_original(self):
