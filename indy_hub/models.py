@@ -472,7 +472,9 @@ class IndustrySkillSnapshot(models.Model):
 
     @property
     def reaction_slots(self) -> int:
-        return 1 + self.mass_reactions_level + self.advanced_mass_reactions_level
+        return min(
+            10, 1 + self.mass_reactions_level + self.advanced_mass_reactions_level
+        )
 
     @property
     def progress_percent(self):
