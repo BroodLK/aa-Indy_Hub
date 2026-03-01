@@ -210,21 +210,54 @@ def get_type_name(type_id: int | None) -> str:
         # Cached fallback may be stale if SDE was loaded after process start.
         try:
             value = ItemType.objects.only("name").get(id=type_id).name
+            _TYPE_NAME_CACHE[type_id] = value
+            return value
         except ItemType.DoesNotExist:  # type: ignore[attr-defined]
-            return cached
-        _TYPE_NAME_CACHE[type_id] = value
-        return value
+            pass
 
-    if ItemType is None:
-        value = str(type_id)
-    else:
+        # Try looking up in the Blueprint model before giving up
+        try:
+            from ..models import Blueprint
+
+            record = (
+                Blueprint.objects.filter(type_id=type_id)
+                .exclude(type_name="")
+                .values_list("type_name", flat=True)
+                .first()
+            )
+            if record:
+                _TYPE_NAME_CACHE[type_id] = record
+                return record
+        except (AppRegistryNotReady, ImportError):
+            pass
+
+        return cached
+
+    value = str(type_id)
+    if ItemType is not None:
         try:
             value = ItemType.objects.only("name").get(id=type_id).name
         except ItemType.DoesNotExist:  # type: ignore[attr-defined]
             logger.debug(
-                "ItemType %s introuvable, retour de l'identifiant brut", type_id
+                "ItemType %s introuvable, searching fallback in Blueprint table",
+                type_id,
             )
-            value = str(type_id)
+
+    # If we still have an ID string, try the Blueprint table
+    if value == str(type_id):
+        try:
+            from ..models import Blueprint
+
+            record = (
+                Blueprint.objects.filter(type_id=type_id)
+                .exclude(type_name="")
+                .values_list("type_name", flat=True)
+                .first()
+            )
+            if record:
+                value = record
+        except (AppRegistryNotReady, ImportError):
+            pass
 
     _TYPE_NAME_CACHE[type_id] = value
     return value
