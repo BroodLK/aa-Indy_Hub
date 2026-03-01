@@ -1977,25 +1977,75 @@ def cleanup_old_jobs():
 
 @shared_task
 def update_type_names():
-    blueprints_without_names = Blueprint.objects.filter(type_name="")
-    type_ids = list(blueprints_without_names.values_list("type_id", flat=True))
-    if type_ids:
-        batch_cache_type_names(type_ids)
-        for bp in blueprints_without_names:
-            bp.refresh_from_db()
-    jobs_without_names = IndustryJob.objects.filter(blueprint_type_name="")
-    job_type_ids = list(jobs_without_names.values_list("blueprint_type_id", flat=True))
-    product_type_ids = list(
-        jobs_without_names.exclude(product_type_id__isnull=True).values_list(
-            "product_type_id", flat=True
+    from django.apps import apps
+
+    try:
+        ItemType = apps.get_model("eve_sde", "ItemType")
+    except LookupError:
+        logger.warning("EVE SDE ItemType model is unavailable; skipping type updates.")
+        return
+
+    type_map = dict(ItemType.objects.values_list("id", "name"))
+    if not type_map:
+        logger.warning("ItemType table is empty; skipping type updates.")
+        return
+
+    def _flush(model_cls, buffer):
+        if buffer:
+            model_cls.objects.bulk_update(buffer, ["type_name"], batch_size=1000)
+            buffer.clear()
+
+    updated_blueprints = 0
+    buffer = []
+    for bp in Blueprint.objects.only("id", "type_id", "type_name").iterator(
+        chunk_size=2000
+    ):
+        desired = type_map.get(int(bp.type_id))
+        if desired and bp.type_name != desired:
+            bp.type_name = desired
+            buffer.append(bp)
+            updated_blueprints += 1
+            if len(buffer) >= 1000:
+                _flush(Blueprint, buffer)
+    _flush(Blueprint, buffer)
+
+    updated_jobs = 0
+    job_buffer = []
+    for job in IndustryJob.objects.only(
+        "id", "blueprint_type_id", "blueprint_type_name", "product_type_id", "product_type_name"
+    ).iterator(chunk_size=2000):
+        changed = False
+        blueprint_name = type_map.get(int(job.blueprint_type_id))
+        if blueprint_name and job.blueprint_type_name != blueprint_name:
+            job.blueprint_type_name = blueprint_name
+            changed = True
+        if job.product_type_id:
+            product_name = type_map.get(int(job.product_type_id))
+            if product_name and job.product_type_name != product_name:
+                job.product_type_name = product_name
+                changed = True
+        if changed:
+            job_buffer.append(job)
+            updated_jobs += 1
+            if len(job_buffer) >= 1000:
+                IndustryJob.objects.bulk_update(
+                    job_buffer,
+                    ["blueprint_type_name", "product_type_name"],
+                    batch_size=1000,
+                )
+                job_buffer.clear()
+    if job_buffer:
+        IndustryJob.objects.bulk_update(
+            job_buffer,
+            ["blueprint_type_name", "product_type_name"],
+            batch_size=1000,
         )
+
+    logger.info(
+        "Updated type names for %s blueprints and %s jobs",
+        updated_blueprints,
+        updated_jobs,
     )
-    all_type_ids = list(set(job_type_ids + product_type_ids))
-    if all_type_ids:
-        batch_cache_type_names(all_type_ids)
-        for job in jobs_without_names:
-            job.refresh_from_db()
-    logger.info("Updated type names for blueprints and jobs")
     emit_analytics_event(
         task="industry.update_type_names",
         label="completed",
