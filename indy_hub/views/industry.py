@@ -3492,7 +3492,6 @@ def bp_copy_request_page(request):
     # Fetch copy sharing configuration for character-owned and corporation-owned originals
     character_settings = list(
         CharacterSettings.objects.filter(
-            character_id=0,
             allow_copy_requests=True,
         ).exclude(copy_sharing_scope=CharacterSettings.SCOPE_NONE)
     )
@@ -3632,14 +3631,16 @@ def bp_copy_request_page(request):
         bp_list.append(
             {
                 "type_id": bp.type_id,
-                "type_name": bp.type_name or str(bp.type_id),
+                "display_name": bp.display_name,
                 "icon_url": f"https://images.evetech.net/types/{bp.type_id}/bp?size=32",
                 "material_efficiency": bp.material_efficiency,
                 "time_efficiency": bp.time_efficiency,
             }
         )
     if search:
-        bp_list = [bp for bp in bp_list if search.lower() in bp["type_name"].lower()]
+        bp_list = [
+            bp for bp in bp_list if search.lower() in bp["display_name"].lower()
+        ]
     if min_me.isdigit():
         min_me_val = int(min_me)
         bp_list = [bp for bp in bp_list if bp["material_efficiency"] >= min_me_val]
