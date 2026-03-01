@@ -70,24 +70,47 @@ def _load_market_groups_from_jsonl(
 
     created = 0
     buffer: list[SdeMarketGroup] = []
+    parent_updates: list[tuple[int, int]] = []
+    group_ids: set[int] = set()
     for row in _iter_jsonl_rows(file_path):
         group_id = _as_int(row.get("_key"))
         if not group_id:
             continue
         name = (row.get("name") or {}).get("en") or ""
         parent_id = _as_int(row.get("parentGroupID"))
+        group_ids.add(group_id)
         buffer.append(
             SdeMarketGroup(
                 id=group_id,
                 name=name,
-                parent_id=parent_id,
             )
         )
+        if parent_id:
+            parent_updates.append((group_id, parent_id))
         created += 1
         if len(buffer) >= batch_size:
             _bulk_flush(SdeMarketGroup, buffer, batch_size=batch_size)
 
     _bulk_flush(SdeMarketGroup, buffer, batch_size=batch_size)
+
+    if parent_updates:
+        update_buffer: list[SdeMarketGroup] = []
+        for group_id, parent_id in parent_updates:
+            if parent_id not in group_ids:
+                continue
+            update_buffer.append(
+                SdeMarketGroup(id=group_id, parent_id=parent_id)
+            )
+            if len(update_buffer) >= batch_size:
+                SdeMarketGroup.objects.bulk_update(
+                    update_buffer, ["parent_id"], batch_size=batch_size
+                )
+                update_buffer.clear()
+
+        if update_buffer:
+            SdeMarketGroup.objects.bulk_update(
+                update_buffer, ["parent_id"], batch_size=batch_size
+            )
     return created
 
 
