@@ -54,5 +54,5 @@ INDY_HUB_BEAT_SCHEDULE = {
         "options": {"priority": 4},
         "apply_offset": True,
     },
-    # Removed: indy-hub-refresh-production-items - now using EveUniverse.EveIndustryActivityMaterial
+    # Removed: indy-hub-refresh-production-items - now using indy_hub SDE industry tables
 }

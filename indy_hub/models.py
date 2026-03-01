@@ -12,6 +12,9 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.utils.translation import ngettext
 
+# Alliance Auth (External Libs)
+from eve_sde.models import ItemType
+
 from .utils.eve import get_blueprint_product_type_id, is_reaction_blueprint
 
 
@@ -2709,3 +2712,103 @@ class ESIContractItem(models.Model):
 
     def __str__(self):
         return f"Contract {self.contract_id} - Item {self.type_id} x{self.quantity}"
+
+
+class SdeIndustryActivityMaterial(models.Model):
+    """Industry materials for SDE blueprints (manufacturing/reactions)."""
+
+    eve_type = models.ForeignKey(
+        ItemType,
+        on_delete=models.CASCADE,
+        related_name="industry_materials",
+        db_column="eve_type_id",
+    )
+    activity_id = models.IntegerField(db_index=True)
+    material_eve_type = models.ForeignKey(
+        ItemType,
+        on_delete=models.CASCADE,
+        related_name="+",
+        db_column="material_eve_type_id",
+    )
+    quantity = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["eve_type", "activity_id"]),
+            models.Index(fields=["material_eve_type", "activity_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["eve_type", "material_eve_type", "activity_id"],
+                name="indy_hub_sdeactivitymaterial_unique",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.eve_type_id}:{self.activity_id} -> "
+            f"{self.material_eve_type_id} x{self.quantity}"
+        )
+
+
+class SdeIndustryActivityProduct(models.Model):
+    """Industry products for SDE blueprints (manufacturing/reactions)."""
+
+    eve_type = models.ForeignKey(
+        ItemType,
+        on_delete=models.CASCADE,
+        related_name="industry_products",
+        db_column="eve_type_id",
+    )
+    activity_id = models.IntegerField(db_index=True)
+    product_eve_type = models.ForeignKey(
+        ItemType,
+        on_delete=models.CASCADE,
+        related_name="+",
+        db_column="product_eve_type_id",
+    )
+    quantity = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["eve_type", "activity_id"]),
+            models.Index(fields=["product_eve_type", "activity_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["eve_type", "product_eve_type", "activity_id"],
+                name="indy_hub_sdeactivityproduct_unique",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.eve_type_id}:{self.activity_id} -> "
+            f"{self.product_eve_type_id} x{self.quantity}"
+        )
+
+
+class SdeMarketGroup(models.Model):
+    """Market group hierarchy imported from the SDE."""
+
+    id = models.BigIntegerField(primary_key=True)
+    name = models.CharField(max_length=255)
+    parent = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        related_name="children",
+        null=True,
+        blank=True,
+        db_column="parent_market_group_id",
+    )
+
+    class Meta:
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["parent"]),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.id})"

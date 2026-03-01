@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 # Third Party
-from bravado.exception import HTTPError
+from esi.exceptions import ESIBucketLimitException, ESIErrorLimitException, HTTPError
 
 # Django
 from django.contrib import messages
@@ -334,15 +334,17 @@ def _fetch_character_corporation_roles_with_token(
             token_obj.character_id,
         )
         return None
+    except (ESIErrorLimitException, ESIBucketLimitException) as exc:
+        raise ESIClientError(
+            "ESI rate limit reached while fetching roles for character "
+            f"{token_obj.character_id}: {exc}"
+        ) from exc
     except HTTPError as exc:
-        status_code = getattr(exc, "status_code", None) or getattr(
-            exc.response, "status_code", None
-        )
-        response_text = None
-        try:
-            response_text = getattr(exc.response, "text", None)
-        except Exception:
-            response_text = None
+        status_code = getattr(exc, "status_code", None)
+        response_text = getattr(exc, "data", None)
+        if response_text is None:
+            response = getattr(exc, "response", None)
+            response_text = getattr(response, "text", None) if response else None
         if status_code == 304:
             cached_roles = cache.get(cache_key)
             if cached_roles:

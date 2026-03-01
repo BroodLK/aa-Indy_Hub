@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterable, Mapping
 
 # Third Party
-from bravado.exception import HTTPError
+from esi.exceptions import ESIBucketLimitException, ESIErrorLimitException, HTTPError
 
 # Django
 from django.apps import apps
@@ -29,18 +29,21 @@ from ..services.esi_client import (
 )
 from ..services.providers import esi_provider
 
-if getattr(settings, "configured", False) and "eveuniverse" in getattr(
+if getattr(settings, "configured", False) and "eve_sde" in getattr(
     settings, "INSTALLED_APPS", ()
 ):  # pragma: no branch
-    try:  # pragma: no cover - EveUniverse is optional
+    try:  # pragma: no cover - Eve SDE optional
         # Alliance Auth (External Libs)
-        from eveuniverse.models import EveIndustryActivityProduct, EveType
-    except ImportError:  # pragma: no cover - fallback when EveUniverse is not installed
-        EveType = None
-        EveIndustryActivityProduct = None
-else:  # pragma: no cover - EveUniverse app not installed
-    EveType = None
-    EveIndustryActivityProduct = None
+        from eve_sde.models import ItemType
+
+        # AA Example App
+        from indy_hub.models import SdeIndustryActivityProduct
+    except ImportError:  # pragma: no cover - fallback when Eve SDE is not installed
+        ItemType = None
+        SdeIndustryActivityProduct = None
+else:  # pragma: no cover - Eve SDE app not installed
+    ItemType = None
+    SdeIndustryActivityProduct = None
 
 logger = get_extension_logger(__name__)
 
@@ -97,23 +100,26 @@ def _rate_limited_public_results(
         _wait_for_structure_rate_limit_window()
 
         try:
-            if hasattr(operation, "request_config"):
-                operation.request_config.also_return_response = True
-            result = operation.results(use_etag=False)
-            if isinstance(result, tuple) and len(result) == 2:
-                payload, response = result
-            else:
-                payload, response = result, None
+            payload, response = operation.results(
+                use_etag=False,
+                return_response=True,
+            )
             return payload, response
+        except (ESIErrorLimitException, ESIBucketLimitException) as exc:
+            sleep_for = getattr(exc, "reset", None) or shared_client.backoff_factor * (
+                2 ** (attempt - 1)
+            )
+            _schedule_structure_rate_limit_pause(sleep_for)
+            if attempt >= max_attempts:
+                break
+            continue
         except HTTPError as exc:
             response = getattr(exc, "response", None)
             last_response = response
-            status_code = getattr(exc, "status_code", None) or getattr(
-                response, "status_code", None
-            )
-            if status_code == 420 and response is not None:
+            status_code = getattr(exc, "status_code", None)
+            if status_code == 420:
                 sleep_for, remaining = rate_limit_wait_seconds(
-                    response, shared_client.backoff_factor * (2 ** (attempt - 1))
+                    exc, shared_client.backoff_factor * (2 ** (attempt - 1))
                 )
                 logger.warning(
                     "ESI rate limit reached for %s (public), attempt %s/%s (remaining=%s).",
@@ -200,14 +206,14 @@ def get_type_name(type_id: int | None) -> str:
     if type_id in _TYPE_NAME_CACHE:
         return _TYPE_NAME_CACHE[type_id]
 
-    if EveType is None:
+    if ItemType is None:
         value = str(type_id)
     else:
         try:
-            value = EveType.objects.only("name").get(id=type_id).name
-        except EveType.DoesNotExist:  # type: ignore[attr-defined]
+            value = ItemType.objects.only("name").get(id=type_id).name
+        except ItemType.DoesNotExist:  # type: ignore[attr-defined]
             logger.debug(
-                "EveType %s introuvable, retour de l'identifiant brut", type_id
+                "ItemType %s introuvable, retour de l'identifiant brut", type_id
             )
             value = str(type_id)
 
@@ -331,13 +337,13 @@ def batch_cache_type_names(type_ids: Iterable[int]) -> Mapping[int, str]:
     if not ids:
         return {}
 
-    if EveType is None:
+    if ItemType is None:
         return {pk: str(pk) for pk in ids}
 
     result: dict[int, str] = {}
-    for eve_type in EveType.objects.filter(id__in=ids).only("id", "name"):
-        _TYPE_NAME_CACHE[eve_type.id] = eve_type.name
-        result[eve_type.id] = eve_type.name
+    for item_type in ItemType.objects.filter(id__in=ids).only("id", "name"):
+        _TYPE_NAME_CACHE[item_type.id] = item_type.name
+        result[item_type.id] = item_type.name
 
     missing = ids - result.keys()
     for pk in missing:
@@ -359,9 +365,9 @@ def get_blueprint_product_type_id(blueprint_type_id: int | None) -> int | None:
 
     product_id: int | None = None
 
-    if EveIndustryActivityProduct is not None:
+    if SdeIndustryActivityProduct is not None:
         try:
-            qs = EveIndustryActivityProduct.objects.filter(
+            qs = SdeIndustryActivityProduct.objects.filter(
                 eve_type_id=blueprint_type_id
             )
             if qs.exists():
@@ -370,7 +376,7 @@ def get_blueprint_product_type_id(blueprint_type_id: int | None) -> int | None:
                     product_id = product.product_eve_type_id
         except Exception:  # pragma: no cover - defensive fallback
             logger.debug(
-                "Unable to resolve the product for blueprint %s via ESI Universe",
+                "Unable to resolve the product for blueprint %s via SDE data",
                 blueprint_type_id,
                 exc_info=True,
             )
@@ -388,11 +394,11 @@ def is_reaction_blueprint(blueprint_type_id: int | None) -> bool:
     if blueprint_type_id in _REACTION_CACHE:
         return _REACTION_CACHE[blueprint_type_id]
 
-    if EveIndustryActivityProduct is None:
+    if SdeIndustryActivityProduct is None:
         value = False
     else:
         try:
-            value = EveIndustryActivityProduct.objects.filter(
+            value = SdeIndustryActivityProduct.objects.filter(
                 eve_type_id=blueprint_type_id, activity_id__in=[9, 11]
             ).exists()
         except Exception:  # pragma: no cover - defensive fallback

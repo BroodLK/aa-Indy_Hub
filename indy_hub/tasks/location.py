@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # Third Party
-from bravado.exception import HTTPBadGateway, HTTPGatewayTimeout, HTTPServiceUnavailable
+from esi.exceptions import HTTPServerError
 from celery import group, shared_task
 
 # Django
@@ -34,9 +34,7 @@ _TASK_ESI_KWARGS: dict[str, object] = {
     **{
         "autoretry_for": (
             OSError,
-            HTTPBadGateway,
-            HTTPGatewayTimeout,
-            HTTPServiceUnavailable,
+            HTTPServerError,
         ),
         "retry_kwargs": {"max_retries": 3},
         "retry_backoff": 30,

@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-# Third Party
-from bravado.exception import HTTPError
+# Standard Library
+from collections.abc import Mapping
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 from esi.errors import TokenError
-from esi.exceptions import HTTPNotModified
+from esi.exceptions import (
+    ESIBucketLimitException,
+    ESIErrorLimitException,
+    HTTPError,
+    HTTPNotModified,
+)
 from esi.models import Token
 
 # AA Example App
@@ -71,12 +76,23 @@ class ESIUnmodifiedError(ESIClientError):
     """Raised when ESI responds with HTTP 304 (Not Modified)."""
 
 
-def rate_limit_wait_seconds(response, fallback: float) -> tuple[float, int | None]:
+def _extract_headers(source) -> Mapping[str, str]:
+    if source is None:
+        return {}
+    if isinstance(source, Mapping):
+        return source
+    headers = getattr(source, "headers", None)
+    return headers or {}
+
+
+def rate_limit_wait_seconds(source, fallback: float) -> tuple[float, int | None]:
     """Return the recommended pause in seconds from ESI headers."""
 
+    headers = _extract_headers(source)
+
     wait_candidates: list[float] = []
-    retry_after_header = response.headers.get("Retry-After")
-    reset_header = response.headers.get("X-Esi-Error-Limit-Reset")
+    retry_after_header = headers.get("Retry-After")
+    reset_header = headers.get("X-Esi-Error-Limit-Reset")
 
     for raw_value in (retry_after_header, reset_header):
         if raw_value is None:
@@ -92,7 +108,7 @@ def rate_limit_wait_seconds(response, fallback: float) -> tuple[float, int | Non
         if positive:
             wait = max(max(positive), fallback)
 
-    remaining_header = response.headers.get("X-Esi-Error-Limit-Remain")
+    remaining_header = headers.get("X-Esi-Error-Limit-Remain")
     remaining: int | None = None
     if remaining_header is not None:
         try:
@@ -103,14 +119,13 @@ def rate_limit_wait_seconds(response, fallback: float) -> tuple[float, int | Non
     return wait, remaining
 
 
-def token_rate_limit_wait_seconds(
-    response, fallback: float
-) -> tuple[float, int | None]:
+def token_rate_limit_wait_seconds(source, fallback: float) -> tuple[float, int | None]:
     """Return wait seconds from token-based rate limit headers."""
 
-    retry_after_header = response.headers.get("Retry-After")
-    reset_header = response.headers.get("X-Ratelimit-Reset")
-    remaining_header = response.headers.get("X-Ratelimit-Remaining")
+    headers = _extract_headers(source)
+    retry_after_header = headers.get("Retry-After")
+    reset_header = headers.get("X-Ratelimit-Reset")
+    remaining_header = headers.get("X-Ratelimit-Remaining")
 
     wait_candidates: list[float] = []
     for raw_value in (retry_after_header, reset_header):
@@ -459,6 +474,12 @@ class ESIClient:
             ).results()
         except HTTPNotModified as exc:
             raise ESIUnmodifiedError(f"ESI returned 304 for {endpoint}") from exc
+        except (ESIErrorLimitException, ESIBucketLimitException) as exc:
+            retry_after = getattr(exc, "reset", None)
+            raise ESIRateLimitError(
+                retry_after=retry_after,
+                remaining=None,
+            ) from exc
         except HTTPError as exc:
             self._handle_http_error(
                 exc,
@@ -705,6 +726,12 @@ class ESIClient:
             raise ESIUnmodifiedError(
                 f"ESI returned 304 for {endpoint or 'request'}"
             ) from exc
+        except (ESIErrorLimitException, ESIBucketLimitException) as exc:
+            retry_after = getattr(exc, "reset", None)
+            raise ESIRateLimitError(
+                retry_after=retry_after,
+                remaining=None,
+            ) from exc
         except HTTPError as exc:
             self._handle_http_error(
                 exc,
@@ -744,12 +771,11 @@ class ESIClient:
         token_obj: Token | None = None,
         scope: str | None = None,
     ) -> None:
-        status_code = getattr(exc, "status_code", None) or getattr(
-            exc.response, "status_code", None
-        )
+        status_code = getattr(exc, "status_code", None)
+        headers = _extract_headers(exc)
         if status_code == 420:
             sleep_for, remaining = rate_limit_wait_seconds(
-                exc.response, self.backoff_factor
+                headers, self.backoff_factor
             )
             raise ESIRateLimitError(
                 retry_after=sleep_for,
@@ -758,7 +784,7 @@ class ESIClient:
 
         if status_code == 429:
             sleep_for, remaining = token_rate_limit_wait_seconds(
-                exc.response, self.backoff_factor
+                headers, self.backoff_factor
             )
             raise ESIRateLimitError(
                 retry_after=sleep_for,

@@ -1044,14 +1044,14 @@ def _get_industry_market_group_ids() -> set[int]:
             return set()
 
     try:
-        # Alliance Auth (External Libs)
-        from eveuniverse.models import EveIndustryActivityMaterial
+        # AA Example App
+        from indy_hub.models import SdeIndustryActivityMaterial
 
         ids = set(
-            EveIndustryActivityMaterial.objects.exclude(
-                material_eve_type__eve_market_group_id__isnull=True
+            SdeIndustryActivityMaterial.objects.exclude(
+                material_eve_type__market_group_id_raw__isnull=True
             )
-            .values_list("material_eve_type__eve_market_group_id", flat=True)
+            .values_list("material_eve_type__market_group_id_raw", flat=True)
             .distinct()
         )
     except Exception as exc:
@@ -1066,18 +1066,16 @@ def _build_market_group_index() -> dict[int, dict[str, str | int | None]]:
     """Return a dict of market group metadata keyed by id."""
 
     try:
-        # Alliance Auth (External Libs)
-        from eveuniverse.models import EveMarketGroup
+        # AA Example App
+        from indy_hub.models import SdeMarketGroup
 
         return {
             g["id"]: {
                 "id": g["id"],
                 "name": g["name"],
-                "parent_market_group_id": g["parent_market_group_id"],
+                "parent_market_group_id": g["parent_id"],
             }
-            for g in EveMarketGroup.objects.values(
-                "id", "name", "parent_market_group_id"
-            )
+            for g in SdeMarketGroup.objects.values("id", "name", "parent_id")
         }
     except Exception as exc:
         logger.warning("Failed to load market group choices: %s", exc)
@@ -1192,15 +1190,15 @@ def _get_industry_market_group_search_index(
         return {}
 
     try:
-        # Alliance Auth (External Libs)
-        from eveuniverse.models import EveIndustryActivityMaterial
+        # AA Example App
+        from indy_hub.models import SdeIndustryActivityMaterial
 
         rows = (
-            EveIndustryActivityMaterial.objects.exclude(
-                material_eve_type__eve_market_group_id__isnull=True
+            SdeIndustryActivityMaterial.objects.exclude(
+                material_eve_type__market_group_id_raw__isnull=True
             )
             .values_list(
-                "material_eve_type__eve_market_group_id",
+                "material_eve_type__market_group_id_raw",
                 "material_eve_type__name",
             )
             .distinct()

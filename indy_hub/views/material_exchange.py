@@ -281,14 +281,14 @@ def _get_industry_market_group_ids() -> set[int]:
             return _INDUSTRY_MARKET_GROUP_IDS_CACHE
 
     try:
-        # Alliance Auth (External Libs)
-        from eveuniverse.models import EveIndustryActivityMaterial
+        # AA Example App
+        from indy_hub.models import SdeIndustryActivityMaterial
 
         ids = set(
-            EveIndustryActivityMaterial.objects.exclude(
-                material_eve_type__eve_market_group_id__isnull=True
+            SdeIndustryActivityMaterial.objects.exclude(
+                material_eve_type__market_group_id_raw__isnull=True
             )
-            .values_list("material_eve_type__eve_market_group_id", flat=True)
+            .values_list("material_eve_type__market_group_id_raw", flat=True)
             .distinct()
         )
     except Exception as exc:
@@ -312,12 +312,12 @@ def _get_market_group_children_map() -> dict[int | None, set[int]]:
             pass
 
     try:
-        # Alliance Auth (External Libs)
-        from eveuniverse.models import EveMarketGroup
+        # AA Example App
+        from indy_hub.models import SdeMarketGroup
 
         children_map: dict[int | None, set[int]] = {}
-        for group_id, parent_id in EveMarketGroup.objects.values_list(
-            "id", "parent_market_group_id"
+        for group_id, parent_id in SdeMarketGroup.objects.values_list(
+            "id", "parent_id"
         ):
             children_map.setdefault(parent_id, set()).add(group_id)
     except Exception as exc:
@@ -354,12 +354,15 @@ def _expand_market_group_ids(group_ids: set[int]) -> set[int]:
 def _get_allowed_type_ids_for_config(
     config: MaterialExchangeConfig, mode: str
 ) -> set[int] | None:
-    """Resolve allowed EveType IDs for the given mode (sell/buy)."""
+    """Resolve allowed item type IDs for the given mode (sell/buy)."""
 
     if mode not in {"sell", "buy"}:
         return None
 
     try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
         raw_group_ids = (
             config.allowed_market_groups_sell
             if mode == "sell"
@@ -381,12 +384,9 @@ def _get_allowed_type_ids_for_config(
         if cached is not None:
             return {int(x) for x in cached}
 
-        # Alliance Auth (External Libs)
-        from eveuniverse.models import EveType
-
         allowed_type_ids = set(
-            EveType.objects.filter(
-                eve_market_group_id__in=expanded_group_ids
+            ItemType.objects.filter(
+                market_group_id_raw__in=expanded_group_ids
             ).values_list("id", flat=True)
         )
         cache.set(cache_key, list(allowed_type_ids), 3600)
@@ -743,18 +743,19 @@ def material_exchange_buy_stock_refresh_status(request):
 
 
 def _get_group_map(type_ids: list[int]) -> dict[int, str]:
-    """Return mapping type_id -> group name using EveUniverse if available."""
+    """Return mapping type_id -> group name using Eve SDE if available."""
 
     if not type_ids:
         return {}
 
     try:
         # Alliance Auth (External Libs)
-        from eveuniverse.models import EveType
+        from eve_sde.models import ItemType
 
-        eve_types = EveType.objects.filter(id__in=type_ids).select_related("eve_group")
+        item_types = ItemType.objects.filter(id__in=type_ids).select_related("group")
         return {
-            et.id: (et.eve_group.name if et.eve_group else "Other") for et in eve_types
+            it.id: (it.group.name if getattr(it, "group", None) else "Other")
+            for it in item_types
         }
     except Exception:
         return {}
