@@ -29,6 +29,7 @@ from ..models import (
     ProductionSimulation,
 )
 from ..utils.analytics import emit_view_analytics_event
+from ..utils.eve import get_type_name
 from ..utils.menu_badge import compute_menu_badge_count
 
 logger = get_extension_logger(__name__)
@@ -209,7 +210,7 @@ def craft_bp_payload(request, type_id: int):
                 qty = int(per_run_qty) * int(runs)
                 mat = {
                     "type_id": row[0],
-                    "type_name": row[1],
+                    "type_name": get_type_name(row[0]),
                     "quantity": qty,
                     "cycles": None,
                     "produced_per_cycle": None,

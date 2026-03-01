@@ -142,7 +142,7 @@
             <div class="fulfill-card__icon">
                 <img
                     src="{{ req.icon_url }}"
-                    alt="{{ req.type_name }}"
+                    alt="{{ req.display_name }}"
                     loading="lazy"
                     onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'"
                 >
@@ -151,7 +151,7 @@
             {# Center: Info #}
             <div class="fulfill-card__info">
                 <div class="fulfill-card__main">
-                    <h3 class="fulfill-card__title">{{ req.type_name }}</h3>
+                    <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
                     <div class="fulfill-card__specs">
                         <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
                         <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
@@ -231,7 +231,7 @@
                     </form>
                     {% endif %}
                     {% if req.chat %}
-                    <button type="button" class="fulfill-btn fulfill-btn--chat bp-chat-trigger" data-chat-fetch-url="{{ req.chat.fetch_url }}" data-chat-send-url="{{ req.chat.send_url }}" data-chat-role="seller" data-chat-type-name="{{ req.type_name }}" data-chat-type-id="{{ req.type_id }}" data-chat-id="{{ req.chat.id }}">
+                    <button type="button" class="fulfill-btn fulfill-btn--chat bp-chat-trigger" data-chat-fetch-url="{{ req.chat.fetch_url }}" data-chat-send-url="{{ req.chat.send_url }}" data-chat-role="seller" data-chat-type-name="{{ req.display_name }}" data-chat-type-id="{{ req.type_id }}" data-chat-id="{{ req.chat.id }}">
                         <i class="fas fa-comments"></i> {% trans "Chat" %}
                     </button>
                     {% endif %}

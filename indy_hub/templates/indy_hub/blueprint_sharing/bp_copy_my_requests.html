@@ -156,7 +156,7 @@
                     <div class="fulfill-card__icon">
                         <img
                             src="{{ req.icon_url }}"
-                            alt="{{ req.type_name }}"
+                            alt="{{ req.display_name }}"
                             loading="lazy"
                             onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'"
                         >
@@ -164,7 +164,7 @@
 
                     <div class="fulfill-card__info">
                         <div class="fulfill-card__main">
-                            <h3 class="fulfill-card__title">{{ req.type_name }}</h3>
+                            <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
                             <div class="fulfill-card__specs">
                                 <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
                                 <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
@@ -203,7 +203,7 @@
                                     data-chat-fetch-url="{{ action.chat.fetch_url }}"
                                     data-chat-send-url="{{ action.chat.send_url }}"
                                     data-chat-role="buyer"
-                                    data-chat-type-name="{{ req.type_name }}"
+                                    data-chat-type-name="{{ req.display_name }}"
                                     data-chat-type-id="{{ req.type_id }}"
                                     data-chat-id="{{ action.chat.id }}"
                                 >
@@ -252,14 +252,14 @@
                     <div class="fulfill-card__icon">
                         <img
                             src="https://images.evetech.net/types/{{ req.type_id }}/bp?size=64"
-                            alt="{{ req.type_name }}"
+                            alt="{{ req.display_name }}"
                             loading="lazy"
                             onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'"
                         >
                     </div>
                     <div class="fulfill-card__info">
                         <div class="fulfill-card__main">
-                            <h3 class="fulfill-card__title">{{ req.type_name }}</h3>
+                            <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
                             <div class="fulfill-card__specs">
                                 <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
                                 <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
@@ -299,7 +299,8 @@
 {% block extra_javascript %}
 {{ block.super }}
 <script>
-<script src="{% static 'indy_hub/js/bp_copy_chat.js' %}?v=20260118-2230"></script>
+    window.BPCopyChat = window.BPCopyChat || {};
+    Object.assign(window.BPCopyChat, {
         labels: {
             buyer: '{% trans "You" %}',
             seller: '{% trans "Builder" %}',

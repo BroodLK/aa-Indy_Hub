@@ -231,6 +231,21 @@ def get_type_name(type_id: int | None) -> str:
         except (AppRegistryNotReady, ImportError):
             pass
 
+        # Final cache-hit fallback: use raw SQL if ItemType model is failing for some reason
+        try:
+            from django.db import connection
+
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT name FROM eve_sde_itemtype WHERE id=%s", [type_id]
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    _TYPE_NAME_CACHE[type_id] = row[0]
+                    return row[0]
+        except Exception:
+            pass
+
         return cached
 
     value = str(type_id)
@@ -257,6 +272,21 @@ def get_type_name(type_id: int | None) -> str:
             if record:
                 value = record
         except (AppRegistryNotReady, ImportError):
+            pass
+
+    # Final fallback: use raw SQL if ItemType model is failing for some reason
+    if value == str(type_id):
+        try:
+            from django.db import connection
+
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT name FROM eve_sde_itemtype WHERE id=%s", [type_id]
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    value = row[0]
+        except Exception:
             pass
 
     _TYPE_NAME_CACHE[type_id] = value

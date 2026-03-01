@@ -79,7 +79,7 @@
                     <div class="blueprint-icon flex-shrink-0 me-3">
                         <img src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
                             alt="{{ bp.type_name|default:blueprint_label }}" loading="lazy"
-                            onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+                            onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ bp.type_id }}/icon?size=64'" />
                         <span class="fallback"><i class="fas fa-industry"></i></span>
                     </div>
                     <div class="flex-grow-1 min-width-0 blueprint-list-content">

@@ -682,7 +682,12 @@ class BlueprintCopyRequest(models.Model):
         ]
 
     def __str__(self):
-        return f"Copy request: {self.type_id} ME{self.material_efficiency} TE{self.time_efficiency} by {self.requested_by.username}"
+        return f"Copy request: {self.display_name} ME{self.material_efficiency} TE{self.time_efficiency} by {self.requested_by.username}"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable name of the requested blueprint."""
+        return get_type_name(self.type_id)
 
 
 class BlueprintCopyOffer(models.Model):

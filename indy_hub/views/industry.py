@@ -1667,7 +1667,7 @@ def all_bp_list(request):
             blueprints = [
                 {
                     "type_id": row[0],
-                    "type_name": row[1],
+                    "type_name": get_type_name(row[0]),
                 }
                 for row in cursor.fetchall()
             ]
@@ -2338,12 +2338,7 @@ def craft_bp(request, type_id):
 
     try:
         # --- Fetch blueprint name ---
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT name FROM eve_sde_itemtype WHERE id=%s", [type_id]
-            )
-            row = cursor.fetchone()
-            bp_name = row[0] if row else str(type_id)
+        bp_name = get_type_name(type_id)
 
         # --- Fetch final product and quantity ---
         with connection.cursor() as cursor:
@@ -2409,12 +2404,12 @@ def craft_bp(request, type_id):
                     mats = []
                     for row in cursor.fetchall():
                         # IMPORTANT: Apply ME rounding per-run (per job/cycle), then multiply.
-                        # Doing ceil((base_qty * runs) * (1 - ME)) underestimates for small quantities.
+                        # Doing ceil((base_qty * runs) * (1 - ME)) underestimates for small base quantities.
                         per_run_qty = ceil((row[2] or 0) * (100 - blueprint_me) / 100)
                         qty = int(per_run_qty) * int(runs)
                         mat = {
                             "type_id": row[0],
-                            "type_name": row[1],
+                            "type_name": get_type_name(row[0]),
                             "quantity": qty,
                             # Default values, will be overwritten if blueprint exists
                             "cycles": None,
@@ -2656,7 +2651,7 @@ def craft_bp(request, type_id):
                 blueprint_configs = [
                     {
                         "type_id": row[0],
-                        "type_name": row[1],
+                        "type_name": get_type_name(row[0]),
                         "group_id": row[2],
                         "group_name": row[3],
                         "activity_id": row[4],
@@ -3109,7 +3104,7 @@ def craft_bp(request, type_id):
                 direct_materials_list.append(
                     {
                         "type_id": row[0],
-                        "type_name": row[1],
+                        "type_name": get_type_name(row[0]),
                         "quantity": qty,
                     }
                 )
@@ -3380,12 +3375,7 @@ def craft_bp(request, type_id):
         logger.error(
             f"EXCEPTION IN craft_bp: {type(e).__name__}: {str(e)}", exc_info=True
         )
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT name FROM eve_sde_itemtype WHERE id=%s", [type_id]
-            )
-            row = cursor.fetchone()
-            bp_name = row[0] if row else str(type_id)
+        bp_name = get_type_name(type_id)
         messages.error(request, f"Error crafting blueprint: {e}")
         return render(
             request,
