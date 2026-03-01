@@ -826,20 +826,12 @@ class ESIClient:
             user_repr = getattr(token, "user_id", None)
 
         logger.warning(
-            "ESI returned 403 for %s (%s) through character %s (user %s). Token will be deleted.",
+            "ESI returned 403 for %s (%s) through character %s (user %s). Token will be kept.",
             endpoint,
             scope,
             character_id,
             user_repr,
         )
-        try:
-            token.delete()
-        except Exception:  # pragma: no cover - defensive guard
-            logger.exception(
-                "Impossible de supprimer le jeton ESI %s pour le personnage %s",
-                token.id,
-                character_id,
-            )
 
 
 # Module level singleton to avoid re-creating sessions
