@@ -365,6 +365,9 @@
                             <i class="fas fa-shopping-cart text-warning"></i> {% trans "Shopping List" %}
                         </h3>
                         <div>
+                            <button id="copyShoppingClipboard" class="btn btn-outline-primary btn-sm me-2" title="{% trans 'Copy item + quantity to clipboard' %}">
+                                <i class="fas fa-clipboard me-1"></i>{% trans "Copy" %}
+                            </button>
                             <button id="exportShoppingCSV" class="btn btn-outline-success btn-sm me-2">
                                 <i class="fas fa-file-csv me-1"></i>{% trans "Export" %}
                             </button>
@@ -1114,6 +1117,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // CSV Export functionality
     const exportPurchaseBtn = document.getElementById('exportPurchaseCSV');
     const exportShoppingBtn = document.getElementById('exportShoppingCSV');
+    const copyShoppingClipboardBtn = document.getElementById('copyShoppingClipboard');
 
     function exportTableToCSV(tableId, filename) {
         const table = document.querySelector(tableId);
@@ -1135,9 +1139,61 @@ document.addEventListener('DOMContentLoaded', function() {
         link.click();
     }
 
+    async function copyShoppingListToClipboard() {
+        const rows = Array.from(document.querySelectorAll('#needed-table tbody tr'));
+        if (rows.length === 0) {
+            if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                window.CraftBP.pushStatus('{% trans "Compute the shopping list first" %}', 'warning');
+            }
+            return;
+        }
+
+        const lines = [];
+        rows.forEach(row => {
+            const cells = row.querySelectorAll('td');
+            if (cells.length < 2) return;
+            const name = cells[0].textContent.trim();
+            const qty = cells[1].textContent.trim().replace(/,/g, '');
+            if (!name || !qty) return;
+            lines.push(`${name}\t${qty}`);
+        });
+
+        if (lines.length === 0) {
+            if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                window.CraftBP.pushStatus('{% trans "No items available to copy" %}', 'warning');
+            }
+            return;
+        }
+
+        const text = lines.join('\n');
+        try {
+            if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                await navigator.clipboard.writeText(text);
+                if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                    window.CraftBP.pushStatus('{% trans "Shopping list copied to clipboard" %}', 'success');
+                }
+                return;
+            }
+        } catch (err) {
+            // fall through to prompt
+        }
+
+        // eslint-disable-next-line no-alert
+        window.prompt('{% trans "Copy shopping list" %}', text);
+        if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+            window.CraftBP.pushStatus('{% trans "Shopping list ready to copy (prompt opened)" %}', 'info');
+        }
+    }
+
     if (exportPurchaseBtn) {
         exportPurchaseBtn.addEventListener('click', function() {
             exportTableToCSV('#financialItemsBody', 'purchase_planner.csv');
+        });
+    }
+
+    if (copyShoppingClipboardBtn) {
+        copyShoppingClipboardBtn.addEventListener('click', function() {
+            copyShoppingListToClipboard();
         });
     }
 
