@@ -45,7 +45,7 @@ DISCORD_EMBED_COLORS = {
 }
 
 DEFAULT_LINK_LABEL = _("View details")
-SHORT_LINK_LABEL = _("clic here")
+SHORT_LINK_LABEL = _("Click here")
 
 
 def build_site_url(path: str | None) -> str | None:
@@ -272,6 +272,25 @@ def _build_discord_webhook_payload(
     return payload
 
 
+def _normalize_discord_webhook_url(webhook_url: str) -> str:
+    """Normalize Discord webhook URLs (e.g., discordapp.com -> discord.com)."""
+
+    if not webhook_url:
+        return webhook_url
+
+    try:
+        parsed = urlparse(webhook_url)
+    except Exception:
+        return webhook_url
+
+    netloc = parsed.netloc or ""
+    if netloc.endswith("discordapp.com"):
+        netloc = netloc.replace("discordapp.com", "discord.com")
+        return parsed._replace(netloc=netloc).geturl()
+
+    return webhook_url
+
+
 def send_discord_webhook(
     webhook_url: str,
     title: str,
@@ -292,25 +311,42 @@ def send_discord_webhook(
     if not webhook_url:
         return False
 
-    payload = _build_discord_webhook_payload(
-        title,
-        message,
-        level,
-        link=link,
-        thumbnail_url=thumbnail_url,
-        embed_title=embed_title,
-        embed_color=embed_color,
-        mention_everyone=mention_everyone,
-    )
+    try:
+        payload = _build_discord_webhook_payload(
+            title,
+            message,
+            level,
+            link=link,
+            thumbnail_url=thumbnail_url,
+            embed_title=embed_title,
+            embed_color=embed_color,
+            mention_everyone=mention_everyone,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Discord webhook payload build failed: %s", exc, exc_info=True
+        )
+        return False
 
-    # Third Party
-    import requests
+    try:
+        # Third Party
+        import requests
+    except Exception as exc:
+        logger.warning("Discord webhook requests import failed: %s", exc, exc_info=True)
+        return False
+
+    normalized_url = _normalize_discord_webhook_url(webhook_url)
 
     attempt_count = max(1, retries)
     for attempt in range(1, attempt_count + 1):
         try:
-            response = requests.post(webhook_url, json=payload, timeout=10)
-            if response.status_code >= 400:
+            response = requests.post(
+                normalized_url,
+                json=payload,
+                timeout=10,
+                allow_redirects=False,
+            )
+            if response.status_code >= 300:
                 logger.warning(
                     "Discord webhook failed (%s): %s",
                     response.status_code,
@@ -344,30 +380,46 @@ def send_discord_webhook_with_message_id(
     if not webhook_url:
         return False, None
 
-    payload = _build_discord_webhook_payload(
-        title,
-        message,
-        level,
-        link=link,
-        thumbnail_url=thumbnail_url,
-        embed_title=embed_title,
-        embed_color=embed_color,
-        mention_everyone=mention_everyone,
-    )
+    try:
+        payload = _build_discord_webhook_payload(
+            title,
+            message,
+            level,
+            link=link,
+            thumbnail_url=thumbnail_url,
+            embed_title=embed_title,
+            embed_color=embed_color,
+            mention_everyone=mention_everyone,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Discord webhook payload build failed: %s", exc, exc_info=True
+        )
+        return False, None
 
-    # Third Party
-    import requests
+    try:
+        # Third Party
+        import requests
+    except Exception as exc:
+        logger.warning("Discord webhook requests import failed: %s", exc, exc_info=True)
+        return False, None
 
     attempt_count = max(1, retries)
-    parsed = urlparse(webhook_url)
+    normalized_url = _normalize_discord_webhook_url(webhook_url)
+    parsed = urlparse(normalized_url)
     if parsed.query:
-        webhook_url_wait = f"{webhook_url}&wait=true"
+        webhook_url_wait = f"{normalized_url}&wait=true"
     else:
-        webhook_url_wait = f"{webhook_url}?wait=true"
+        webhook_url_wait = f"{normalized_url}?wait=true"
     for attempt in range(1, attempt_count + 1):
         try:
-            response = requests.post(webhook_url_wait, json=payload, timeout=10)
-            if response.status_code >= 400:
+            response = requests.post(
+                webhook_url_wait,
+                json=payload,
+                timeout=10,
+                allow_redirects=False,
+            )
+            if response.status_code >= 300:
                 logger.warning(
                     "Discord webhook failed (%s): %s",
                     response.status_code,
@@ -378,7 +430,7 @@ def send_discord_webhook_with_message_id(
                 data = response.json()
             except ValueError:
                 logger.warning("Discord webhook response JSON parse failed.")
-                return True, None
+                return False, None
             message_id = data.get("id") if isinstance(data, dict) else None
             return True, str(message_id) if message_id else None
         except Exception as exc:  # pragma: no cover - defensive logging

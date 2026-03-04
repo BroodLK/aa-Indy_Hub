@@ -2321,7 +2321,7 @@ class NotificationRoutingTests(TestCase):
         link_label = "Open queue"
         expected_cta = f"{link_label}: {link}"
         expected_message = f"Message body\n\n{expected_cta}"
-        expected_dm_message = f"Message body\n\n[clic here]({link})"
+        expected_dm_message = f"Message body\n\n[click here]({link})"
 
         notify_user(
             self.user,
