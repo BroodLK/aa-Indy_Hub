@@ -1435,14 +1435,14 @@ def _handle_config_save(request, existing_config):
                 corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}"
                 for sid in invalid_hangar
             ]
-            messages.error(
+            messages.warning(
                 request,
                 _(
-                    "Selected buy locations must have the chosen hangar division available. "
-                    f"Missing {required_flag} on: {', '.join(invalid_hangar_names)}."
+                    "Selected buy locations are missing the chosen hangar division. "
+                    f"Missing {required_flag} on: {', '.join(invalid_hangar_names)}. "
+                    "Configuration was saved, but buy stock may remain unavailable until this is corrected."
                 ),
             )
-            return redirect("indy_hub:material_exchange_config")
         if unknown_hangar:
             unknown_hangar_names = [
                 corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}"

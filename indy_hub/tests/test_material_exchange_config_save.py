@@ -180,3 +180,38 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             self.config.buy_structure_ids,
             [int(self.config.structure_id)],
         )
+
+    @patch("indy_hub.views.material_exchange_config.resolve_structure_names")
+    @patch("indy_hub.views.material_exchange_config._get_corp_structures")
+    def test_buy_locations_missing_required_hangar_flag_are_warning_only(
+        self,
+        mock_get_corp_structures,
+        mock_resolve_structure_names,
+    ):
+        mock_get_corp_structures.return_value = (
+            [
+                {
+                    "id": int(self.config.structure_id),
+                    "name": "Test Structure",
+                    "flags": ["CorpSAG1"],
+                }
+            ],
+            False,
+        )
+        mock_resolve_structure_names.return_value = {
+            int(self.config.structure_id): "Test Structure"
+        }
+
+        post_data = self._base_post_data()
+        post_data["hangar_division"] = "7"
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.hangar_division, 7)
+        self.assertTrue(self.config.buy_enabled)
+        self.assertEqual(
+            self.config.buy_structure_ids,
+            [int(self.config.structure_id)],
+        )
