@@ -173,6 +173,7 @@ def sell_order_detail(request, order_id):
     config = order.config
 
     corporation_name = get_corporation_name(getattr(config, "corporation_id", None))
+    order_location_label = _resolve_sell_order_location_label(order)
 
     # Get all items with their details
     items = order.items.all()
@@ -185,6 +186,7 @@ def sell_order_detail(request, order_id):
         "order": order,
         "config": config,
         "corporation_name": corporation_name,
+        "order_location_label": order_location_label,
         "items": items,
         "timeline": timeline,
         "timeline_breadcrumb": timeline_breadcrumb,
@@ -267,6 +269,43 @@ def _get_status_class(status):
         "cancelled": "secondary",
     }
     return status_classes.get(status, "secondary")
+
+
+def _resolve_sell_order_location_label(order: MaterialExchangeSellOrder) -> str:
+    source_name = str(getattr(order, "source_location_name", "") or "").strip()
+    if source_name:
+        return source_name
+
+    source_id = getattr(order, "source_location_id", None)
+    try:
+        source_id_int = int(source_id or 0)
+    except (TypeError, ValueError):
+        source_id_int = 0
+    if source_id_int > 0:
+        return f"Structure {source_id_int}"
+
+    config = getattr(order, "config", None)
+    if not config:
+        return ""
+
+    if str(config.structure_name or "").strip():
+        return str(config.structure_name).strip()
+
+    name_map = config.get_sell_structure_name_map() or {}
+    location_ids = config.get_sell_structure_ids()
+    if location_ids:
+        try:
+            first_id = int(location_ids[0])
+        except (TypeError, ValueError):
+            first_id = 0
+        if first_id <= 0:
+            return f"Structure {config.structure_id}"
+        fallback_name = str(name_map.get(first_id, "") or "").strip()
+        if fallback_name:
+            return fallback_name
+        return f"Structure {first_id}"
+
+    return f"Structure {config.structure_id}"
 
 
 def _resolve_main_character_name(user) -> str:

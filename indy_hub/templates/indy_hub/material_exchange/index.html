@@ -46,8 +46,29 @@
 
     <div class="me-hub-banner" role="note">
         <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
-        <span class="me-hub-banner-label">{% trans "Hub Location" %}:</span>
-        <span class="me-hub-banner-value">{{ hub_location_label }}</span>
+        <span class="me-hub-banner-label">{% trans "Hub Locations" %}:</span>
+        <span class="me-hub-banner-value">
+            <span class="me-hub-line">
+                <strong>{% trans "Sell" %}:</strong>
+                {% for location_name in sell_location_names %}
+                    <span class="me-hub-line-item">{{ location_name }}</span>
+                {% empty %}
+                    <span class="me-hub-line-item">{{ hub_location_label }}</span>
+                {% endfor %}
+            </span>
+            <span class="me-hub-line">
+                <strong>{% trans "Buy" %}:</strong>
+                {% if buy_enabled %}
+                    {% for location_name in buy_location_names %}
+                        <span class="me-hub-line-item">{{ location_name }}</span>
+                    {% empty %}
+                        <span class="me-hub-line-item text-muted">{% trans "No buy locations configured" %}</span>
+                    {% endfor %}
+                {% else %}
+                    <span class="me-hub-line-item text-muted">{% trans "Disabled" %}</span>
+                {% endif %}
+            </span>
+        </span>
     </div>
 
     <!-- Hub Actions -->

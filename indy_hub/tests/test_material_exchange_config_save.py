@@ -1,3 +1,6 @@
+# Standard Library
+from unittest.mock import patch
+
 # Django
 from django.contrib.auth.models import User
 from django.contrib.messages.storage.fallback import FallbackStorage
@@ -144,3 +147,36 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.config.refresh_from_db()
         self.assertEqual(self.config.location_match_mode, "name_or_id")
+
+    @patch("indy_hub.views.material_exchange_config.resolve_structure_names")
+    @patch("indy_hub.views.material_exchange_config._get_corp_structures")
+    def test_buy_locations_with_unknown_hangar_flags_are_allowed(
+        self,
+        mock_get_corp_structures,
+        mock_resolve_structure_names,
+    ):
+        mock_get_corp_structures.return_value = (
+            [
+                {
+                    "id": int(self.config.structure_id),
+                    "name": "Test Structure",
+                    "flags": [],
+                }
+            ],
+            False,
+        )
+        mock_resolve_structure_names.return_value = {
+            int(self.config.structure_id): "Test Structure"
+        }
+
+        post_data = self._base_post_data()
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertTrue(self.config.buy_enabled)
+        self.assertEqual(
+            self.config.buy_structure_ids,
+            [int(self.config.structure_id)],
+        )

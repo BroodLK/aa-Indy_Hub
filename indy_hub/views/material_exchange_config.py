@@ -924,7 +924,7 @@ def _get_user_corporations(user):
 def _get_corp_structures(user, corp_id):
     """Get list of player structures using lazy queryset and resolve names for user's DIRECTOR characters."""
 
-    cache_key = f"indy_hub:material_exchange:corp_structures:v2:{int(corp_id)}"
+    cache_key = f"indy_hub:material_exchange:corp_structures:v3:{int(corp_id)}"
     cached = cache.get(cache_key)
     if cached is not None:
         try:
@@ -978,6 +978,10 @@ def _get_corp_structures(user, corp_id):
         if not office_folder_item_id:
             continue
         structure_id = office_folder_map.get(int(office_folder_item_id))
+        if not structure_id:
+            # Some corp asset payloads report CorpSAG location_id directly as
+            # structure/station ID instead of office folder item_id.
+            structure_id = int(office_folder_item_id)
         if structure_id:
             loc_ids_set.add(int(structure_id))
             structure_flags.setdefault(int(structure_id), set()).add(str(flag))
@@ -1415,19 +1419,42 @@ def _handle_config_save(request, existing_config):
 
     if not assets_scope_missing and buy_structure_ids:
         required_flag = f"CorpSAG{hangar_division}"
-        invalid_hangar = [
-            sid
-            for sid in buy_structure_ids
-            if required_flag not in structure_flags_by_id.get(int(sid), set())
-        ]
+        invalid_hangar: list[int] = []
+        unknown_hangar: list[int] = []
+        for sid in buy_structure_ids:
+            flags = structure_flags_by_id.get(int(sid), set())
+            if not flags:
+                # If we cannot infer CorpSAG flags for a location, do not
+                # hard-fail configuration save on unknown data.
+                unknown_hangar.append(int(sid))
+                continue
+            if required_flag not in flags:
+                invalid_hangar.append(int(sid))
         if invalid_hangar:
+            invalid_hangar_names = [
+                corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}"
+                for sid in invalid_hangar
+            ]
             messages.error(
                 request,
                 _(
-                    "Selected buy locations must have the chosen hangar division available."
+                    "Selected buy locations must have the chosen hangar division available. "
+                    f"Missing {required_flag} on: {', '.join(invalid_hangar_names)}."
                 ),
             )
             return redirect("indy_hub:material_exchange_config")
+        if unknown_hangar:
+            unknown_hangar_names = [
+                corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}"
+                for sid in unknown_hangar
+            ]
+            messages.warning(
+                request,
+                _(
+                    "Could not verify hangar divisions for: "
+                    f"{', '.join(unknown_hangar_names)}. Configuration was saved, but buy stock may remain unavailable until corp assets are refreshed."
+                ),
+            )
 
     # Save or update config
     with transaction.atomic():

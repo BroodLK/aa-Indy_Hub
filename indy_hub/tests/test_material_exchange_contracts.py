@@ -1392,6 +1392,95 @@ class NotificationDeduplicationTest(TestCase):
         self.assertEqual(sell_order.esi_contract_id, valid_contract.contract_id)
         self.assertTrue(mock_notify_user.called)
 
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_sell_validation_uses_order_source_location_when_present(
+        self, mock_get_character_ids
+    ):
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        self.config.sell_structure_ids = [70000001, 70000002]
+        self.config.sell_structure_names = ["Alpha Hub", "Beta Hub"]
+        self.config.save(update_fields=["sell_structure_ids", "sell_structure_names"])
+
+        seller_char_id = 111222333
+        mock_get_character_ids.return_value = [seller_char_id]
+
+        sell_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+            order_reference="INDY-SRC-LOC-1",
+            source_location_id=70000002,
+            source_location_name="Beta Hub",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=sell_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=100,
+            unit_price=10,
+            total_price=1000,
+        )
+
+        wrong_location_contract = ESIContract.objects.create(
+            contract_id=999001,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=70000001,
+            end_location_id=70000001,
+            status="outstanding",
+            price=sell_order.total_price,
+            title=sell_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=wrong_location_contract,
+            record_id=999101,
+            type_id=34,
+            quantity=100,
+            is_included=True,
+        )
+
+        validate_material_exchange_sell_orders()
+
+        sell_order.refresh_from_db()
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
+        self.assertIn("Expected: Beta Hub", sell_order.notes)
+
+        correct_location_contract = ESIContract.objects.create(
+            contract_id=999002,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=70000002,
+            end_location_id=70000002,
+            status="outstanding",
+            price=sell_order.total_price,
+            title=sell_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=correct_location_contract,
+            record_id=999102,
+            type_id=34,
+            quantity=100,
+            is_included=True,
+        )
+
+        validate_material_exchange_sell_orders()
+
+        sell_order.refresh_from_db()
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED)
+        self.assertEqual(sell_order.esi_contract_id, correct_location_contract.contract_id)
+
 
 if __name__ == "__main__":
     # Standard Library

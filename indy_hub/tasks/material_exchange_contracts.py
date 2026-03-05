@@ -787,7 +787,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     notify_admins_on_sell_anomaly = bool(
         getattr(config, "notify_admins_on_sell_anomaly", True)
     )
-    expected_sell_locations_label = _get_expected_locations_label(config, side="sell")
+    (
+        expected_sell_location_ids,
+        expected_sell_location_names,
+        expected_sell_locations_label,
+    ) = _get_sell_order_expected_locations(order, config)
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
     rejected_statuses = {"cancelled", "rejected", "failed", "expired", "deleted"}
 
@@ -1040,7 +1044,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
 
         # Basic criteria
         criteria_match = _matches_sell_order_criteria_db(
-            contract, order, config, seller_character_ids, esi_client
+            contract,
+            order,
+            config,
+            seller_character_ids,
+            esi_client,
+            expected_location_ids=expected_sell_location_ids,
+            expected_location_names=expected_sell_location_names,
         )
         if not criteria_match:
             # Store contract info if it has correct ref but wrong structure
@@ -1922,6 +1932,27 @@ def _get_expected_locations_label(config: MaterialExchangeConfig, *, side: str) 
     )
 
 
+def _get_sell_order_expected_locations(
+    order: MaterialExchangeSellOrder, config: MaterialExchangeConfig
+) -> tuple[list[int], set[str], str]:
+    source_name = str(getattr(order, "source_location_name", "") or "").strip()
+    source_location_id = None
+    try:
+        source_location_id = int(getattr(order, "source_location_id", 0) or 0)
+    except (TypeError, ValueError):
+        source_location_id = 0
+
+    if source_location_id > 0:
+        labels_name = source_name or f"Structure {source_location_id}"
+        name_set = {_normalize_location_name(source_name)} if source_name else set()
+        return [source_location_id], name_set, labels_name
+
+    expected_ids = _get_expected_location_ids(config, side="sell")
+    expected_name_set = _get_expected_location_name_set(config, side="sell")
+    expected_label = _get_expected_locations_label(config, side="sell")
+    return expected_ids, expected_name_set, expected_label
+
+
 def _contract_matches_expected_locations(
     *,
     start_location_id: int | None,
@@ -1961,7 +1992,14 @@ def _contract_matches_expected_locations(
 
 
 def _matches_sell_order_criteria_db(
-    contract, order, config, seller_character_ids, esi_client=None
+    contract,
+    order,
+    config,
+    seller_character_ids,
+    esi_client=None,
+    *,
+    expected_location_ids: list[int] | None = None,
+    expected_location_names: set[str] | None = None,
 ):
     """
     Check if a database contract matches sell order basic criteria.
@@ -1979,8 +2017,16 @@ def _matches_sell_order_criteria_db(
         return False
 
     location_match_mode = _get_location_match_mode(config)
-    expected_ids = _get_expected_location_ids(config, side="sell")
-    expected_name_set = _get_expected_location_name_set(config, side="sell")
+    expected_ids = (
+        list(expected_location_ids)
+        if expected_location_ids is not None
+        else _get_expected_location_ids(config, side="sell")
+    )
+    expected_name_set = (
+        set(expected_location_names)
+        if expected_location_names is not None
+        else _get_expected_location_name_set(config, side="sell")
+    )
 
     contract_start_name = None
     contract_end_name = None

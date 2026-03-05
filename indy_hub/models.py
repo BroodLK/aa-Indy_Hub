@@ -2302,6 +2302,16 @@ class MaterialExchangeSellOrder(models.Model):
         db_index=True,
         help_text=_("Unique order reference (INDY-{id}) for contract matching"),
     )
+    source_location_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=_("Location ID selected by the seller when creating this order."),
+    )
+    source_location_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text=_("Location name selected by the seller when creating this order."),
+    )
 
     rounded_total_price = models.DecimalField(
         max_digits=20,

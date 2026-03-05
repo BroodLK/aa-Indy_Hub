@@ -849,6 +849,15 @@ def material_exchange_index(request):
         sell_location_names.append(
             sell_name_map.get(sid_int) or f"Structure {sid_int}"
         )
+    buy_enabled = bool(getattr(config, "buy_enabled", True))
+    buy_structure_ids = config.get_buy_structure_ids() if buy_enabled else []
+    buy_location_names = []
+    buy_name_map = config.get_buy_structure_name_map()
+    for sid in buy_structure_ids:
+        sid_int = int(sid)
+        buy_location_names.append(
+            buy_name_map.get(sid_int) or f"Structure {sid_int}"
+        )
     hub_location_label = ", ".join(sell_location_names).strip() or (
         config.structure_name or f"Structure {config.structure_id}"
     )
@@ -987,7 +996,9 @@ def material_exchange_index(request):
     context = {
         "config": config,
         "hub_location_label": hub_location_label,
-        "buy_enabled": bool(getattr(config, "buy_enabled", True)),
+        "sell_location_names": sell_location_names,
+        "buy_location_names": buy_location_names,
+        "buy_enabled": buy_enabled,
         "stock_count": stock_count,
         "total_stock_value": total_stock_value,
         "pending_sell_orders": pending_sell_orders,
@@ -1323,6 +1334,8 @@ def material_exchange_sell(request, tokens):
                 seller=request.user,
                 status=MaterialExchangeSellOrder.Status.DRAFT,
                 order_reference=client_order_ref if client_order_ref else None,
+                source_location_id=selected_location_id,
+                source_location_name=active_location_name or "",
             )
             for item_data in items_to_create:
                 MaterialExchangeSellOrderItem.objects.create(order=order, **item_data)
