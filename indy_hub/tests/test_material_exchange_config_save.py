@@ -41,8 +41,10 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
     def _base_post_data(self):
         return {
             "corporation_id": str(self.config.corporation_id),
-            "structure_id": str(self.config.structure_id),
-            "structure_name": self.config.structure_name,
+            "sell_structure_ids": [str(self.config.structure_id)],
+            "buy_structure_ids": [str(self.config.structure_id)],
+            "buy_enabled": "on",
+            "location_match_mode": "name_or_id",
             "hangar_division": str(self.config.hangar_division),
             "sell_markup_percent": "0",
             "sell_markup_base": "buy",
@@ -106,3 +108,39 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.config.refresh_from_db()
         self.assertFalse(self.config.is_active)
+
+    def test_buy_enabled_requires_buy_locations(self):
+        post_data = self._base_post_data()
+        post_data["buy_enabled"] = "on"
+        post_data["buy_structure_ids"] = []
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertTrue(self.config.buy_enabled)
+
+    def test_buy_disabled_allows_empty_buy_locations(self):
+        post_data = self._base_post_data()
+        post_data.pop("buy_enabled", None)
+        post_data["buy_structure_ids"] = []
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertFalse(self.config.buy_enabled)
+        self.assertEqual(self.config.buy_structure_ids, [])
+
+    def test_location_match_mode_defaults_to_name_or_id_when_invalid(self):
+        post_data = self._base_post_data()
+        post_data["location_match_mode"] = "invalid"
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.location_match_mode, "name_or_id")

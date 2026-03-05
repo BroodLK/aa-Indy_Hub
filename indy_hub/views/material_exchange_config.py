@@ -253,6 +253,26 @@ def material_exchange_config(request, tokens):
         else []
     )
 
+    selected_sell_structures: list[dict[str, object]] = []
+    selected_buy_structures: list[dict[str, object]] = []
+    buy_enabled = True
+    location_match_mode = "name_or_id"
+    if config:
+        buy_enabled = bool(getattr(config, "buy_enabled", True))
+        location_match_mode = getattr(config, "location_match_mode", None) or "name_or_id"
+        sell_ids = config.get_sell_structure_ids(include_primary=False)
+        buy_ids = config.get_buy_structure_ids(include_primary=False)
+        sell_name_map = config.get_sell_structure_name_map()
+        buy_name_map = config.get_buy_structure_name_map()
+        selected_sell_structures = [
+            {"id": int(sid), "name": sell_name_map.get(int(sid), "")}
+            for sid in sell_ids
+        ]
+        selected_buy_structures = [
+            {"id": int(sid), "name": buy_name_map.get(int(sid), "")}
+            for sid in buy_ids
+        ]
+
     market_group_search_index = {}
     try:
         market_group_search_index = _get_industry_market_group_search_index(
@@ -278,6 +298,10 @@ def material_exchange_config(request, tokens):
         "selected_market_groups_buy": selected_market_groups_buy,
         "selected_market_groups_sell": selected_market_groups_sell,
         "market_group_search_index": market_group_search_index,
+        "selected_sell_structures": selected_sell_structures,
+        "selected_buy_structures": selected_buy_structures,
+        "buy_enabled": buy_enabled,
+        "location_match_mode": location_match_mode,
     }
 
     from .navigation import build_nav_context
@@ -1245,8 +1269,8 @@ def _handle_config_save(request, existing_config):
     """Handle POST request to save Material Exchange configuration."""
 
     corporation_id = request.POST.get("corporation_id")
-    structure_id = request.POST.get("structure_id")
-    structure_name = request.POST.get("structure_name", "")
+    sell_structure_ids_raw = request.POST.getlist("sell_structure_ids")
+    buy_structure_ids_raw = request.POST.getlist("buy_structure_ids")
     hangar_division = request.POST.get("hangar_division")
     sell_markup_percent = request.POST.get("sell_markup_percent", "0")
     sell_markup_base = request.POST.get("sell_markup_base", "buy")
@@ -1260,6 +1284,8 @@ def _handle_config_save(request, existing_config):
     notify_admins_on_sell_anomaly = (
         request.POST.get("notify_admins_on_sell_anomaly") == "on"
     )
+    buy_enabled = request.POST.get("buy_enabled") == "on"
+    location_match_mode = request.POST.get("location_match_mode") or "name_or_id"
 
     raw_is_active = request.POST.get("is_active")
     if raw_is_active is None and existing_config is not None:
@@ -1277,15 +1303,14 @@ def _handle_config_save(request, existing_config):
     try:
         if not corporation_id:
             raise ValueError("Corporation ID is required")
-        if not structure_id:
-            raise ValueError("Structure ID is required")
+        if not sell_structure_ids_raw:
+            raise ValueError("At least one sell structure is required")
         if not hangar_division:
             raise ValueError(
                 "Hangar division is required. Please ensure the divisions scope token is added and a division is selected."
             )
 
         corporation_id = int(corporation_id)
-        structure_id = int(structure_id)
         hangar_division = int(hangar_division)
         sell_markup_percent = _parse_decimal(sell_markup_percent, "0")
         buy_markup_percent = _parse_decimal(buy_markup_percent, "5")
@@ -1310,14 +1335,105 @@ def _handle_config_save(request, existing_config):
         if not (1 <= hangar_division <= 7):
             raise ValueError("Hangar division must be between 1 and 7")
 
+        valid_location_match_modes = {"name_or_id", "strict_id"}
+        if location_match_mode not in valid_location_match_modes:
+            location_match_mode = "name_or_id"
+
     except (ValueError, TypeError, InvalidOperation) as e:
         messages.error(request, _("Invalid configuration values: {}").format(e))
         return redirect("indy_hub:material_exchange_config")
 
+    def _parse_structure_ids(raw_list: list[str]) -> list[int]:
+        parsed: list[int] = []
+        for raw in raw_list:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value <= 0:
+                continue
+            if value not in parsed:
+                parsed.append(value)
+        return parsed
+
+    sell_structure_ids = _parse_structure_ids(sell_structure_ids_raw)
+    buy_structure_ids = _parse_structure_ids(buy_structure_ids_raw)
+
+    if not sell_structure_ids:
+        messages.error(
+            request,
+            _("At least one valid sell location is required."),
+        )
+        return redirect("indy_hub:material_exchange_config")
+
+    if buy_enabled and not buy_structure_ids:
+        messages.error(
+            request,
+            _("Buy locations are required when buy orders are enabled."),
+        )
+        return redirect("indy_hub:material_exchange_config")
+
+    structure_flags_by_id: dict[int, set[str]] = {}
+    allowed_structure_ids: set[int] = set()
+    corp_structure_names_by_id: dict[int, str] = {}
+    try:
+        corp_structures, assets_scope_missing = _get_corp_structures(
+            request.user, corporation_id
+        )
+        for entry in corp_structures or []:
+            try:
+                sid = int(entry.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if sid <= 0:
+                continue
+            allowed_structure_ids.add(sid)
+            corp_name = str(entry.get("name") or "").strip()
+            if corp_name:
+                corp_structure_names_by_id[sid] = corp_name
+            flags = entry.get("flags") or []
+            structure_flags_by_id[sid] = {str(flag) for flag in flags if flag}
+    except Exception:
+        assets_scope_missing = False
+
+    if allowed_structure_ids:
+        invalid_sell = [sid for sid in sell_structure_ids if sid not in allowed_structure_ids]
+        if invalid_sell:
+            messages.error(
+                request,
+                _("One or more sell locations are not available for this corporation."),
+            )
+            return redirect("indy_hub:material_exchange_config")
+
+        invalid_buy = [sid for sid in buy_structure_ids if sid not in allowed_structure_ids]
+        if invalid_buy:
+            messages.error(
+                request,
+                _("One or more buy locations are not available for this corporation."),
+            )
+            return redirect("indy_hub:material_exchange_config")
+
+    if not assets_scope_missing and buy_structure_ids:
+        required_flag = f"CorpSAG{hangar_division}"
+        invalid_hangar = [
+            sid
+            for sid in buy_structure_ids
+            if required_flag not in structure_flags_by_id.get(int(sid), set())
+        ]
+        if invalid_hangar:
+            messages.error(
+                request,
+                _(
+                    "Selected buy locations must have the chosen hangar division available."
+                ),
+            )
+            return redirect("indy_hub:material_exchange_config")
+
     # Save or update config
     with transaction.atomic():
-        # Best-effort: resolve name server-side to avoid persisting placeholders.
-        if corporation_id and structure_id:
+        resolved_names: dict[int, str] = {}
+        all_structure_ids = list({*sell_structure_ids, *buy_structure_ids})
+        if corporation_id and all_structure_ids:
             try:
                 token_for_names = _get_token_for_corp(
                     request.user, corporation_id, "esi-universe.read_structures.v1"
@@ -1327,21 +1443,36 @@ def _handle_config_save(request, existing_config):
                     if token_for_names
                     else None
                 )
-                resolved = resolve_structure_names(
-                    [int(structure_id)],
+                resolved_names = resolve_structure_names(
+                    [int(sid) for sid in all_structure_ids],
                     character_id_for_names,
                     int(corporation_id),
                     user=request.user,
-                ).get(int(structure_id))
-                if resolved and not str(resolved).startswith("Structure "):
-                    structure_name = resolved
+                )
             except Exception:
-                pass
+                resolved_names = {}
+
+        def _resolve_name(sid: int) -> str:
+            name = resolved_names.get(int(sid), "") or ""
+            if name and not str(name).startswith("Structure "):
+                return str(name)
+            fallback = corp_structure_names_by_id.get(int(sid), "") or ""
+            return str(fallback)
+
+        sell_structure_names = [_resolve_name(sid) for sid in sell_structure_ids]
+        buy_structure_names = [_resolve_name(sid) for sid in buy_structure_ids]
+
+        primary_structure_id = sell_structure_ids[0] if sell_structure_ids else 0
+        if not primary_structure_id and buy_structure_ids:
+            primary_structure_id = buy_structure_ids[0]
+        primary_structure_name = _resolve_name(primary_structure_id) if primary_structure_id else ""
+        if primary_structure_id and not primary_structure_name:
+            primary_structure_name = f"Structure {primary_structure_id}"
 
         if existing_config:
             existing_config.corporation_id = corporation_id
-            existing_config.structure_id = structure_id
-            existing_config.structure_name = structure_name
+            existing_config.structure_id = primary_structure_id
+            existing_config.structure_name = primary_structure_name
             existing_config.hangar_division = hangar_division
             existing_config.sell_markup_percent = sell_markup_percent
             existing_config.sell_markup_base = sell_markup_base
@@ -1351,6 +1482,12 @@ def _handle_config_save(request, existing_config):
             existing_config.notify_admins_on_sell_anomaly = (
                 notify_admins_on_sell_anomaly
             )
+            existing_config.sell_structure_ids = sell_structure_ids
+            existing_config.sell_structure_names = sell_structure_names
+            existing_config.buy_structure_ids = buy_structure_ids
+            existing_config.buy_structure_names = buy_structure_names
+            existing_config.buy_enabled = buy_enabled
+            existing_config.location_match_mode = location_match_mode
             existing_config.allowed_market_groups_buy = allowed_market_groups_buy
             existing_config.allowed_market_groups_sell = allowed_market_groups_sell
             existing_config.is_active = is_active
@@ -1361,8 +1498,8 @@ def _handle_config_save(request, existing_config):
         else:
             MaterialExchangeConfig.objects.create(
                 corporation_id=corporation_id,
-                structure_id=structure_id,
-                structure_name=structure_name,
+                structure_id=primary_structure_id,
+                structure_name=primary_structure_name,
                 hangar_division=hangar_division,
                 sell_markup_percent=sell_markup_percent,
                 sell_markup_base=sell_markup_base,
@@ -1370,6 +1507,12 @@ def _handle_config_save(request, existing_config):
                 buy_markup_base=buy_markup_base,
                 enforce_jita_price_bounds=enforce_jita_price_bounds,
                 notify_admins_on_sell_anomaly=notify_admins_on_sell_anomaly,
+                sell_structure_ids=sell_structure_ids,
+                sell_structure_names=sell_structure_names,
+                buy_structure_ids=buy_structure_ids,
+                buy_structure_names=buy_structure_names,
+                buy_enabled=buy_enabled,
+                location_match_mode=location_match_mode,
                 allowed_market_groups_buy=allowed_market_groups_buy,
                 allowed_market_groups_sell=allowed_market_groups_sell,
                 is_active=is_active,

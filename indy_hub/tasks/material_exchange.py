@@ -718,16 +718,30 @@ def _sync_stock_impl():
         if assets_scope_missing:
             logger.warning("Missing corp assets scope for %s", config.corporation_id)
 
+        target_structure_ids = config.get_buy_structure_ids()
+        if not target_structure_ids:
+            logger.warning(
+                "No buy locations configured on Material Exchange config %s; clearing stock",
+                config.pk,
+            )
+            MaterialExchangeStock.objects.filter(config=config).delete()
+            return
+
         # Upwell structures store corp hangar contents under the OfficeFolder item_id.
         # Stations (and some locations) use the structure/station id directly.
-        office_folder_item_id = get_office_folder_item_id_from_assets(
-            corp_assets, structure_id=int(config.structure_id)
-        )
-        effective_location_id = (
-            int(office_folder_item_id)
-            if office_folder_item_id is not None
-            else int(config.structure_id)
-        )
+        effective_location_ids: list[int] = []
+        for structure_id in target_structure_ids:
+            office_folder_item_id = get_office_folder_item_id_from_assets(
+                corp_assets,
+                structure_id=int(structure_id),
+            )
+            effective_location_id = (
+                int(office_folder_item_id)
+                if office_folder_item_id is not None
+                else int(structure_id)
+            )
+            if int(effective_location_id) not in effective_location_ids:
+                effective_location_ids.append(int(effective_location_id))
 
         index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
 
@@ -735,12 +749,17 @@ def _sync_stock_impl():
             # Assets can be inside containers (cans/boxes) which have their own item_id.
             # In those cases the child asset location_id points to the container item_id,
             # and the container carries the actual hangar context.
-            if not asset_chain_has_context(
-                asset,
-                index_by_item_id,
-                location_id=int(effective_location_id),
-                location_flag=str(target_flag),
-            ):
+            matches_any_location = False
+            for location_id in effective_location_ids:
+                if asset_chain_has_context(
+                    asset,
+                    index_by_item_id,
+                    location_id=int(location_id),
+                    location_flag=str(target_flag),
+                ):
+                    matches_any_location = True
+                    break
+            if not matches_any_location:
                 continue
 
             try:
@@ -759,9 +778,9 @@ def _sync_stock_impl():
             stock_updates[type_id] = stock_updates.get(type_id, 0) + quantity
 
         logger.info(
-            "Loaded %d asset types from cache for structure %s, division %s",
+            "Loaded %d asset types from cache for %d buy location(s), division %s",
             len(stock_updates),
-            config.structure_id,
+            len(target_structure_ids),
             config.hangar_division,
         )
 

@@ -787,6 +787,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     notify_admins_on_sell_anomaly = bool(
         getattr(config, "notify_admins_on_sell_anomaly", True)
     )
+    expected_sell_locations_label = _get_expected_locations_label(config, side="sell")
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
     rejected_statuses = {"cancelled", "rejected", "failed", "expired", "deleted"}
 
@@ -1083,7 +1084,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         # Contract found with correct title but wrong structure
         anomaly_notes = (
             f"Anomaly: contract {contract_with_correct_ref_wrong_structure['contract_id']} has the correct title ({order_ref}) "
-            f"but wrong location. Expected: {config.structure_name or f'Structure {config.structure_id}'}\n"
+            f"but wrong location. Expected: {expected_sell_locations_label}\n"
             f"Contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}"
         )
         anomaly_updated = (
@@ -1108,7 +1109,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"Your sell order {order_ref} is in anomaly status.\n\n"
                         f"You submitted contract #{contract_with_correct_ref_wrong_structure['contract_id']} which has the correct title, "
                         f"but it's located at the wrong structure.\n\n"
-                        f"Required location: {config.structure_name or f'Structure {config.structure_id}'}\n"
+                        f"Required location(s): {expected_sell_locations_label}\n"
                         f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n\n"
                         f"You can either create a new contract at the correct location, or contact a Material Hub admin (they have been notified)."
                     )
@@ -1117,7 +1118,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"Your sell order {order_ref} is in anomaly status.\n\n"
                         f"You submitted contract #{contract_with_correct_ref_wrong_structure['contract_id']} which has the correct title, "
                         f"but it's located at the wrong structure.\n\n"
-                        f"Required location: {config.structure_name or f'Structure {config.structure_id}'}\n"
+                        f"Required location(s): {expected_sell_locations_label}\n"
                         f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n\n"
                         f"Please create a new compliant contract at the correct location."
                     )
@@ -1206,7 +1207,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the price does not match the agreed total.\n\n"
                         f"Expected price: {expected_price}\n"
                         f"Contract price: {contract_price}\n\n"
-                        f"You can either create a new contract with the correct price at {config.structure_name or f'Structure {config.structure_id}'}, or wait for admin review (admins have been notified)."
+                        f"You can either create a new contract with the correct price at {expected_sell_locations_label}, or wait for admin review (admins have been notified)."
                     )
                     if notify_admins_on_sell_anomaly
                     else _(
@@ -1214,7 +1215,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the price does not match the agreed total.\n\n"
                         f"Expected price: {expected_price}\n"
                         f"Contract price: {contract_price}\n\n"
-                        f"Please create a new compliant contract with the correct price at {config.structure_name or f'Structure {config.structure_id}'}."
+                        f"Please create a new compliant contract with the correct price at {expected_sell_locations_label}."
                     )
                 ),
                 level="warning",
@@ -1413,7 +1414,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             "Waiting for matching contract. Please create an item exchange contract with:\n"
             f"- Title including {order_ref}\n"
             f"- Recipient (assignee): {_get_corp_name(config.corporation_id)}\n"
-            f"- Location: {config.structure_name or f'Structure {config.structure_id}'}\n"
+            f"- Location(s): {expected_sell_locations_label}\n"
             f"- Price: {order.total_price:,.0f} ISK\n"
             f"- Items: {', '.join(item.type_name for item in order.items.all())}"
             + (f"\nLast checked issue: {last_price_issue}" if last_price_issue else "")
@@ -1462,6 +1463,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
     order_ref = order.order_reference or f"INDY-{order.id}"
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
+    expected_buy_locations_label = _get_expected_locations_label(config, side="buy")
 
     buyer_character_ids = _get_user_character_ids(order.buyer)
     if not buyer_character_ids:
@@ -1733,6 +1735,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         [
             f"Pending contract for {order_ref}.",
             "Ensure corp issues item exchange contract to buyer.",
+            f"Expected location(s): {expected_buy_locations_label}",
             f"Expected price: {order.total_price:,.0f} ISK",
             f"{issue_line}{mismatch_block}".strip(),
         ]
@@ -1763,6 +1766,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"Buy order {order.order_reference} has no matching contract yet.\n"
                 f"Buyer: {order.buyer.username}\n"
+                f"Expected location(s): {expected_buy_locations_label}\n"
                 f"Expected price: {order.total_price:,.0f} ISK"
                 + (f"\nIssue(s): {'; '.join(issues)}" if issues else "")
                 + (
@@ -1786,15 +1790,120 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     logger.info("Buy order %s pending: no matching contract yet", order.id)
 
 
+def _get_location_match_mode(config: MaterialExchangeConfig) -> str:
+    mode = (getattr(config, "location_match_mode", None) or "name_or_id").strip()
+    if mode not in {"name_or_id", "strict_id"}:
+        return "name_or_id"
+    return mode
+
+
+def _normalize_location_name(name: str | None) -> str:
+    return str(name or "").strip().lower()
+
+
+def _get_expected_location_ids(config: MaterialExchangeConfig, *, side: str) -> list[int]:
+    if side == "sell":
+        raw_ids = config.get_sell_structure_ids()
+    elif side == "buy":
+        raw_ids = config.get_buy_structure_ids()
+    else:
+        raw_ids = []
+
+    normalized_ids: list[int] = []
+    for raw in raw_ids:
+        try:
+            sid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if sid <= 0 or sid in normalized_ids:
+            continue
+        normalized_ids.append(sid)
+    return normalized_ids
+
+
+def _get_expected_location_name_set(
+    config: MaterialExchangeConfig, *, side: str
+) -> set[str]:
+    if side == "sell":
+        name_map = config.get_sell_structure_name_map()
+    elif side == "buy":
+        name_map = config.get_buy_structure_name_map()
+    else:
+        name_map = {}
+
+    names = {
+        _normalize_location_name(name)
+        for name in (name_map or {}).values()
+        if _normalize_location_name(name)
+    }
+    return names
+
+
+def _get_expected_locations_label(config: MaterialExchangeConfig, *, side: str) -> str:
+    if side == "sell":
+        name_map = config.get_sell_structure_name_map()
+    elif side == "buy":
+        name_map = config.get_buy_structure_name_map()
+    else:
+        name_map = {}
+
+    labels = []
+    for sid in _get_expected_location_ids(config, side=side):
+        name = str((name_map or {}).get(int(sid), "") or "").strip()
+        labels.append(name or f"Structure {sid}")
+
+    return ", ".join(labels) if labels else (
+        config.structure_name or f"Structure {config.structure_id}"
+    )
+
+
+def _contract_matches_expected_locations(
+    *,
+    start_location_id: int | None,
+    end_location_id: int | None,
+    start_location_name: str | None,
+    end_location_name: str | None,
+    expected_location_ids: list[int],
+    expected_location_names: set[str],
+    match_mode: str,
+) -> bool:
+    expected_id_set = {int(sid) for sid in expected_location_ids if sid}
+    if expected_id_set:
+        try:
+            if int(start_location_id or 0) in expected_id_set:
+                return True
+        except (TypeError, ValueError):
+            pass
+        try:
+            if int(end_location_id or 0) in expected_id_set:
+                return True
+        except (TypeError, ValueError):
+            pass
+
+    if match_mode != "name_or_id":
+        return False
+    if not expected_location_names:
+        return False
+
+    start_name = _normalize_location_name(start_location_name)
+    if start_name and start_name in expected_location_names:
+        return True
+    end_name = _normalize_location_name(end_location_name)
+    if end_name and end_name in expected_location_names:
+        return True
+
+    return False
+
+
 def _matches_sell_order_criteria_db(
     contract, order, config, seller_character_ids, esi_client=None
 ):
     """
     Check if a database contract matches sell order basic criteria.
 
-    Location matching:
-    - Prefer matching by structure name (handles signed/unsigned ID variants)
-    - Fall back to ID matching only if name lookup fails
+    Location matching respects config.location_match_mode:
+    - strict_id: contract start/end location must match configured sell IDs.
+    - name_or_id: match by ID OR by resolved location name.
     """
     # Issuer must be the seller
     if contract.issuer_id not in seller_character_ids:
@@ -1804,32 +1913,33 @@ def _matches_sell_order_criteria_db(
     if contract.assignee_id != config.corporation_id:
         return False
 
-    # Check location by name to handle signed/unsigned variants and service-module IDs
-    contract_start_name = _get_location_name(
-        contract.start_location_id,
-        esi_client,
-        corporation_id=int(config.corporation_id),
+    location_match_mode = _get_location_match_mode(config)
+    expected_ids = _get_expected_location_ids(config, side="sell")
+    expected_name_set = _get_expected_location_name_set(config, side="sell")
+
+    contract_start_name = None
+    contract_end_name = None
+    if location_match_mode == "name_or_id":
+        contract_start_name = _get_location_name(
+            contract.start_location_id,
+            esi_client,
+            corporation_id=int(config.corporation_id),
+        )
+        contract_end_name = _get_location_name(
+            contract.end_location_id,
+            esi_client,
+            corporation_id=int(config.corporation_id),
+        )
+
+    return _contract_matches_expected_locations(
+        start_location_id=contract.start_location_id,
+        end_location_id=contract.end_location_id,
+        start_location_name=contract_start_name,
+        end_location_name=contract_end_name,
+        expected_location_ids=expected_ids,
+        expected_location_names=expected_name_set,
+        match_mode=location_match_mode,
     )
-    contract_end_name = _get_location_name(
-        contract.end_location_id,
-        esi_client,
-        corporation_id=int(config.corporation_id),
-    )
-    config_location_name = config.structure_name
-
-    # Try name matching first
-    if contract_start_name and contract_start_name == config_location_name:
-        return True
-    if contract_end_name and contract_end_name == config_location_name:
-        return True
-
-    # Fall back to ID matching if name lookup failed
-    if contract.start_location_id == config.structure_id:
-        return True
-    if contract.end_location_id == config.structure_id:
-        return True
-
-    return False
 
 
 def _matches_buy_order_criteria_db(
@@ -1845,29 +1955,33 @@ def _matches_buy_order_criteria_db(
     if contract.assignee_id not in buyer_character_ids:
         return False
 
-    contract_start_name = _get_location_name(
-        contract.start_location_id,
-        esi_client,
-        corporation_id=int(config.corporation_id),
+    location_match_mode = _get_location_match_mode(config)
+    expected_ids = _get_expected_location_ids(config, side="buy")
+    expected_name_set = _get_expected_location_name_set(config, side="buy")
+
+    contract_start_name = None
+    contract_end_name = None
+    if location_match_mode == "name_or_id":
+        contract_start_name = _get_location_name(
+            contract.start_location_id,
+            esi_client,
+            corporation_id=int(config.corporation_id),
+        )
+        contract_end_name = _get_location_name(
+            contract.end_location_id,
+            esi_client,
+            corporation_id=int(config.corporation_id),
+        )
+
+    return _contract_matches_expected_locations(
+        start_location_id=contract.start_location_id,
+        end_location_id=contract.end_location_id,
+        start_location_name=contract_start_name,
+        end_location_name=contract_end_name,
+        expected_location_ids=expected_ids,
+        expected_location_names=expected_name_set,
+        match_mode=location_match_mode,
     )
-    contract_end_name = _get_location_name(
-        contract.end_location_id,
-        esi_client,
-        corporation_id=int(config.corporation_id),
-    )
-    config_location_name = config.structure_name
-
-    if contract_start_name and contract_start_name == config_location_name:
-        return True
-    if contract_end_name and contract_end_name == config_location_name:
-        return True
-
-    if contract.start_location_id == config.structure_id:
-        return True
-    if contract.end_location_id == config.structure_id:
-        return True
-
-    return False
 
 
 def _contract_items_match_order_db(contract, order):

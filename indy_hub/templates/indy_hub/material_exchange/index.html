@@ -47,11 +47,7 @@
     <div class="me-hub-banner" role="note">
         <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
         <span class="me-hub-banner-label">{% trans "Hub Location" %}:</span>
-        {% if config.structure_name %}
-        <span class="me-hub-banner-value">{{ config.structure_name }}</span>
-        {% else %}
-        <span class="me-hub-banner-value">{% blocktrans with location=config.structure_id %}{{ location }}{% endblocktrans %}</span>
-        {% endif %}
+        <span class="me-hub-banner-value">{{ hub_location_label }}</span>
     </div>
 
     <!-- Hub Actions -->
@@ -75,9 +71,15 @@
             <h5 class="me-hub-action-title">{% trans "Buy from Hub" %}</h5>
             <span class="me-hub-action-badge">{{ pending_buy_orders|intcomma }} {% trans "pending" %}</span>
             <p class="me-hub-action-desc">{% trans "Purchase materials from the Hub stock without going to Jita." %}</p>
+            {% if buy_enabled %}
             <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info me-hub-action-btn">
                 <i class="fas fa-shopping-bag me-1"></i>{% trans "Browse Stock" %}
             </a>
+            {% else %}
+            <button class="btn btn-outline-secondary me-hub-action-btn" disabled>
+                <i class="fas fa-ban me-1"></i>{% trans "Buy Disabled" %}
+            </button>
+            {% endif %}
         </article>
     </div>
 

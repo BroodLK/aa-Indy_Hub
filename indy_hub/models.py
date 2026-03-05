@@ -1845,6 +1845,48 @@ class MaterialExchangeConfig(models.Model):
         help_text=_("Structure or station ID where the hub is located")
     )
     structure_name = models.CharField(max_length=255, blank=True)
+    sell_structure_ids = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "List of structure IDs where members can SELL to the hub. Empty = use primary structure."
+        ),
+    )
+    sell_structure_names = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Cached structure names aligned with sell_structure_ids (same order)."
+        ),
+    )
+    buy_structure_ids = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "List of structure IDs where members can BUY from the hub. Empty = use primary structure when enabled."
+        ),
+    )
+    buy_structure_names = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Cached structure names aligned with buy_structure_ids (same order)."
+        ),
+    )
+    buy_enabled = models.BooleanField(
+        default=True,
+        help_text=_("Enable/disable Material Exchange buy orders."),
+    )
+    LOCATION_MATCH_MODE_CHOICES = [
+        ("name_or_id", _("Match by name or ID")),
+        ("strict_id", _("Match by ID only")),
+    ]
+    location_match_mode = models.CharField(
+        max_length=20,
+        choices=LOCATION_MATCH_MODE_CHOICES,
+        default="name_or_id",
+        help_text=_("How contract locations are matched during validation."),
+    )
     hangar_division = models.IntegerField(
         default=1,
         validators=[MinValueValidator(1), MaxValueValidator(7)],
@@ -1933,6 +1975,70 @@ class MaterialExchangeConfig(models.Model):
 
     def __str__(self):
         return f"Material Exchange Config (Corp {self.corporation_id})"
+
+    def _normalize_structure_ids(self, raw_ids) -> list[int]:
+        ids: list[int] = []
+        for raw in raw_ids or []:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if value <= 0:
+                continue
+            if value not in ids:
+                ids.append(value)
+        return ids
+
+    def _build_name_map(self, ids: list[int], names: list[str]) -> dict[int, str]:
+        mapping: dict[int, str] = {}
+        for idx, sid in enumerate(ids):
+            try:
+                name = names[idx]
+            except Exception:
+                name = ""
+            if name:
+                mapping[int(sid)] = str(name)
+        return mapping
+
+    def get_sell_structure_ids(self, *, include_primary: bool = True) -> list[int]:
+        ids = self._normalize_structure_ids(self.sell_structure_ids)
+        if ids or not include_primary:
+            return ids
+        try:
+            primary = int(self.structure_id)
+        except (TypeError, ValueError):
+            primary = 0
+        return [primary] if primary > 0 else []
+
+    def get_buy_structure_ids(self, *, include_primary: bool = True) -> list[int]:
+        ids = self._normalize_structure_ids(self.buy_structure_ids)
+        if ids or not include_primary:
+            return ids
+        try:
+            primary = int(self.structure_id)
+        except (TypeError, ValueError):
+            primary = 0
+        return [primary] if primary > 0 else []
+
+    def get_sell_structure_name_map(self) -> dict[int, str]:
+        ids = self.get_sell_structure_ids(include_primary=False)
+        mapping = self._build_name_map(ids, list(self.sell_structure_names or []))
+        if not mapping and self.structure_id and self.structure_name:
+            try:
+                mapping[int(self.structure_id)] = str(self.structure_name)
+            except (TypeError, ValueError):
+                pass
+        return mapping
+
+    def get_buy_structure_name_map(self) -> dict[int, str]:
+        ids = self.get_buy_structure_ids(include_primary=False)
+        mapping = self._build_name_map(ids, list(self.buy_structure_names or []))
+        if not mapping and self.structure_id and self.structure_name:
+            try:
+                mapping[int(self.structure_id)] = str(self.structure_name)
+            except (TypeError, ValueError):
+                pass
+        return mapping
 
 
 class CachedCorporationAsset(models.Model):

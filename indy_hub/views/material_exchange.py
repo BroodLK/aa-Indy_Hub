@@ -37,7 +37,11 @@ from ..models import (
     MaterialExchangeStock,
     MaterialExchangeTransaction,
 )
-from ..services.asset_cache import get_corp_divisions_cached, get_user_assets_cached
+from ..services.asset_cache import (
+    get_corp_divisions_cached,
+    get_user_assets_cached,
+    resolve_structure_names,
+)
 from ..tasks.material_exchange import (
     ESI_DOWN_COOLDOWN_SECONDS,
     ME_STOCK_SYNC_CACHE_VERSION,
@@ -412,30 +416,51 @@ def _get_material_exchange_admins() -> list[User]:
 
 
 def _fetch_user_assets_for_structure(
-    user, structure_id: int, *, allow_refresh: bool = True
+    user, structure_ids: int | list[int], *, allow_refresh: bool = True
 ) -> tuple[dict[int, int], bool]:
-    """Return aggregated asset quantities for the user's characters at a structure using cache."""
+    """Return aggregated asset quantities for the user's characters at structure(s) using cache."""
 
-    aggregated, _by_character, scope_missing = _fetch_user_assets_for_structure_data(
-        user, structure_id, allow_refresh=allow_refresh
+    aggregated, _by_character, _by_location, scope_missing = (
+        _fetch_user_assets_for_structure_data(
+            user, structure_ids, allow_refresh=allow_refresh
+        )
     )
     return aggregated, scope_missing
 
 
 def _fetch_user_assets_for_structure_data(
-    user, structure_id: int, *, allow_refresh: bool = True
-) -> tuple[dict[int, int], dict[int, dict[int, int]], bool]:
-    """Return aggregated and per-character asset quantities at a structure using cache."""
+    user, structure_ids: int | list[int], *, allow_refresh: bool = True
+) -> tuple[dict[int, int], dict[int, dict[int, int]], dict[int, dict[int, int]], bool]:
+    """Return aggregated and per-character asset quantities at structure(s) using cache."""
 
     assets, scope_missing = get_user_assets_cached(user, allow_refresh=allow_refresh)
 
     aggregated: dict[int, int] = {}
     by_character: dict[int, dict[int, int]] = {}
+    by_location: dict[int, dict[int, int]] = {}
+    if isinstance(structure_ids, (list, tuple, set)):
+        structure_id_set: set[int] = set()
+        for sid in structure_ids:
+            try:
+                sid_int = int(sid)
+            except (TypeError, ValueError):
+                continue
+            if sid_int > 0:
+                structure_id_set.add(sid_int)
+    else:
+        try:
+            structure_id_set = {int(structure_ids)}
+        except (TypeError, ValueError):
+            structure_id_set = set()
+    if not structure_id_set:
+        return aggregated, by_character, by_location, scope_missing
+
     for asset in assets:
         try:
-            if int(asset.get("location_id", 0)) != int(structure_id):
-                continue
+            location_id = int(asset.get("location_id", 0))
         except (TypeError, ValueError):
+            continue
+        if location_id not in structure_id_set:
             continue
 
         try:
@@ -462,7 +487,10 @@ def _fetch_user_assets_for_structure_data(
             char_assets = by_character.setdefault(character_id, {})
             char_assets[type_id] = char_assets.get(type_id, 0) + quantity
 
-    return aggregated, by_character, scope_missing
+        loc_assets = by_location.setdefault(location_id, {})
+        loc_assets[type_id] = loc_assets.get(type_id, 0) + quantity
+
+    return aggregated, by_character, by_location, scope_missing
 
 
 def _resolve_user_character_names_map(user) -> dict[int, str]:
@@ -807,6 +835,24 @@ def material_exchange_index(request):
             context,
         )
 
+    sell_structure_ids = config.get_sell_structure_ids()
+    if not sell_structure_ids:
+        try:
+            sell_structure_ids = [int(config.structure_id)]
+        except (TypeError, ValueError):
+            sell_structure_ids = []
+
+    sell_location_names = []
+    sell_name_map = config.get_sell_structure_name_map()
+    for sid in sell_structure_ids:
+        sid_int = int(sid)
+        sell_location_names.append(
+            sell_name_map.get(sid_int) or f"Structure {sid_int}"
+        )
+    hub_location_label = ", ".join(sell_location_names).strip() or (
+        config.structure_name or f"Structure {config.structure_id}"
+    )
+
     # Stats (based on the user's visible sell items)
     stock_count = 0
     total_stock_value = 0
@@ -814,7 +860,7 @@ def material_exchange_index(request):
     try:
         # Avoid blocking ESI calls on index page; use cached data only
         user_assets, scope_missing = _fetch_user_assets_for_structure(
-            request.user, int(config.structure_id), allow_refresh=False
+            request.user, sell_structure_ids, allow_refresh=False
         )
 
         if scope_missing:
@@ -940,6 +986,8 @@ def material_exchange_index(request):
 
     context = {
         "config": config,
+        "hub_location_label": hub_location_label,
+        "buy_enabled": bool(getattr(config, "buy_enabled", True)),
         "stock_count": stock_count,
         "total_stock_value": total_stock_value,
         "pending_sell_orders": pending_sell_orders,
@@ -1033,6 +1081,29 @@ def material_exchange_sell(request, tokens):
     if not config:
         messages.warning(request, _("Material Exchange is not configured."))
         return redirect("indy_hub:material_exchange_index")
+    sell_structure_ids = config.get_sell_structure_ids()
+    if not sell_structure_ids:
+        messages.warning(request, _("Sell locations are not configured."))
+        return redirect("indy_hub:material_exchange_index")
+    sell_structure_name_map = config.get_sell_structure_name_map()
+    missing_name_ids = [
+        int(sid)
+        for sid in sell_structure_ids
+        if int(sid) not in sell_structure_name_map
+    ]
+    if missing_name_ids:
+        try:
+            resolved = resolve_structure_names(
+                missing_name_ids,
+                corporation_id=int(config.corporation_id),
+                user=request.user,
+                schedule_async=True,
+            )
+            for sid, name in resolved.items():
+                if name and not str(name).startswith("Structure "):
+                    sell_structure_name_map[int(sid)] = str(name)
+        except Exception:
+            pass
     materials_with_qty: list[dict] = []
     assets_refreshing = False
 
@@ -1090,21 +1161,41 @@ def material_exchange_sell(request, tokens):
             )
 
     if request.method == "POST":
+        selected_location_param = (request.POST.get("sell_location_id") or "").strip()
+        selected_location_id = None
+        if selected_location_param:
+            try:
+                selected_location_id = int(selected_location_param)
+            except (TypeError, ValueError):
+                selected_location_id = None
+        if selected_location_id not in sell_structure_ids:
+            selected_location_id = sell_structure_ids[0]
+        active_location_name = (
+            sell_structure_name_map.get(int(selected_location_id))
+            if selected_location_id
+            else ""
+        )
+        if not active_location_name and selected_location_id:
+            active_location_name = f"Structure {selected_location_id}"
+        sell_redirect_url = reverse("indy_hub:material_exchange_sell")
+        if selected_location_id:
+            sell_redirect_url = f"{sell_redirect_url}?location={int(selected_location_id)}"
+
         user_assets, scope_missing = _fetch_user_assets_for_structure(
-            request.user, config.structure_id
+            request.user, selected_location_id
         )
         if scope_missing:
             # Avoid transient flash messaging for missing scopes; the page already
             # renders a persistent on-page warning based on `sell_assets_progress`.
             _ensure_sell_assets_refresh_started(request.user)
-            return redirect("indy_hub:material_exchange_sell")
+            return redirect(sell_redirect_url)
 
         if not user_assets:
             messages.error(
                 request,
                 _("No items available to sell at this location."),
             )
-            return redirect("indy_hub:material_exchange_sell")
+            return redirect(sell_redirect_url)
 
         pre_filter_count = len(user_assets)
 
@@ -1130,7 +1221,7 @@ def material_exchange_sell(request, tokens):
                 messages.error(
                     request, _("You have no items to sell at this location.")
                 )
-            return redirect("indy_hub:material_exchange_sell")
+            return redirect(sell_redirect_url)
 
         # Parse submitted quantities from the form. Do not iterate over `user_assets` here:
         # doing so can silently drop items if assets changed or a type was filtered out.
@@ -1157,7 +1248,7 @@ def material_exchange_sell(request, tokens):
                 request,
                 _("Please enter a quantity greater than 0 for at least one item."),
             )
-            return redirect("indy_hub:material_exchange_sell")
+            return redirect(sell_redirect_url)
 
         items_to_create: list[dict] = []
         errors: list[str] = []
@@ -1171,7 +1262,7 @@ def material_exchange_sell(request, tokens):
                 type_name = get_type_name(type_id)
                 errors.append(
                     _(
-                        f"{type_name} is no longer available at {config.structure_name}. Please refresh the page and try again."
+                        f"{type_name} is no longer available at {active_location_name}. Please refresh the page and try again."
                     )
                 )
                 continue
@@ -1180,7 +1271,7 @@ def material_exchange_sell(request, tokens):
                 type_name = get_type_name(type_id)
                 errors.append(
                     _(
-                        f"Insufficient {type_name} in {config.structure_name}. You have: {user_qty:,}, requested: {qty:,}"
+                        f"Insufficient {type_name} in {active_location_name}. You have: {user_qty:,}, requested: {qty:,}"
                     )
                 )
                 continue
@@ -1221,7 +1312,7 @@ def material_exchange_sell(request, tokens):
                 messages.error(request, err)
 
             # Prevent creating a partial order with an unexpected (lower) total.
-            return redirect("indy_hub:material_exchange_sell")
+            return redirect(sell_redirect_url)
 
         if items_to_create:
             # Get order reference from client (generated in JavaScript)
@@ -1253,7 +1344,7 @@ def material_exchange_sell(request, tokens):
             # Redirect to order detail page instead of index
             return redirect("indy_hub:sell_order_detail", order_id=order.id)
 
-        return redirect("indy_hub:material_exchange_sell")
+        return redirect(sell_redirect_url)
 
     # GET branch: trigger stock sync only if stale (> 1h) or never synced
     message_shown = False
@@ -1323,10 +1414,10 @@ def material_exchange_sell(request, tokens):
         or not has_cached_assets
         or needs_user_assets_version_refresh
     )
-    user_assets, user_assets_by_character, scope_missing = (
+    user_assets, user_assets_by_character, user_assets_by_location, scope_missing = (
         _fetch_user_assets_for_structure_data(
             request.user,
-            config.structure_id,
+            sell_structure_ids,
             allow_refresh=allow_refresh,
         )
     )
@@ -1340,6 +1431,14 @@ def material_exchange_sell(request, tokens):
             sell_assets_progress,
             10 * 60,
         )
+    active_location_id = str(sell_structure_ids[0]) if sell_structure_ids else ""
+    active_location_name = sell_structure_name_map.get(
+        int(sell_structure_ids[0]), ""
+    ) if sell_structure_ids else ""
+    if not active_location_name and sell_structure_ids:
+        active_location_name = f"Structure {sell_structure_ids[0]}"
+    location_tabs: list[dict] = []
+
     if user_assets:
         pre_filter_count = len(user_assets)
         logger.info(
@@ -1363,6 +1462,14 @@ def material_exchange_sell(request, tokens):
                     }
                     for character_id, char_assets in user_assets_by_character.items()
                 }
+                user_assets_by_location = {
+                    location_id: {
+                        tid: qty
+                        for tid, qty in loc_assets.items()
+                        if tid in allowed_type_ids
+                    }
+                    for location_id, loc_assets in user_assets_by_location.items()
+                }
                 logger.info(
                     f"SELL DEBUG: {len(user_assets)} items after market group filter"
                 )
@@ -1385,59 +1492,118 @@ def material_exchange_sell(request, tokens):
             )
             return buy_price > 0
 
-        character_names_map = _resolve_user_character_names_map(request.user)
         sell_page_base_url = reverse("indy_hub:material_exchange_sell")
+        location_tabs = []
         character_tabs = []
+        active_character_tab = ""
 
-        sorted_characters = sorted(
-            user_assets_by_character.keys(),
-            key=lambda character_id: character_names_map.get(
-                character_id, str(character_id)
-            ).lower(),
-        )
-        for character_id in sorted_characters:
-            character_assets = user_assets_by_character.get(character_id, {})
-            tab_count = sum(
-                1 for type_id in character_assets if _is_sellable_type(type_id)
-            )
-            if tab_count <= 0:
-                continue
-            character_tabs.append(
-                {
-                    "id": str(character_id),
-                    "name": character_names_map.get(
-                        character_id, _("Character %(id)s") % {"id": character_id}
-                    ),
-                    "item_count": tab_count,
-                    "url": f"{sell_page_base_url}?character={character_id}",
-                }
-            )
-
-        selected_character_param = (request.GET.get("character") or "").strip()
-        selected_character_id: int | None = None
-        if selected_character_param:
+        selected_location_param = (request.GET.get("location") or "").strip()
+        selected_location_id: int | None = None
+        if selected_location_param:
             try:
-                selected_character_id = int(selected_character_param)
+                selected_location_id = int(selected_location_param)
             except (TypeError, ValueError):
+                selected_location_id = None
+        if selected_location_id not in sell_structure_ids:
+            selected_location_id = sell_structure_ids[0]
+        active_location_id = str(selected_location_id) if selected_location_id else ""
+
+        active_location_name = sell_structure_name_map.get(int(selected_location_id), "")
+        if not active_location_name and selected_location_id:
+            active_location_name = f"Structure {selected_location_id}"
+
+        show_character_tabs = len(sell_structure_ids) <= 1
+
+        if show_character_tabs:
+            character_names_map = _resolve_user_character_names_map(request.user)
+            sorted_characters = sorted(
+                user_assets_by_character.keys(),
+                key=lambda character_id: character_names_map.get(
+                    character_id, str(character_id)
+                ).lower(),
+            )
+            for character_id in sorted_characters:
+                character_assets = user_assets_by_character.get(character_id, {})
+                tab_count = sum(
+                    1 for type_id in character_assets if _is_sellable_type(type_id)
+                )
+                if tab_count <= 0:
+                    continue
+                character_tabs.append(
+                    {
+                        "id": str(character_id),
+                        "name": character_names_map.get(
+                            character_id, _("Character %(id)s") % {"id": character_id}
+                        ),
+                        "item_count": tab_count,
+                        "url": f"{sell_page_base_url}?character={character_id}",
+                    }
+                )
+
+            selected_character_param = (request.GET.get("character") or "").strip()
+            selected_character_id: int | None = None
+            if selected_character_param:
+                try:
+                    selected_character_id = int(selected_character_param)
+                except (TypeError, ValueError):
+                    selected_character_id = None
+
+            available_character_ids = {
+                int(tab["id"])
+                for tab in character_tabs
+                if str(tab.get("id", "")).isdigit()
+            }
+
+            if selected_character_id in available_character_ids:
+                active_character_tab = str(selected_character_id)
+            elif character_tabs:
+                active_character_tab = str(character_tabs[0]["id"])
+                selected_character_id = int(active_character_tab)
+            else:
+                active_character_tab = ""
                 selected_character_id = None
 
-        available_character_ids = {
-            int(tab["id"]) for tab in character_tabs if str(tab.get("id", "")).isdigit()
-        }
-
-        if selected_character_id in available_character_ids:
-            active_character_tab = str(selected_character_id)
-        elif character_tabs:
-            active_character_tab = str(character_tabs[0]["id"])
-            selected_character_id = int(active_character_tab)
+            if (
+                selected_character_id
+                and selected_character_id in user_assets_by_character
+            ):
+                assets_for_display = user_assets_by_character[selected_character_id]
+            else:
+                assets_for_display = {}
         else:
-            active_character_tab = ""
-            selected_character_id = None
-
-        if selected_character_id and selected_character_id in user_assets_by_character:
-            assets_for_display = user_assets_by_character[selected_character_id]
-        else:
-            assets_for_display = {}
+            for loc_id in sell_structure_ids:
+                loc_assets = user_assets_by_location.get(int(loc_id), {})
+                tab_count = sum(
+                    1 for type_id in loc_assets if _is_sellable_type(type_id)
+                )
+                location_tabs.append(
+                    {
+                        "id": str(loc_id),
+                        "name": sell_structure_name_map.get(int(loc_id), "")
+                        or f"Structure {loc_id}",
+                        "item_count": tab_count,
+                        "url": f"{sell_page_base_url}?location={loc_id}",
+                    }
+                )
+            if not selected_location_param:
+                first_with_items = next(
+                    (
+                        int(tab.get("id"))
+                        for tab in location_tabs
+                        if int(tab.get("item_count") or 0) > 0
+                    ),
+                    None,
+                )
+                if first_with_items and first_with_items != int(selected_location_id):
+                    selected_location_id = int(first_with_items)
+                    active_location_id = str(selected_location_id)
+                    active_location_name = (
+                        sell_structure_name_map.get(int(selected_location_id), "")
+                        or f"Structure {selected_location_id}"
+                    )
+            assets_for_display = user_assets_by_location.get(
+                int(selected_location_id), {}
+            )
 
         for type_id, user_qty in assets_for_display.items():
             fuzz_prices = price_data.get(type_id, {})
@@ -1499,6 +1665,9 @@ def material_exchange_sell(request, tokens):
     context = {
         "config": config,
         "materials": materials_with_qty,
+        "location_tabs": location_tabs if user_assets else [],
+        "active_location_id": active_location_id,
+        "active_location_name": active_location_name,
         "character_tabs": character_tabs if user_assets else [],
         "active_character_tab": active_character_tab if user_assets else "",
         "corporation_name": corporation_name,
@@ -1539,7 +1708,22 @@ def material_exchange_buy(request, tokens):
     if not config:
         messages.warning(request, _("Material Exchange is not configured."))
         return redirect("indy_hub:material_exchange_index")
+    if not bool(getattr(config, "buy_enabled", True)):
+        messages.info(request, _("Buy orders are currently disabled for this hub."))
+        return redirect("indy_hub:material_exchange_index")
     stock_refreshing = False
+
+    buy_structure_ids = config.get_buy_structure_ids()
+    buy_name_map = config.get_buy_structure_name_map()
+    buy_location_names = []
+    for sid in buy_structure_ids:
+        sid_int = int(sid)
+        buy_location_names.append(
+            buy_name_map.get(sid_int) or f"Structure {sid_int}"
+        )
+    buy_locations_label = ", ".join(buy_location_names).strip() or (
+        config.structure_name or f"Structure {config.structure_id}"
+    )
 
     corp_assets_scope_missing = False
     try:
@@ -1827,6 +2011,7 @@ def material_exchange_buy(request, tokens):
     context = {
         "config": config,
         "stock": stock_items,
+        "buy_locations_label": buy_locations_label,
         "stock_refreshing": stock_refreshing,
         "buy_stock_progress": buy_stock_progress,
         "corp_assets_scope_missing": corp_assets_scope_missing,

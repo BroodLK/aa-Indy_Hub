@@ -20,7 +20,7 @@
                     <i class="fas fa-exchange-alt me-2"></i>
                     {% trans "Material Exchange" %}
                 </h2>
-                <p class="description mb-0">{% trans "Configure corp hangar location and pricing rules." %}</p>
+                <p class="description mb-0">{% trans "Configure corp hangar locations and pricing rules." %}</p>
             </div>
                 <div class="d-flex flex-column align-items-end gap-2 me-header-actions">
                     <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light me-header-btn me-header-btn--back">
@@ -123,7 +123,7 @@
                     <div class="d-flex flex-wrap align-items-center gap-2 mb-3 small text-muted me-steps-header">
                         <span class="badge bg-secondary me-step-badge">1</span><span>{% trans "Corporation" %}</span>
                         <i class="fas fa-arrow-right opacity-50"></i>
-                        <span class="badge bg-secondary me-step-badge">2</span><span>{% trans "Structure" %}</span>
+                        <span class="badge bg-secondary me-step-badge">2</span><span>{% trans "Locations" %}</span>
                         <i class="fas fa-arrow-right opacity-50"></i>
                         <span class="badge bg-secondary me-step-badge">3</span><span>{% trans "Hangar" %}</span>
                         <i class="fas fa-arrow-right opacity-50"></i>
@@ -193,38 +193,71 @@
                             <div class="d-flex align-items-center gap-2 mb-2">
                                 <span class="badge bg-secondary me-step-badge">2</span>
                                 <h5 class="fw-semibold mb-0">
-                                    <i class="fas fa-warehouse me-1 text-muted"></i>{% trans "Structure" %}
+                                    <i class="fas fa-warehouse me-1 text-muted"></i>{% trans "Locations" %}
                                     <button
                                         type="button"
                                         class="me-help-icon"
-                                        aria-label="Help: Structure"
+                                        aria-label="Help: Locations"
                                         data-bs-toggle="popover"
                                         data-bs-trigger="hover focus"
                                         data-bs-placement="right"
-                                        title="Structure"
-                                        data-bs-content="Pick the structure that contains your hub inventory.">
+                                        title="Locations"
+                                        data-bs-content="Pick the structures used for selling to and buying from the hub.">
                                         <i class="fas fa-info-circle"></i>
                                     </button>
                                 </h5>
                             </div>
-                            <label class="form-label fw-semibold">{% trans "Structure" %} <span class="text-danger">*</span></label>
-                            <div class="input-group input-group-sm">
-                                <select name="structure_id" class="form-select form-select-sm" required id="structureSelect">
-                                <option value="">{% trans "Select corporation first..." %}</option>
-                                {% for structure in available_structures %}
-                                <option value="{{ structure.id }}"
-                                        data-name="{{ structure.name }}"
-                                        data-flags="{{ structure.flags|join:',' }}"
-                                        {% if config and config.structure_id == structure.id %}selected{% endif %}>
-                                    {{ structure.name }}
-                                </option>
-                                {% endfor %}
+
+                            <label class="form-label fw-semibold">{% trans "Sell Locations" %} <span class="text-danger">*</span></label>
+                            <div class="input-group input-group-sm mb-2">
+                                <select name="sell_structure_ids" class="form-select form-select-sm" required id="sellStructureSelect" multiple size="6">
+                                    <option value="">{% trans "Select corporation first..." %}</option>
+                                    {% for structure in available_structures %}
+                                    <option value="{{ structure.id }}"
+                                            data-name="{{ structure.name }}"
+                                            data-flags="{{ structure.flags|join:',' }}">
+                                        {{ structure.name }}
+                                    </option>
+                                    {% endfor %}
                                 </select>
                                 <button type="button" class="btn btn-outline-secondary btn-sm" id="refreshAssetsBtn" title="{% trans 'Refresh corporation assets and structures' %}" disabled>
                                     <i class="fas fa-sync-alt"></i>
                                 </button>
                             </div>
-                            <input type="hidden" name="structure_name" id="structureName" value="{{ config.structure_name|default:'' }}">
+
+                            <div class="form-check form-switch mb-2">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    name="buy_enabled"
+                                    id="buyEnabled"
+                                    {% if buy_enabled %}checked{% endif %}>
+                                <label class="form-check-label fw-semibold" for="buyEnabled">
+                                    {% trans "Enable buy orders" %}
+                                </label>
+                            </div>
+
+                            <label class="form-label fw-semibold">{% trans "Buy Locations" %}</label>
+                            <select name="buy_structure_ids" class="form-select form-select-sm mb-2" id="buyStructureSelect" multiple size="6">
+                                <option value="">{% trans "Select corporation first..." %}</option>
+                                {% for structure in available_structures %}
+                                <option value="{{ structure.id }}"
+                                        data-name="{{ structure.name }}"
+                                        data-flags="{{ structure.flags|join:',' }}">
+                                    {{ structure.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+
+                            <label class="form-label fw-semibold">{% trans "Location Match Mode" %}</label>
+                            <select name="location_match_mode" class="form-select form-select-sm">
+                                <option value="name_or_id" {% if location_match_mode == 'name_or_id' %}selected{% endif %}>
+                                    {% trans "Match by name or ID (recommended)" %}
+                                </option>
+                                <option value="strict_id" {% if location_match_mode == 'strict_id' %}selected{% endif %}>
+                                    {% trans "Match by ID only" %}
+                                </option>
+                            </select>
 
                             <div id="assetsScopeInfo" class="mt-2">
                                 <div class="alert alert-warning py-2 mb-0 d-none" id="assetsScopeMissingNotice">
@@ -594,21 +627,36 @@
 </div>
 
 {{ hangar_divisions|json_script:"hangarDivisionsData" }}
+{{ selected_sell_structures|json_script:"selectedSellStructures" }}
+{{ selected_buy_structures|json_script:"selectedBuyStructures" }}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const corpSelect = document.getElementById('corpSelect');
-    const structureSelect = document.getElementById('structureSelect');
-    const structureName = document.getElementById('structureName');
+    const sellStructureSelect = document.getElementById('sellStructureSelect');
+    const buyStructureSelect = document.getElementById('buyStructureSelect');
+    const buyEnabledToggle = document.getElementById('buyEnabled');
     const hangarSelect = document.getElementById('hangarSelect');
     const submitBtn = document.getElementById('submitBtn');
-    const initialStructureId = "{{ config.structure_id|default:'' }}";
     const initialHangarDivision = "{{ config.hangar_division|default:'' }}";
     let hangarDivisions = JSON.parse(document.getElementById('hangarDivisionsData').textContent);
     let divisionScopeMissing = {{ division_scope_missing|yesno:"true,false" }};
     let assetsScopeMissing = {{ assets_scope_missing|yesno:"true,false" }};
     const divisionScopeMissingNotice = document.getElementById('divisionScopeMissingNotice');
     const assetsScopeMissingNotice = document.getElementById('assetsScopeMissingNotice');
+    const selectedSell = JSON.parse(document.getElementById('selectedSellStructures').textContent || '[]');
+    const selectedBuy = JSON.parse(document.getElementById('selectedBuyStructures').textContent || '[]');
+
+    const selectedSellIds = new Set(selectedSell.map(item => String(item.id)));
+    const selectedBuyIds = new Set(selectedBuy.map(item => String(item.id)));
+    const selectedSellNameMap = selectedSell.reduce((acc, item) => {
+        acc[String(item.id)] = item.name || '';
+        return acc;
+    }, {});
+    const selectedBuyNameMap = selectedBuy.reduce((acc, item) => {
+        acc[String(item.id)] = item.name || '';
+        return acc;
+    }, {});
 
     // Initialize scope notices based on server-rendered flags
     if (divisionScopeMissing && divisionScopeMissingNotice) {
@@ -625,14 +673,38 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    const syncBuyEnabledState = () => {
+        const enabled = !!(buyEnabledToggle && buyEnabledToggle.checked);
+        if (buyStructureSelect) {
+            buyStructureSelect.disabled = !enabled;
+        }
+    };
+
     const updateSubmitButton = () => {
         if (hangarSelect.disabled || divisionScopeMissing) {
             submitBtn.disabled = true;
             submitBtn.title = "{% trans 'Please add a divisions token to save configuration' %}";
-        } else {
-            submitBtn.disabled = false;
-            submitBtn.title = "";
+            return;
         }
+
+        const sellSelected = Array.from(sellStructureSelect.options).some(opt => opt.selected && opt.value);
+        if (!sellSelected) {
+            submitBtn.disabled = true;
+            submitBtn.title = "{% trans 'Select at least one sell location' %}";
+            return;
+        }
+
+        if (buyEnabledToggle && buyEnabledToggle.checked) {
+            const buySelected = Array.from(buyStructureSelect.options).some(opt => opt.selected && opt.value);
+            if (!buySelected) {
+                submitBtn.disabled = true;
+                submitBtn.title = "{% trans 'Select at least one buy location when buy is enabled' %}";
+                return;
+            }
+        }
+
+        submitBtn.disabled = false;
+        submitBtn.title = "";
     };
 
     const rebuildHangarOptions = (flagsCsv) => {
@@ -685,31 +757,81 @@ document.addEventListener('DOMContentLoaded', function() {
         updateSubmitButton();
     };
 
-    // Update structure name when structure is selected
-    structureSelect.addEventListener('change', function() {
-        const selectedOption = structureSelect.options[structureSelect.selectedIndex];
-        structureName.value = selectedOption.getAttribute('data-name') || '';
-        rebuildHangarOptions(selectedOption.getAttribute('data-flags'));
-    });
+    const collectSelectedFlags = () => {
+        const selections = [];
+        const selectsToScan = [sellStructureSelect];
+        if (!buyEnabledToggle || buyEnabledToggle.checked) {
+            selectsToScan.push(buyStructureSelect);
+        }
+        selectsToScan.forEach(selectEl => {
+            if (!selectEl) return;
+            Array.from(selectEl.options).forEach(option => {
+                if (!option.selected) return;
+                const flags = option.getAttribute('data-flags');
+                if (flags) {
+                    selections.push(flags);
+                }
+            });
+        });
+        return selections.join(',');
+    };
+
+    const applySelections = (selectEl, selectedIds, nameMap) => {
+        if (!selectEl) return;
+        selectedIds.forEach((id) => {
+            const exists = Array.from(selectEl.options).some(opt => opt.value === id);
+            if (!exists) {
+                const fallbackOption = document.createElement('option');
+                fallbackOption.value = id;
+                fallbackOption.textContent = nameMap[id] || `Structure ${id}`;
+                fallbackOption.setAttribute('data-name', nameMap[id] || `Structure ${id}`);
+                fallbackOption.setAttribute('data-flags', '');
+                selectEl.appendChild(fallbackOption);
+            }
+        });
+        Array.from(selectEl.options).forEach(option => {
+            option.selected = selectedIds.has(option.value);
+        });
+    };
 
     const fetchStructures = (corpId, preserveSelection = false) => {
-        const prevStructure = preserveSelection ? structureSelect.value : '';
-        const prevHangar = preserveSelection ? hangarSelect.value : '';
+        const currentSellIds = new Set(
+            Array.from(sellStructureSelect.options)
+                .filter(opt => opt.selected && opt.value)
+                .map(opt => opt.value)
+        );
+        const currentBuyIds = new Set(
+            Array.from(buyStructureSelect.options)
+                .filter(opt => opt.selected && opt.value)
+                .map(opt => opt.value)
+        );
+        const desiredSellIds = new Set();
+        const desiredBuyIds = new Set();
+        if (preserveSelection) {
+            const sellSource = selectedSellIds.size > 0 ? selectedSellIds : currentSellIds;
+            const buySource = selectedBuyIds.size > 0 ? selectedBuyIds : currentBuyIds;
+            sellSource.forEach(id => desiredSellIds.add(id));
+            buySource.forEach(id => desiredBuyIds.add(id));
+        }
 
         if (!corpId) {
-            structureSelect.innerHTML = '<option value="">{% trans "Select corporation first..." %}</option>';
+            sellStructureSelect.innerHTML = '<option value="">{% trans "Select corporation first..." %}</option>';
+            buyStructureSelect.innerHTML = '<option value="">{% trans "Select corporation first..." %}</option>';
             rebuildHangarOptions('');
             updateSubmitButton();
             return;
         }
 
-        structureSelect.innerHTML = '<option value="">{% trans "Loading structures..." %}</option>';
-        structureSelect.disabled = true;
+        sellStructureSelect.innerHTML = '<option value="">{% trans "Loading structures..." %}</option>';
+        buyStructureSelect.innerHTML = '<option value="">{% trans "Loading structures..." %}</option>';
+        sellStructureSelect.disabled = true;
+        buyStructureSelect.disabled = true;
 
         fetch(`{% url 'indy_hub:material_exchange_get_structures' 0 %}`.replace('/0/', `/${corpId}/`))
             .then(response => response.json())
             .then(data => {
-                structureSelect.innerHTML = '<option value="">{% trans "Select a structure..." %}</option>';
+                sellStructureSelect.innerHTML = '';
+                buyStructureSelect.innerHTML = '';
 
                 if (data.hangar_divisions) {
                     hangarDivisions = data.hangar_divisions;
@@ -735,58 +857,64 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 data.structures.forEach(structure => {
-                    const option = document.createElement('option');
-                    option.value = structure.id;
-                    option.textContent = structure.name;
-                    option.setAttribute('data-name', structure.name);
-                    option.setAttribute('data-flags', (structure.flags || []).join(','));
-                    structureSelect.appendChild(option);
+                    const sellOption = document.createElement('option');
+                    sellOption.value = structure.id;
+                    sellOption.textContent = structure.name;
+                    sellOption.setAttribute('data-name', structure.name);
+                    sellOption.setAttribute('data-flags', (structure.flags || []).join(','));
+                    sellStructureSelect.appendChild(sellOption);
+
+                    const buyOption = document.createElement('option');
+                    buyOption.value = structure.id;
+                    buyOption.textContent = structure.name;
+                    buyOption.setAttribute('data-name', structure.name);
+                    buyOption.setAttribute('data-flags', (structure.flags || []).join(','));
+                    buyStructureSelect.appendChild(buyOption);
                 });
 
-                structureSelect.disabled = false;
+                sellStructureSelect.disabled = false;
+                buyStructureSelect.disabled = false;
 
-                // Restore previous structure if still available, else pick first
-                let selectedIndex = 1;
-                const desiredStructure = prevStructure || initialStructureId;
-                if (desiredStructure) {
-                    const exists = Array.from(structureSelect.options).some(opt => opt.value === desiredStructure);
-                    if (!exists) {
-                        const fallbackOption = document.createElement('option');
-                        fallbackOption.value = desiredStructure;
-                        fallbackOption.textContent = structureName.value || `Structure ${desiredStructure}`;
-                        fallbackOption.setAttribute('data-name', structureName.value || `Structure ${desiredStructure}`);
-                        fallbackOption.setAttribute('data-flags', '');
-                        structureSelect.appendChild(fallbackOption);
-                    }
+                applySelections(sellStructureSelect, desiredSellIds, selectedSellNameMap);
+                applySelections(buyStructureSelect, desiredBuyIds, selectedBuyNameMap);
+
+                const desiredHangar = initialHangarDivision;
+                if (desiredHangar) {
+                    hangarSelect.value = desiredHangar;
                 }
-                if (desiredStructure) {
-                    const foundIndex = Array.from(structureSelect.options).findIndex(opt => opt.value === desiredStructure);
-                    if (foundIndex > 0) {
-                        selectedIndex = foundIndex;
-                    }
-                }
-                if (structureSelect.options.length > selectedIndex) {
-                    structureSelect.selectedIndex = selectedIndex;
-                    const selectedOption = structureSelect.options[selectedIndex];
-                    structureName.value = selectedOption.getAttribute('data-name') || '';
-                    rebuildHangarOptions(selectedOption.getAttribute('data-flags'));
-                    const desiredHangar = prevHangar || initialHangarDivision;
-                    if (desiredHangar) {
-                        hangarSelect.value = desiredHangar;
-                    }
-                } else {
-                    rebuildHangarOptions('');
-                }
+
+                rebuildHangarOptions(collectSelectedFlags());
                 updateSubmitButton();
+                syncBuyEnabledState();
             })
             .catch(error => {
                 console.error('Error fetching structures:', error);
-                structureSelect.innerHTML = '<option value="">{% trans "Error loading structures" %}</option>';
-                structureSelect.disabled = false;
+                sellStructureSelect.innerHTML = '<option value="">{% trans "Error loading structures" %}</option>';
+                buyStructureSelect.innerHTML = '<option value="">{% trans "Error loading structures" %}</option>';
+                sellStructureSelect.disabled = false;
+                buyStructureSelect.disabled = false;
                 rebuildHangarOptions('');
                 updateSubmitButton();
             });
     };
+
+    sellStructureSelect.addEventListener('change', function() {
+        rebuildHangarOptions(collectSelectedFlags());
+        updateSubmitButton();
+    });
+
+    buyStructureSelect.addEventListener('change', function() {
+        rebuildHangarOptions(collectSelectedFlags());
+        updateSubmitButton();
+    });
+
+    if (buyEnabledToggle) {
+        buyEnabledToggle.addEventListener('change', function() {
+            syncBuyEnabledState();
+            rebuildHangarOptions(collectSelectedFlags());
+            updateSubmitButton();
+        });
+    }
 
     corpSelect.addEventListener('change', function() {
         fetchStructures(corpSelect.value, false);
@@ -795,21 +923,34 @@ document.addEventListener('DOMContentLoaded', function() {
     // On load, fetch structures (and divisions) for the preselected corp to hydrate names
     if (corpSelect.value) {
         fetchStructures(corpSelect.value, true);
-    } else if (structureSelect.value) {
-        const selectedOption = structureSelect.options[structureSelect.selectedIndex];
-        rebuildHangarOptions(selectedOption.getAttribute('data-flags'));
+    } else {
+        rebuildHangarOptions('');
+        updateSubmitButton();
+        syncBuyEnabledState();
     }
-
-    updateSubmitButton();
 });
 
 function validateForm() {
     const hangarSelect = document.getElementById('hangarSelect');
-    const submitBtn = document.getElementById('submitBtn');
+    const sellStructureSelect = document.getElementById('sellStructureSelect');
+    const buyStructureSelect = document.getElementById('buyStructureSelect');
+    const buyEnabledToggle = document.getElementById('buyEnabled');
 
     if (hangarSelect.disabled || !hangarSelect.value) {
         alert('{% trans "Please add a divisions token and select a hangar division before saving." %}');
         return false;
+    }
+    const sellSelected = Array.from(sellStructureSelect.options).some(opt => opt.selected && opt.value);
+    if (!sellSelected) {
+        alert('{% trans "Please select at least one sell location." %}');
+        return false;
+    }
+    if (buyEnabledToggle && buyEnabledToggle.checked) {
+        const buySelected = Array.from(buyStructureSelect.options).some(opt => opt.selected && opt.value);
+        if (!buySelected) {
+            alert('{% trans "Please select at least one buy location or disable buy orders." %}');
+            return false;
+        }
     }
     return true;
 }
@@ -958,7 +1099,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshBtn = document.getElementById('refreshAssetsBtn');
     const refreshStatus = document.getElementById('refreshStatus');
     const refreshStatusText = document.getElementById('refreshStatusText');
-    const structureSelect = document.getElementById('structureSelect');
+    const sellStructureSelect = document.getElementById('sellStructureSelect');
+    const buyStructureSelect = document.getElementById('buyStructureSelect');
 
     // Enable/disable refresh button based on corp selection
     corpSelect.addEventListener('change', function() {
@@ -1076,16 +1218,38 @@ document.addEventListener('DOMContentLoaded', function() {
                     })
                     .then(r => r.json())
                     .then(structData => {
-                        // Update structure select
-                        structureSelect.innerHTML = '<option value="">{% trans "Select a structure..." %}</option>';
+                        const sellSelectedIds = new Set(
+                            Array.from(sellStructureSelect.options)
+                                .filter(opt => opt.selected && opt.value)
+                                .map(opt => opt.value)
+                        );
+                        const buySelectedIds = new Set(
+                            Array.from(buyStructureSelect.options)
+                                .filter(opt => opt.selected && opt.value)
+                                .map(opt => opt.value)
+                        );
+
+                        sellStructureSelect.innerHTML = '';
+                        buyStructureSelect.innerHTML = '';
                         structData.structures.forEach(struct => {
-                            const option = document.createElement('option');
-                            option.value = struct.id;
-                            option.textContent = struct.name;
-                            option.dataset.name = struct.name;
-                            option.dataset.flags = (struct.flags || []).join(',');
-                            structureSelect.appendChild(option);
+                            const sellOption = document.createElement('option');
+                            sellOption.value = struct.id;
+                            sellOption.textContent = struct.name;
+                            sellOption.dataset.name = struct.name;
+                            sellOption.dataset.flags = (struct.flags || []).join(',');
+                            sellOption.selected = sellSelectedIds.has(String(struct.id));
+                            sellStructureSelect.appendChild(sellOption);
+
+                            const buyOption = document.createElement('option');
+                            buyOption.value = struct.id;
+                            buyOption.textContent = struct.name;
+                            buyOption.dataset.name = struct.name;
+                            buyOption.dataset.flags = (struct.flags || []).join(',');
+                            buyOption.selected = buySelectedIds.has(String(struct.id));
+                            buyStructureSelect.appendChild(buyOption);
                         });
+                        sellStructureSelect.dispatchEvent(new Event('change'));
+                        buyStructureSelect.dispatchEvent(new Event('change'));
 
                         refreshStatusText.textContent = '{% trans "Done! Structures loaded." %}';
                         setTimeout(() => {

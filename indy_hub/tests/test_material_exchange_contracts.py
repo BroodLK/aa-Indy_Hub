@@ -917,6 +917,9 @@ class StructureNameMatchingTest(TestCase):
             corporation_id=123456789,
             structure_id=1045667241057,
             structure_name="C-N4OD - Fountain of Life",
+            sell_structure_ids=[1045667241057],
+            sell_structure_names=["C-N4OD - Fountain of Life"],
+            location_match_mode="name_or_id",
             is_active=True,
         )
         self.seller = User.objects.create_user(username="test_seller")
@@ -1051,6 +1054,59 @@ class StructureNameMatchingTest(TestCase):
         self.assertEqual(
             self.sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED
         )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_strict_id_mode_rejects_name_only_match(
+        self, _mock_notify_multi, _mock_notify_user, mock_get_char_ids
+    ):
+        """strict_id mode must reject contracts that only match by location name."""
+        # Standard Library
+        from datetime import timedelta
+
+        # Django
+        from django.utils import timezone
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        self.config.location_match_mode = "strict_id"
+        self.config.save(update_fields=["location_match_mode"])
+
+        seller_char_id = 111111111
+        mock_get_char_ids.return_value = [seller_char_id]
+
+        contract = ESIContract.objects.create(
+            contract_id=226598411,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=1045722708748,
+            end_location_id=1045722708748,
+            price=5500,
+            title=self.sell_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1,
+            type_id=34,
+            quantity=1000,
+            is_included=True,
+        )
+
+        with patch("indy_hub.tasks.material_exchange_contracts.shared_client") as mock_client:
+            mock_client.get_structure_info.return_value = {
+                "name": "C-N4OD - Fountain of Life"
+            }
+            validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
 
 
 class BuyOrderSignalTest(TestCase):

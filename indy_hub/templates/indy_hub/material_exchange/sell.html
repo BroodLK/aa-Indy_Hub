@@ -142,6 +142,21 @@
             {% endif %}
         </div>
 
+        {% if location_tabs %}
+        <div class="me-character-tabs mb-3">
+            <ul class="nav nav-pills flex-wrap gap-2">
+                {% for tab in location_tabs %}
+                <li class="nav-item">
+                    <a class="nav-link {% if active_location_id == tab.id %}active{% endif %}" href="{{ tab.url }}">
+                        {{ tab.name }}
+                        <span class="badge rounded-pill bg-secondary ms-1">{{ tab.item_count }}</span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
         {% if materials %}
         <div class="row g-4">
             <div class="col-lg-8">
@@ -149,7 +164,7 @@
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
                         <h5 class="mb-0">
                             <i class="fas fa-warehouse me-2"></i>
-                            {% trans "Your Materials at" %} {{ config.structure_name }}
+                            {% trans "Your Materials at" %} {{ active_location_name }}
                         </h5>
                         <div class="d-flex flex-wrap gap-2">
                             <button type="button" class="btn btn-outline-success btn-sm" id="sellAllBtn">
@@ -173,6 +188,7 @@
                     {% endif %}
                     <form method="post" id="sellForm">
                         {% csrf_token %}
+                        <input type="hidden" name="sell_location_id" value="{{ active_location_id }}">
                         <div class="table-responsive">
                             <table class="table table-hover stock-table align-middle">
                                 <thead>
