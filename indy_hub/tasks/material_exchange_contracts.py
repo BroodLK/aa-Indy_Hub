@@ -791,7 +791,43 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
     rejected_statuses = {"cancelled", "rejected", "failed", "expired", "deleted"}
 
-    def _set_sell_order_validated(*, contract_id: int, contract_price, override: bool):
+    def _format_contract_location(
+        start_location_id: int | None,
+        end_location_id: int | None,
+    ) -> str:
+        location_ids: list[int] = []
+        for raw in [start_location_id, end_location_id]:
+            try:
+                loc_id = int(raw or 0)
+            except (TypeError, ValueError):
+                continue
+            if loc_id <= 0 or loc_id in location_ids:
+                continue
+            location_ids.append(loc_id)
+
+        if not location_ids:
+            return ""
+
+        labels: list[str] = []
+        for loc_id in location_ids:
+            loc_name = _get_location_name(
+                loc_id,
+                esi_client,
+                corporation_id=int(config.corporation_id),
+            )
+            if loc_name:
+                labels.append(f"{loc_name} ({loc_id})")
+            else:
+                labels.append(f"Location {loc_id}")
+        return " / ".join(labels)
+
+    def _set_sell_order_validated(
+        *,
+        contract_id: int,
+        contract_price,
+        override: bool,
+        contract_location: str = "",
+    ):
         order.status = MaterialExchangeSellOrder.Status.VALIDATED
         order.contract_validated_at = timezone.now()
         order.esi_contract_id = contract_id
@@ -829,6 +865,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _(
                     f"Your sell order {order.order_reference} was in anomaly, but the corporation accepted contract #{contract_id} in-game. "
                     f"The order has been moved back to validated status."
+                    + (f"\nLocation: {contract_location}" if contract_location else "")
                 ),
                 level="success",
                 link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
@@ -840,6 +877,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _(
                     f"{order.seller.username}'s anomalous order {order_ref} has been accepted in-game via contract #{contract_id}.\n"
                     f"Order moved to validated status."
+                    + (f"\nLocation: {contract_location}" if contract_location else "")
                 ),
                 level="info",
                 link=(
@@ -866,7 +904,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"Your sell order {order.order_reference} has been validated!\n"
                 f"Contract #{contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
-                f"Status: Awaiting corporation to accept the contract.\n"
+                + (f"Location: {contract_location}\n" if contract_location else "")
+                + f"Status: Awaiting corporation to accept the contract.\n"
                 f"Once accepted, you will receive payment."
             ),
             level="success",
@@ -879,7 +918,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"{order.seller.username} wants to sell:\n{items_list}\n\n"
                 f"Total: {order.total_price:,.0f} ISK\n"
-                f"Contract #{contract_id} verified from database.\n\n"
+                f"Contract #{contract_id} verified from database.\n"
+                + (f"Location: {contract_location}\n" if contract_location else "")
+                + "\n"
                 f"Awaiting corporation to accept the contract."
             ),
             level="success",
@@ -1024,6 +1065,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     "issue": "items mismatch",
                     "status": contract.status,
                     "price": contract.price,
+                    "start_location_id": contract.start_location_id,
+                    "end_location_id": contract.end_location_id,
                     "details": mismatch_details,
                 }
             continue
@@ -1040,6 +1083,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     "contract_price": contract.price,
                     "expected_price": order.total_price,
                     "status": contract.status,
+                    "start_location_id": contract.start_location_id,
+                    "end_location_id": contract.end_location_id,
                 }
             continue
 
@@ -1058,20 +1103,30 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             }
 
     if matching_contract:
+        matching_contract_location = _format_contract_location(
+            matching_contract.start_location_id,
+            matching_contract.end_location_id,
+        )
         _set_sell_order_validated(
             contract_id=matching_contract.contract_id,
             contract_price=matching_contract.price,
             override=False,
+            contract_location=matching_contract_location,
         )
     elif contract_with_correct_ref_wrong_structure:
         contract_status = str(
             contract_with_correct_ref_wrong_structure.get("status") or ""
         ).lower()
         if contract_status in finished_statuses:
+            contract_location = _format_contract_location(
+                contract_with_correct_ref_wrong_structure.get("start_location_id"),
+                contract_with_correct_ref_wrong_structure.get("end_location_id"),
+            )
             _set_sell_order_validated(
                 contract_id=contract_with_correct_ref_wrong_structure["contract_id"],
                 contract_price=contract_with_correct_ref_wrong_structure.get("price"),
                 override=True,
+                contract_location=contract_location,
             )
             return
         if contract_status in rejected_statuses:
@@ -1149,12 +1204,17 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             contract_with_correct_ref_wrong_price.get("status") or ""
         ).lower()
         if contract_status in finished_statuses:
+            contract_location = _format_contract_location(
+                contract_with_correct_ref_wrong_price.get("start_location_id"),
+                contract_with_correct_ref_wrong_price.get("end_location_id"),
+            )
             _set_sell_order_validated(
                 contract_id=contract_with_correct_ref_wrong_price["contract_id"],
                 contract_price=contract_with_correct_ref_wrong_price.get(
                     "contract_price"
                 ),
                 override=True,
+                contract_location=contract_location,
             )
             return
         if contract_status in rejected_statuses:
@@ -1245,10 +1305,15 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             contract_with_correct_ref_items_mismatch.get("status") or ""
         ).lower()
         if contract_status in finished_statuses:
+            contract_location = _format_contract_location(
+                contract_with_correct_ref_items_mismatch.get("start_location_id"),
+                contract_with_correct_ref_items_mismatch.get("end_location_id"),
+            )
             _set_sell_order_validated(
                 contract_id=contract_with_correct_ref_items_mismatch["contract_id"],
                 contract_price=contract_with_correct_ref_items_mismatch.get("price"),
                 override=True,
+                contract_location=contract_location,
             )
             return
         if contract_status in rejected_statuses:
