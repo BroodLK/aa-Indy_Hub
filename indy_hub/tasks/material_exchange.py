@@ -46,6 +46,7 @@ from indy_hub.services.asset_cache import (
     force_refresh_corp_assets,
     get_corp_assets_cached,
     get_office_folder_item_id_from_assets,
+    make_managed_hangar_location_id,
     resolve_asset_root_location_id,
     resolve_structure_names,
 )
@@ -730,26 +731,40 @@ def _sync_stock_impl():
         # Upwell structures store corp hangar contents under the OfficeFolder item_id.
         # Stations (and some locations) use the structure/station id directly.
         effective_location_ids: list[int] = []
+        context_to_structure_ids: dict[int, set[int]] = {}
         for structure_id in target_structure_ids:
+            structure_id_int = int(structure_id)
             office_folder_item_id = get_office_folder_item_id_from_assets(
                 corp_assets,
-                structure_id=int(structure_id),
+                structure_id=structure_id_int,
             )
-            effective_location_id = (
-                int(office_folder_item_id)
-                if office_folder_item_id is not None
-                else int(structure_id)
-            )
-            if int(effective_location_id) not in effective_location_ids:
-                effective_location_ids.append(int(effective_location_id))
+            candidate_context_ids: list[int] = [structure_id_int]
+            if office_folder_item_id is not None:
+                office_folder_item_id_int = int(office_folder_item_id)
+                candidate_context_ids.append(office_folder_item_id_int)
+                candidate_context_ids.append(
+                    make_managed_hangar_location_id(
+                        office_folder_item_id_int,
+                        int(config.hangar_division),
+                    )
+                )
+
+            for context_id in candidate_context_ids:
+                context_id_int = int(context_id)
+                if context_id_int not in effective_location_ids:
+                    effective_location_ids.append(context_id_int)
+                structure_ids = context_to_structure_ids.setdefault(context_id_int, set())
+                structure_ids.add(structure_id_int)
 
         index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
+        matched_assets_by_structure: dict[int, int] = {}
 
         for asset in corp_assets:
             # Assets can be inside containers (cans/boxes) which have their own item_id.
             # In those cases the child asset location_id points to the container item_id,
             # and the container carries the actual hangar context.
             matches_any_location = False
+            matched_structure_id: int | None = None
             for location_id in effective_location_ids:
                 if asset_chain_has_context(
                     asset,
@@ -758,6 +773,12 @@ def _sync_stock_impl():
                     location_flag=str(target_flag),
                 ):
                     matches_any_location = True
+                    structure_candidates = context_to_structure_ids.get(int(location_id), set())
+                    matched_structure_id = (
+                        int(next(iter(structure_candidates)))
+                        if structure_candidates
+                        else None
+                    )
                     break
             if not matches_any_location:
                 continue
@@ -776,6 +797,10 @@ def _sync_stock_impl():
                 quantity = 1 if asset.get("is_singleton") else 0
 
             stock_updates[type_id] = stock_updates.get(type_id, 0) + quantity
+            if matched_structure_id is not None:
+                matched_assets_by_structure[matched_structure_id] = (
+                    matched_assets_by_structure.get(matched_structure_id, 0) + quantity
+                )
 
         logger.info(
             "Loaded %d asset types from cache for %d buy location(s), division %s",
@@ -783,6 +808,14 @@ def _sync_stock_impl():
             len(target_structure_ids),
             config.hangar_division,
         )
+        if matched_assets_by_structure:
+            logger.info(
+                "Buy stock matched quantities by structure: %s",
+                ", ".join(
+                    f"{sid}={qty}"
+                    for sid, qty in sorted(matched_assets_by_structure.items())
+                ),
+            )
 
         # Update MaterialExchangeStock with atomic transaction
         with transaction.atomic():
