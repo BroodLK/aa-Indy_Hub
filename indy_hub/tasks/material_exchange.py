@@ -759,6 +759,26 @@ def _sync_stock_impl():
         index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
         matched_assets_by_structure: dict[int, int] = {}
 
+        def _asset_chain_contains_location(asset_row: dict, location_id: int) -> bool:
+            current = asset_row
+            seen: set[int] = set()
+            target_id = int(location_id)
+            for _ in range(25):
+                try:
+                    current_location_id = int(current.get("location_id", 0) or 0)
+                except (TypeError, ValueError):
+                    return False
+                if current_location_id == target_id:
+                    return True
+                parent = index_by_item_id.get(current_location_id)
+                if not parent:
+                    return False
+                if current_location_id in seen:
+                    return False
+                seen.add(current_location_id)
+                current = parent
+            return False
+
         for asset in corp_assets:
             # Assets can be inside containers (cans/boxes) which have their own item_id.
             # In those cases the child asset location_id points to the container item_id,
@@ -766,14 +786,24 @@ def _sync_stock_impl():
             matches_any_location = False
             matched_structure_id: int | None = None
             for location_id in effective_location_ids:
-                if asset_chain_has_context(
-                    asset,
-                    index_by_item_id,
-                    location_id=int(location_id),
-                    location_flag=str(target_flag),
-                ):
+                location_id_int = int(location_id)
+                if location_id_int < 0:
+                    # Managed hangar location ids already encode the division.
+                    # Match by location chain only to support payloads where
+                    # location_flag is "Hangar" instead of "CorpSAGx".
+                    matched = _asset_chain_contains_location(asset, location_id_int)
+                else:
+                    matched = asset_chain_has_context(
+                        asset,
+                        index_by_item_id,
+                        location_id=location_id_int,
+                        location_flag=str(target_flag),
+                    )
+                if matched:
                     matches_any_location = True
-                    structure_candidates = context_to_structure_ids.get(int(location_id), set())
+                    structure_candidates = context_to_structure_ids.get(
+                        location_id_int, set()
+                    )
                     matched_structure_id = (
                         int(next(iter(structure_candidates)))
                         if structure_candidates
