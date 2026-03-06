@@ -155,6 +155,66 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertFalse(self.config.buy_enabled)
         self.assertEqual(self.config.buy_structure_ids, [])
 
+    def test_sell_market_groups_can_be_saved_per_structure(self):
+        second_structure_id = int(self.config.structure_id) + 1
+        post_data = self._base_post_data()
+        post_data["sell_structure_ids"] = [
+            str(self.config.structure_id),
+            str(second_structure_id),
+        ]
+        post_data["buy_structure_ids"] = [str(self.config.structure_id)]
+        post_data["allowed_market_groups_sell"] = ["200", "300"]
+        post_data["allowed_market_groups_sell_by_structure_json"] = (
+            f'{{"{int(self.config.structure_id)}":[200],"{second_structure_id}":null}}'
+        )
+
+        request = self._build_request(post_data)
+        with patch(
+            "indy_hub.views.material_exchange_config._get_industry_market_group_choice_ids",
+            return_value=set(),
+        ):
+            response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.allowed_market_groups_sell_by_structure,
+            {
+                str(int(self.config.structure_id)): [200],
+                str(second_structure_id): None,
+            },
+        )
+
+    def test_sell_market_groups_payload_defaults_missing_structure_to_all(self):
+        second_structure_id = int(self.config.structure_id) + 1
+        post_data = self._base_post_data()
+        post_data["sell_structure_ids"] = [
+            str(self.config.structure_id),
+            str(second_structure_id),
+        ]
+        post_data["buy_structure_ids"] = [str(self.config.structure_id)]
+        post_data["allowed_market_groups_sell"] = ["200", "300"]
+        post_data["allowed_market_groups_sell_by_structure_json"] = (
+            f'{{"{int(self.config.structure_id)}":[200]}}'
+        )
+
+        request = self._build_request(post_data)
+        with patch(
+            "indy_hub.views.material_exchange_config._get_industry_market_group_choice_ids",
+            return_value=set(),
+        ):
+            response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.allowed_market_groups_sell_by_structure,
+            {
+                str(int(self.config.structure_id)): [200],
+                str(second_structure_id): None,
+            },
+        )
+
     def test_location_match_mode_defaults_to_name_or_id_when_invalid(self):
         post_data = self._base_post_data()
         post_data["location_match_mode"] = "invalid"

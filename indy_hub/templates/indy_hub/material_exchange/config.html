@@ -520,7 +520,27 @@
                                 {% else %}
                                     <div class="row g-3">
                                         <div class="col-lg-6 me-dual-list-block">
-                                            <label class="form-label fw-semibold"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups" %}</span></label>
+                                            <input
+                                                type="hidden"
+                                                name="allowed_market_groups_sell_by_structure_json"
+                                                id="allowedMarketGroupsSellByStructureJson">
+                                            <label class="form-label fw-semibold"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span></label>
+                                            <div class="mb-2">
+                                                <label class="form-label fw-semibold mb-1" for="sellMarketGroupStructureSelect">{% trans "Sell Location" %}</label>
+                                                <select class="form-select form-select-sm" id="sellMarketGroupStructureSelect"></select>
+                                                <div class="form-check mt-2">
+                                                    <input
+                                                        class="form-check-input"
+                                                        type="checkbox"
+                                                        id="sellMarketGroupsAllowAll">
+                                                    <label class="form-check-label" for="sellMarketGroupsAllowAll">
+                                                        {% trans "Accept all market groups for this location" %}
+                                                    </label>
+                                                </div>
+                                                <div class="form-text">
+                                                    {% trans "Disable 'all' to choose only specific accepted groups for this location." %}
+                                                </div>
+                                            </div>
                                             <div class="row g-1 me-dual-list me-dual-list-sell">
                                                 <div class="col-5">
                                                     <div class="small text-muted mb-1">{% trans "Available" %}</div>
@@ -644,6 +664,7 @@
 {{ hangar_divisions|json_script:"hangarDivisionsData" }}
 {{ selected_sell_structures|json_script:"selectedSellStructures" }}
 {{ selected_buy_structures|json_script:"selectedBuyStructures" }}
+{{ selected_sell_market_groups_by_structure|json_script:"selectedSellMarketGroupsByStructure" }}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -834,6 +855,7 @@ document.addEventListener('DOMContentLoaded', function() {
             buyStructureSelect.innerHTML = '<option value="">{% trans "Select corporation first..." %}</option>';
             rebuildHangarOptions('');
             updateSubmitButton();
+            document.dispatchEvent(new CustomEvent('me:sell-structures-changed'));
             return;
         }
 
@@ -901,6 +923,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 rebuildHangarOptions(collectSelectedFlags());
                 updateSubmitButton();
                 syncBuyEnabledState();
+                document.dispatchEvent(new CustomEvent('me:sell-structures-changed'));
             })
             .catch(error => {
                 console.error('Error fetching structures:', error);
@@ -910,12 +933,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 buyStructureSelect.disabled = false;
                 rebuildHangarOptions('');
                 updateSubmitButton();
+                document.dispatchEvent(new CustomEvent('me:sell-structures-changed'));
             });
     };
 
     sellStructureSelect.addEventListener('change', function() {
         rebuildHangarOptions(collectSelectedFlags());
         updateSubmitButton();
+        document.dispatchEvent(new CustomEvent('me:sell-structures-changed'));
     });
 
     buyStructureSelect.addEventListener('change', function() {
@@ -942,6 +967,7 @@ document.addEventListener('DOMContentLoaded', function() {
         rebuildHangarOptions('');
         updateSubmitButton();
         syncBuyEnabledState();
+        document.dispatchEvent(new CustomEvent('me:sell-structures-changed'));
     }
 });
 
@@ -973,6 +999,10 @@ function validateForm() {
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('marketGroupSearch');
     const searchDataEl = document.getElementById('marketGroupSearchIndex');
+    const sellStructureSelect = document.getElementById('sellStructureSelect');
+    const sellMarketGroupStructureSelect = document.getElementById('sellMarketGroupStructureSelect');
+    const sellAllowAllToggle = document.getElementById('sellMarketGroupsAllowAll');
+    const sellGroupMapInput = document.getElementById('allowedMarketGroupsSellByStructureJson');
     const sellAvailable = document.getElementById('marketGroupsSellAvailable');
     const sellSelected = document.getElementById('marketGroupsSellSelected');
     const buyAvailable = document.getElementById('marketGroupsBuyAvailable');
@@ -992,6 +1022,70 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) {
         searchIndex = {};
     }
+
+    let initialSellGroupMap = {};
+    const sellGroupMapDataEl = document.getElementById('selectedSellMarketGroupsByStructure');
+    if (sellGroupMapDataEl) {
+        try {
+            initialSellGroupMap = JSON.parse(sellGroupMapDataEl.textContent || '{}');
+        } catch (e) {
+            initialSellGroupMap = {};
+        }
+    }
+
+    const allGroupChoicesById = {};
+    const collectChoiceOptions = (selectEl) => {
+        if (!selectEl) return;
+        Array.from(selectEl.options).forEach(option => {
+            if (!option || !option.value) return;
+            allGroupChoicesById[String(option.value)] = option.textContent || option.value;
+        });
+    };
+    collectChoiceOptions(sellAvailable);
+    collectChoiceOptions(sellSelected);
+    collectChoiceOptions(buyAvailable);
+    collectChoiceOptions(buySelected);
+
+    const normalizeGroupIdList = (rawList) => {
+        const normalized = [];
+        if (!Array.isArray(rawList)) {
+            return normalized;
+        }
+        rawList.forEach(rawGroupId => {
+            const parsed = parseInt(rawGroupId, 10);
+            if (!Number.isInteger(parsed) || parsed <= 0) {
+                return;
+            }
+            if (!normalized.includes(parsed)) {
+                normalized.push(parsed);
+            }
+        });
+        normalized.sort((a, b) => a - b);
+        return normalized;
+    };
+
+    const normalizeSellGroupMap = (rawMap) => {
+        const normalized = {};
+        if (!rawMap || typeof rawMap !== 'object') {
+            return normalized;
+        }
+        Object.entries(rawMap).forEach(([rawStructureId, rawGroups]) => {
+            const parsedStructureId = parseInt(rawStructureId, 10);
+            if (!Number.isInteger(parsedStructureId) || parsedStructureId <= 0) {
+                return;
+            }
+            const structureKey = String(parsedStructureId);
+            if (rawGroups === null) {
+                normalized[structureKey] = null;
+                return;
+            }
+            normalized[structureKey] = normalizeGroupIdList(rawGroups);
+        });
+        return normalized;
+    };
+
+    let sellGroupsByStructure = normalizeSellGroupMap(initialSellGroupMap);
+    let activeSellStructureId = '';
 
     const matchesQuery = (groupId, label, query) => {
         if (!query) return true;
@@ -1026,25 +1120,191 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     };
 
-    const moveAllToSelected = (fromSelect, toSelect) => {
-        Array.from(fromSelect.options).forEach(option => {
-            const newOption = new Option(option.textContent, option.value, true, true);
-            toSelect.add(newOption);
-        });
-        fromSelect.innerHTML = '';
-    };
-
     const ensureAllSelected = (selectEl) => {
         Array.from(selectEl.options).forEach(option => {
             option.selected = true;
         });
     };
 
+    const setSellPickerDisabled = (disabled) => {
+        [sellAvailable, sellSelected].forEach(selectEl => {
+            if (selectEl) {
+                selectEl.disabled = disabled;
+            }
+        });
+        [sellAddBtn, sellRemoveBtn].forEach(button => {
+            if (button) {
+                button.disabled = disabled;
+            }
+        });
+    };
+
+    const serializeSellGroupMap = () => {
+        if (sellGroupMapInput) {
+            sellGroupMapInput.value = JSON.stringify(sellGroupsByStructure);
+        }
+    };
+
+    const persistStructureRule = (structureId) => {
+        if (!structureId) {
+            return;
+        }
+        if (sellAllowAllToggle && sellAllowAllToggle.checked) {
+            sellGroupsByStructure[structureId] = null;
+            return;
+        }
+        const selectedIds = Array.from(sellSelected.options)
+            .map(option => parseInt(option.value, 10))
+            .filter(groupId => Number.isInteger(groupId) && groupId > 0);
+        sellGroupsByStructure[structureId] = normalizeGroupIdList(selectedIds);
+    };
+
+    const renderSellGroupListsForActiveStructure = () => {
+        const structureId = activeSellStructureId;
+        if (!structureId) {
+            sellAvailable.innerHTML = '';
+            sellSelected.innerHTML = '';
+            if (sellAllowAllToggle) {
+                sellAllowAllToggle.checked = false;
+                sellAllowAllToggle.disabled = true;
+            }
+            setSellPickerDisabled(true);
+            serializeSellGroupMap();
+            return;
+        }
+
+        const currentRule = sellGroupsByStructure[structureId];
+        const allowAll = currentRule === null;
+
+        if (sellAllowAllToggle) {
+            sellAllowAllToggle.disabled = false;
+            sellAllowAllToggle.checked = allowAll;
+        }
+
+        setSellPickerDisabled(allowAll);
+
+        const selectedSet = new Set(
+            Array.isArray(currentRule)
+                ? currentRule.map(groupId => String(groupId))
+                : []
+        );
+
+        sellAvailable.innerHTML = '';
+        sellSelected.innerHTML = '';
+
+        Object.entries(allGroupChoicesById)
+            .sort((a, b) => String(a[1]).localeCompare(String(b[1])))
+            .forEach(([groupId, label]) => {
+                const option = new Option(label, groupId, false, false);
+                if (selectedSet.has(groupId)) {
+                    option.selected = true;
+                    sellSelected.add(option);
+                } else {
+                    sellAvailable.add(option);
+                }
+            });
+
+        applyFilter();
+        serializeSellGroupMap();
+    };
+
+    const getSelectedSellStructures = () => {
+        if (!sellStructureSelect) {
+            return [];
+        }
+        return Array.from(sellStructureSelect.options)
+            .filter(option => option.selected && option.value)
+            .map(option => ({
+                id: String(option.value),
+                name: option.getAttribute('data-name') || option.textContent || `Structure ${option.value}`,
+            }));
+    };
+
+    const rebuildSellStructureRules = () => {
+        persistStructureRule(activeSellStructureId);
+
+        const selectedStructures = getSelectedSellStructures();
+        const selectedIds = selectedStructures.map(item => item.id);
+
+        if (selectedStructures.length > 0) {
+            Object.keys(sellGroupsByStructure).forEach(structureId => {
+                if (!selectedIds.includes(structureId)) {
+                    delete sellGroupsByStructure[structureId];
+                }
+            });
+
+            selectedIds.forEach(structureId => {
+                if (!(structureId in sellGroupsByStructure)) {
+                    sellGroupsByStructure[structureId] = null;
+                }
+            });
+        }
+
+        if (sellMarketGroupStructureSelect) {
+            sellMarketGroupStructureSelect.innerHTML = '';
+            if (selectedStructures.length === 0) {
+                const emptyOption = new Option('{% trans "Select at least one sell location" %}', '', true, true);
+                sellMarketGroupStructureSelect.add(emptyOption);
+                activeSellStructureId = '';
+            } else {
+                selectedStructures.forEach(structure => {
+                    const structureOption = new Option(structure.name, structure.id, false, false);
+                    sellMarketGroupStructureSelect.add(structureOption);
+                });
+                if (!selectedIds.includes(activeSellStructureId)) {
+                    activeSellStructureId = selectedIds[0];
+                }
+                sellMarketGroupStructureSelect.value = activeSellStructureId;
+            }
+        }
+
+        renderSellGroupListsForActiveStructure();
+    };
+
+    const syncLegacySellUnionSelection = () => {
+        const union = new Set();
+        Object.values(sellGroupsByStructure).forEach(groupRule => {
+            if (!Array.isArray(groupRule)) {
+                return;
+            }
+            groupRule.forEach(groupId => {
+                const parsed = parseInt(groupId, 10);
+                if (Number.isInteger(parsed) && parsed > 0) {
+                    union.add(parsed);
+                }
+            });
+        });
+
+        sellSelected.innerHTML = '';
+        Array.from(union)
+            .sort((a, b) => a - b)
+            .forEach(groupId => {
+                const groupKey = String(groupId);
+                const label = allGroupChoicesById[groupKey] || `Group ${groupId}`;
+                const option = new Option(label, groupKey, true, true);
+                sellSelected.add(option);
+            });
+    };
+
     if (sellAddBtn) {
-        sellAddBtn.addEventListener('click', () => moveSelected(sellAvailable, sellSelected));
+        sellAddBtn.addEventListener('click', () => {
+            if (sellAllowAllToggle && sellAllowAllToggle.checked) {
+                return;
+            }
+            moveSelected(sellAvailable, sellSelected);
+            persistStructureRule(activeSellStructureId);
+            serializeSellGroupMap();
+        });
     }
     if (sellRemoveBtn) {
-        sellRemoveBtn.addEventListener('click', () => moveSelected(sellSelected, sellAvailable));
+        sellRemoveBtn.addEventListener('click', () => {
+            if (sellAllowAllToggle && sellAllowAllToggle.checked) {
+                return;
+            }
+            moveSelected(sellSelected, sellAvailable);
+            persistStructureRule(activeSellStructureId);
+            serializeSellGroupMap();
+        });
     }
     if (buyAddBtn) {
         buyAddBtn.addEventListener('click', () => moveSelected(buyAvailable, buySelected));
@@ -1060,6 +1320,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const newOption = new Option(option.textContent, option.value, true, true);
                 toSelect.add(newOption);
                 fromSelect.remove(option.index);
+                if (fromSelect === sellAvailable || fromSelect === sellSelected) {
+                    persistStructureRule(activeSellStructureId);
+                    serializeSellGroupMap();
+                }
             }
         });
     };
@@ -1071,9 +1335,34 @@ document.addEventListener('DOMContentLoaded', function() {
 
     searchInput.addEventListener('input', applyFilter);
 
+    if (sellMarketGroupStructureSelect) {
+        sellMarketGroupStructureSelect.addEventListener('change', () => {
+            persistStructureRule(activeSellStructureId);
+            activeSellStructureId = sellMarketGroupStructureSelect.value || '';
+            renderSellGroupListsForActiveStructure();
+        });
+    }
+
+    if (sellAllowAllToggle) {
+        sellAllowAllToggle.addEventListener('change', () => {
+            persistStructureRule(activeSellStructureId);
+            renderSellGroupListsForActiveStructure();
+        });
+    }
+
+    if (sellStructureSelect) {
+        sellStructureSelect.addEventListener('change', rebuildSellStructureRules);
+    }
+    document.addEventListener('me:sell-structures-changed', rebuildSellStructureRules);
+
+    rebuildSellStructureRules();
+
     const form = document.getElementById('configForm');
     if (form) {
         form.addEventListener('submit', function() {
+            persistStructureRule(activeSellStructureId);
+            serializeSellGroupMap();
+            syncLegacySellUnionSelection();
             ensureAllSelected(sellSelected);
             ensureAllSelected(buySelected);
         });

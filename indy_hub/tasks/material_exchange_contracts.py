@@ -87,6 +87,9 @@ logger = get_extension_logger(__name__)
 
 # Cache for structure names to avoid repeated ESI lookups
 _structure_name_cache: dict[int, str] = {}
+_type_market_group_cache: dict[int, int | None] = {}
+_market_group_children_cache: dict[int | None, set[int]] | None = None
+_expanded_group_cache: dict[tuple[int, ...], set[int]] = {}
 
 
 def _normalize_esi_mapping(payload, *, context: str) -> dict | None:
@@ -1070,6 +1073,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         if not _contract_items_match_order_db(contract, order):
             last_reason = "items mismatch"
             mismatch_details = _build_items_mismatch_details(contract, order)
+            _missing_by_type, surplus_by_type, mismatch_type_names = (
+                _get_items_mismatch_breakdown(contract, order)
+            )
             if has_correct_ref and not contract_with_correct_ref_items_mismatch:
                 contract_with_correct_ref_items_mismatch = {
                     "contract_id": contract.contract_id,
@@ -1079,6 +1085,14 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     "start_location_id": contract.start_location_id,
                     "end_location_id": contract.end_location_id,
                     "details": mismatch_details,
+                    "surplus_type_ids": sorted(
+                        int(type_id) for type_id in surplus_by_type.keys()
+                    ),
+                    "type_names": {
+                        str(int(type_id)): str(name)
+                        for type_id, name in (mismatch_type_names or {}).items()
+                        if str(name).strip()
+                    },
                 }
             continue
 
@@ -1334,6 +1348,49 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             )
             return
 
+        mismatch_type_names_raw = contract_with_correct_ref_items_mismatch.get(
+            "type_names"
+        ) or {}
+        mismatch_type_names: dict[int, str] = {}
+        if isinstance(mismatch_type_names_raw, dict):
+            for raw_type_id, raw_name in mismatch_type_names_raw.items():
+                try:
+                    parsed_type_id = int(raw_type_id)
+                except (TypeError, ValueError):
+                    continue
+                parsed_name = str(raw_name or "").strip()
+                if parsed_name:
+                    mismatch_type_names[parsed_type_id] = parsed_name
+
+        surplus_type_ids = []
+        for raw_type_id in (
+            contract_with_correct_ref_items_mismatch.get("surplus_type_ids") or []
+        ):
+            try:
+                parsed_type_id = int(raw_type_id)
+            except (TypeError, ValueError):
+                continue
+            if parsed_type_id <= 0:
+                continue
+            if parsed_type_id not in surplus_type_ids:
+                surplus_type_ids.append(parsed_type_id)
+
+        effective_contract_location_id = _get_effective_contract_location_id(
+            start_location_id=contract_with_correct_ref_items_mismatch.get(
+                "start_location_id"
+            ),
+            end_location_id=contract_with_correct_ref_items_mismatch.get(
+                "end_location_id"
+            ),
+            expected_location_ids=expected_sell_location_ids,
+        )
+        location_guidance_block = _build_sell_surplus_item_location_guidance(
+            config=config,
+            contract_location_id=effective_contract_location_id,
+            surplus_type_ids=surplus_type_ids,
+            type_names=mismatch_type_names,
+        )
+
         anomaly_notes = (
             f"Anomaly: contract {contract_with_correct_ref_items_mismatch['contract_id']} has the correct title ({order_ref}) "
             f"but item list/quantities do not match this order."
@@ -1342,11 +1399,15 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 if contract_with_correct_ref_items_mismatch.get("details")
                 else ""
             )
+            + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
         )
         mismatch_details_block = (
             f"{contract_with_correct_ref_items_mismatch.get('details')}\n\n"
             if contract_with_correct_ref_items_mismatch.get("details")
             else ""
+        )
+        guidance_details_block = (
+            f"{location_guidance_block}\n\n" if location_guidance_block else ""
         )
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY
@@ -1367,6 +1428,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Your sell order {order_ref} is in anomaly status.\n\n"
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
+                    f"{guidance_details_block}"
                     "Please create a corrected contract, or contact a Material Hub admin (they have been notified)."
                 )
                 if notify_admins_on_sell_anomaly
@@ -1374,6 +1436,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Your sell order {order_ref} is in anomaly status.\n\n"
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
+                    f"{guidance_details_block}"
                     "Please create a corrected and compliant contract."
                 )
             )
@@ -1395,6 +1458,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     + (
                         f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}"
                         if contract_with_correct_ref_items_mismatch.get("details")
+                        else ""
+                    )
+                    + (
+                        f"\n\n{location_guidance_block}"
+                        if location_guidance_block
                         else ""
                     )
                 ),
@@ -1873,6 +1941,218 @@ def _get_location_match_mode(config: MaterialExchangeConfig) -> str:
     return mode
 
 
+def _get_type_market_group_id(type_id: int) -> int | None:
+    """Return ItemType.market_group_id_raw for the given type ID."""
+    type_id_int = int(type_id)
+    if type_id_int in _type_market_group_cache:
+        return _type_market_group_cache[type_id_int]
+
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        market_group_id = (
+            ItemType.objects.filter(id=type_id_int)
+            .values_list("market_group_id_raw", flat=True)
+            .first()
+        )
+        market_group_value = int(market_group_id) if market_group_id else None
+    except Exception:
+        market_group_value = None
+
+    _type_market_group_cache[type_id_int] = market_group_value
+    return market_group_value
+
+
+def _get_market_group_children_map() -> dict[int | None, set[int]]:
+    """Return a parent->children map for market groups (cached)."""
+    global _market_group_children_cache
+    if _market_group_children_cache is not None:
+        return _market_group_children_cache
+
+    try:
+        # AA Example App
+        from indy_hub.models import SdeMarketGroup
+
+        children_map: dict[int | None, set[int]] = {}
+        for group_id, parent_id in SdeMarketGroup.objects.values_list(
+            "id", "parent_id"
+        ):
+            children_map.setdefault(parent_id, set()).add(int(group_id))
+    except Exception:
+        children_map = {}
+
+    _market_group_children_cache = children_map
+    return children_map
+
+
+def _expand_market_group_ids(group_ids: set[int]) -> set[int]:
+    """Expand grouped market IDs to include all descendant groups."""
+    if not group_ids:
+        return set()
+
+    cache_key = tuple(sorted(int(gid) for gid in group_ids if int(gid) > 0))
+    if cache_key in _expanded_group_cache:
+        return _expanded_group_cache[cache_key]
+
+    children_map = _get_market_group_children_map()
+    expanded = set(cache_key)
+    stack = list(cache_key)
+
+    while stack:
+        current = int(stack.pop())
+        for child_id in children_map.get(current, set()):
+            child_int = int(child_id)
+            if child_int in expanded:
+                continue
+            expanded.add(child_int)
+            stack.append(child_int)
+
+    _expanded_group_cache[cache_key] = expanded
+    return expanded
+
+
+def _normalize_group_ids(raw_group_ids: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
+    normalized: list[int] = []
+    for raw in raw_group_ids or []:
+        try:
+            group_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if group_id <= 0 or group_id in normalized:
+            continue
+        normalized.append(group_id)
+    return normalized
+
+
+def _get_sell_group_ids_for_location(
+    config: MaterialExchangeConfig, location_id: int
+) -> list[int] | None:
+    """Return grouped sell market IDs for a location, or None for explicit all."""
+    group_map = config.get_sell_market_group_map()
+    location_key = int(location_id)
+    if location_key in group_map:
+        rule = group_map[location_key]
+        if rule is None:
+            return None
+        return _normalize_group_ids(rule)
+
+    return _normalize_group_ids(list(getattr(config, "allowed_market_groups_sell", []) or []))
+
+
+def _is_type_accepted_for_sell_location(
+    *,
+    config: MaterialExchangeConfig,
+    location_id: int,
+    type_id: int,
+) -> bool:
+    """Return whether a type is accepted for selling at a specific location."""
+    grouped_ids = _get_sell_group_ids_for_location(config, int(location_id))
+    if grouped_ids is None:
+        return True
+    if not grouped_ids:
+        return False
+
+    market_group_id = _get_type_market_group_id(int(type_id))
+    if not market_group_id:
+        return False
+
+    expanded_group_ids = _expand_market_group_ids(set(grouped_ids))
+    return int(market_group_id) in expanded_group_ids
+
+
+def _get_effective_contract_location_id(
+    *,
+    start_location_id: int | None,
+    end_location_id: int | None,
+    expected_location_ids: list[int] | None = None,
+) -> int | None:
+    """Pick the most relevant contract location ID, preferring expected IDs."""
+    location_ids: list[int] = []
+    for raw in [start_location_id, end_location_id]:
+        try:
+            loc_id = int(raw or 0)
+        except (TypeError, ValueError):
+            continue
+        if loc_id <= 0 or loc_id in location_ids:
+            continue
+        location_ids.append(loc_id)
+
+    if not location_ids:
+        return None
+
+    expected_set = {int(sid) for sid in (expected_location_ids or []) if int(sid) > 0}
+    if expected_set:
+        for loc_id in location_ids:
+            if loc_id in expected_set:
+                return loc_id
+
+    return location_ids[0]
+
+
+def _build_sell_surplus_item_location_guidance(
+    *,
+    config: MaterialExchangeConfig,
+    contract_location_id: int | None,
+    surplus_type_ids: list[int],
+    type_names: dict[int, str] | None = None,
+) -> str:
+    """Build guidance for surplus sell-contract items and accepted locations."""
+    if not surplus_type_ids:
+        return ""
+
+    sell_location_ids = config.get_sell_structure_ids()
+    if not sell_location_ids:
+        return ""
+
+    sell_name_map = config.get_sell_structure_name_map()
+    guidance_lines: list[str] = []
+
+    for raw_type_id in surplus_type_ids:
+        type_id = int(raw_type_id)
+        item_name = str((type_names or {}).get(type_id) or "").strip() or str(
+            get_type_name(type_id) or f"Type {type_id}"
+        )
+
+        not_accepted_here = False
+        if contract_location_id:
+            not_accepted_here = not _is_type_accepted_for_sell_location(
+                config=config,
+                location_id=int(contract_location_id),
+                type_id=type_id,
+            )
+        if not not_accepted_here:
+            continue
+
+        accepted_elsewhere: list[str] = []
+        for raw_loc_id in sell_location_ids:
+            loc_id = int(raw_loc_id)
+            if contract_location_id and loc_id == int(contract_location_id):
+                continue
+            if _is_type_accepted_for_sell_location(
+                config=config,
+                location_id=loc_id,
+                type_id=type_id,
+            ):
+                accepted_elsewhere.append(
+                    str(sell_name_map.get(loc_id) or f"Structure {loc_id}")
+                )
+
+        if accepted_elsewhere:
+            guidance_lines.append(
+                f"- {item_name}: not accepted at this contract location; accepted at {', '.join(accepted_elsewhere)}."
+            )
+        else:
+            guidance_lines.append(
+                f"- {item_name}: not accepted at this contract location or any configured sell location."
+            )
+
+    if not guidance_lines:
+        return ""
+
+    return "Sell-location guidance:\n" + "\n".join(guidance_lines)
+
+
 def _normalize_location_name(name: str | None) -> str:
     return str(name or "").strip().lower()
 
@@ -2125,13 +2405,15 @@ def _contract_items_match_order_db(contract, order):
     return True
 
 
-def _build_items_mismatch_details(contract, order) -> str:
-    """Build a human-readable item delta between order and contract included items."""
+def _get_items_mismatch_breakdown(
+    contract, order
+) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
+    """Return (missing_by_type, surplus_by_type, type_names) for order vs contract items."""
     order_items = list(order.items.all())
     included_items = list(contract.items.filter(is_included=True))
 
     if not order_items and not included_items:
-        return ""
+        return {}, {}, {}
 
     expected_by_type: dict[int, int] = {}
     actual_by_type: dict[int, int] = {}
@@ -2170,12 +2452,49 @@ def _build_items_mismatch_details(contract, order) -> str:
     for type_id in all_type_ids:
         expected_qty = expected_by_type.get(type_id, 0)
         actual_qty = actual_by_type.get(type_id, 0)
-        type_name = type_names.get(type_id) or _resolved_type_name(type_id)
 
         if expected_qty > actual_qty:
-            missing_lines.append(f"- {expected_qty - actual_qty:,} {type_name}")
+            missing_lines.append(type_id)
         elif actual_qty > expected_qty:
-            surplus_lines.append(f"- {actual_qty - expected_qty:,} {type_name}")
+            surplus_lines.append(type_id)
+
+    missing_by_type = {
+        int(type_id): int(expected_by_type.get(type_id, 0) - actual_by_type.get(type_id, 0))
+        for type_id in missing_lines
+        if expected_by_type.get(type_id, 0) > actual_by_type.get(type_id, 0)
+    }
+    surplus_by_type = {
+        int(type_id): int(actual_by_type.get(type_id, 0) - expected_by_type.get(type_id, 0))
+        for type_id in surplus_lines
+        if actual_by_type.get(type_id, 0) > expected_by_type.get(type_id, 0)
+    }
+    return missing_by_type, surplus_by_type, type_names
+
+
+def _build_items_mismatch_details(contract, order) -> str:
+    """Build a human-readable item delta between order and contract included items."""
+    missing_by_type, surplus_by_type, type_names = _get_items_mismatch_breakdown(
+        contract, order
+    )
+    if not missing_by_type and not surplus_by_type:
+        return ""
+
+    missing_lines: list[str] = []
+    surplus_lines: list[str] = []
+    for type_id, qty in sorted(missing_by_type.items()):
+        type_name = (
+            str(type_names.get(type_id) or "").strip()
+            or str(get_type_name(int(type_id)) or "")
+            or f"Type {int(type_id)}"
+        )
+        missing_lines.append(f"- {int(qty):,} {type_name}")
+    for type_id, qty in sorted(surplus_by_type.items()):
+        type_name = (
+            str(type_names.get(type_id) or "").strip()
+            or str(get_type_name(int(type_id)) or "")
+            or f"Type {int(type_id)}"
+        )
+        surplus_lines.append(f"- {int(qty):,} {type_name}")
 
     sections: list[str] = []
     if missing_lines:

@@ -356,7 +356,7 @@ def _expand_market_group_ids(group_ids: set[int]) -> set[int]:
 
 
 def _get_allowed_type_ids_for_config(
-    config: MaterialExchangeConfig, mode: str
+    config: MaterialExchangeConfig, mode: str, *, structure_id: int | None = None
 ) -> set[int] | None:
     """Resolve allowed item type IDs for the given mode (sell/buy)."""
 
@@ -367,11 +367,26 @@ def _get_allowed_type_ids_for_config(
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
 
-        raw_group_ids = (
-            config.allowed_market_groups_sell
-            if mode == "sell"
-            else config.allowed_market_groups_buy
-        )
+        explicit_all_groups = False
+        if mode == "sell" and structure_id:
+            structure_group_map = config.get_sell_market_group_map()
+            structure_key = int(structure_id)
+            if structure_key in structure_group_map:
+                raw_group_ids = structure_group_map.get(structure_key)
+                if raw_group_ids is None:
+                    explicit_all_groups = True
+            else:
+                raw_group_ids = config.allowed_market_groups_sell
+        else:
+            raw_group_ids = (
+                config.allowed_market_groups_sell
+                if mode == "sell"
+                else config.allowed_market_groups_buy
+            )
+
+        if explicit_all_groups:
+            return None
+
         group_ids = {int(x) for x in (raw_group_ids or [])}
         if not group_ids:
             return set()
@@ -398,6 +413,55 @@ def _get_allowed_type_ids_for_config(
     except Exception as exc:
         logger.warning("Failed to resolve market group filter (%s): %s", mode, exc)
         return None
+
+
+def _find_sell_locations_for_type(
+    *,
+    config: MaterialExchangeConfig,
+    sell_structure_ids: list[int],
+    sell_structure_name_map: dict[int, str],
+    user_assets_by_location: dict[int, dict[int, int]],
+    type_id: int,
+    exclude_location_id: int | None = None,
+    allowed_type_ids_cache: dict[int, set[int] | None] | None = None,
+) -> list[dict[str, object]]:
+    """Return sell locations where the given type is both present and accepted."""
+
+    matches: list[dict[str, object]] = []
+    cache_by_location = allowed_type_ids_cache if allowed_type_ids_cache is not None else {}
+
+    for raw_location_id in sell_structure_ids:
+        location_id = int(raw_location_id)
+        if exclude_location_id is not None and int(exclude_location_id) == location_id:
+            continue
+
+        location_assets = user_assets_by_location.get(location_id, {})
+        quantity = int(location_assets.get(int(type_id), 0) or 0)
+        if quantity <= 0:
+            continue
+
+        if location_id in cache_by_location:
+            allowed_type_ids = cache_by_location[location_id]
+        else:
+            allowed_type_ids = _get_allowed_type_ids_for_config(
+                config,
+                "sell",
+                structure_id=location_id,
+            )
+            cache_by_location[location_id] = allowed_type_ids
+
+        if allowed_type_ids is not None and int(type_id) not in allowed_type_ids:
+            continue
+
+        matches.append(
+            {
+                "id": location_id,
+                "name": sell_structure_name_map.get(location_id) or f"Structure {location_id}",
+                "quantity": quantity,
+            }
+        )
+
+    return matches
 
 
 def _get_material_exchange_admins() -> list[User]:
@@ -985,7 +1049,12 @@ def material_exchange_index(request):
 
     try:
         # Avoid blocking ESI calls on index page; use cached data only
-        user_assets, scope_missing = _fetch_user_assets_for_structure(
+        (
+            user_assets,
+            _user_assets_by_character,
+            user_assets_by_location,
+            scope_missing,
+        ) = _fetch_user_assets_for_structure_data(
             request.user,
             sell_structure_ids,
             allow_refresh=False,
@@ -1000,11 +1069,23 @@ def material_exchange_index(request):
                 ),
             )
 
-        allowed_type_ids = _get_allowed_type_ids_for_config(config, "sell")
-        if allowed_type_ids is not None:
-            user_assets = {
-                tid: qty for tid, qty in user_assets.items() if tid in allowed_type_ids
-            }
+        filtered_assets: dict[int, int] = {}
+        for sid in sell_structure_ids:
+            loc_assets = user_assets_by_location.get(int(sid), {})
+            allowed_type_ids = _get_allowed_type_ids_for_config(
+                config,
+                "sell",
+                structure_id=int(sid),
+            )
+            if allowed_type_ids is None:
+                loc_filtered = loc_assets
+            else:
+                loc_filtered = {
+                    tid: qty for tid, qty in loc_assets.items() if tid in allowed_type_ids
+                }
+            for type_id, qty in loc_filtered.items():
+                filtered_assets[type_id] = filtered_assets.get(type_id, 0) + qty
+        user_assets = filtered_assets
 
         if user_assets:
             price_data = _fetch_fuzzwork_prices(list(user_assets.keys()))
@@ -1312,9 +1393,14 @@ def material_exchange_sell(request, tokens):
         if selected_location_id:
             sell_redirect_url = f"{sell_redirect_url}?location={int(selected_location_id)}"
 
-        user_assets, scope_missing = _fetch_user_assets_for_structure(
+        (
+            _all_sell_assets,
+            _all_sell_assets_by_character,
+            all_sell_assets_by_location,
+            scope_missing,
+        ) = _fetch_user_assets_for_structure_data(
             request.user,
-            selected_location_id,
+            sell_structure_ids,
             config=config,
         )
         if scope_missing:
@@ -1323,23 +1409,36 @@ def material_exchange_sell(request, tokens):
             _ensure_sell_assets_refresh_started(request.user)
             return redirect(sell_redirect_url)
 
-        if not user_assets:
+        selected_location_assets_raw = all_sell_assets_by_location.get(
+            int(selected_location_id), {}
+        )
+        if not selected_location_assets_raw:
             messages.error(
                 request,
                 _("No items available to sell at this location."),
             )
             return redirect(sell_redirect_url)
 
+        allowed_type_ids_cache: dict[int, set[int] | None] = {}
+        selected_location_allowed_type_ids = _get_allowed_type_ids_for_config(
+            config,
+            "sell",
+            structure_id=selected_location_id,
+        )
+        allowed_type_ids_cache[int(selected_location_id)] = (
+            selected_location_allowed_type_ids
+        )
+
+        user_assets = dict(selected_location_assets_raw)
         pre_filter_count = len(user_assets)
 
         # Apply market group filter strictly (empty config means no allowed items)
         try:
-            allowed_type_ids = _get_allowed_type_ids_for_config(config, "sell")
-            if allowed_type_ids is not None:
+            if selected_location_allowed_type_ids is not None:
                 user_assets = {
                     tid: qty
                     for tid, qty in user_assets.items()
-                    if tid in allowed_type_ids
+                    if tid in selected_location_allowed_type_ids
                 }
         except Exception as exc:
             logger.warning("Failed to apply market group filter: %s", exc)
@@ -1393,11 +1492,53 @@ def material_exchange_sell(request, tokens):
             user_qty = user_assets.get(type_id)
             if user_qty is None:
                 type_name = get_type_name(type_id)
-                errors.append(
-                    _(
-                        f"{type_name} is no longer available at {active_location_name}. Please refresh the page and try again."
-                    )
+                selected_raw_qty = int(selected_location_assets_raw.get(type_id, 0) or 0)
+                other_locations = _find_sell_locations_for_type(
+                    config=config,
+                    sell_structure_ids=sell_structure_ids,
+                    sell_structure_name_map=sell_structure_name_map,
+                    user_assets_by_location=all_sell_assets_by_location,
+                    type_id=type_id,
+                    exclude_location_id=selected_location_id,
+                    allowed_type_ids_cache=allowed_type_ids_cache,
                 )
+                location_hints = ", ".join(
+                    f"{entry['name']} ({int(entry['quantity']):,})"
+                    for entry in other_locations
+                )
+
+                if (
+                    selected_raw_qty > 0
+                    and selected_location_allowed_type_ids is not None
+                    and type_id not in selected_location_allowed_type_ids
+                ):
+                    if location_hints:
+                        errors.append(
+                            _(
+                                f"{type_name} is not accepted at {active_location_name}. "
+                                f"It is accepted at: {location_hints}."
+                            )
+                        )
+                    else:
+                        errors.append(
+                            _(
+                                f"{type_name} is not accepted at {active_location_name} "
+                                "and is not accepted in other configured sell locations."
+                            )
+                        )
+                elif location_hints:
+                    errors.append(
+                        _(
+                            f"{type_name} is no longer available at {active_location_name}. "
+                            f"You can sell it at: {location_hints}."
+                        )
+                    )
+                else:
+                    errors.append(
+                        _(
+                            f"{type_name} is no longer available at {active_location_name}. Please refresh the page and try again."
+                        )
+                    )
                 continue
 
             if qty > user_qty:
@@ -1583,32 +1724,55 @@ def material_exchange_sell(request, tokens):
 
         # Apply market group filter strictly (same as POST + Index)
         try:
-            allowed_type_ids = _get_allowed_type_ids_for_config(config, "sell")
-            if allowed_type_ids is not None:
-                user_assets = {
-                    tid: qty
-                    for tid, qty in user_assets.items()
-                    if tid in allowed_type_ids
-                }
-                user_assets_by_character = {
-                    character_id: {
-                        tid: qty
-                        for tid, qty in char_assets.items()
-                        if tid in allowed_type_ids
-                    }
-                    for character_id, char_assets in user_assets_by_character.items()
-                }
-                user_assets_by_location = {
-                    location_id: {
+            allowed_type_ids_by_location: dict[int, set[int] | None] = {
+                int(sid): _get_allowed_type_ids_for_config(
+                    config,
+                    "sell",
+                    structure_id=int(sid),
+                )
+                for sid in sell_structure_ids
+            }
+
+            filtered_by_location: dict[int, dict[int, int]] = {}
+            for location_id, loc_assets in user_assets_by_location.items():
+                allowed_type_ids = allowed_type_ids_by_location.get(int(location_id))
+                if allowed_type_ids is None:
+                    filtered_loc_assets = dict(loc_assets)
+                else:
+                    filtered_loc_assets = {
                         tid: qty
                         for tid, qty in loc_assets.items()
                         if tid in allowed_type_ids
                     }
-                    for location_id, loc_assets in user_assets_by_location.items()
-                }
-                logger.info(
-                    f"SELL DEBUG: {len(user_assets)} items after market group filter"
+                filtered_by_location[int(location_id)] = filtered_loc_assets
+            user_assets_by_location = filtered_by_location
+
+            filtered_user_assets: dict[int, int] = {}
+            for loc_assets in user_assets_by_location.values():
+                for type_id, qty in loc_assets.items():
+                    filtered_user_assets[type_id] = (
+                        filtered_user_assets.get(type_id, 0) + qty
+                    )
+            user_assets = filtered_user_assets
+
+            if len(sell_structure_ids) <= 1 and sell_structure_ids:
+                single_location_id = int(sell_structure_ids[0])
+                single_location_allowed = allowed_type_ids_by_location.get(
+                    single_location_id
                 )
+                if single_location_allowed is not None:
+                    user_assets_by_character = {
+                        character_id: {
+                            tid: qty
+                            for tid, qty in char_assets.items()
+                            if tid in single_location_allowed
+                        }
+                        for character_id, char_assets in user_assets_by_character.items()
+                    }
+
+            logger.info(
+                f"SELL DEBUG: {len(user_assets)} items after market group filter"
+            )
         except Exception as exc:
             logger.warning("Failed to apply market group filter (GET): %s", exc)
 

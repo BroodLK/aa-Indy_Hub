@@ -1,6 +1,7 @@
 """Material Exchange Configuration views."""
 
 # Standard Library
+import json
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -252,6 +253,7 @@ def material_exchange_config(request, tokens):
         if config
         else []
     )
+    selected_sell_market_groups_by_structure: dict[str, list[int] | None] = {}
 
     selected_sell_structures: list[dict[str, object]] = []
     selected_buy_structures: list[dict[str, object]] = []
@@ -274,6 +276,31 @@ def material_exchange_config(request, tokens):
             {"id": int(sid), "name": buy_name_map.get(int(sid), "")}
             for sid in buy_ids
         ]
+        sell_group_map = config.get_sell_market_group_map()
+        if sell_group_map:
+            for sid in sell_ids:
+                sid_int = int(sid)
+                if sid_int not in sell_group_map:
+                    continue
+                groups = sell_group_map[sid_int]
+                if groups is None:
+                    selected_sell_market_groups_by_structure[str(sid_int)] = None
+                    continue
+                selected_sell_market_groups_by_structure[str(sid_int)] = [
+                    int(gid)
+                    for gid in groups
+                    if not allowed_choice_ids or int(gid) in allowed_choice_ids
+                ]
+        elif selected_market_groups_sell:
+            fallback_sell_groups = [
+                int(gid)
+                for gid in selected_market_groups_sell
+                if not allowed_choice_ids or int(gid) in allowed_choice_ids
+            ]
+            for sid in sell_ids:
+                selected_sell_market_groups_by_structure[str(int(sid))] = list(
+                    fallback_sell_groups
+                )
 
     market_group_search_index = {}
     try:
@@ -299,6 +326,7 @@ def material_exchange_config(request, tokens):
         "market_group_choices": market_group_choices,
         "selected_market_groups_buy": selected_market_groups_buy,
         "selected_market_groups_sell": selected_market_groups_sell,
+        "selected_sell_market_groups_by_structure": selected_sell_market_groups_by_structure,
         "market_group_search_index": market_group_search_index,
         "selected_sell_structures": selected_sell_structures,
         "selected_buy_structures": selected_buy_structures,
@@ -1285,6 +1313,9 @@ def _handle_config_save(request, existing_config):
     buy_markup_base = request.POST.get("buy_markup_base", "buy")
     allowed_market_groups_buy_raw = request.POST.getlist("allowed_market_groups_buy")
     allowed_market_groups_sell_raw = request.POST.getlist("allowed_market_groups_sell")
+    allowed_market_groups_sell_by_structure_raw = (
+        request.POST.get("allowed_market_groups_sell_by_structure_json", "") or ""
+    ).strip()
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
@@ -1380,6 +1411,44 @@ def _handle_config_save(request, existing_config):
             _("Buy locations are required when buy orders are enabled."),
         )
         return redirect("indy_hub:material_exchange_config")
+
+    allowed_market_groups_sell_by_structure: dict[str, list[int] | None] = {}
+    sell_group_payload_was_submitted = bool(allowed_market_groups_sell_by_structure_raw)
+    if sell_group_payload_was_submitted:
+        try:
+            payload = json.loads(allowed_market_groups_sell_by_structure_raw)
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            for raw_sid, raw_groups in payload.items():
+                try:
+                    sid = int(raw_sid)
+                except (TypeError, ValueError):
+                    continue
+                if sid not in sell_structure_ids:
+                    continue
+
+                if raw_groups is None:
+                    allowed_market_groups_sell_by_structure[str(sid)] = None
+                    continue
+
+                if not isinstance(raw_groups, (list, tuple, set)):
+                    continue
+
+                parsed_groups = _parse_group_ids([str(gid) for gid in raw_groups])
+                allowed_market_groups_sell_by_structure[str(sid)] = parsed_groups
+
+        # Ensure every selected sell structure has an explicit rule.
+        # Missing entries default to "all groups allowed".
+        for sid in sell_structure_ids:
+            sid_key = str(int(sid))
+            if sid_key not in allowed_market_groups_sell_by_structure:
+                allowed_market_groups_sell_by_structure[sid_key] = None
+    elif allowed_market_groups_sell:
+        for sid in sell_structure_ids:
+            allowed_market_groups_sell_by_structure[str(int(sid))] = list(
+                allowed_market_groups_sell
+            )
 
     structure_flags_by_id: dict[int, set[str]] = {}
     allowed_structure_ids: set[int] = set()
@@ -1522,6 +1591,9 @@ def _handle_config_save(request, existing_config):
             existing_config.location_match_mode = location_match_mode
             existing_config.allowed_market_groups_buy = allowed_market_groups_buy
             existing_config.allowed_market_groups_sell = allowed_market_groups_sell
+            existing_config.allowed_market_groups_sell_by_structure = (
+                allowed_market_groups_sell_by_structure
+            )
             existing_config.is_active = is_active
             existing_config.save()
             messages.success(
@@ -1548,6 +1620,7 @@ def _handle_config_save(request, existing_config):
                 location_match_mode=location_match_mode,
                 allowed_market_groups_buy=allowed_market_groups_buy,
                 allowed_market_groups_sell=allowed_market_groups_sell,
+                allowed_market_groups_sell_by_structure=allowed_market_groups_sell_by_structure,
                 is_active=is_active,
             )
             messages.success(

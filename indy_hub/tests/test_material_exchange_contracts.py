@@ -594,6 +594,122 @@ class ContractValidationTaskTest(TestCase):
         self.assertIn("- 449 Hyperion", details)
         self.assertNotIn("Type 81348", details)
 
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts._is_type_accepted_for_sell_location"
+    )
+    def test_build_sell_surplus_item_location_guidance_recommends_other_location(
+        self, mock_is_type_accepted
+    ):
+        """Surplus guidance should suggest configured sell locations that accept the item."""
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            _build_sell_surplus_item_location_guidance,
+        )
+
+        self.config.sell_structure_ids = [70000001, 70000002]
+        self.config.sell_structure_names = ["Alpha Hub", "Beta Hub"]
+        self.config.allowed_market_groups_sell_by_structure = {
+            "70000001": [100],
+            "70000002": [200],
+        }
+        self.config.save(
+            update_fields=[
+                "sell_structure_ids",
+                "sell_structure_names",
+                "allowed_market_groups_sell_by_structure",
+            ]
+        )
+
+        def _acceptance_side_effect(*args, **kwargs):
+            location_id = int(kwargs.get("location_id"))
+            if location_id == 70000001:
+                return False
+            if location_id == 70000002:
+                return True
+            return False
+
+        mock_is_type_accepted.side_effect = _acceptance_side_effect
+
+        guidance = _build_sell_surplus_item_location_guidance(
+            config=self.config,
+            contract_location_id=70000001,
+            surplus_type_ids=[34],
+            type_names={34: "Tritanium"},
+        )
+
+        self.assertIn("Sell-location guidance:", guidance)
+        self.assertIn("Tritanium", guidance)
+        self.assertIn("accepted at Beta Hub", guidance)
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts._build_sell_surplus_item_location_guidance"
+    )
+    def test_items_mismatch_anomaly_includes_sell_location_guidance(
+        self,
+        mock_build_guidance,
+        mock_notify_multi,
+        mock_notify_user,
+        mock_user_chars,
+    ):
+        """Sell items mismatch anomaly should include sell-location recommendations."""
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        guidance_text = (
+            "Sell-location guidance:\n"
+            "- Isogen: not accepted at this contract location; accepted at Beta Hub."
+        )
+        mock_build_guidance.return_value = guidance_text
+
+        seller_char_id = 111111111
+        mock_user_chars.return_value = [seller_char_id]
+
+        mismatch_contract = ESIContract.objects.create(
+            contract_id=4210,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=self.sell_order.total_price,
+            title=self.sell_order.order_reference,
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+        )
+        ESIContractItem.objects.create(
+            contract=mismatch_contract,
+            record_id=42101,
+            type_id=34,
+            quantity=999,
+            is_included=True,
+        )
+        ESIContractItem.objects.create(
+            contract=mismatch_contract,
+            record_id=42102,
+            type_id=37,
+            quantity=3,
+            is_included=True,
+        )
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
+        self.assertIn("Sell-location guidance:", self.sell_order.notes)
+        self.assertIn("accepted at Beta Hub", self.sell_order.notes)
+
+        self.assertTrue(mock_notify_user.called)
+        notify_message = mock_notify_user.call_args[0][2]
+        self.assertIn("Sell-location guidance:", notify_message)
+        self.assertIn("accepted at Beta Hub", notify_message)
+        mock_notify_multi.assert_called()
+
 
 class BuyOrderValidationTaskTest(TestCase):
     """Tests for buy order validation task behavior."""

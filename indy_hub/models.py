@@ -1961,6 +1961,14 @@ class MaterialExchangeConfig(models.Model):
             "List of market group IDs allowed for selling. Empty = all industry market groups allowed."
         ),
     )
+    allowed_market_groups_sell_by_structure = models.JSONField(
+        blank=True,
+        default=dict,
+        help_text=_(
+            "Per-sell-location market group rules. Key = structure ID. "
+            "Value = list of market group IDs, or null to allow all groups."
+        ),
+    )
 
     # Stock sync
     last_stock_sync = models.DateTimeField(blank=True, null=True)
@@ -2045,6 +2053,48 @@ class MaterialExchangeConfig(models.Model):
             except (TypeError, ValueError):
                 pass
         return mapping
+
+    def get_sell_market_group_map(self) -> dict[int, list[int] | None]:
+        """Return per-sell-location market group rules keyed by structure ID.
+
+        Mapping values:
+        - `None`: all groups allowed for that structure.
+        - `list[int]`: explicitly allowed grouped market IDs for that structure.
+        """
+
+        raw_mapping = getattr(self, "allowed_market_groups_sell_by_structure", None)
+        if not isinstance(raw_mapping, dict):
+            return {}
+
+        normalized: dict[int, list[int] | None] = {}
+        for raw_sid, raw_groups in raw_mapping.items():
+            try:
+                sid = int(raw_sid)
+            except (TypeError, ValueError):
+                continue
+            if sid <= 0:
+                continue
+
+            if raw_groups is None:
+                normalized[sid] = None
+                continue
+
+            if not isinstance(raw_groups, (list, tuple, set)):
+                continue
+
+            groups: list[int] = []
+            for raw_gid in raw_groups:
+                try:
+                    gid = int(raw_gid)
+                except (TypeError, ValueError):
+                    continue
+                if gid <= 0:
+                    continue
+                if gid not in groups:
+                    groups.append(gid)
+            normalized[sid] = groups
+
+        return normalized
 
 
 class CachedCorporationAsset(models.Model):
