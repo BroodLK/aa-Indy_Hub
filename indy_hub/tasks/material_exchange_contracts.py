@@ -81,6 +81,7 @@ from indy_hub.services.esi_client import (
     shared_client,
 )
 from indy_hub.utils.analytics import emit_analytics_event
+from indy_hub.utils.eve import get_type_name
 
 logger = get_extension_logger(__name__)
 
@@ -2136,15 +2137,23 @@ def _build_items_mismatch_details(contract, order) -> str:
     actual_by_type: dict[int, int] = {}
     type_names: dict[int, str] = {}
 
+    def _resolved_type_name(type_id: int, preferred_name: str = "") -> str:
+        name = str(preferred_name or "").strip()
+        if name:
+            return name
+        try:
+            resolved = str(get_type_name(int(type_id)) or "").strip()
+        except Exception:
+            resolved = ""
+        return resolved or f"Type {int(type_id)}"
+
     for order_item in order_items:
         type_id = int(order_item.type_id)
         expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(
             order_item.quantity
         )
         if type_id not in type_names:
-            type_names[type_id] = (
-                order_item.type_name or ""
-            ).strip() or f"Type {type_id}"
+            type_names[type_id] = _resolved_type_name(type_id, order_item.type_name)
 
     for contract_item in included_items:
         type_id = int(contract_item.type_id)
@@ -2152,7 +2161,7 @@ def _build_items_mismatch_details(contract, order) -> str:
             contract_item.quantity
         )
         if type_id not in type_names:
-            type_names[type_id] = f"Type {type_id}"
+            type_names[type_id] = _resolved_type_name(type_id)
 
     all_type_ids = sorted(set(expected_by_type.keys()) | set(actual_by_type.keys()))
     missing_lines: list[str] = []
@@ -2161,7 +2170,7 @@ def _build_items_mismatch_details(contract, order) -> str:
     for type_id in all_type_ids:
         expected_qty = expected_by_type.get(type_id, 0)
         actual_qty = actual_by_type.get(type_id, 0)
-        type_name = type_names.get(type_id, f"Type {type_id}")
+        type_name = type_names.get(type_id) or _resolved_type_name(type_id)
 
         if expected_qty > actual_qty:
             missing_lines.append(f"- {expected_qty - actual_qty:,} {type_name}")

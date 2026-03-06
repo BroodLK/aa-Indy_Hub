@@ -416,20 +416,123 @@ def _get_material_exchange_admins() -> list[User]:
 
 
 def _fetch_user_assets_for_structure(
-    user, structure_ids: int | list[int], *, allow_refresh: bool = True
+    user,
+    structure_ids: int | list[int],
+    *,
+    allow_refresh: bool = True,
+    config: MaterialExchangeConfig | None = None,
 ) -> tuple[dict[int, int], bool]:
     """Return aggregated asset quantities for the user's characters at structure(s) using cache."""
 
     aggregated, _by_character, _by_location, scope_missing = (
         _fetch_user_assets_for_structure_data(
-            user, structure_ids, allow_refresh=allow_refresh
+            user,
+            structure_ids,
+            allow_refresh=allow_refresh,
+            config=config,
         )
     )
     return aggregated, scope_missing
 
 
+def _get_ship_type_ids(type_ids: set[int]) -> set[int]:
+    """Return type IDs that are ships (category 6) for the provided IDs."""
+    if not type_ids:
+        return set()
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        return set(
+            ItemType.objects.filter(
+                id__in=type_ids,
+                group__category_id=6,  # EVE SDE ship category
+            ).values_list("id", flat=True)
+        )
+    except Exception:
+        return set()
+
+
+def _build_fitted_ship_excluded_item_ids(assets: list[dict]) -> set[int]:
+    """Return item_ids to exclude when fitted ships are not allowed."""
+    if not assets:
+        return set()
+
+    item_assets: dict[int, dict] = {}
+    children_by_parent: dict[int, list[dict]] = {}
+    present_type_ids: set[int] = set()
+
+    for asset in assets:
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            type_id = 0
+        if type_id > 0:
+            present_type_ids.add(type_id)
+
+        item_id_raw = asset.get("item_id")
+        try:
+            item_id = int(item_id_raw) if item_id_raw is not None else 0
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id > 0:
+            item_assets[item_id] = asset
+
+        raw_location_id_raw = asset.get("raw_location_id")
+        try:
+            raw_location_id = (
+                int(raw_location_id_raw) if raw_location_id_raw is not None else 0
+            )
+        except (TypeError, ValueError):
+            raw_location_id = 0
+        if raw_location_id > 0:
+            children_by_parent.setdefault(raw_location_id, []).append(asset)
+
+    ship_type_ids = _get_ship_type_ids(present_type_ids)
+    if not ship_type_ids:
+        return set()
+
+    fitted_ship_item_ids: set[int] = set()
+    for item_id, asset in item_assets.items():
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id not in ship_type_ids:
+            continue
+        # Consider the ship fitted if it has any direct child assets.
+        if children_by_parent.get(item_id):
+            fitted_ship_item_ids.add(item_id)
+
+    if not fitted_ship_item_ids:
+        return set()
+
+    excluded_item_ids = set(fitted_ship_item_ids)
+    stack = list(fitted_ship_item_ids)
+    while stack:
+        parent_id = stack.pop()
+        for child in children_by_parent.get(parent_id, []):
+            child_item_id_raw = child.get("item_id")
+            try:
+                child_item_id = (
+                    int(child_item_id_raw) if child_item_id_raw is not None else 0
+                )
+            except (TypeError, ValueError):
+                child_item_id = 0
+            if child_item_id <= 0 or child_item_id in excluded_item_ids:
+                continue
+            excluded_item_ids.add(child_item_id)
+            stack.append(child_item_id)
+
+    return excluded_item_ids
+
+
 def _fetch_user_assets_for_structure_data(
-    user, structure_ids: int | list[int], *, allow_refresh: bool = True
+    user,
+    structure_ids: int | list[int],
+    *,
+    allow_refresh: bool = True,
+    config: MaterialExchangeConfig | None = None,
 ) -> tuple[dict[int, int], dict[int, dict[int, int]], dict[int, dict[int, int]], bool]:
     """Return aggregated and per-character asset quantities at structure(s) using cache."""
 
@@ -455,7 +558,21 @@ def _fetch_user_assets_for_structure_data(
     if not structure_id_set:
         return aggregated, by_character, by_location, scope_missing
 
+    exclude_fitted_ships = not bool(getattr(config, "allow_fitted_ships", False))
+    excluded_item_ids: set[int] = (
+        _build_fitted_ship_excluded_item_ids(assets) if exclude_fitted_ships else set()
+    )
+
     for asset in assets:
+        if excluded_item_ids:
+            item_id_raw = asset.get("item_id")
+            try:
+                item_id = int(item_id_raw) if item_id_raw is not None else 0
+            except (TypeError, ValueError):
+                item_id = 0
+            if item_id > 0 and item_id in excluded_item_ids:
+                continue
+
         try:
             location_id = int(asset.get("location_id", 0))
         except (TypeError, ValueError):
@@ -869,7 +986,10 @@ def material_exchange_index(request):
     try:
         # Avoid blocking ESI calls on index page; use cached data only
         user_assets, scope_missing = _fetch_user_assets_for_structure(
-            request.user, sell_structure_ids, allow_refresh=False
+            request.user,
+            sell_structure_ids,
+            allow_refresh=False,
+            config=config,
         )
 
         if scope_missing:
@@ -1193,7 +1313,9 @@ def material_exchange_sell(request, tokens):
             sell_redirect_url = f"{sell_redirect_url}?location={int(selected_location_id)}"
 
         user_assets, scope_missing = _fetch_user_assets_for_structure(
-            request.user, selected_location_id
+            request.user,
+            selected_location_id,
+            config=config,
         )
         if scope_missing:
             # Avoid transient flash messaging for missing scopes; the page already
@@ -1432,6 +1554,7 @@ def material_exchange_sell(request, tokens):
             request.user,
             sell_structure_ids,
             allow_refresh=allow_refresh,
+            config=config,
         )
     )
     if sell_assets_progress.get("error") == "no_assets_fetched" and (

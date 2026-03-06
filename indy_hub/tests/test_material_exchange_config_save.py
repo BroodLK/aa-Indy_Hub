@@ -78,16 +78,19 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
     def test_checked_checkboxes_are_saved_true(self):
         self.config.notify_admins_on_sell_anomaly = False
         self.config.enforce_jita_price_bounds = False
+        self.config.allow_fitted_ships = False
         self.config.save(
             update_fields=[
                 "notify_admins_on_sell_anomaly",
                 "enforce_jita_price_bounds",
+                "allow_fitted_ships",
             ]
         )
 
         post_data = self._base_post_data()
         post_data["notify_admins_on_sell_anomaly"] = "on"
         post_data["enforce_jita_price_bounds"] = "on"
+        post_data["allow_fitted_ships"] = "on"
 
         request = self._build_request(post_data)
         response = _handle_config_save(request, self.config)
@@ -96,6 +99,21 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.config.refresh_from_db()
         self.assertTrue(self.config.notify_admins_on_sell_anomaly)
         self.assertTrue(self.config.enforce_jita_price_bounds)
+        self.assertTrue(self.config.allow_fitted_ships)
+
+    def test_unchecked_allow_fitted_ships_is_saved_false(self):
+        self.config.allow_fitted_ships = True
+        self.config.save(update_fields=["allow_fitted_ships"])
+
+        post_data = self._base_post_data()
+        post_data.pop("allow_fitted_ships", None)
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertFalse(self.config.allow_fitted_ships)
 
     def test_is_active_keeps_existing_value_when_field_missing(self):
         self.config.is_active = False

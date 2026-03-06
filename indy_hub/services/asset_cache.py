@@ -1184,6 +1184,8 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
             all_assets.append(
                 {
                     "character_id": int(character_id),
+                    "item_id": row.item_id,
+                    "raw_location_id": row.raw_location_id,
                     "location_id": row.location_id,
                     "location_flag": row.location_flag,
                     "type_id": row.type_id,
@@ -1238,6 +1240,8 @@ def get_user_assets_cached(
         assets = [
             {
                 "character_id": row.character_id,
+                "item_id": row.item_id,
+                "raw_location_id": row.raw_location_id,
                 "location_id": row.location_id,
                 "location_flag": row.location_flag,
                 "type_id": row.type_id,
@@ -1257,6 +1261,8 @@ def get_user_assets_cached(
     assets = [
         {
             "character_id": row.character_id,
+            "item_id": row.item_id,
+            "raw_location_id": row.raw_location_id,
             "location_id": row.location_id,
             "location_flag": row.location_flag,
             "type_id": row.type_id,

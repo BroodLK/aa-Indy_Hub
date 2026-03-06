@@ -256,9 +256,11 @@ def material_exchange_config(request, tokens):
     selected_sell_structures: list[dict[str, object]] = []
     selected_buy_structures: list[dict[str, object]] = []
     buy_enabled = True
+    allow_fitted_ships = False
     location_match_mode = "name_or_id"
     if config:
         buy_enabled = bool(getattr(config, "buy_enabled", True))
+        allow_fitted_ships = bool(getattr(config, "allow_fitted_ships", False))
         location_match_mode = getattr(config, "location_match_mode", None) or "name_or_id"
         sell_ids = config.get_sell_structure_ids(include_primary=False)
         buy_ids = config.get_buy_structure_ids(include_primary=False)
@@ -301,6 +303,7 @@ def material_exchange_config(request, tokens):
         "selected_sell_structures": selected_sell_structures,
         "selected_buy_structures": selected_buy_structures,
         "buy_enabled": buy_enabled,
+        "allow_fitted_ships": allow_fitted_ships,
         "location_match_mode": location_match_mode,
     }
 
@@ -1289,6 +1292,7 @@ def _handle_config_save(request, existing_config):
         request.POST.get("notify_admins_on_sell_anomaly") == "on"
     )
     buy_enabled = request.POST.get("buy_enabled") == "on"
+    allow_fitted_ships = request.POST.get("allow_fitted_ships") == "on"
     location_match_mode = request.POST.get("location_match_mode") or "name_or_id"
 
     raw_is_active = request.POST.get("is_active")
@@ -1514,6 +1518,7 @@ def _handle_config_save(request, existing_config):
             existing_config.buy_structure_ids = buy_structure_ids
             existing_config.buy_structure_names = buy_structure_names
             existing_config.buy_enabled = buy_enabled
+            existing_config.allow_fitted_ships = allow_fitted_ships
             existing_config.location_match_mode = location_match_mode
             existing_config.allowed_market_groups_buy = allowed_market_groups_buy
             existing_config.allowed_market_groups_sell = allowed_market_groups_sell
@@ -1539,6 +1544,7 @@ def _handle_config_save(request, existing_config):
                 buy_structure_ids=buy_structure_ids,
                 buy_structure_names=buy_structure_names,
                 buy_enabled=buy_enabled,
+                allow_fitted_ships=allow_fitted_ships,
                 location_match_mode=location_match_mode,
                 allowed_market_groups_buy=allowed_market_groups_buy,
                 allowed_market_groups_sell=allowed_market_groups_sell,

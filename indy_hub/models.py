@@ -1877,6 +1877,12 @@ class MaterialExchangeConfig(models.Model):
         default=True,
         help_text=_("Enable/disable Material Exchange buy orders."),
     )
+    allow_fitted_ships = models.BooleanField(
+        default=False,
+        help_text=_(
+            "When enabled, fitted ships and their fitted/cargo contents are allowed in sell listings."
+        ),
+    )
     LOCATION_MATCH_MODE_CHOICES = [
         ("name_or_id", _("Match by name or ID")),
         ("strict_id", _("Match by ID only")),

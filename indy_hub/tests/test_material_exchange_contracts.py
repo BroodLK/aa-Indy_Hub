@@ -3,11 +3,13 @@ Tests for Material Exchange contract validation system
 """
 
 # Standard Library
+from datetime import timedelta
 from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.utils import timezone
 
 # AA Example App
 # Local
@@ -548,6 +550,49 @@ class ContractValidationTaskTest(TestCase):
         self.assertIn("Surplus:", notify_message)
         self.assertIn("- 3 Isogen", notify_message)
         mock_notify_multi.assert_called()
+
+    @patch("indy_hub.tasks.material_exchange_contracts.get_type_name")
+    def test_build_items_mismatch_details_resolves_unknown_surplus_names(
+        self, mock_get_type_name
+    ):
+        """Surplus-only contract items should render with resolved type names."""
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+        from indy_hub.tasks.material_exchange_contracts import (
+            _build_items_mismatch_details,
+        )
+
+        mock_get_type_name.side_effect = lambda type_id: (
+            "Hyperion" if int(type_id) == 81348 else ""
+        )
+
+        mismatch_contract = ESIContract.objects.create(
+            contract_id=4202,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=111111111,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=self.sell_order.total_price,
+            title=self.sell_order.order_reference,
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+        )
+        ESIContractItem.objects.create(
+            contract=mismatch_contract,
+            record_id=42021,
+            type_id=81348,
+            quantity=449,
+            is_included=True,
+        )
+
+        details = _build_items_mismatch_details(mismatch_contract, self.sell_order)
+        self.assertIn("Surplus:", details)
+        self.assertIn("- 449 Hyperion", details)
+        self.assertNotIn("Type 81348", details)
 
 
 class BuyOrderValidationTaskTest(TestCase):
