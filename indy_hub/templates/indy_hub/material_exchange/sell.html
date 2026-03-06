@@ -172,6 +172,14 @@
                             </button>
                         </div>
                     </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="sellStockSearch">{% trans "Search items" %}</label>
+                        <input
+                            type="text"
+                            class="form-control form-control-sm"
+                            id="sellStockSearch"
+                            placeholder="{% trans 'Type an item name or type ID...' %}">
+                    </div>
                     {% if character_tabs %}
                     <div class="me-character-tabs mb-3">
                         <ul class="nav nav-pills flex-wrap gap-2">
@@ -308,6 +316,25 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const qtyInputs = document.querySelectorAll('.qty-input');
     const sellAllBtn = document.getElementById('sellAllBtn');
+    const sellStockSearch = document.getElementById('sellStockSearch');
+    const stockRows = document.querySelectorAll('.stock-row');
+
+    function applyStockFilter() {
+        if (!stockRows.length) {
+            return;
+        }
+        const query = (sellStockSearch?.value || '').trim().toLowerCase();
+        stockRows.forEach(row => {
+            const typeName = (row.dataset.typeName || '').toLowerCase();
+            const typeId = String(row.dataset.typeId || '').toLowerCase();
+            const matches = !query || typeName.includes(query) || typeId.includes(query);
+            row.classList.toggle('d-none', !matches);
+        });
+    }
+
+    if (sellStockSearch) {
+        sellStockSearch.addEventListener('input', applyStockFilter);
+    }
 
     document.addEventListener('click', function(event) {
         const button = event.target.closest('.qty-btn');
@@ -490,6 +517,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (hasInvoice) {
         updateInvoice();
     }
+    applyStockFilter();
 
     if (sellAllBtn) {
         sellAllBtn.addEventListener('click', function() {

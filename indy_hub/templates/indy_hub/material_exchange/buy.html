@@ -140,6 +140,14 @@
                     <h5 class="mb-4">
                         {% trans "Available Stock in" %} {{ buy_locations_label }}
                     </h5>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="buyStockSearch">{% trans "Search items" %}</label>
+                        <input
+                            type="text"
+                            class="form-control form-control-sm"
+                            id="buyStockSearch"
+                            placeholder="{% trans 'Type an item name or type ID...' %}">
+                    </div>
                     <form method="post" id="purchaseForm">
                         {% csrf_token %}
                         <input type="hidden" id="hidden_order_reference" name="order_reference" value="">
@@ -169,6 +177,9 @@
                                         </td>
                                         <td>
                                             <strong>{{ item.type_name }}</strong>
+                                            <div class="small text-muted">
+                                                {% trans "Location:" %} {{ buy_locations_label }} · {{ hangar_division_label }}
+                                            </div>
                                         </td>
                                         <td class="text-end">
                                             <span class="badge bg-primary">{{ item.quantity|intcomma }}</span>
@@ -257,6 +268,25 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     const qtyInputs = document.querySelectorAll('.qty-input');
+    const buyStockSearch = document.getElementById('buyStockSearch');
+    const stockRows = document.querySelectorAll('.stock-row');
+
+    function applyStockFilter() {
+        if (!stockRows.length) {
+            return;
+        }
+        const query = (buyStockSearch?.value || '').trim().toLowerCase();
+        stockRows.forEach(row => {
+            const typeName = (row.dataset.typeName || '').toLowerCase();
+            const typeId = String(row.dataset.typeId || '').toLowerCase();
+            const matches = !query || typeName.includes(query) || typeId.includes(query);
+            row.classList.toggle('d-none', !matches);
+        });
+    }
+
+    if (buyStockSearch) {
+        buyStockSearch.addEventListener('input', applyStockFilter);
+    }
 
     document.addEventListener('click', function(event) {
         const button = event.target.closest('.qty-btn');
@@ -457,6 +487,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initial update
     updateInvoice();
+    applyStockFilter();
 
     // Live stock refresh progress
     {% if stock_refreshing %}
