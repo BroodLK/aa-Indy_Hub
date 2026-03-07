@@ -985,6 +985,32 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
         return {}
 
 
+def _build_buy_stock_location_label(
+    stock_item: MaterialExchangeStock,
+    *,
+    buy_name_map: dict[int, str],
+    fallback_label: str,
+) -> str:
+    """Return a stable per-item location label for the buy table."""
+
+    labels: list[str] = []
+    for raw_name in getattr(stock_item, "source_structure_names", []) or []:
+        clean_name = str(raw_name or "").strip()
+        if clean_name and clean_name not in labels:
+            labels.append(clean_name)
+
+    for raw_structure_id in getattr(stock_item, "source_structure_ids", []) or []:
+        try:
+            structure_id = int(raw_structure_id)
+        except (TypeError, ValueError):
+            continue
+        resolved_name = (buy_name_map.get(structure_id) or f"Structure {structure_id}").strip()
+        if resolved_name and resolved_name not in labels:
+            labels.append(resolved_name)
+
+    return ", ".join(labels).strip() or str(fallback_label or "").strip()
+
+
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
 def material_exchange_index(request):
@@ -2277,6 +2303,12 @@ def material_exchange_buy(request, tokens):
             (i.type_name or "").lower(),
         )
     )
+    for stock_item in stock_items:
+        stock_item.buy_location_label = _build_buy_stock_location_label(
+            stock_item,
+            buy_name_map=buy_name_map,
+            fallback_label=buy_locations_label,
+        )
 
     if pre_filter_stock_count > 0 and not stock_items:
         messages.info(

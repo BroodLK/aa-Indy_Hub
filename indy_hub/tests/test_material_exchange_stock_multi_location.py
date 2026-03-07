@@ -69,6 +69,8 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
 
         stock = MaterialExchangeStock.objects.get(config=self.config, type_id=34)
         self.assertEqual(stock.quantity, 15)
+        self.assertEqual(stock.source_structure_ids, [1001, 1002])
+        self.assertEqual(stock.source_structure_names, ["Structure Alpha", "Structure Beta"])
 
     @patch("indy_hub.tasks.material_exchange.sync_material_exchange_prices")
     @patch("indy_hub.tasks.material_exchange.get_type_name", return_value="Tritanium")
@@ -110,3 +112,5 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
 
         stock = MaterialExchangeStock.objects.get(config=self.config, type_id=34)
         self.assertEqual(stock.quantity, 12)
+        self.assertEqual(stock.source_structure_ids, [1002])
+        self.assertEqual(stock.source_structure_names, ["Structure Beta"])

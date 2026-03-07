@@ -67,7 +67,7 @@ logger = get_extension_logger(__name__)
 # Bump these when a deployment changes how caches are normalized/derived.
 # This lets pages trigger a one-time refresh for already-cached data.
 ME_USER_ASSETS_CACHE_VERSION = 1
-ME_STOCK_SYNC_CACHE_VERSION = 1
+ME_STOCK_SYNC_CACHE_VERSION = 2
 ESI_DOWN_COOLDOWN_SECONDS = 5 * 60
 
 # Long TTL: we want this to survive normal operation, but it's OK if cache clears.
@@ -712,6 +712,7 @@ def _sync_stock_impl():
             return
 
         stock_updates: dict[int, int] = {}
+        stock_source_structures: dict[int, set[int]] = {}
 
         corp_assets, assets_scope_missing = get_corp_assets_cached(
             int(config.corporation_id)
@@ -784,7 +785,7 @@ def _sync_stock_impl():
             # In those cases the child asset location_id points to the container item_id,
             # and the container carries the actual hangar context.
             matches_any_location = False
-            matched_structure_id: int | None = None
+            matched_structure_ids: set[int] = set()
             for location_id in effective_location_ids:
                 location_id_int = int(location_id)
                 if location_id_int < 0:
@@ -804,11 +805,7 @@ def _sync_stock_impl():
                     structure_candidates = context_to_structure_ids.get(
                         location_id_int, set()
                     )
-                    matched_structure_id = (
-                        int(next(iter(structure_candidates)))
-                        if structure_candidates
-                        else None
-                    )
+                    matched_structure_ids = {int(sid) for sid in structure_candidates}
                     break
             if not matches_any_location:
                 continue
@@ -827,10 +824,14 @@ def _sync_stock_impl():
                 quantity = 1 if asset.get("is_singleton") else 0
 
             stock_updates[type_id] = stock_updates.get(type_id, 0) + quantity
-            if matched_structure_id is not None:
-                matched_assets_by_structure[matched_structure_id] = (
-                    matched_assets_by_structure.get(matched_structure_id, 0) + quantity
-                )
+            if matched_structure_ids:
+                type_structures = stock_source_structures.setdefault(type_id, set())
+                type_structures.update(matched_structure_ids)
+                for matched_structure_id in matched_structure_ids:
+                    matched_assets_by_structure[matched_structure_id] = (
+                        matched_assets_by_structure.get(matched_structure_id, 0)
+                        + quantity
+                    )
 
         logger.info(
             "Loaded %d asset types from cache for %d buy location(s), division %s",
@@ -846,6 +847,34 @@ def _sync_stock_impl():
                     for sid, qty in sorted(matched_assets_by_structure.items())
                 ),
             )
+
+        source_structure_name_map = config.get_buy_structure_name_map()
+        source_structure_ids_to_resolve = sorted(
+            {
+                int(structure_id)
+                for structure_ids in stock_source_structures.values()
+                for structure_id in structure_ids
+                if int(structure_id) not in source_structure_name_map
+            }
+        )
+        if source_structure_ids_to_resolve:
+            try:
+                resolved_structure_names = resolve_structure_names(
+                    source_structure_ids_to_resolve,
+                    corporation_id=int(config.corporation_id),
+                    schedule_async=True,
+                )
+                for structure_id, structure_name in resolved_structure_names.items():
+                    structure_id_int = int(structure_id)
+                    structure_name_clean = (str(structure_name or "")).strip()
+                    if structure_name_clean:
+                        source_structure_name_map[structure_id_int] = structure_name_clean
+            except Exception as exc:
+                logger.debug(
+                    "Failed to resolve stock source structure names for config %s: %s",
+                    config.pk,
+                    exc,
+                )
 
         # Update MaterialExchangeStock with atomic transaction
         with transaction.atomic():
@@ -902,17 +931,35 @@ def _sync_stock_impl():
 
                 if type_id not in current_ids:
                     # New item
+                    source_structure_ids = sorted(
+                        int(sid) for sid in stock_source_structures.get(type_id, set())
+                    )
+                    source_structure_names = [
+                        source_structure_name_map.get(int(sid))
+                        or f"Structure {int(sid)}"
+                        for sid in source_structure_ids
+                    ]
                     to_create.append(
                         MaterialExchangeStock(
                             config=config,
                             type_id=type_id,
                             type_name=type_name,
                             quantity=quantity,
+                            source_structure_ids=source_structure_ids,
+                            source_structure_names=source_structure_names,
                             last_stock_sync=now,
                         )
                     )
                 else:
                     existing_item = existing_items[type_id]
+                    source_structure_ids = sorted(
+                        int(sid) for sid in stock_source_structures.get(type_id, set())
+                    )
+                    source_structure_names = [
+                        source_structure_name_map.get(int(sid))
+                        or f"Structure {int(sid)}"
+                        for sid in source_structure_ids
+                    ]
                     # Check if quantity or type_name changed
                     if quantity != current_data[type_id]:
                         existing_item.quantity = quantity
@@ -920,6 +967,8 @@ def _sync_stock_impl():
                     # Always update type_name in case it changed
                     if existing_item.type_name != type_name:
                         existing_item.type_name = type_name
+                    existing_item.source_structure_ids = source_structure_ids
+                    existing_item.source_structure_names = source_structure_names
                     # Always update last_stock_sync and updated_at for all existing items
                     existing_item.last_stock_sync = now
                     existing_item.updated_at = now
@@ -942,7 +991,14 @@ def _sync_stock_impl():
             if to_update:
                 MaterialExchangeStock.objects.bulk_update(
                     to_update,
-                    fields=["quantity", "type_name", "last_stock_sync", "updated_at"],
+                    fields=[
+                        "quantity",
+                        "type_name",
+                        "source_structure_ids",
+                        "source_structure_names",
+                        "last_stock_sync",
+                        "updated_at",
+                    ],
                     batch_size=500,
                 )
                 logger.info(

@@ -2217,6 +2217,18 @@ class MaterialExchangeStock(models.Model):
     type_id = models.IntegerField(help_text=_("EVE item type ID"))
     type_name = models.CharField(max_length=255, blank=True, db_index=True)
     quantity = models.BigIntegerField(default=0)
+    source_structure_ids = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_("Buy structure IDs where this stock type currently exists."),
+    )
+    source_structure_names = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Cached buy structure names aligned with source_structure_ids (same order)."
+        ),
+    )
 
     # Pricing cache (from Jita via Fuzzwork)
     jita_buy_price = models.DecimalField(
