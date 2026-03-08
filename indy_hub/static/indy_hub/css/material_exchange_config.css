@@ -573,6 +573,54 @@ html[data-theme="darkly"] .me-config .me-pill-success {
     color: rgba(255, 255, 255, 0.85);
 }
 
+/* Market group tree selector */
+.me-config .me-market-tree {
+    max-height: 24rem;
+    overflow: auto;
+    border: 1px solid var(--me-border);
+    border-radius: 0.6rem;
+    padding: 0.45rem 0.5rem;
+    background: rgba(0, 0, 0, 0.02);
+}
+
+html[data-theme="darkly"] .me-config .me-market-tree {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.me-config .me-market-tree-node + .me-market-tree-node {
+    margin-top: 0.2rem;
+}
+
+.me-config .me-market-tree-row {
+    padding: 0.12rem 0.15rem;
+    border-radius: 0.35rem;
+}
+
+.me-config .me-market-tree-row:hover {
+    background: rgba(13, 110, 253, 0.08);
+}
+
+.me-config .me-market-tree-label {
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.me-config .me-market-tree-children {
+    margin-left: 1.5rem;
+    margin-top: 0.1rem;
+    border-left: 1px dashed var(--me-border);
+    padding-left: 0.45rem;
+}
+
+.me-config .me-market-tree-row-child .me-market-tree-label {
+    font-size: 0.86rem;
+    font-weight: 500;
+}
+
+.me-config .me-market-tree-disabled {
+    opacity: 0.65;
+}
+
 /* SELL vs BUY accenting for dual lists */
 .me-config .me-dual-list-sell .me-dual-list-select {
     border-color: rgba(var(--bs-info-rgb), 0.35);

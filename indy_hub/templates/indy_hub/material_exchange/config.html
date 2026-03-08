@@ -503,12 +503,15 @@
                                     </h5>
                                 </div>
                                 <div class="mb-2">
-                                    <label class="form-label fw-semibold" for="marketGroupSearch">{% trans "Search everything" %}</label>
+                                    <div class="d-flex align-items-center justify-content-between gap-2">
+                                        <label class="form-label fw-semibold mb-0" for="marketGroupSearch">{% trans "Search everything" %}</label>
+                                        <button type="button" class="btn btn-link btn-sm p-0" id="toggleGranularChoices">{% trans "Granular choices" %}</button>
+                                    </div>
                                     <input
                                         type="text"
                                         class="form-control form-control-sm"
                                         id="marketGroupSearch"
-                                        placeholder="{% trans 'Type any market group or item name…' %}">
+                                        placeholder="{% trans 'Type any market group or item name...' %}">
                                     <div class="form-text">
                                         {% trans "Tip: you can type an item name (e.g. Mexallon) to reveal its market group, then add that group or allow everything." %}
                                     </div>
@@ -524,6 +527,8 @@
                                                 type="hidden"
                                                 name="allowed_market_groups_sell_by_structure_json"
                                                 id="allowedMarketGroupsSellByStructureJson">
+                                            <input type="hidden" name="allowed_market_groups_sell_json" id="allowedMarketGroupsSellJson">
+                                            <input type="hidden" name="allowed_market_groups_buy_json" id="allowedMarketGroupsBuyJson">
                                             <label class="form-label fw-semibold"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span></label>
                                             <div class="mb-2">
                                                 <label class="form-label fw-semibold mb-1" for="sellMarketGroupStructureSelect">{% trans "Sell Location" %}</label>
@@ -541,69 +546,12 @@
                                                     {% trans "Disable 'all' to choose only specific accepted groups for this location." %}
                                                 </div>
                                             </div>
-                                            <div class="row g-1 me-dual-list me-dual-list-sell">
-                                                <div class="col-5">
-                                                    <div class="small text-muted mb-1">{% trans "Available" %}</div>
-                                                    <select class="form-select form-select-sm" multiple size="10" id="marketGroupsSellAvailable">
-                                                        {% for group in market_group_choices %}
-                                                            {% if group.id not in selected_market_groups_sell %}
-                                                                <option value="{{ group.id }}">{{ group.label }}</option>
-                                                            {% endif %}
-                                                        {% endfor %}
-                                                    </select>
-                                                </div>
-                                                <div class="col-2 d-flex flex-column align-items-center justify-content-center gap-2 me-dual-list-controls">
-                                                    <button type="button" class="btn btn-info btn-sm" id="sellAddBtn" title="{% trans 'Add' %}">
-                                                        <i class="fas fa-chevron-right"></i>
-                                                    </button>
-                                                    <button type="button" class="btn btn-info btn-sm" id="sellRemoveBtn" title="{% trans 'Remove' %}">
-                                                        <i class="fas fa-chevron-left"></i>
-                                                    </button>
-                                                </div>
-                                                <div class="col-5">
-                                                    <div class="small text-muted mb-1">{% trans "Selected" %}</div>
-                                                    <select name="allowed_market_groups_sell" class="form-select form-select-sm" multiple size="10" id="marketGroupsSellSelected">
-                                                        {% for group in market_group_choices %}
-                                                            {% if group.id in selected_market_groups_sell %}
-                                                                <option value="{{ group.id }}" selected>{{ group.label }}</option>
-                                                            {% endif %}
-                                                        {% endfor %}
-                                                    </select>
-                                                </div>
-                                            </div>
+                                            <div class="me-market-tree" id="sellMarketGroupTree"></div>
                                         </div>
                                         <div class="col-lg-6 me-dual-list-block">
                                             <label class="form-label fw-semibold"><span class="me-pill-success"><i class="fas fa-arrow-left"></i> {% trans "BUY - Market Groups" %}</span></label>
-                                            <div class="row g-1 me-dual-list me-dual-list-buy">
-                                                <div class="col-5">
-                                                    <div class="small text-muted mb-1">{% trans "Available" %}</div>
-                                                    <select class="form-select form-select-sm" multiple size="10" id="marketGroupsBuyAvailable">
-                                                        {% for group in market_group_choices %}
-                                                            {% if group.id not in selected_market_groups_buy %}
-                                                                <option value="{{ group.id }}">{{ group.label }}</option>
-                                                            {% endif %}
-                                                        {% endfor %}
-                                                    </select>
-                                                </div>
-                                                <div class="col-2 d-flex flex-column align-items-center justify-content-center gap-2 me-dual-list-controls">
-                                                    <button type="button" class="btn btn-success btn-sm" id="buyAddBtn" title="{% trans 'Add' %}">
-                                                        <i class="fas fa-chevron-right"></i>
-                                                    </button>
-                                                    <button type="button" class="btn btn-success btn-sm" id="buyRemoveBtn" title="{% trans 'Remove' %}">
-                                                        <i class="fas fa-chevron-left"></i>
-                                                    </button>
-                                                </div>
-                                                <div class="col-5">
-                                                    <div class="small text-muted mb-1">{% trans "Selected" %}</div>
-                                                    <select name="allowed_market_groups_buy" class="form-select form-select-sm" multiple size="10" id="marketGroupsBuySelected">
-                                                        {% for group in market_group_choices %}
-                                                            {% if group.id in selected_market_groups_buy %}
-                                                                <option value="{{ group.id }}" selected>{{ group.label }}</option>
-                                                            {% endif %}
-                                                        {% endfor %}
-                                                    </select>
-                                                </div>
-                                            </div>
+                                            <div class="form-text mb-2">{% trans "Granular mode applies to both SELL and BUY trees." %}</div>
+                                            <div class="me-market-tree" id="buyMarketGroupTree"></div>
                                         </div>
                                     </div>
                                 {% endif %}
@@ -665,6 +613,8 @@
 {{ selected_sell_structures|json_script:"selectedSellStructures" }}
 {{ selected_buy_structures|json_script:"selectedBuyStructures" }}
 {{ selected_sell_market_groups_by_structure|json_script:"selectedSellMarketGroupsByStructure" }}
+{{ selected_market_groups_buy|json_script:"selectedMarketGroupsBuy" }}
+{{ market_group_tree|json_script:"marketGroupTreeData" }}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -999,31 +949,54 @@ function validateForm() {
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('marketGroupSearch');
     const searchDataEl = document.getElementById('marketGroupSearchIndex');
+    const treeDataEl = document.getElementById('marketGroupTreeData');
+    const selectedBuyGroupsEl = document.getElementById('selectedMarketGroupsBuy');
     const sellStructureSelect = document.getElementById('sellStructureSelect');
     const sellMarketGroupStructureSelect = document.getElementById('sellMarketGroupStructureSelect');
     const sellAllowAllToggle = document.getElementById('sellMarketGroupsAllowAll');
     const sellGroupMapInput = document.getElementById('allowedMarketGroupsSellByStructureJson');
-    const sellAvailable = document.getElementById('marketGroupsSellAvailable');
-    const sellSelected = document.getElementById('marketGroupsSellSelected');
-    const buyAvailable = document.getElementById('marketGroupsBuyAvailable');
-    const buySelected = document.getElementById('marketGroupsBuySelected');
-    const sellAddBtn = document.getElementById('sellAddBtn');
-    const sellRemoveBtn = document.getElementById('sellRemoveBtn');
-    const buyAddBtn = document.getElementById('buyAddBtn');
-    const buyRemoveBtn = document.getElementById('buyRemoveBtn');
+    const sellGroupsJsonInput = document.getElementById('allowedMarketGroupsSellJson');
+    const buyGroupsJsonInput = document.getElementById('allowedMarketGroupsBuyJson');
+    const sellTreeContainer = document.getElementById('sellMarketGroupTree');
+    const buyTreeContainer = document.getElementById('buyMarketGroupTree');
+    const granularToggleBtn = document.getElementById('toggleGranularChoices');
 
-    if (!searchInput || !sellAvailable || !sellSelected || !buyAvailable || !buySelected || !searchDataEl) {
+    if (
+        !searchInput ||
+        !searchDataEl ||
+        !treeDataEl ||
+        !sellStructureSelect ||
+        !sellMarketGroupStructureSelect ||
+        !sellGroupMapInput ||
+        !sellTreeContainer ||
+        !buyTreeContainer
+    ) {
         return;
     }
 
     let searchIndex = {};
+    let marketTree = [];
+    let initialSellGroupMap = {};
+    let initialBuyGroups = [];
+
     try {
         searchIndex = JSON.parse(searchDataEl.textContent || '{}');
     } catch (e) {
         searchIndex = {};
     }
+    try {
+        marketTree = JSON.parse(treeDataEl.textContent || '[]');
+    } catch (e) {
+        marketTree = [];
+    }
+    try {
+        initialBuyGroups = JSON.parse(
+            (selectedBuyGroupsEl ? selectedBuyGroupsEl.textContent : '[]') || '[]'
+        );
+    } catch (e) {
+        initialBuyGroups = [];
+    }
 
-    let initialSellGroupMap = {};
     const sellGroupMapDataEl = document.getElementById('selectedSellMarketGroupsByStructure');
     if (sellGroupMapDataEl) {
         try {
@@ -1032,19 +1005,6 @@ document.addEventListener('DOMContentLoaded', function() {
             initialSellGroupMap = {};
         }
     }
-
-    const allGroupChoicesById = {};
-    const collectChoiceOptions = (selectEl) => {
-        if (!selectEl) return;
-        Array.from(selectEl.options).forEach(option => {
-            if (!option || !option.value) return;
-            allGroupChoicesById[String(option.value)] = option.textContent || option.value;
-        });
-    };
-    collectChoiceOptions(sellAvailable);
-    collectChoiceOptions(sellSelected);
-    collectChoiceOptions(buyAvailable);
-    collectChoiceOptions(buySelected);
 
     const normalizeGroupIdList = (rawList) => {
         const normalized = [];
@@ -1084,134 +1044,91 @@ document.addEventListener('DOMContentLoaded', function() {
         return normalized;
     };
 
+    const getNodeDescendantIds = (node) => {
+        const descendants = [];
+        (node.children || []).forEach(child => {
+            const childId = parseInt(child.id, 10);
+            if (Number.isInteger(childId) && childId > 0) {
+                descendants.push(childId);
+            }
+        });
+        return descendants;
+    };
+
+    const nodeMatchesSearch = (node, query) => {
+        if (!query) {
+            return true;
+        }
+        const q = query.toLowerCase();
+        if (String(node.label || '').toLowerCase().includes(q)) {
+            return true;
+        }
+        const nodePayload = searchIndex[String(node.id)] || searchIndex[node.id] || {};
+        const nodeItems = Array.isArray(nodePayload.items) ? nodePayload.items : [];
+        if (nodeItems.some(item => String(item).toLowerCase().includes(q))) {
+            return true;
+        }
+        return (node.children || []).some(child => {
+            if (String(child.label || '').toLowerCase().includes(q)) {
+                return true;
+            }
+            const childPayload = searchIndex[String(child.id)] || searchIndex[child.id] || {};
+            const childItems = Array.isArray(childPayload.items) ? childPayload.items : [];
+            return childItems.some(item => String(item).toLowerCase().includes(q));
+        });
+    };
+
+    const nodeMatchesOwnSearch = (node, query) => {
+        if (!query) {
+            return true;
+        }
+        const q = query.toLowerCase();
+        if (String(node.label || '').toLowerCase().includes(q)) {
+            return true;
+        }
+        const nodePayload = searchIndex[String(node.id)] || searchIndex[node.id] || {};
+        const nodeItems = Array.isArray(nodePayload.items) ? nodePayload.items : [];
+        return nodeItems.some(item => String(item).toLowerCase().includes(q));
+    };
+
     let sellGroupsByStructure = normalizeSellGroupMap(initialSellGroupMap);
+    let buySelectedGroupIds = normalizeGroupIdList(initialBuyGroups);
+    let granularMode = false;
     let activeSellStructureId = '';
 
-    const matchesQuery = (groupId, label, query) => {
-        if (!query) return true;
-        const q = query.toLowerCase();
-        if ((label || '').toLowerCase().includes(q)) return true;
-        const payload = searchIndex[groupId] || {};
-        const items = payload.items || [];
-        return items.some(name => String(name).toLowerCase().includes(q));
-    };
-
-    const applyFilter = () => {
-        const query = (searchInput.value || '').trim();
-        const filterSelect = (selectEl) => {
-            Array.from(selectEl.options).forEach(option => {
-                const groupId = option.value;
-                const label = option.textContent || '';
-                const visible = matchesQuery(groupId, label, query);
-                option.hidden = !visible;
-            });
-        };
-
-        filterSelect(sellAvailable);
-        filterSelect(buyAvailable);
-    };
-
-    const moveSelected = (fromSelect, toSelect) => {
-        const selected = Array.from(fromSelect.options).filter(opt => opt.selected && !opt.hidden);
-        selected.forEach(option => {
-            const newOption = new Option(option.textContent, option.value, true, true);
-            toSelect.add(newOption);
-            fromSelect.remove(option.index);
-        });
-    };
-
-    const ensureAllSelected = (selectEl) => {
-        Array.from(selectEl.options).forEach(option => {
-            option.selected = true;
-        });
-    };
-
-    const setSellPickerDisabled = (disabled) => {
-        [sellAvailable, sellSelected].forEach(selectEl => {
-            if (selectEl) {
-                selectEl.disabled = disabled;
-            }
-        });
-        [sellAddBtn, sellRemoveBtn].forEach(button => {
-            if (button) {
-                button.disabled = disabled;
-            }
-        });
-    };
-
     const serializeSellGroupMap = () => {
-        if (sellGroupMapInput) {
-            sellGroupMapInput.value = JSON.stringify(sellGroupsByStructure);
-        }
+        sellGroupMapInput.value = JSON.stringify(sellGroupsByStructure);
     };
 
-    const persistStructureRule = (structureId) => {
-        if (!structureId) {
-            return;
-        }
-        if (sellAllowAllToggle && sellAllowAllToggle.checked) {
-            sellGroupsByStructure[structureId] = null;
-            return;
-        }
-        const selectedIds = Array.from(sellSelected.options)
-            .map(option => parseInt(option.value, 10))
-            .filter(groupId => Number.isInteger(groupId) && groupId > 0);
-        sellGroupsByStructure[structureId] = normalizeGroupIdList(selectedIds);
-    };
-
-    const renderSellGroupListsForActiveStructure = () => {
-        const structureId = activeSellStructureId;
-        if (!structureId) {
-            sellAvailable.innerHTML = '';
-            sellSelected.innerHTML = '';
-            if (sellAllowAllToggle) {
-                sellAllowAllToggle.checked = false;
-                sellAllowAllToggle.disabled = true;
+    const serializeSellUnionGroups = () => {
+        const union = new Set();
+        Object.values(sellGroupsByStructure).forEach(groupRule => {
+            if (!Array.isArray(groupRule)) {
+                return;
             }
-            setSellPickerDisabled(true);
-            serializeSellGroupMap();
+            normalizeGroupIdList(groupRule).forEach(groupId => union.add(groupId));
+        });
+        if (sellGroupsJsonInput) {
+            sellGroupsJsonInput.value = JSON.stringify(Array.from(union).sort((a, b) => a - b));
+        }
+    };
+
+    const serializeBuyGroups = () => {
+        if (buyGroupsJsonInput) {
+            buyGroupsJsonInput.value = JSON.stringify(normalizeGroupIdList(buySelectedGroupIds));
+        }
+    };
+
+    const setGranularButtonLabel = () => {
+        if (!granularToggleBtn) {
             return;
         }
-
-        const currentRule = sellGroupsByStructure[structureId];
-        const allowAll = currentRule === null;
-
-        if (sellAllowAllToggle) {
-            sellAllowAllToggle.disabled = false;
-            sellAllowAllToggle.checked = allowAll;
-        }
-
-        setSellPickerDisabled(allowAll);
-
-        const selectedSet = new Set(
-            Array.isArray(currentRule)
-                ? currentRule.map(groupId => String(groupId))
-                : []
-        );
-
-        sellAvailable.innerHTML = '';
-        sellSelected.innerHTML = '';
-
-        Object.entries(allGroupChoicesById)
-            .sort((a, b) => String(a[1]).localeCompare(String(b[1])))
-            .forEach(([groupId, label]) => {
-                const option = new Option(label, groupId, false, false);
-                if (selectedSet.has(groupId)) {
-                    option.selected = true;
-                    sellSelected.add(option);
-                } else {
-                    sellAvailable.add(option);
-                }
-            });
-
-        applyFilter();
-        serializeSellGroupMap();
+        granularToggleBtn.textContent = granularMode
+            ? "{% trans 'Granular choices: On' %}"
+            : "{% trans 'Granular choices' %}";
     };
 
     const getSelectedSellStructures = () => {
-        if (!sellStructureSelect) {
-            return [];
-        }
         return Array.from(sellStructureSelect.options)
             .filter(option => option.selected && option.value)
             .map(option => ({
@@ -1220,153 +1137,266 @@ document.addEventListener('DOMContentLoaded', function() {
             }));
     };
 
+    const getActiveSellSelectionSet = () => {
+        const rule = sellGroupsByStructure[activeSellStructureId];
+        if (!Array.isArray(rule)) {
+            return new Set();
+        }
+        return new Set(normalizeGroupIdList(rule));
+    };
+
+    const renderTreeRow = ({ node, selectedSet, onToggle, isChild = false, disableSelection = false }) => {
+        const row = document.createElement('div');
+        row.className = isChild ? 'me-market-tree-row me-market-tree-row-child' : 'me-market-tree-row';
+
+        const labelWrap = document.createElement('label');
+        labelWrap.className = 'form-check mb-0 d-flex align-items-center gap-2';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'form-check-input mt-0';
+
+        const nodeId = parseInt(node.id, 10);
+        const descendants = getNodeDescendantIds(node);
+        if (!granularMode && !isChild && descendants.length > 0) {
+            checkbox.checked = selectedSet.has(nodeId) || descendants.some(id => selectedSet.has(id));
+        } else {
+            checkbox.checked = selectedSet.has(nodeId);
+        }
+        checkbox.disabled = !!disableSelection;
+        checkbox.addEventListener('change', function() {
+            const nextSet = new Set(selectedSet);
+            if (!granularMode && !isChild) {
+                if (checkbox.checked) {
+                    nextSet.add(nodeId);
+                    descendants.forEach(descendantId => nextSet.delete(descendantId));
+                } else {
+                    nextSet.delete(nodeId);
+                    descendants.forEach(descendantId => nextSet.delete(descendantId));
+                }
+            } else if (checkbox.checked) {
+                nextSet.add(nodeId);
+            } else {
+                nextSet.delete(nodeId);
+            }
+            onToggle(nextSet);
+        });
+
+        const label = document.createElement('span');
+        label.className = isChild ? 'me-market-tree-label me-market-tree-label-child' : 'me-market-tree-label';
+        label.textContent = node.label || String(node.id);
+
+        labelWrap.appendChild(checkbox);
+        labelWrap.appendChild(label);
+        row.appendChild(labelWrap);
+        return row;
+    };
+
+    const renderTree = ({ container, selectedSet, onToggle, disableSelection = false }) => {
+        container.innerHTML = '';
+        const query = String(searchInput.value || '').trim();
+
+        const nodes = marketTree.filter(node => nodeMatchesSearch(node, query));
+        if (!nodes.length) {
+            const empty = document.createElement('div');
+            empty.className = 'small text-muted';
+            empty.textContent = "{% trans 'No matching groups.' %}";
+            container.appendChild(empty);
+            return;
+        }
+
+        nodes.forEach(node => {
+            const nodeWrapper = document.createElement('div');
+            nodeWrapper.className = 'me-market-tree-node';
+            nodeWrapper.appendChild(
+                renderTreeRow({
+                    node,
+                    selectedSet,
+                    onToggle,
+                    isChild: false,
+                    disableSelection,
+                })
+            );
+
+            const canExpand = !!node.expandable && Array.isArray(node.children) && node.children.length > 0;
+            if (granularMode && canExpand) {
+                const childWrapper = document.createElement('div');
+                childWrapper.className = 'me-market-tree-children';
+                const nodeOwnMatch = nodeMatchesOwnSearch(node, query);
+                node.children.forEach(child => {
+                    if (query && !nodeOwnMatch && !nodeMatchesSearch(child, query)) {
+                        return;
+                    }
+                    childWrapper.appendChild(
+                        renderTreeRow({
+                            node: child,
+                            selectedSet,
+                            onToggle,
+                            isChild: true,
+                            disableSelection,
+                        })
+                    );
+                });
+                if (childWrapper.children.length > 0) {
+                    nodeWrapper.appendChild(childWrapper);
+                }
+            }
+
+            container.appendChild(nodeWrapper);
+        });
+    };
+
+    const persistActiveSellRule = () => {
+        if (!activeSellStructureId) {
+            return;
+        }
+        if (sellAllowAllToggle && sellAllowAllToggle.checked) {
+            sellGroupsByStructure[activeSellStructureId] = null;
+            return;
+        }
+        sellGroupsByStructure[activeSellStructureId] = Array.from(getActiveSellSelectionSet()).sort((a, b) => a - b);
+    };
+
+    const renderSellTree = () => {
+        const disableSelection = !!(sellAllowAllToggle && sellAllowAllToggle.checked);
+        const selectedSet = getActiveSellSelectionSet();
+        sellTreeContainer.classList.toggle('me-market-tree-disabled', disableSelection);
+        renderTree({
+            container: sellTreeContainer,
+            selectedSet,
+            disableSelection,
+            onToggle: (nextSet) => {
+                if (sellAllowAllToggle) {
+                    sellAllowAllToggle.checked = false;
+                }
+                sellGroupsByStructure[activeSellStructureId] = Array.from(nextSet).sort((a, b) => a - b);
+                serializeSellGroupMap();
+                serializeSellUnionGroups();
+                renderSellTree();
+            },
+        });
+    };
+
+    const renderBuyTree = () => {
+        renderTree({
+            container: buyTreeContainer,
+            selectedSet: new Set(normalizeGroupIdList(buySelectedGroupIds)),
+            onToggle: (nextSet) => {
+                buySelectedGroupIds = Array.from(nextSet).sort((a, b) => a - b);
+                serializeBuyGroups();
+                renderBuyTree();
+            },
+        });
+    };
+
     const rebuildSellStructureRules = () => {
-        persistStructureRule(activeSellStructureId);
+        persistActiveSellRule();
 
         const selectedStructures = getSelectedSellStructures();
         const selectedIds = selectedStructures.map(item => item.id);
 
-        if (selectedStructures.length > 0) {
-            Object.keys(sellGroupsByStructure).forEach(structureId => {
-                if (!selectedIds.includes(structureId)) {
-                    delete sellGroupsByStructure[structureId];
-                }
-            });
+        Object.keys(sellGroupsByStructure).forEach(structureId => {
+            if (!selectedIds.includes(structureId)) {
+                delete sellGroupsByStructure[structureId];
+            }
+        });
+        selectedIds.forEach(structureId => {
+            if (!(structureId in sellGroupsByStructure)) {
+                sellGroupsByStructure[structureId] = null;
+            }
+        });
 
-            selectedIds.forEach(structureId => {
-                if (!(structureId in sellGroupsByStructure)) {
-                    sellGroupsByStructure[structureId] = null;
-                }
-            });
+        sellMarketGroupStructureSelect.innerHTML = '';
+        if (!selectedStructures.length) {
+            sellMarketGroupStructureSelect.add(
+                new Option('{% trans "Select at least one sell location" %}', '', true, true)
+            );
+            activeSellStructureId = '';
+            if (sellAllowAllToggle) {
+                sellAllowAllToggle.checked = false;
+                sellAllowAllToggle.disabled = true;
+            }
+            sellTreeContainer.innerHTML = '';
+            serializeSellGroupMap();
+            serializeSellUnionGroups();
+            return;
         }
 
-        if (sellMarketGroupStructureSelect) {
-            sellMarketGroupStructureSelect.innerHTML = '';
-            if (selectedStructures.length === 0) {
-                const emptyOption = new Option('{% trans "Select at least one sell location" %}', '', true, true);
-                sellMarketGroupStructureSelect.add(emptyOption);
-                activeSellStructureId = '';
-            } else {
-                selectedStructures.forEach(structure => {
-                    const structureOption = new Option(structure.name, structure.id, false, false);
-                    sellMarketGroupStructureSelect.add(structureOption);
-                });
-                if (!selectedIds.includes(activeSellStructureId)) {
-                    activeSellStructureId = selectedIds[0];
-                }
-                sellMarketGroupStructureSelect.value = activeSellStructureId;
-            }
+        selectedStructures.forEach(structure => {
+            sellMarketGroupStructureSelect.add(new Option(structure.name, structure.id, false, false));
+        });
+        if (!selectedIds.includes(activeSellStructureId)) {
+            activeSellStructureId = selectedIds[0];
+        }
+        sellMarketGroupStructureSelect.value = activeSellStructureId;
+
+        if (sellAllowAllToggle) {
+            sellAllowAllToggle.disabled = false;
+            sellAllowAllToggle.checked = sellGroupsByStructure[activeSellStructureId] === null;
         }
 
-        renderSellGroupListsForActiveStructure();
+        serializeSellGroupMap();
+        serializeSellUnionGroups();
+        renderSellTree();
     };
 
-    const syncLegacySellUnionSelection = () => {
-        const union = new Set();
-        Object.values(sellGroupsByStructure).forEach(groupRule => {
-            if (!Array.isArray(groupRule)) {
-                return;
-            }
-            groupRule.forEach(groupId => {
-                const parsed = parseInt(groupId, 10);
-                if (Number.isInteger(parsed) && parsed > 0) {
-                    union.add(parsed);
-                }
-            });
-        });
-
-        sellSelected.innerHTML = '';
-        Array.from(union)
-            .sort((a, b) => a - b)
-            .forEach(groupId => {
-                const groupKey = String(groupId);
-                const label = allGroupChoicesById[groupKey] || `Group ${groupId}`;
-                const option = new Option(label, groupKey, true, true);
-                sellSelected.add(option);
-            });
-    };
-
-    if (sellAddBtn) {
-        sellAddBtn.addEventListener('click', () => {
-            if (sellAllowAllToggle && sellAllowAllToggle.checked) {
-                return;
-            }
-            moveSelected(sellAvailable, sellSelected);
-            persistStructureRule(activeSellStructureId);
-            serializeSellGroupMap();
+    if (granularToggleBtn) {
+        granularToggleBtn.addEventListener('click', function() {
+            granularMode = !granularMode;
+            setGranularButtonLabel();
+            renderSellTree();
+            renderBuyTree();
         });
     }
-    if (sellRemoveBtn) {
-        sellRemoveBtn.addEventListener('click', () => {
-            if (sellAllowAllToggle && sellAllowAllToggle.checked) {
-                return;
-            }
-            moveSelected(sellSelected, sellAvailable);
-            persistStructureRule(activeSellStructureId);
-            serializeSellGroupMap();
-        });
-    }
-    if (buyAddBtn) {
-        buyAddBtn.addEventListener('click', () => moveSelected(buyAvailable, buySelected));
-    }
-    if (buyRemoveBtn) {
-        buyRemoveBtn.addEventListener('click', () => moveSelected(buySelected, buyAvailable));
-    }
 
-    const bindDoubleClickMove = (fromSelect, toSelect) => {
-        fromSelect.addEventListener('dblclick', (event) => {
-            const option = event.target;
-            if (option && option.tagName === 'OPTION') {
-                const newOption = new Option(option.textContent, option.value, true, true);
-                toSelect.add(newOption);
-                fromSelect.remove(option.index);
-                if (fromSelect === sellAvailable || fromSelect === sellSelected) {
-                    persistStructureRule(activeSellStructureId);
-                    serializeSellGroupMap();
-                }
-            }
-        });
-    };
+    searchInput.addEventListener('input', function() {
+        renderSellTree();
+        renderBuyTree();
+    });
 
-    bindDoubleClickMove(sellAvailable, sellSelected);
-    bindDoubleClickMove(sellSelected, sellAvailable);
-    bindDoubleClickMove(buyAvailable, buySelected);
-    bindDoubleClickMove(buySelected, buyAvailable);
-
-    searchInput.addEventListener('input', applyFilter);
-
-    if (sellMarketGroupStructureSelect) {
-        sellMarketGroupStructureSelect.addEventListener('change', () => {
-            persistStructureRule(activeSellStructureId);
-            activeSellStructureId = sellMarketGroupStructureSelect.value || '';
-            renderSellGroupListsForActiveStructure();
-        });
-    }
+    sellMarketGroupStructureSelect.addEventListener('change', function() {
+        persistActiveSellRule();
+        activeSellStructureId = sellMarketGroupStructureSelect.value || '';
+        if (sellAllowAllToggle) {
+            sellAllowAllToggle.checked = sellGroupsByStructure[activeSellStructureId] === null;
+        }
+        serializeSellGroupMap();
+        serializeSellUnionGroups();
+        renderSellTree();
+    });
 
     if (sellAllowAllToggle) {
-        sellAllowAllToggle.addEventListener('change', () => {
-            persistStructureRule(activeSellStructureId);
-            renderSellGroupListsForActiveStructure();
+        sellAllowAllToggle.addEventListener('change', function() {
+            if (!activeSellStructureId) {
+                return;
+            }
+            if (sellAllowAllToggle.checked) {
+                sellGroupsByStructure[activeSellStructureId] = null;
+            } else if (sellGroupsByStructure[activeSellStructureId] === null) {
+                sellGroupsByStructure[activeSellStructureId] = [];
+            }
+            serializeSellGroupMap();
+            serializeSellUnionGroups();
+            renderSellTree();
         });
     }
 
-    if (sellStructureSelect) {
-        sellStructureSelect.addEventListener('change', rebuildSellStructureRules);
-    }
+    sellStructureSelect.addEventListener('change', rebuildSellStructureRules);
     document.addEventListener('me:sell-structures-changed', rebuildSellStructureRules);
-
-    rebuildSellStructureRules();
 
     const form = document.getElementById('configForm');
     if (form) {
         form.addEventListener('submit', function() {
-            persistStructureRule(activeSellStructureId);
+            persistActiveSellRule();
             serializeSellGroupMap();
-            syncLegacySellUnionSelection();
-            ensureAllSelected(sellSelected);
-            ensureAllSelected(buySelected);
+            serializeSellUnionGroups();
+            serializeBuyGroups();
         });
     }
+
+    setGranularButtonLabel();
+    serializeBuyGroups();
+    rebuildSellStructureRules();
+    renderBuyTree();
 });
 
 function requestDivisionsToken() {

@@ -1,6 +1,7 @@
 """Material Exchange Configuration views."""
 
 # Standard Library
+import hashlib
 import json
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -36,6 +37,276 @@ from ..utils.eve import PLACEHOLDER_PREFIX
 
 esi = esi_provider
 logger = get_extension_logger(__name__)
+MARKET_GROUP_CHOICE_DEPTH = 1
+MARKET_GROUP_SEARCH_ITEMS_PER_GROUP = 100
+NON_EXPANDABLE_GRANULAR_GROUPS = {
+    "Skills",
+    "Special Edition Assets",
+    "Structure Equipment",
+}
+MARKET_GROUP_MAJOR_ORDER = [
+    "Ammunition & Charges",
+    "Apparel",
+    "Blueprints & Reactions",
+    "Drones",
+    "Implants & Boosters",
+    "Manufacture & Research",
+    "Personalization",
+    "Pilot's Services",
+    "Planetary Infrastructure",
+    "Ship and Module Modifications",
+    "Ship Equipment",
+    "Ship SKINs",
+    "Ships",
+    "Skills",
+    "Special Edition Assets",
+    "Structure Equipment",
+    "Structure Modifications",
+    "Structures",
+    "Trade Goods",
+]
+MARKET_GROUP_GRANULAR_CHILDREN: dict[str, list[str]] = {
+    "Ammunition & Charges": [
+        "Bombs",
+        "Breacher Pods",
+        "Cap Booster Charges",
+        "Command Burst Charges",
+        "Condenser Packs",
+        "Exotic Plasma Charges",
+        "Frequency Crystals",
+        "Hybrid Charges",
+        "Mining Crystals",
+        "Missiles",
+        "Nanite Repair Paste",
+        "Probes",
+        "Projectile Ammo",
+        "Scripts",
+        "Structure Area Denial Ammunition",
+        "Structure Guided Bombs",
+    ],
+    "Apparel": ["Accessories", "Men's Clothing", "Women's Clothing"],
+    "Blueprints & Reactions": [
+        "Ammunition & Charges",
+        "Drones",
+        "Manufacture & Research",
+        "Reaction Formulas",
+        "Ship Equipment",
+        "Ship Modifications",
+        "Ships",
+        "Structure Equipment",
+        "Structure Modifications",
+        "Structures",
+    ],
+    "Drones": [
+        "Combat Drones",
+        "Combat Utility Drones",
+        "Electronic Warfare Drones",
+        "Fighters",
+        "Logistic Drones",
+        "Mining Drones",
+        "Salvage Drones",
+    ],
+    "Implants & Boosters": ["Booster", "Cerebral Accelerators", "Implants"],
+    "Manufacture & Research": ["Components", "Materials", "Research Equipment"],
+    "Personalization": ["Design Elements", "Sequencing Binders"],
+    "Pilot's Services": [
+        "Expert Systems",
+        "HyperNet Relay",
+        "Pilot's Services",
+        "PLEX",
+        "Skill Trading",
+    ],
+    "Planetary Infrastructure": ["Command Centers", "Orbital Infrastructure"],
+    "Ship and Module Modifications": ["Mutaplasmids", "Rigs", "Subsystems"],
+    "Ship Equipment": [
+        "Compressors",
+        "Drone Upgrades",
+        "Electronic Warfare",
+        "Electronics and Sensor Upgrades",
+        "Engineering Equipment",
+        "Fleet Assistance Modules",
+        "Harvest Equipment",
+        "Hull & Armor",
+        "Propulsion",
+        "Scanning Equipment",
+        "Shield",
+        "Smartbombs",
+        "Turrets & Launchers",
+    ],
+    "Ship SKINs": [
+        "Battlecruisers",
+        "Battleships",
+        "Capital Ships",
+        "Capsules",
+        "Corvettes",
+        "Cruisers",
+        "Destroyers",
+        "Frigates",
+        "Haulers and Industrial Ships",
+        "Mining Barges",
+        "Multiple Hull SKINs",
+        "Shuttles",
+    ],
+    "Ships": [
+        "Battlecruisers",
+        "Battleships",
+        "Capital Ships",
+        "Corvettes",
+        "Cruisers",
+        "Destroyers",
+        "Frigates",
+        "Haulers and Industrial Ships",
+        "Mining Barges",
+        "Shuttles",
+        "Special Edition Ships",
+    ],
+    "Structure Modifications": [
+        "Structure Combat Rigs",
+        "Structure Engineering Rigs",
+        "Structure Resource Processing Rigs",
+    ],
+    "Structures": [
+        "Citadels",
+        "Deployable Structures",
+        "Engineering Complexes",
+        "FLEX Structures",
+        "Refineries",
+        "Sovereignty Structures",
+        "Starbase Structures",
+    ],
+    "Trade Goods": [
+        "Acceleration Gate Keys",
+        "AEGIS Databases",
+        "Aurum Tokens",
+        "Bounty Encrypted Bonds",
+        "Consumer Products",
+        "Covert Research Tools",
+        "Criminal Dog Tags",
+        "Criminal Evidence",
+        "Filaments",
+        "Industrial Goods",
+        "Insignias",
+        "Limited Rarities",
+        "Narcotics",
+        "Nexus Chips",
+        "Passengers",
+        "Political Paraphernalia",
+        "Radioactive Goods",
+        "Rogue Drone Data",
+        "Security Tags",
+        "Sleeper Components",
+        "Starbase Charters",
+        "Strong Boxes",
+        "Triglavian Data",
+        "Unknown Components",
+    ],
+}
+
+
+def _normalize_market_group_name(raw_value: str) -> str:
+    return " ".join(str(raw_value or "").replace("&amp;", "&").split()).strip().casefold()
+
+
+def _find_market_group_id_by_name(
+    *,
+    all_groups: dict[int, dict[str, str | int | None]],
+    group_name: str,
+    parent_id: int | None = None,
+) -> int | None:
+    target_name = _normalize_market_group_name(group_name)
+    if not target_name:
+        return None
+
+    parent_id_value = int(parent_id) if isinstance(parent_id, int) else None
+    matches = [
+        int(group_id)
+        for group_id, payload in all_groups.items()
+        if _normalize_market_group_name(payload.get("name", "")) == target_name
+    ]
+    if not matches:
+        return None
+
+    if parent_id is None:
+        root_matches = [
+            gid
+            for gid in matches
+            if payload_parent_id_is_none(
+                all_groups.get(gid, {}).get("parent_market_group_id", None)
+            )
+        ]
+        if root_matches:
+            return int(sorted(root_matches)[0])
+        return int(sorted(matches)[0])
+
+    direct_matches = [
+        gid
+        for gid in matches
+        if int(all_groups.get(gid, {}).get("parent_market_group_id") or 0)
+        == int(parent_id_value)
+    ]
+    if direct_matches:
+        return int(sorted(direct_matches)[0])
+
+    # Fallback: nearest descendant under the requested parent branch.
+    for gid in sorted(matches):
+        path_ids = _get_market_group_path_ids(gid, all_groups)
+        if int(parent_id_value) in path_ids:
+            return int(gid)
+    return int(sorted(matches)[0])
+
+
+def payload_parent_id_is_none(parent_id) -> bool:
+    return parent_id in (None, "", 0, "0")
+
+
+def _get_market_group_tree() -> list[dict[str, object]]:
+    """Return curated market-group tree for config UI."""
+
+    cache_key = "indy_hub:material_exchange:market_group_tree:v2"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    all_groups = _build_market_group_index()
+    tree: list[dict[str, object]] = []
+    if not all_groups:
+        cache.set(cache_key, tree, 3600)
+        return tree
+
+    for major_label in MARKET_GROUP_MAJOR_ORDER:
+        major_group_id = _find_market_group_id_by_name(
+            all_groups=all_groups,
+            group_name=major_label,
+            parent_id=None,
+        )
+        if not major_group_id:
+            continue
+
+        children: list[dict[str, object]] = []
+        if major_label not in NON_EXPANDABLE_GRANULAR_GROUPS:
+            for child_label in MARKET_GROUP_GRANULAR_CHILDREN.get(major_label, []):
+                child_group_id = _find_market_group_id_by_name(
+                    all_groups=all_groups,
+                    group_name=child_label,
+                    parent_id=int(major_group_id),
+                )
+                if not child_group_id:
+                    continue
+                children.append({"id": int(child_group_id), "label": str(child_label)})
+
+        tree.append(
+            {
+                "id": int(major_group_id),
+                "label": str(major_label),
+                "expandable": bool(
+                    major_label not in NON_EXPANDABLE_GRANULAR_GROUPS and children
+                ),
+                "children": children,
+            }
+        )
+
+    cache.set(cache_key, tree, 3600)
+    return tree
 
 
 @login_required
@@ -229,27 +500,62 @@ def material_exchange_config(request, tokens):
         return _handle_config_save(request, config)
 
     market_group_choices: list[dict[str, str | int]] = []
+    market_group_tree: list[dict[str, object]] = []
+    allowed_choice_ids: set[int] = set()
     try:
-        market_group_choices = _get_industry_market_group_choices(depth_from_root=2)
-    except Exception as exc:
-        logger.warning("Failed to build market group choices: %s", exc)
-
-    allowed_choice_ids = set(_get_industry_market_group_choice_ids(depth_from_root=2))
-    selected_market_groups_buy = (
-        [
-            gid
-            for gid in (list(getattr(config, "allowed_market_groups_buy", []) or []))
-            if not allowed_choice_ids or int(gid) in allowed_choice_ids
+        market_group_tree = _get_market_group_tree()
+        for node in market_group_tree:
+            try:
+                allowed_choice_ids.add(int(node.get("id")))
+            except (TypeError, ValueError):
+                continue
+            for child in node.get("children", []) or []:
+                try:
+                    allowed_choice_ids.add(int(child.get("id")))
+                except (TypeError, ValueError):
+                    continue
+        market_group_choices = [
+            {"id": int(node.get("id")), "label": str(node.get("label"))}
+            for node in market_group_tree
+            if node.get("id")
         ]
+    except Exception as exc:
+        logger.warning("Failed to build market group tree: %s", exc)
+
+    all_groups = _build_market_group_index()
+
+    def _normalize_selected_group_ids_for_ui(raw_group_ids) -> list[int]:
+        normalized: set[int] = set()
+        for raw_group_id in raw_group_ids or []:
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            if group_id <= 0:
+                continue
+            if not allowed_choice_ids:
+                normalized.add(group_id)
+                continue
+            if group_id in allowed_choice_ids:
+                normalized.add(group_id)
+                continue
+            path_ids = _get_market_group_path_ids(group_id, all_groups)
+            for path_id in reversed(path_ids):
+                if int(path_id) in allowed_choice_ids:
+                    normalized.add(int(path_id))
+                    break
+        return sorted(normalized)
+    selected_market_groups_buy = (
+        _normalize_selected_group_ids_for_ui(
+            list(getattr(config, "allowed_market_groups_buy", []) or [])
+        )
         if config
         else []
     )
     selected_market_groups_sell = (
-        [
-            gid
-            for gid in (list(getattr(config, "allowed_market_groups_sell", []) or []))
-            if not allowed_choice_ids or int(gid) in allowed_choice_ids
-        ]
+        _normalize_selected_group_ids_for_ui(
+            list(getattr(config, "allowed_market_groups_sell", []) or [])
+        )
         if config
         else []
     )
@@ -286,17 +592,13 @@ def material_exchange_config(request, tokens):
                 if groups is None:
                     selected_sell_market_groups_by_structure[str(sid_int)] = None
                     continue
-                selected_sell_market_groups_by_structure[str(sid_int)] = [
-                    int(gid)
-                    for gid in groups
-                    if not allowed_choice_ids or int(gid) in allowed_choice_ids
-                ]
+                selected_sell_market_groups_by_structure[str(sid_int)] = (
+                    _normalize_selected_group_ids_for_ui(groups)
+                )
         elif selected_market_groups_sell:
-            fallback_sell_groups = [
-                int(gid)
-                for gid in selected_market_groups_sell
-                if not allowed_choice_ids or int(gid) in allowed_choice_ids
-            ]
+            fallback_sell_groups = _normalize_selected_group_ids_for_ui(
+                selected_market_groups_sell
+            )
             for sid in sell_ids:
                 selected_sell_market_groups_by_structure[str(int(sid))] = list(
                     fallback_sell_groups
@@ -304,8 +606,8 @@ def material_exchange_config(request, tokens):
 
     market_group_search_index = {}
     try:
-        market_group_search_index = _get_industry_market_group_search_index(
-            depth_from_root=2
+        market_group_search_index = _get_market_group_search_index_for_ids(
+            allowed_choice_ids
         )
     except Exception as exc:
         logger.warning("Failed to build market group search index: %s", exc)
@@ -324,6 +626,7 @@ def material_exchange_config(request, tokens):
         ),
         "division_scope_missing": division_scope_missing,
         "market_group_choices": market_group_choices,
+        "market_group_tree": market_group_tree,
         "selected_market_groups_buy": selected_market_groups_buy,
         "selected_market_groups_sell": selected_market_groups_sell,
         "selected_sell_market_groups_by_structure": selected_sell_market_groups_by_structure,
@@ -1178,7 +1481,42 @@ def _get_market_group_path_ids(
     return list(reversed(path))
 
 
-def _get_industry_market_group_choice_ids(depth_from_root: int = 2) -> set[int]:
+def _normalize_market_group_ids_for_choice_depth(
+    raw_group_ids, *, depth_from_root: int
+) -> list[int]:
+    """Normalize market group ids to the configured UI grouping depth."""
+
+    normalized: set[int] = set()
+    all_groups = _build_market_group_index()
+
+    for raw_group_id in raw_group_ids or []:
+        try:
+            group_id = int(raw_group_id)
+        except (TypeError, ValueError):
+            continue
+        if group_id <= 0:
+            continue
+
+        if not all_groups:
+            normalized.add(group_id)
+            continue
+
+        path_ids = _get_market_group_path_ids(group_id, all_groups)
+        if not path_ids:
+            normalized.add(group_id)
+            continue
+
+        if len(path_ids) <= depth_from_root:
+            normalized.add(int(path_ids[-1]))
+        else:
+            normalized.add(int(path_ids[depth_from_root]))
+
+    return sorted(normalized)
+
+
+def _get_industry_market_group_choice_ids(
+    depth_from_root: int = MARKET_GROUP_CHOICE_DEPTH,
+) -> set[int]:
     """Return grouped market group IDs at the given depth for all item types."""
 
     cache_key = (
@@ -1215,7 +1553,7 @@ def _get_industry_market_group_choice_ids(depth_from_root: int = 2) -> set[int]:
 
 
 def _get_industry_market_group_choices(
-    depth_from_root: int = 2,
+    depth_from_root: int = MARKET_GROUP_CHOICE_DEPTH,
 ) -> list[dict[str, str | int]]:
     """Return sorted market group choices (id + label) for all item types."""
 
@@ -1247,7 +1585,7 @@ def _get_industry_market_group_choices(
 
 
 def _get_industry_market_group_search_index(
-    depth_from_root: int = 2,
+    depth_from_root: int = MARKET_GROUP_CHOICE_DEPTH,
 ) -> dict[int, dict[str, object]]:
     """Return market group labels and item names for search."""
 
@@ -1283,7 +1621,7 @@ def _get_industry_market_group_search_index(
         if int(group_id) in all_groups
     }
 
-    max_items_per_group = 100
+    max_items_per_group = int(MARKET_GROUP_SEARCH_ITEMS_PER_GROUP)
     for market_group_id, type_name in rows:
         if not market_group_id:
             continue
@@ -1311,6 +1649,69 @@ def _get_industry_market_group_search_index(
     return index
 
 
+def _get_market_group_search_index_for_ids(
+    allowed_group_ids: set[int],
+) -> dict[int, dict[str, object]]:
+    """Return search index for a specific set of allowed market-group ids."""
+
+    allowed_ids = {int(group_id) for group_id in allowed_group_ids if int(group_id) > 0}
+    if not allowed_ids:
+        return {}
+
+    key_raw = ",".join(str(group_id) for group_id in sorted(allowed_ids))
+    key_hash = hashlib.md5(key_raw.encode("utf-8"), usedforsecurity=False).hexdigest()
+    cache_key = f"indy_hub:material_exchange:market_group_search_index:allowed:v1:{key_hash}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        try:
+            return {int(group_id): payload for group_id, payload in cached.items()}
+        except Exception:
+            return {}
+
+    all_groups = _build_market_group_index()
+    if not all_groups:
+        return {}
+
+    index: dict[int, dict[str, object]] = {
+        int(group_id): {
+            "label": str(all_groups.get(int(group_id), {}).get("name") or f"Group {group_id}"),
+            "items": set(),
+        }
+        for group_id in allowed_ids
+    }
+
+    rows = _get_itemtype_market_group_name_rows() or []
+    max_items_per_group = int(MARKET_GROUP_SEARCH_ITEMS_PER_GROUP)
+    for market_group_id, type_name in rows:
+        if not market_group_id or not type_name:
+            continue
+        path_ids = _get_market_group_path_ids(int(market_group_id), all_groups)
+        if not path_ids:
+            continue
+        selected_group_id = None
+        for path_group_id in reversed(path_ids):
+            if int(path_group_id) in allowed_ids:
+                selected_group_id = int(path_group_id)
+                break
+        if selected_group_id is None:
+            continue
+        if len(index[selected_group_id]["items"]) >= max_items_per_group:
+            continue
+        index[selected_group_id]["items"].add(str(type_name))
+
+    serialized = {}
+    for group_id, payload in index.items():
+        serialized[str(group_id)] = {
+            "label": payload["label"],
+            "items": sorted(payload["items"], key=lambda name: str(name).lower()),
+        }
+    cache.set(cache_key, serialized, 3600)
+
+    return {
+        int(group_id): payload for group_id, payload in serialized.items()
+    }
+
+
 def _handle_config_save(request, existing_config):
     """Handle POST request to save Material Exchange configuration."""
 
@@ -1324,6 +1725,12 @@ def _handle_config_save(request, existing_config):
     buy_markup_base = request.POST.get("buy_markup_base", "buy")
     allowed_market_groups_buy_raw = request.POST.getlist("allowed_market_groups_buy")
     allowed_market_groups_sell_raw = request.POST.getlist("allowed_market_groups_sell")
+    allowed_market_groups_buy_json_raw = (
+        request.POST.get("allowed_market_groups_buy_json", "") or ""
+    ).strip()
+    allowed_market_groups_sell_json_raw = (
+        request.POST.get("allowed_market_groups_sell_json", "") or ""
+    ).strip()
     allowed_market_groups_sell_by_structure_raw = (
         request.POST.get("allowed_market_groups_sell_by_structure_json", "") or ""
     ).strip()
@@ -1349,8 +1756,34 @@ def _handle_config_save(request, existing_config):
             normalized = fallback
         return Decimal(normalized)
 
+    def _parse_group_ids_json(raw_value: str) -> list[str]:
+        if not raw_value:
+            return []
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, (list, tuple, set)):
+            return []
+        parsed: list[str] = []
+        for raw_group_id in payload:
+            try:
+                parsed.append(str(int(raw_group_id)))
+            except (TypeError, ValueError):
+                continue
+        return parsed
+
     # Validation
     try:
+        if allowed_market_groups_buy_json_raw:
+            parsed_buy_json = _parse_group_ids_json(allowed_market_groups_buy_json_raw)
+            if parsed_buy_json:
+                allowed_market_groups_buy_raw = parsed_buy_json
+        if allowed_market_groups_sell_json_raw:
+            parsed_sell_json = _parse_group_ids_json(allowed_market_groups_sell_json_raw)
+            if parsed_sell_json:
+                allowed_market_groups_sell_raw = parsed_sell_json
+
         if not corporation_id:
             raise ValueError("Corporation ID is required")
         if not sell_structure_ids_raw:
@@ -1365,18 +1798,40 @@ def _handle_config_save(request, existing_config):
         sell_markup_percent = _parse_decimal(sell_markup_percent, "0")
         buy_markup_percent = _parse_decimal(buy_markup_percent, "5")
 
-        allowed_ids = _get_industry_market_group_choice_ids(depth_from_root=2)
+        allowed_ids: set[int] = set()
+        market_group_tree = _get_market_group_tree()
+        for node in market_group_tree:
+            try:
+                allowed_ids.add(int(node.get("id")))
+            except (TypeError, ValueError):
+                continue
+            for child in node.get("children", []) or []:
+                try:
+                    allowed_ids.add(int(child.get("id")))
+                except (TypeError, ValueError):
+                    continue
+        all_groups = _build_market_group_index()
 
         def _parse_group_ids(raw_list: list[str]) -> list[int]:
             parsed: set[int] = set()
-            for raw in raw_list:
+            for raw_group_id in raw_list or []:
                 try:
-                    group_id = int(raw)
+                    group_id = int(raw_group_id)
                 except (TypeError, ValueError):
                     continue
-                if allowed_ids and group_id not in allowed_ids:
+                if group_id <= 0:
                     continue
-                parsed.add(group_id)
+                if not allowed_ids:
+                    parsed.add(group_id)
+                    continue
+                if group_id in allowed_ids:
+                    parsed.add(group_id)
+                    continue
+                path_ids = _get_market_group_path_ids(group_id, all_groups)
+                for path_id in reversed(path_ids):
+                    if int(path_id) in allowed_ids:
+                        parsed.add(int(path_id))
+                        break
             return sorted(parsed)
 
         allowed_market_groups_buy = _parse_group_ids(allowed_market_groups_buy_raw)

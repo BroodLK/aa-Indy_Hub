@@ -215,6 +215,23 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             },
         )
 
+    def test_market_groups_can_be_saved_from_json_payload_fields(self):
+        post_data = self._base_post_data()
+        post_data["allowed_market_groups_buy_json"] = "[200,300]"
+        post_data["allowed_market_groups_sell_json"] = "[400]"
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.allowed_market_groups_buy, [200, 300])
+        self.assertEqual(self.config.allowed_market_groups_sell, [400])
+        self.assertEqual(
+            self.config.allowed_market_groups_sell_by_structure,
+            {str(int(self.config.structure_id)): [400]},
+        )
+
     def test_location_match_mode_defaults_to_name_or_id_when_invalid(self):
         post_data = self._base_post_data()
         post_data["location_match_mode"] = "invalid"
