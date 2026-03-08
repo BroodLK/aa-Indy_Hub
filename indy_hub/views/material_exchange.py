@@ -111,14 +111,26 @@ def _get_reserved_sell_quantities(
     location_id: int | None = None,
     type_ids: set[int] | None = None,
     exclude_order_id: int | None = None,
+    assets_synced_at=None,
 ) -> dict[int, int]:
-    """Return reserved quantities by type for a seller's active sell orders."""
+    """Return reserved quantities by type for a seller's active sell orders.
+
+    Completed sell orders remain reserved until the next successful user assets sync
+    that happened after the order completion timestamp.
+    """
+
+    status_filter = Q(order__status__in=_ACTIVE_SELL_RESERVATION_STATUSES)
+    completed_pending_sync_filter = Q(
+        order__status=MaterialExchangeSellOrder.Status.COMPLETED
+    )
+    if assets_synced_at is not None:
+        completed_pending_sync_filter &= Q(order__updated_at__gt=assets_synced_at)
+    status_filter |= completed_pending_sync_filter
 
     queryset = MaterialExchangeSellOrderItem.objects.filter(
         order__config=config,
         order__seller=seller,
-        order__status__in=_ACTIVE_SELL_RESERVATION_STATUSES,
-    )
+    ).filter(status_filter)
     if location_id is not None:
         queryset = queryset.filter(
             Q(order__source_location_id=int(location_id))
@@ -315,6 +327,19 @@ def _minutes_until_refresh(last_update, *, window_seconds: int = 3600) -> int | 
     if remaining <= 0:
         return 0
     return int((remaining + 59) // 60)
+
+
+def _get_user_assets_last_sync(user):
+    """Return latest cached assets sync timestamp for a user."""
+    try:
+        return (
+            CachedCharacterAsset.objects.filter(user=user)
+            .order_by("-synced_at")
+            .values_list("synced_at", flat=True)
+            .first()
+        )
+    except Exception:
+        return None
 
 
 def _get_material_exchange_settings() -> MaterialExchangeSettings | None:
@@ -1576,11 +1601,13 @@ def material_exchange_sell(request, tokens):
             )
             return redirect(sell_redirect_url)
 
+        assets_last_sync = _get_user_assets_last_sync(request.user)
         reserved_quantities = _get_reserved_sell_quantities(
             config=config,
             seller=request.user,
             location_id=selected_location_id,
             type_ids=set(submitted_quantities.keys()),
+            assets_synced_at=assets_last_sync,
         )
 
         items_to_create: list[dict] = []
@@ -2025,11 +2052,13 @@ def material_exchange_sell(request, tokens):
                 int(selected_location_id), {}
             )
 
+        assets_last_sync = _get_user_assets_last_sync(request.user)
         reserved_quantities_for_display = _get_reserved_sell_quantities(
             config=config,
             seller=request.user,
             location_id=selected_location_id,
             type_ids=set(assets_for_display.keys()),
+            assets_synced_at=assets_last_sync,
         )
 
         for type_id, user_qty in assets_for_display.items():
