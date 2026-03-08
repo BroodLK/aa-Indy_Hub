@@ -497,25 +497,25 @@
                                             data-bs-trigger="hover focus"
                                             data-bs-placement="right"
                                             title="Market Groups"
-                                            data-bs-content="Select which categories your hub will BUY from members and SELL to members.">
+                                            data-bs-content="Select what your hub will BUY from members and SELL to members.">
                                             <i class="fas fa-info-circle"></i>
                                         </button>
                                     </h5>
                                 </div>
                                 <div class="mb-2">
-                                    <label class="form-label fw-semibold" for="marketGroupSearch">{% trans "Search categories or items" %}</label>
+                                    <label class="form-label fw-semibold" for="marketGroupSearch">{% trans "Search everything" %}</label>
                                     <input
                                         type="text"
                                         class="form-control form-control-sm"
                                         id="marketGroupSearch"
-                                        placeholder="{% trans 'Type a category or item name…' %}">
+                                        placeholder="{% trans 'Type any market group or item name…' %}">
                                     <div class="form-text">
-                                        {% trans "Tip: you can type an item name (e.g. Mexallon) to reveal its category, then add the whole category." %}
+                                        {% trans "Tip: you can type an item name (e.g. Mexallon) to reveal its market group, then add that group or allow everything." %}
                                     </div>
                                 </div>
                                 {% if not market_group_choices %}
                                     <div class="alert alert-warning py-2 mb-0">
-                                        <small><i class="fas fa-exclamation-triangle me-1"></i>{% trans "No industry market groups found. Check that the SDE data is loaded." %}</small>
+                                        <small><i class="fas fa-exclamation-triangle me-1"></i>{% trans "No market groups found. Check that the SDE data is loaded." %}</small>
                                     </div>
                                 {% else %}
                                     <div class="row g-3">

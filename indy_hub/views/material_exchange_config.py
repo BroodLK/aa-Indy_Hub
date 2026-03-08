@@ -1092,9 +1092,9 @@ def _get_corp_hangar_divisions(user, corp_id):
 
 
 def _get_industry_market_group_ids() -> set[int]:
-    """Return market group IDs used by industry materials (cached)."""
+    """Return market group IDs used by all item types (cached)."""
 
-    cache_key = "indy_hub:material_exchange:industry_market_group_ids:v1"
+    cache_key = "indy_hub:material_exchange:all_market_group_ids:v1"
     cached = cache.get(cache_key)
     if cached is not None:
         try:
@@ -1103,22 +1103,44 @@ def _get_industry_market_group_ids() -> set[int]:
             return set()
 
     try:
-        # AA Example App
-        from indy_hub.models import SdeIndustryActivityMaterial
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
 
-        ids = set(
-            SdeIndustryActivityMaterial.objects.exclude(
-                material_eve_type__market_group_id_raw__isnull=True
-            )
-            .values_list("material_eve_type__market_group_id_raw", flat=True)
-            .distinct()
-        )
-    except Exception as exc:
-        logger.warning("Failed to load industry market group IDs: %s", exc)
-        ids = set()
+        ids = {
+            int(group_id)
+            for group_id in ItemType.objects.exclude(
+                market_group_id_raw__isnull=True
+            ).values_list("market_group_id_raw", flat=True)
+            if group_id is not None
+        }
+    except Exception:
+        # Fallback to internal SDE table if eve_sde models are unavailable.
+        try:
+            # AA Example App
+            from indy_hub.models import SdeMarketGroup
+
+            ids = set(SdeMarketGroup.objects.values_list("id", flat=True))
+        except Exception as exc:
+            logger.warning("Failed to load market group IDs: %s", exc)
+            ids = set()
 
     cache.set(cache_key, list(ids), 3600)
     return ids
+
+
+def _get_itemtype_market_group_name_rows():
+    """Return (market_group_id, item_name) rows for all item types."""
+
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        return ItemType.objects.exclude(market_group_id_raw__isnull=True).values_list(
+            "market_group_id_raw",
+            "name",
+        )
+    except Exception:
+        return []
 
 
 def _build_market_group_index() -> dict[int, dict[str, str | int | None]]:
@@ -1157,10 +1179,10 @@ def _get_market_group_path_ids(
 
 
 def _get_industry_market_group_choice_ids(depth_from_root: int = 2) -> set[int]:
-    """Return grouped market group IDs at the given depth for industry items."""
+    """Return grouped market group IDs at the given depth for all item types."""
 
     cache_key = (
-        "indy_hub:material_exchange:industry_market_group_choice_ids:v2:"
+        "indy_hub:material_exchange:market_group_choice_ids:v3:"
         f"depth:{depth_from_root}"
     )
     cached = cache.get(cache_key)
@@ -1195,10 +1217,10 @@ def _get_industry_market_group_choice_ids(depth_from_root: int = 2) -> set[int]:
 def _get_industry_market_group_choices(
     depth_from_root: int = 2,
 ) -> list[dict[str, str | int]]:
-    """Return sorted market group choices (id + label) for industry items."""
+    """Return sorted market group choices (id + label) for all item types."""
 
     cache_key = (
-        "indy_hub:material_exchange:industry_market_group_choices:v2:"
+        "indy_hub:material_exchange:market_group_choices:v3:"
         f"depth:{depth_from_root}"
     )
     cached = cache.get(cache_key)
@@ -1230,7 +1252,7 @@ def _get_industry_market_group_search_index(
     """Return market group labels and item names for search."""
 
     cache_key = (
-        "indy_hub:material_exchange:industry_market_group_search_index:v1:"
+        "indy_hub:material_exchange:market_group_search_index:v3:"
         f"depth:{depth_from_root}"
     )
     cached = cache.get(cache_key)
@@ -1248,23 +1270,9 @@ def _get_industry_market_group_search_index(
     if not all_groups:
         return {}
 
-    try:
-        # AA Example App
-        from indy_hub.models import SdeIndustryActivityMaterial
-
-        rows = (
-            SdeIndustryActivityMaterial.objects.exclude(
-                material_eve_type__market_group_id_raw__isnull=True
-            )
-            .values_list(
-                "material_eve_type__market_group_id_raw",
-                "material_eve_type__name",
-            )
-            .distinct()
-        )
-    except Exception as exc:
-        logger.warning("Failed to load industry item names: %s", exc)
-        return {}
+    rows = _get_itemtype_market_group_name_rows()
+    if rows is None:
+        rows = []
 
     index: dict[int, dict[str, object]] = {
         int(group_id): {
@@ -1275,6 +1283,7 @@ def _get_industry_market_group_search_index(
         if int(group_id) in all_groups
     }
 
+    max_items_per_group = 100
     for market_group_id, type_name in rows:
         if not market_group_id:
             continue
@@ -1286,6 +1295,8 @@ def _get_industry_market_group_search_index(
         else:
             grouped_id = path_ids[depth_from_root]
         if grouped_id in index and type_name:
+            if len(index[grouped_id]["items"]) >= max_items_per_group:
+                continue
             index[grouped_id]["items"].add(str(type_name))
 
     for group_id, payload in index.items():
