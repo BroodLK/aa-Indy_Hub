@@ -1238,6 +1238,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             checkbox.checked = selectedSet.has(nodeId);
         }
+        row.classList.toggle('is-selected', checkbox.checked);
         checkbox.disabled = !!disableSelection;
         checkbox.addEventListener('change', function() {
             const nextSet = new Set(selectedSet);
@@ -1251,8 +1252,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             } else if (checkbox.checked) {
                 nextSet.add(nodeId);
+                descendants.forEach(descendantId => nextSet.add(descendantId));
             } else {
                 nextSet.delete(nodeId);
+                descendants.forEach(descendantId => nextSet.delete(descendantId));
             }
             onToggle(nextSet);
         });

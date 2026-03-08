@@ -325,9 +325,21 @@ html[data-theme="darkly"] .me-config .me-current-bar {
     color: var(--bs-body-color) !important;
 }
 
+.me-config .me-step-badge.bg-secondary {
+    background-color: rgba(var(--bs-secondary-rgb), 0.20) !important;
+    border-color: rgba(var(--bs-secondary-rgb), 0.32) !important;
+    color: var(--bs-body-color) !important;
+}
+
 html[data-theme="darkly"] .me-config .me-step-badge {
     background-color: rgba(255, 255, 255, 0.08) !important;
     border-color: rgba(255, 255, 255, 0.16);
+    color: rgba(255, 255, 255, 0.90) !important;
+}
+
+html[data-theme="darkly"] .me-config .me-step-badge.bg-secondary {
+    background-color: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.16) !important;
     color: rgba(255, 255, 255, 0.90) !important;
 }
 
@@ -607,7 +619,17 @@ html[data-theme="darkly"] .me-config .me-market-tree {
 }
 
 .me-config .me-market-tree-row:hover {
-    background: rgba(13, 110, 253, 0.08);
+    background: rgba(var(--bs-secondary-rgb), 0.12);
+}
+
+.me-config .me-market-tree-row.is-selected {
+    background: rgba(var(--bs-secondary-rgb), 0.16);
+    border: 1px solid rgba(var(--bs-secondary-rgb), 0.34);
+}
+
+html[data-theme="darkly"] .me-config .me-market-tree-row.is-selected {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.16);
 }
 
 .me-config .me-market-tree-toggle {
