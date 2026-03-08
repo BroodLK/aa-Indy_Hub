@@ -214,7 +214,7 @@
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
                                         data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
-                                        data-max-qty="{{ item.user_quantity }}">
+                                        data-max-qty="{{ item.available_quantity }}">
                                         <td>
                                             <img
                                                 src="https://images.evetech.net/types/{{ item.type_id }}/icon?size=64"
@@ -223,9 +223,17 @@
                                         </td>
                                         <td>
                                             <strong>{{ item.type_name }}</strong>
+                                            {% if item.reserved_quantity > 0 %}
+                                            <div class="small text-warning">
+                                                <i class="fas fa-lock me-1"></i>{% trans "Reserved in your open orders:" %} {{ item.reserved_quantity|intcomma }}
+                                            </div>
+                                            {% endif %}
                                         </td>
                                         <td class="text-end">
                                             <span class="badge bg-success">{{ item.user_quantity|intcomma }}</span>
+                                            <div class="small text-muted">
+                                                {% trans "Available now:" %} {{ item.available_quantity|intcomma }}
+                                            </div>
                                         </td>
                                         <td class="text-end text-success fw-semibold">
                                             {{ item.buy_price_from_member|floatformat:2|intcomma }} ISK
@@ -239,10 +247,11 @@
                                                         id="qty-{{ item.type_id }}"
                                                         class="form-control qty-input"
                                                         min="0"
-                                                        max="{{ item.user_quantity }}"
+                                                        max="{{ item.available_quantity }}"
                                                         value="0"
                                                         data-type-id="{{ item.type_id }}"
-                                                        data-max="{{ item.user_quantity }}">
+                                                        data-max="{{ item.available_quantity }}"
+                                                        {% if item.available_quantity <= 0 %}disabled{% endif %}>
                                                     <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="zero" title="{% trans 'Zero' %}" aria-label="{% trans 'Zero' %}">
                                                             <i class="fas fa-ban" aria-hidden="true"></i>
@@ -251,7 +260,7 @@
                                                     </div>
                                                 </div>
                                                 <div class="qty-error" id="error-{{ item.type_id }}">
-                                                    {% trans "Max:" %} {{ item.user_quantity|intcomma }}
+                                                    {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
                                                 </div>
                                             </div>
                                         </td>

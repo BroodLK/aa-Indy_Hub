@@ -157,3 +157,72 @@ html[data-theme="darkly"] .bg-white {
 html[data-theme="darkly"] [class*="subtle"] {
     background-color: #303030 !important;
 }
+
+/* Global focus-card treatment so pages without index.css still render correctly. */
+.focus-card,
+.card.focus-card,
+.accordion-item.focus-card {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--bs-border-color, rgba(0, 0, 0, 0.12));
+    border-radius: 18px;
+    background: var(--indy-card-surface, rgba(var(--bs-body-bg-rgb, 255, 255, 255), 0.96));
+    box-shadow: var(--indy-card-shadow, 0 14px 30px rgba(15, 23, 42, 0.15));
+    transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.focus-card::before,
+.card.focus-card::before,
+.accordion-item.focus-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+        120deg,
+        rgba(var(--bs-primary-rgb, 13, 110, 253), 0.12) 0%,
+        transparent 72%
+    );
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.focus-card:hover,
+.card.focus-card:hover,
+.accordion-item.focus-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--indy-card-shadow-hover, 0 20px 38px rgba(15, 23, 42, 0.22));
+}
+
+.focus-card:hover::before,
+.card.focus-card:hover::before,
+.accordion-item.focus-card:hover::before {
+    opacity: 1;
+}
+
+html[data-theme="darkly"] .focus-card,
+html[data-theme="darkly"] .card.focus-card,
+html[data-theme="darkly"] .accordion-item.focus-card,
+html[data-theme="figl-theme"] .focus-card,
+html[data-theme="figl-theme"] .card.focus-card,
+html[data-theme="figl-theme"] .accordion-item.focus-card,
+html[data-theme="figl"] .focus-card,
+html[data-theme="figl"] .card.focus-card,
+html[data-theme="figl"] .accordion-item.focus-card {
+    background: rgba(var(--bs-body-bg-rgb, 15, 23, 42), 0.86);
+    border-color: rgba(var(--bs-light-rgb, 248, 249, 250), 0.16);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.34);
+}
+
+html[data-theme="darkly"] .focus-card:hover,
+html[data-theme="darkly"] .card.focus-card:hover,
+html[data-theme="darkly"] .accordion-item.focus-card:hover,
+html[data-theme="figl-theme"] .focus-card:hover,
+html[data-theme="figl-theme"] .card.focus-card:hover,
+html[data-theme="figl-theme"] .accordion-item.focus-card:hover,
+html[data-theme="figl"] .focus-card:hover,
+html[data-theme="figl"] .card.focus-card:hover,
+html[data-theme="figl"] .accordion-item.focus-card:hover {
+    border-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.34);
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.4);
+}

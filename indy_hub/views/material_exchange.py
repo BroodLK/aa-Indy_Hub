@@ -66,6 +66,74 @@ User = get_user_model()
 _PRODUCTION_IDS_CACHE: set[int] | None = None
 _INDUSTRY_MARKET_GROUP_IDS_CACHE: set[int] | None = None
 
+_ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
+    MaterialExchangeBuyOrder.Status.DRAFT,
+    MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
+    MaterialExchangeBuyOrder.Status.VALIDATED,
+)
+
+_ACTIVE_SELL_RESERVATION_STATUSES: tuple[str, ...] = (
+    MaterialExchangeSellOrder.Status.DRAFT,
+    MaterialExchangeSellOrder.Status.AWAITING_VALIDATION,
+    MaterialExchangeSellOrder.Status.ANOMALY,
+    MaterialExchangeSellOrder.Status.ANOMALY_REJECTED,
+    MaterialExchangeSellOrder.Status.VALIDATED,
+)
+
+
+def _get_reserved_buy_quantities(
+    *,
+    config: MaterialExchangeConfig,
+    type_ids: set[int] | None = None,
+    exclude_order_id: int | None = None,
+) -> dict[int, int]:
+    """Return reserved quantities by type for active buy orders."""
+
+    queryset = MaterialExchangeBuyOrderItem.objects.filter(
+        order__config=config,
+        order__status__in=_ACTIVE_BUY_RESERVATION_STATUSES,
+    )
+    if type_ids:
+        queryset = queryset.filter(type_id__in=type_ids)
+    if exclude_order_id:
+        queryset = queryset.exclude(order_id=int(exclude_order_id))
+
+    aggregated = queryset.values("type_id").annotate(total_reserved=Sum("quantity"))
+    return {
+        int(row["type_id"]): int(row["total_reserved"] or 0) for row in aggregated
+    }
+
+
+def _get_reserved_sell_quantities(
+    *,
+    config: MaterialExchangeConfig,
+    seller,
+    location_id: int | None = None,
+    type_ids: set[int] | None = None,
+    exclude_order_id: int | None = None,
+) -> dict[int, int]:
+    """Return reserved quantities by type for a seller's active sell orders."""
+
+    queryset = MaterialExchangeSellOrderItem.objects.filter(
+        order__config=config,
+        order__seller=seller,
+        order__status__in=_ACTIVE_SELL_RESERVATION_STATUSES,
+    )
+    if location_id is not None:
+        queryset = queryset.filter(
+            Q(order__source_location_id=int(location_id))
+            | Q(order__source_location_id__isnull=True)
+        )
+    if type_ids:
+        queryset = queryset.filter(type_id__in=type_ids)
+    if exclude_order_id:
+        queryset = queryset.exclude(order_id=int(exclude_order_id))
+
+    aggregated = queryset.values("type_id").annotate(total_reserved=Sum("quantity"))
+    return {
+        int(row["type_id"]): int(row["total_reserved"] or 0) for row in aggregated
+    }
+
 
 def _resolve_main_character_name(user) -> str:
     """Return user's main character name when available, fallback to username."""
@@ -1508,6 +1576,13 @@ def material_exchange_sell(request, tokens):
             )
             return redirect(sell_redirect_url)
 
+        reserved_quantities = _get_reserved_sell_quantities(
+            config=config,
+            seller=request.user,
+            location_id=selected_location_id,
+            type_ids=set(submitted_quantities.keys()),
+        )
+
         items_to_create: list[dict] = []
         errors: list[str] = []
         total_payout = Decimal("0")
@@ -1574,6 +1649,25 @@ def material_exchange_sell(request, tokens):
                         f"Insufficient {type_name} in {active_location_name}. You have: {user_qty:,}, requested: {qty:,}"
                     )
                 )
+                continue
+
+            reserved_qty = int(reserved_quantities.get(int(type_id), 0) or 0)
+            available_qty = max(int(user_qty) - reserved_qty, 0)
+            if qty > available_qty:
+                type_name = get_type_name(type_id)
+                if reserved_qty > 0:
+                    errors.append(
+                        _(
+                            f"Insufficient unlocked {type_name} in {active_location_name}. "
+                            f"Available now: {available_qty:,}, reserved in open orders: {reserved_qty:,}, requested: {qty:,}."
+                        )
+                    )
+                else:
+                    errors.append(
+                        _(
+                            f"Insufficient {type_name} in {active_location_name}. You have: {user_qty:,}, requested: {qty:,}"
+                        )
+                    )
                 continue
 
             fuzz_prices = price_data.get(type_id, {})
@@ -1931,6 +2025,13 @@ def material_exchange_sell(request, tokens):
                 int(selected_location_id), {}
             )
 
+        reserved_quantities_for_display = _get_reserved_sell_quantities(
+            config=config,
+            seller=request.user,
+            location_id=selected_location_id,
+            type_ids=set(assets_for_display.keys()),
+        )
+
         for type_id, user_qty in assets_for_display.items():
             fuzz_prices = price_data.get(type_id, {})
             jita_buy = fuzz_prices.get("buy") or Decimal(0)
@@ -1949,12 +2050,18 @@ def material_exchange_sell(request, tokens):
             if buy_price <= 0:
                 continue
             type_name = get_type_name(type_id)
+            reserved_qty = int(
+                reserved_quantities_for_display.get(int(type_id), 0) or 0
+            )
+            available_qty = max(int(user_qty) - reserved_qty, 0)
             materials_with_qty.append(
                 {
                     "type_id": type_id,
                     "type_name": type_name,
                     "buy_price_from_member": buy_price,
                     "user_quantity": user_qty,
+                    "reserved_quantity": reserved_qty,
+                    "available_quantity": available_qty,
                 }
             )
 
@@ -2066,42 +2173,6 @@ def material_exchange_buy(request, tokens):
         corp_assets_scope_missing = False
 
     if request.method == "POST":
-        # Get available stock
-        stock_items = list(
-            config.stock_items.filter(quantity__gt=0, jita_buy_price__gt=0)
-        )
-
-        pre_filter_stock_count = len(stock_items)
-
-        # Apply market group filter strictly (empty config means no allowed items)
-        try:
-            allowed_type_ids = _get_allowed_type_ids_for_config(config, "buy")
-            if allowed_type_ids is not None:
-                stock_items = [
-                    item for item in stock_items if item.type_id in allowed_type_ids
-                ]
-        except Exception as exc:
-            logger.warning("Failed to apply market group filter: %s", exc)
-
-        group_map = _get_group_map([item.type_id for item in stock_items])
-        stock_items.sort(
-            key=lambda i: (
-                group_map.get(i.type_id, "Other").lower(),
-                (i.type_name or "").lower(),
-            )
-        )
-        if not stock_items:
-            if pre_filter_stock_count > 0:
-                messages.error(
-                    request,
-                    _(
-                        "No stock available in the allowed Market Groups based on the current configuration."
-                    ),
-                )
-            else:
-                messages.error(request, _("No stock available."))
-            return redirect("indy_hub:material_exchange_buy")
-
         # Parse submitted quantities from the form. Do not iterate over `stock_items` here:
         # doing so can silently drop items if stock changed (quantity=0) or an item is no
         # longer visible due to filters.
@@ -2130,60 +2201,90 @@ def material_exchange_buy(request, tokens):
             )
             return redirect("indy_hub:material_exchange_buy")
 
-        stock_by_type_id = {item.type_id: item for item in stock_items}
-
         items_to_create = []
         errors = []
         total_cost = Decimal("0")
 
-        for type_id, qty in submitted_quantities.items():
-            stock_item = stock_by_type_id.get(type_id)
-            if stock_item is None:
-                type_name = get_type_name(type_id)
-                errors.append(
-                    _(
-                        f"{type_name} is no longer available in stock. Please refresh the page and try again."
-                    )
-                )
-                continue
+        submitted_type_ids = set(submitted_quantities.keys())
 
-            if stock_item.quantity < qty:
-                errors.append(
-                    _(
-                        f"Insufficient stock for {stock_item.type_name}. Available: {stock_item.quantity:,}, requested: {qty:,}"
-                    )
-                )
-                continue
+        with transaction.atomic():
+            stock_items = list(
+                config.stock_items.select_for_update()
+                .filter(type_id__in=submitted_type_ids, quantity__gt=0, jita_buy_price__gt=0)
+            )
+            stock_by_type_id = {item.type_id: item for item in stock_items}
 
-            unit_price = stock_item.sell_price_to_member
-            total_price = unit_price * qty
-            total_cost += total_price
+            # Apply market group filter strictly (empty config means no allowed items)
+            allowed_type_ids: set[int] | None = None
+            try:
+                allowed_type_ids = _get_allowed_type_ids_for_config(config, "buy")
+            except Exception as exc:
+                logger.warning("Failed to apply market group filter: %s", exc)
 
-            items_to_create.append(
-                {
-                    "type_id": type_id,
-                    "type_name": stock_item.type_name,
-                    "quantity": qty,
-                    "unit_price": unit_price,
-                    "total_price": total_price,
-                    "stock_available_at_creation": stock_item.quantity,
-                }
+            reserved_quantities = _get_reserved_buy_quantities(
+                config=config,
+                type_ids=submitted_type_ids,
             )
 
-        if not items_to_create and not errors:
-            messages.error(
-                request,
-                _("Please enter a quantity greater than 0 for at least one item."),
-            )
-            return redirect("indy_hub:material_exchange_buy")
-        if errors:
-            for err in errors:
-                messages.error(request, err)
+            for type_id, qty in submitted_quantities.items():
+                stock_item = stock_by_type_id.get(type_id)
+                if stock_item is None:
+                    type_name = get_type_name(type_id)
+                    errors.append(
+                        _(
+                            f"{type_name} is no longer available in stock. Please refresh the page and try again."
+                        )
+                    )
+                    continue
 
-            # Prevent creating a partial order with an unexpected (lower) total.
-            return redirect("indy_hub:material_exchange_buy")
+                if allowed_type_ids is not None and type_id not in allowed_type_ids:
+                    type_name = get_type_name(type_id)
+                    errors.append(
+                        _(
+                            f"{type_name} is not available in the currently allowed categories."
+                        )
+                    )
+                    continue
 
-        if items_to_create:
+                reserved_qty = int(reserved_quantities.get(int(type_id), 0) or 0)
+                available_qty = max(int(stock_item.quantity) - reserved_qty, 0)
+                if qty > available_qty:
+                    errors.append(
+                        _(
+                            f"Insufficient unlocked stock for {stock_item.type_name}. "
+                            f"Available now: {available_qty:,}, reserved in open orders: {reserved_qty:,}, requested: {qty:,}"
+                        )
+                    )
+                    continue
+
+                unit_price = stock_item.sell_price_to_member
+                total_price = unit_price * qty
+                total_cost += total_price
+
+                items_to_create.append(
+                    {
+                        "type_id": type_id,
+                        "type_name": stock_item.type_name,
+                        "quantity": qty,
+                        "unit_price": unit_price,
+                        "total_price": total_price,
+                        "stock_available_at_creation": available_qty,
+                    }
+                )
+
+            if not items_to_create and not errors:
+                messages.error(
+                    request,
+                    _("Please enter a quantity greater than 0 for at least one item."),
+                )
+                return redirect("indy_hub:material_exchange_buy")
+
+            if errors:
+                for err in errors:
+                    messages.error(request, err)
+                # Prevent creating a partial order with an unexpected (lower) total.
+                return redirect("indy_hub:material_exchange_buy")
+
             # Get order reference from client (generated in JavaScript)
             client_order_ref = request.POST.get("order_reference", "").strip()
 
@@ -2191,7 +2292,7 @@ def material_exchange_buy(request, tokens):
             order = MaterialExchangeBuyOrder.objects.create(
                 config=config,
                 buyer=request.user,
-                status="draft",
+                status=MaterialExchangeBuyOrder.Status.DRAFT,
                 order_reference=client_order_ref if client_order_ref else None,
             )
 
@@ -2205,17 +2306,15 @@ def material_exchange_buy(request, tokens):
             order.rounded_total_price = rounded_total_cost
             order.save(update_fields=["rounded_total_price", "updated_at"])
 
-            # Admin notifications are handled by the post_save signal + async task
+        # Admin notifications are handled by the post_save signal + async task
 
-            messages.success(
-                request,
-                _(
-                    f"Created buy order #{order.id} with {len(items_to_create)} item(s). Total cost: {rounded_total_cost:,.0f} ISK. Awaiting admin approval."
-                ),
-            )
-            return redirect("indy_hub:material_exchange_index")
-
-        return redirect("indy_hub:material_exchange_buy")
+        messages.success(
+            request,
+            _(
+                f"Created buy order #{order.id} with {len(items_to_create)} item(s). Total cost: {rounded_total_cost:,.0f} ISK. Awaiting admin approval."
+            ),
+        )
+        return redirect("indy_hub:material_exchange_index")
 
     # Auto-refresh stock only if stale (> 1h) or never synced; otherwise keep cache.
     # Post-deploy self-heal: if we changed stock derivation logic, trigger a one-time refresh.
@@ -2303,7 +2402,14 @@ def material_exchange_buy(request, tokens):
             (i.type_name or "").lower(),
         )
     )
+    reserved_quantities = _get_reserved_buy_quantities(
+        config=config,
+        type_ids={int(item.type_id) for item in stock_items},
+    )
     for stock_item in stock_items:
+        reserved_qty = int(reserved_quantities.get(int(stock_item.type_id), 0) or 0)
+        stock_item.reserved_quantity = reserved_qty
+        stock_item.available_quantity = max(int(stock_item.quantity) - reserved_qty, 0)
         stock_item.buy_location_label = _build_buy_stock_location_label(
             stock_item,
             buy_name_map=buy_name_map,
