@@ -201,6 +201,42 @@ MARKET_GROUP_GRANULAR_CHILDREN: dict[str, list[str]] = {
         "Unknown Components",
     ],
 }
+MARKET_GROUP_GRANULAR_GRANDCHILDREN: dict[str, dict[str, list[str]]] = {
+    "Manufacture & Research": {
+        "Components": [
+            "Advanced Capital Components",
+            "Advanced Components",
+            "Fuel Blocks",
+            "Protective Components",
+            "R.A.M.",
+            "Standard Capital Ship Components",
+            "Structure Components",
+            "Subsystem Components",
+        ],
+        "Materials": [
+            "Advanced Protective Technology",
+            "Atavum",
+            "Colony Reagents",
+            "Faction Materials",
+            "Gas Clouds Materials",
+            "Ice Products",
+            "Infomorph Systems",
+            "Minerals",
+            "Molecular-Forging Tools",
+            "Named Components",
+            "Planetary Materials",
+            "Raw Materials",
+            "Reaction Materials",
+            "Salvage Materials",
+        ],
+        "Research Equipment": [
+            "Ancient Relics",
+            "Datacores",
+            "Decryptors",
+            "R.Db",
+        ],
+    }
+}
 
 
 def _normalize_market_group_name(raw_value: str) -> str:
@@ -284,6 +320,9 @@ def _get_market_group_tree() -> list[dict[str, object]]:
 
         children: list[dict[str, object]] = []
         if major_label not in NON_EXPANDABLE_GRANULAR_GROUPS:
+            major_grandchild_map = MARKET_GROUP_GRANULAR_GRANDCHILDREN.get(
+                major_label, {}
+            )
             for child_label in MARKET_GROUP_GRANULAR_CHILDREN.get(major_label, []):
                 child_group_id = _find_market_group_id_by_name(
                     all_groups=all_groups,
@@ -292,7 +331,33 @@ def _get_market_group_tree() -> list[dict[str, object]]:
                 )
                 if not child_group_id:
                     continue
-                children.append({"id": int(child_group_id), "label": str(child_label)})
+
+                grand_children: list[dict[str, object]] = []
+                for grandchild_label in major_grandchild_map.get(child_label, []):
+                    grandchild_group_id = _find_market_group_id_by_name(
+                        all_groups=all_groups,
+                        group_name=grandchild_label,
+                        parent_id=int(child_group_id),
+                    )
+                    if not grandchild_group_id:
+                        continue
+                    grand_children.append(
+                        {
+                            "id": int(grandchild_group_id),
+                            "label": str(grandchild_label),
+                            "expandable": False,
+                            "children": [],
+                        }
+                    )
+
+                children.append(
+                    {
+                        "id": int(child_group_id),
+                        "label": str(child_label),
+                        "expandable": bool(grand_children),
+                        "children": grand_children,
+                    }
+                )
 
         tree.append(
             {
@@ -307,6 +372,32 @@ def _get_market_group_tree() -> list[dict[str, object]]:
 
     cache.set(cache_key, tree, 3600)
     return tree
+
+
+def _collect_market_group_tree_ids(
+    market_group_tree: list[dict[str, object]],
+) -> set[int]:
+    """Return all IDs included in the curated tree (all depths)."""
+
+    ids: set[int] = set()
+    stack = list(market_group_tree or [])
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        try:
+            node_id = int(node.get("id"))
+        except (TypeError, ValueError):
+            node_id = 0
+        if node_id > 0:
+            ids.add(node_id)
+
+        raw_children = node.get("children", []) or []
+        if isinstance(raw_children, list):
+            for child in raw_children:
+                if isinstance(child, dict):
+                    stack.append(child)
+    return ids
 
 
 @login_required
@@ -504,16 +595,7 @@ def material_exchange_config(request, tokens):
     allowed_choice_ids: set[int] = set()
     try:
         market_group_tree = _get_market_group_tree()
-        for node in market_group_tree:
-            try:
-                allowed_choice_ids.add(int(node.get("id")))
-            except (TypeError, ValueError):
-                continue
-            for child in node.get("children", []) or []:
-                try:
-                    allowed_choice_ids.add(int(child.get("id")))
-                except (TypeError, ValueError):
-                    continue
+        allowed_choice_ids = _collect_market_group_tree_ids(market_group_tree)
         market_group_choices = [
             {"id": int(node.get("id")), "label": str(node.get("label"))}
             for node in market_group_tree
@@ -1798,18 +1880,8 @@ def _handle_config_save(request, existing_config):
         sell_markup_percent = _parse_decimal(sell_markup_percent, "0")
         buy_markup_percent = _parse_decimal(buy_markup_percent, "5")
 
-        allowed_ids: set[int] = set()
         market_group_tree = _get_market_group_tree()
-        for node in market_group_tree:
-            try:
-                allowed_ids.add(int(node.get("id")))
-            except (TypeError, ValueError):
-                continue
-            for child in node.get("children", []) or []:
-                try:
-                    allowed_ids.add(int(child.get("id")))
-                except (TypeError, ValueError):
-                    continue
+        allowed_ids: set[int] = _collect_market_group_tree_ids(market_group_tree)
         all_groups = _build_market_group_index()
 
         def _parse_group_ids(raw_list: list[str]) -> list[int]:

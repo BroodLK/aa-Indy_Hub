@@ -1044,14 +1044,22 @@ document.addEventListener('DOMContentLoaded', function() {
         return normalized;
     };
 
+    const nodeHasChildren = (node) => Array.isArray(node.children) && node.children.length > 0;
+
     const getNodeDescendantIds = (node) => {
         const descendants = [];
-        (node.children || []).forEach(child => {
-            const childId = parseInt(child.id, 10);
-            if (Number.isInteger(childId) && childId > 0) {
-                descendants.push(childId);
-            }
-        });
+        const walk = (currentNode) => {
+            (currentNode.children || []).forEach(child => {
+                const childId = parseInt(child.id, 10);
+                if (Number.isInteger(childId) && childId > 0) {
+                    descendants.push(childId);
+                }
+                if (nodeHasChildren(child)) {
+                    walk(child);
+                }
+            });
+        };
+        walk(node);
         return descendants;
     };
 
@@ -1078,6 +1086,19 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     };
 
+    const expandSelectedGroupIdsToGranularChildren = (rawGroupIds) => {
+        const expanded = new Set(normalizeGroupIdList(rawGroupIds));
+        const walk = (node) => {
+            const nodeId = parseInt(node.id, 10);
+            if (Number.isInteger(nodeId) && nodeId > 0 && expanded.has(nodeId)) {
+                getNodeDescendantIds(node).forEach(descendantId => expanded.add(descendantId));
+            }
+            (node.children || []).forEach(child => walk(child));
+        };
+        marketTree.forEach(node => walk(node));
+        return Array.from(expanded).sort((a, b) => a - b);
+    };
+
     const nodeMatchesOwnSearch = (node, query) => {
         if (!query) {
             return true;
@@ -1095,6 +1116,19 @@ document.addEventListener('DOMContentLoaded', function() {
     let buySelectedGroupIds = normalizeGroupIdList(initialBuyGroups);
     let granularMode = false;
     let activeSellStructureId = '';
+    let expandedNodeIds = new Set();
+
+    const initializeExpandedNodeIds = () => {
+        expandedNodeIds = new Set();
+        const walk = (node) => {
+            const nodeId = parseInt(node.id, 10);
+            if (Number.isInteger(nodeId) && nodeId > 0 && nodeHasChildren(node)) {
+                expandedNodeIds.add(nodeId);
+            }
+            (node.children || []).forEach(child => walk(child));
+        };
+        marketTree.forEach(node => walk(node));
+    };
 
     const serializeSellGroupMap = () => {
         sellGroupMapInput.value = JSON.stringify(sellGroupsByStructure);
@@ -1145,9 +1179,51 @@ document.addEventListener('DOMContentLoaded', function() {
         return new Set(normalizeGroupIdList(rule));
     };
 
-    const renderTreeRow = ({ node, selectedSet, onToggle, isChild = false, disableSelection = false }) => {
+    const renderTreeRow = ({
+        node,
+        selectedSet,
+        onToggle,
+        depth = 0,
+        disableSelection = false,
+        showExpandToggle = false,
+        isExpanded = false,
+    }) => {
         const row = document.createElement('div');
-        row.className = isChild ? 'me-market-tree-row me-market-tree-row-child' : 'me-market-tree-row';
+        row.className = depth > 0 ? 'me-market-tree-row me-market-tree-row-child' : 'me-market-tree-row';
+        if (depth > 0) {
+            row.style.paddingLeft = `${depth * 1.0}rem`;
+        }
+
+        const rowContent = document.createElement('div');
+        rowContent.className = 'd-flex align-items-center gap-2';
+
+        if (showExpandToggle) {
+            const expandToggle = document.createElement('button');
+            expandToggle.type = 'button';
+            expandToggle.className = 'btn btn-sm me-market-tree-toggle';
+            expandToggle.textContent = isExpanded ? '-' : '+';
+            expandToggle.setAttribute('aria-label', isExpanded ? '{% trans "Collapse section" %}' : '{% trans "Expand section" %}');
+            expandToggle.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                const nodeId = parseInt(node.id, 10);
+                if (!Number.isInteger(nodeId) || nodeId <= 0) {
+                    return;
+                }
+                if (expandedNodeIds.has(nodeId)) {
+                    expandedNodeIds.delete(nodeId);
+                } else {
+                    expandedNodeIds.add(nodeId);
+                }
+                renderSellTree();
+                renderBuyTree();
+            });
+            rowContent.appendChild(expandToggle);
+        } else if (granularMode && depth > 0) {
+            const spacer = document.createElement('span');
+            spacer.className = 'me-market-tree-toggle-spacer';
+            rowContent.appendChild(spacer);
+        }
 
         const labelWrap = document.createElement('label');
         labelWrap.className = 'form-check mb-0 d-flex align-items-center gap-2';
@@ -1157,7 +1233,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const nodeId = parseInt(node.id, 10);
         const descendants = getNodeDescendantIds(node);
-        if (!granularMode && !isChild && descendants.length > 0) {
+        if (!granularMode && depth === 0 && descendants.length > 0) {
             checkbox.checked = selectedSet.has(nodeId) || descendants.some(id => selectedSet.has(id));
         } else {
             checkbox.checked = selectedSet.has(nodeId);
@@ -1165,7 +1241,7 @@ document.addEventListener('DOMContentLoaded', function() {
         checkbox.disabled = !!disableSelection;
         checkbox.addEventListener('change', function() {
             const nextSet = new Set(selectedSet);
-            if (!granularMode && !isChild) {
+            if (!granularMode && depth === 0) {
                 if (checkbox.checked) {
                     nextSet.add(nodeId);
                     descendants.forEach(descendantId => nextSet.delete(descendantId));
@@ -1182,12 +1258,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         const label = document.createElement('span');
-        label.className = isChild ? 'me-market-tree-label me-market-tree-label-child' : 'me-market-tree-label';
+        label.className = depth > 0 ? 'me-market-tree-label me-market-tree-label-child' : 'me-market-tree-label';
         label.textContent = node.label || String(node.id);
 
         labelWrap.appendChild(checkbox);
         labelWrap.appendChild(label);
-        row.appendChild(labelWrap);
+        rowContent.appendChild(labelWrap);
+        row.appendChild(rowContent);
         return row;
     };
 
@@ -1204,44 +1281,43 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        nodes.forEach(node => {
+        const renderNode = (node, depth = 0) => {
             const nodeWrapper = document.createElement('div');
             nodeWrapper.className = 'me-market-tree-node';
+            const canExpand = !!node.expandable && nodeHasChildren(node);
+            const isExpanded = query ? true : expandedNodeIds.has(parseInt(node.id, 10));
             nodeWrapper.appendChild(
                 renderTreeRow({
                     node,
                     selectedSet,
                     onToggle,
-                    isChild: false,
+                    depth,
                     disableSelection,
+                    showExpandToggle: granularMode && canExpand,
+                    isExpanded,
                 })
             );
 
-            const canExpand = !!node.expandable && Array.isArray(node.children) && node.children.length > 0;
-            if (granularMode && canExpand) {
+            if (granularMode && canExpand && isExpanded) {
                 const childWrapper = document.createElement('div');
                 childWrapper.className = 'me-market-tree-children';
                 const nodeOwnMatch = nodeMatchesOwnSearch(node, query);
-                node.children.forEach(child => {
+                (node.children || []).forEach(child => {
                     if (query && !nodeOwnMatch && !nodeMatchesSearch(child, query)) {
                         return;
                     }
-                    childWrapper.appendChild(
-                        renderTreeRow({
-                            node: child,
-                            selectedSet,
-                            onToggle,
-                            isChild: true,
-                            disableSelection,
-                        })
-                    );
+                    childWrapper.appendChild(renderNode(child, depth + 1));
                 });
                 if (childWrapper.children.length > 0) {
                     nodeWrapper.appendChild(childWrapper);
                 }
             }
 
-            container.appendChild(nodeWrapper);
+            return nodeWrapper;
+        };
+
+        nodes.forEach(node => {
+            container.appendChild(renderNode(node, 0));
         });
     };
 
@@ -1293,20 +1369,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const selectedStructures = getSelectedSellStructures();
         const selectedIds = selectedStructures.map(item => item.id);
+        const hasSelectableStructures = Array.from(sellStructureSelect.options || []).some(
+            option => option.value
+        );
 
-        Object.keys(sellGroupsByStructure).forEach(structureId => {
-            if (!selectedIds.includes(structureId)) {
-                delete sellGroupsByStructure[structureId];
-            }
-        });
-        selectedIds.forEach(structureId => {
-            if (!(structureId in sellGroupsByStructure)) {
-                sellGroupsByStructure[structureId] = null;
-            }
-        });
-
-        sellMarketGroupStructureSelect.innerHTML = '';
         if (!selectedStructures.length) {
+            // If structure options are loaded and nothing is selected, clear rules.
+            // If options are not loaded yet (initial async hydration), preserve existing map.
+            if (hasSelectableStructures) {
+                sellGroupsByStructure = {};
+            }
+
+            sellMarketGroupStructureSelect.innerHTML = '';
             sellMarketGroupStructureSelect.add(
                 new Option('{% trans "Select at least one sell location" %}', '', true, true)
             );
@@ -1321,6 +1395,18 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
+        Object.keys(sellGroupsByStructure).forEach(structureId => {
+            if (!selectedIds.includes(structureId)) {
+                delete sellGroupsByStructure[structureId];
+            }
+        });
+        selectedIds.forEach(structureId => {
+            if (!(structureId in sellGroupsByStructure)) {
+                sellGroupsByStructure[structureId] = null;
+            }
+        });
+
+        sellMarketGroupStructureSelect.innerHTML = '';
         selectedStructures.forEach(structure => {
             sellMarketGroupStructureSelect.add(new Option(structure.name, structure.id, false, false));
         });
@@ -1342,6 +1428,25 @@ document.addEventListener('DOMContentLoaded', function() {
     if (granularToggleBtn) {
         granularToggleBtn.addEventListener('click', function() {
             granularMode = !granularMode;
+            if (granularMode) {
+                if (expandedNodeIds.size === 0) {
+                    initializeExpandedNodeIds();
+                }
+                Object.entries(sellGroupsByStructure).forEach(([structureId, groupRule]) => {
+                    if (groupRule === null) {
+                        return;
+                    }
+                    sellGroupsByStructure[structureId] = expandSelectedGroupIdsToGranularChildren(
+                        groupRule
+                    );
+                });
+                buySelectedGroupIds = expandSelectedGroupIdsToGranularChildren(
+                    buySelectedGroupIds
+                );
+                serializeSellGroupMap();
+                serializeSellUnionGroups();
+                serializeBuyGroups();
+            }
             setGranularButtonLabel();
             renderSellTree();
             renderBuyTree();
@@ -1393,6 +1498,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    initializeExpandedNodeIds();
     setGranularButtonLabel();
     serializeBuyGroups();
     rebuildSellStructureRules();

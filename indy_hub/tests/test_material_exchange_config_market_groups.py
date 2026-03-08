@@ -108,3 +108,41 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         self.assertIn("Structure Equipment", nodes_by_label)
         self.assertEqual(nodes_by_label["Structure Equipment"]["children"], [])
         self.assertFalse(nodes_by_label["Structure Equipment"]["expandable"])
+
+    @patch("indy_hub.views.material_exchange_config._build_market_group_index")
+    def test_manufacture_research_tree_includes_grandchildren(self, mock_build_market_group_index):
+        mock_build_market_group_index.return_value = {
+            1: {"id": 1, "name": "Root", "parent_market_group_id": None},
+            200: {"id": 200, "name": "Manufacture & Research", "parent_market_group_id": 1},
+            210: {"id": 210, "name": "Components", "parent_market_group_id": 200},
+            211: {"id": 211, "name": "Materials", "parent_market_group_id": 200},
+            212: {"id": 212, "name": "Research Equipment", "parent_market_group_id": 200},
+            310: {"id": 310, "name": "Advanced Components", "parent_market_group_id": 210},
+            311: {"id": 311, "name": "Minerals", "parent_market_group_id": 211},
+            312: {"id": 312, "name": "Datacores", "parent_market_group_id": 212},
+        }
+
+        tree = _get_market_group_tree()
+        manufacture_node = next(
+            node for node in tree if node.get("label") == "Manufacture & Research"
+        )
+        components_node = next(
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Components"
+        )
+        materials_node = next(
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Materials"
+        )
+        research_node = next(
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Research Equipment"
+        )
+
+        self.assertTrue(components_node["expandable"])
+        self.assertTrue(any(g["label"] == "Advanced Components" for g in components_node["children"]))
+        self.assertTrue(any(g["label"] == "Minerals" for g in materials_node["children"]))
+        self.assertTrue(any(g["label"] == "Datacores" for g in research_node["children"]))
