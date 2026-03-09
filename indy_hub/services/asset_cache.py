@@ -1138,6 +1138,46 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
             )
             continue
 
+        parent_item_ids: set[int] = set()
+        for asset in assets or []:
+            try:
+                parent_item_id = int(asset.get("location_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if parent_item_id > 0:
+                parent_item_ids.add(parent_item_id)
+
+        named_item_ids: list[int] = []
+        for asset in assets or []:
+            if not asset.get("is_singleton"):
+                continue
+            try:
+                named_item_id = int(asset.get("item_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            # Only request names for assets that currently act as container parents.
+            if named_item_id > 0 and named_item_id in parent_item_ids:
+                named_item_ids.append(named_item_id)
+
+        asset_name_map: dict[int, str] = {}
+        if named_item_ids:
+            try:
+                asset_name_map = shared_client.fetch_character_asset_names(
+                    character_id=int(character_id),
+                    item_ids=named_item_ids,
+                )
+            except (
+                ESITokenError,
+                ESIRateLimitError,
+                ESIForbiddenError,
+                ESIClientError,
+            ) as exc:
+                logger.debug(
+                    "Failed to load asset names for character %s: %s",
+                    character_id,
+                    exc,
+                )
+
         index_by_item_id = build_asset_index_by_item_id(assets or [])
 
         for asset in assets:
@@ -1158,6 +1198,10 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
             except (TypeError, ValueError):
                 raw_location_id = None
 
+            set_name = ""
+            if item_id_int and item_id_int > 0:
+                set_name = str(asset_name_map.get(item_id_int) or "").strip()
+
             row = CachedCharacterAsset(
                 user=user,
                 character_id=int(character_id),
@@ -1166,6 +1210,7 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
                 location_id=int(resolved_location_id),
                 location_flag=str(asset.get("location_flag", "") or ""),
                 type_id=int(asset.get("type_id", 0) or 0),
+                set_name=set_name,
                 quantity=int(asset.get("quantity", 0) or 0),
                 is_singleton=bool(asset.get("is_singleton", False)),
                 is_blueprint=bool(asset.get("is_blueprint", False)),
@@ -1189,6 +1234,7 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
                     "location_id": row.location_id,
                     "location_flag": row.location_flag,
                     "type_id": row.type_id,
+                    "set_name": row.set_name,
                     "quantity": row.quantity,
                     "is_singleton": row.is_singleton,
                     "is_blueprint": row.is_blueprint,
@@ -1245,6 +1291,7 @@ def get_user_assets_cached(
                 "location_id": row.location_id,
                 "location_flag": row.location_flag,
                 "type_id": row.type_id,
+                "set_name": row.set_name,
                 "quantity": row.quantity,
                 "is_singleton": row.is_singleton,
                 "is_blueprint": row.is_blueprint,

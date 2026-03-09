@@ -167,6 +167,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
                 "raw_location_id": self.structure_id,
                 "location_id": self.structure_id,
                 "type_id": 1000,
+                "set_name": "Example Production Container",
                 "quantity": 1,
                 "is_singleton": True,
             },
@@ -215,7 +216,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
 
         self.assertTrue(rows)
         self.assertEqual(rows[0]["row_kind"], "container")
-        self.assertEqual(rows[0]["container_name"], "Small Secure Container")
+        self.assertEqual(rows[0]["container_name"], "Example Production Container")
 
         item_rows = [row for row in rows if row.get("row_kind") == "item"]
         self.assertEqual(len(item_rows), 3)
