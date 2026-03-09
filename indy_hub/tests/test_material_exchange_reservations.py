@@ -181,8 +181,9 @@ class MaterialExchangeReservationTests(TestCase):
             type_ids={34},
         )
 
-        # Alpha: explicit alpha (5) + unknown location (4)
-        self.assertEqual(reserved_alpha.get(34), 9)
+        # Without a newer asset sync timestamp, terminal states also remain reserved.
+        # Alpha: explicit alpha (5) + unknown location (4) + terminal rejected (200)
+        self.assertEqual(reserved_alpha.get(34), 209)
         # Beta: explicit beta (3) + unknown location (4)
         self.assertEqual(reserved_beta.get(34), 7)
 
@@ -237,3 +238,73 @@ class MaterialExchangeReservationTests(TestCase):
             assets_synced_at=completed_at + timedelta(minutes=1),
         )
         self.assertIsNone(reserved_with_new_sync.get(34))
+
+    def test_terminal_sell_reservations_release_only_after_newer_asset_sync(self):
+        cancelled_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.user_a,
+            status=MaterialExchangeSellOrder.Status.CANCELLED,
+            source_location_id=70000001,
+            source_location_name="Alpha Hub",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=cancelled_order,
+            type_id=35,
+            type_name="Pyerite",
+            quantity=6,
+            unit_price=1,
+            total_price=6,
+        )
+        rejected_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.user_a,
+            status=MaterialExchangeSellOrder.Status.REJECTED,
+            source_location_id=70000001,
+            source_location_name="Alpha Hub",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=rejected_order,
+            type_id=36,
+            type_name="Mexallon",
+            quantity=4,
+            unit_price=1,
+            total_price=4,
+        )
+
+        terminal_at = timezone.now()
+        MaterialExchangeSellOrder.objects.filter(
+            pk__in=[cancelled_order.pk, rejected_order.pk]
+        ).update(updated_at=terminal_at)
+
+        # No post-terminal asset sync yet -> still reserved.
+        reserved_without_sync = _get_reserved_sell_quantities(
+            config=self.config,
+            seller=self.user_a,
+            location_id=70000001,
+            type_ids={35, 36},
+            assets_synced_at=None,
+        )
+        self.assertEqual(reserved_without_sync.get(35), 6)
+        self.assertEqual(reserved_without_sync.get(36), 4)
+
+        # Sync happened before terminal status update -> still reserved.
+        reserved_with_old_sync = _get_reserved_sell_quantities(
+            config=self.config,
+            seller=self.user_a,
+            location_id=70000001,
+            type_ids={35, 36},
+            assets_synced_at=terminal_at - timedelta(minutes=1),
+        )
+        self.assertEqual(reserved_with_old_sync.get(35), 6)
+        self.assertEqual(reserved_with_old_sync.get(36), 4)
+
+        # Sync happened after terminal status update -> released.
+        reserved_with_new_sync = _get_reserved_sell_quantities(
+            config=self.config,
+            seller=self.user_a,
+            location_id=70000001,
+            type_ids={35, 36},
+            assets_synced_at=terminal_at + timedelta(minutes=1),
+        )
+        self.assertIsNone(reserved_with_new_sync.get(35))
+        self.assertIsNone(reserved_with_new_sync.get(36))

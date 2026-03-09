@@ -22,6 +22,7 @@ from indy_hub.models import (
 )
 from indy_hub.tasks.material_exchange_contracts import (
     _extract_contract_id,
+    _get_effective_contract_location_id,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
 )
@@ -694,6 +695,69 @@ class ContractValidationTaskTest(TestCase):
         self.assertIn("Sell-location guidance:", guidance)
         self.assertIn("Tritanium", guidance)
         self.assertIn("accepted at Beta Hub", guidance)
+
+    def test_effective_contract_location_prefers_single_expected_location_id(self):
+        """Guidance should map name-matched contracts back to a single configured sell location."""
+        resolved = _get_effective_contract_location_id(
+            start_location_id=1045722708748,
+            end_location_id=1045722708748,
+            expected_location_ids=[70000001],
+        )
+        self.assertEqual(resolved, 70000001)
+
+    def test_effective_contract_location_uses_first_expected_when_no_id_match(self):
+        """Guidance should deterministically use the first configured expected location."""
+        resolved = _get_effective_contract_location_id(
+            start_location_id=1045722708748,
+            end_location_id=1045722708749,
+            expected_location_ids=[70000002, 70000001],
+        )
+        self.assertEqual(resolved, 70000002)
+
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts._is_type_accepted_for_sell_location"
+    )
+    def test_build_sell_surplus_item_location_guidance_uses_expected_location_when_ids_differ(
+        self, mock_is_type_accepted
+    ):
+        """Name-only location matches should not produce false 'not accepted here' guidance."""
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            _build_sell_surplus_item_location_guidance,
+        )
+
+        self.config.sell_structure_ids = [70000001]
+        self.config.sell_structure_names = ["Alpha Hub"]
+        self.config.allowed_market_groups_sell_by_structure = {
+            "70000001": [100],
+        }
+        self.config.save(
+            update_fields=[
+                "sell_structure_ids",
+                "sell_structure_names",
+                "allowed_market_groups_sell_by_structure",
+            ]
+        )
+
+        # Accepted for the configured location, rejected for unknown IDs.
+        def _acceptance_side_effect(*args, **kwargs):
+            return int(kwargs.get("location_id") or 0) == 70000001
+
+        mock_is_type_accepted.side_effect = _acceptance_side_effect
+
+        effective_contract_location_id = _get_effective_contract_location_id(
+            start_location_id=1045722708748,
+            end_location_id=1045722708748,
+            expected_location_ids=[70000001],
+        )
+        guidance = _build_sell_surplus_item_location_guidance(
+            config=self.config,
+            contract_location_id=effective_contract_location_id,
+            surplus_type_ids=[34],
+            type_names={34: "Tritanium"},
+        )
+
+        self.assertEqual(guidance, "")
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")

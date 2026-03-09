@@ -2067,7 +2067,13 @@ def _get_effective_contract_location_id(
     end_location_id: int | None,
     expected_location_ids: list[int] | None = None,
 ) -> int | None:
-    """Pick the most relevant contract location ID, preferring expected IDs."""
+    """Pick the most relevant location ID for sell-location guidance.
+
+    When location matching succeeds by name (name_or_id mode), contract start/end IDs
+    may differ from configured sell location IDs for the same structure. In that case,
+    prefer a configured expected location ID so market-group acceptance checks evaluate
+    against configured location rules.
+    """
     location_ids: list[int] = []
     for raw in [start_location_id, end_location_id]:
         try:
@@ -2081,11 +2087,23 @@ def _get_effective_contract_location_id(
     if not location_ids:
         return None
 
-    expected_set = {int(sid) for sid in (expected_location_ids or []) if int(sid) > 0}
-    if expected_set:
+    expected_ids: list[int] = []
+    for raw in expected_location_ids or []:
+        try:
+            expected_id = int(raw or 0)
+        except (TypeError, ValueError):
+            continue
+        if expected_id <= 0 or expected_id in expected_ids:
+            continue
+        expected_ids.append(expected_id)
+
+    if expected_ids:
+        expected_set = set(expected_ids)
         for loc_id in location_ids:
             if loc_id in expected_set:
                 return loc_id
+        # No contract ID match: use first configured expected location deterministically.
+        return expected_ids[0]
 
     return location_ids[0]
 

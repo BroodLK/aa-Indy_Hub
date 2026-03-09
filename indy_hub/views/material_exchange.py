@@ -119,17 +119,22 @@ def _get_reserved_sell_quantities(
 ) -> dict[int, int]:
     """Return reserved quantities by type for a seller's active sell orders.
 
-    Completed sell orders remain reserved until the next successful user assets sync
-    that happened after the order completion timestamp.
+    Active sell orders are always reserved.
+    Terminal sell orders (completed/rejected/cancelled) remain reserved until the
+    next successful user assets sync that happened after the order status update.
     """
 
     status_filter = Q(order__status__in=_ACTIVE_SELL_RESERVATION_STATUSES)
-    completed_pending_sync_filter = Q(
-        order__status=MaterialExchangeSellOrder.Status.COMPLETED
+    terminal_pending_sync_filter = Q(
+        order__status__in=[
+            MaterialExchangeSellOrder.Status.COMPLETED,
+            MaterialExchangeSellOrder.Status.REJECTED,
+            MaterialExchangeSellOrder.Status.CANCELLED,
+        ]
     )
     if assets_synced_at is not None:
-        completed_pending_sync_filter &= Q(order__updated_at__gt=assets_synced_at)
-    status_filter |= completed_pending_sync_filter
+        terminal_pending_sync_filter &= Q(order__updated_at__gt=assets_synced_at)
+    status_filter |= terminal_pending_sync_filter
 
     queryset = MaterialExchangeSellOrderItem.objects.filter(
         order__config=config,
@@ -2537,7 +2542,6 @@ def material_exchange_sell(request, tokens):
             config=config,
             seller=request.user,
             location_id=selected_location_id,
-            type_ids=set(assets_for_display.keys()),
             assets_synced_at=assets_last_sync,
         )
 

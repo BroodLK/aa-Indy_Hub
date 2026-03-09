@@ -4,13 +4,17 @@ from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
+from django.http import HttpResponse
+from django.test import RequestFactory
 from django.test import TestCase
+from django.utils import timezone
 
 # AA Example App
 from indy_hub.models import MaterialExchangeConfig
 from indy_hub.views.material_exchange import (
     _build_sell_material_rows,
     _fetch_user_assets_for_structure_data,
+    material_exchange_sell,
 )
 
 
@@ -27,6 +31,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
             is_active=True,
         )
         self.structure_id = 60003760
+        self.factory = RequestFactory()
 
     @patch("indy_hub.views.material_exchange._get_ship_type_ids", return_value={999})
     @patch("indy_hub.views.material_exchange.get_user_assets_cached")
@@ -233,3 +238,82 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertTrue(by_type[35]["has_sell_price_override"])
 
         self.assertEqual(by_type[36]["depth"], 0)
+
+    @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
+    @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
+    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
+    @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config", return_value=None)
+    @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
+    @patch("indy_hub.views.material_exchange.get_user_assets_cached")
+    @patch("indy_hub.views.material_exchange._fetch_user_assets_for_structure_data")
+    @patch("indy_hub.views.material_exchange._get_reserved_sell_quantities")
+    @patch(
+        "indy_hub.views.material_exchange._get_item_price_override_maps",
+        return_value=({}, {}),
+    )
+    @patch("indy_hub.views.material_exchange._get_material_exchange_config")
+    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch("indy_hub.views.material_exchange.render")
+    def test_sell_view_display_reservations_do_not_type_filter_query(
+        self,
+        mock_render,
+        _mock_enabled,
+        mock_get_config,
+        _mock_override_maps,
+        mock_reserved_sell,
+        mock_fetch_assets_for_structures,
+        mock_get_user_assets_cached,
+        mock_fetch_prices,
+        _mock_allowed_type_ids,
+        _mock_corp_name,
+        _mock_build_nav,
+        _mock_build_main_nav,
+    ) -> None:
+        self.config.last_stock_sync = timezone.now()
+        self.config.save(update_fields=["last_stock_sync"])
+
+        mock_get_config.return_value = self.config
+        mock_render.return_value = HttpResponse("ok")
+        mock_fetch_prices.return_value = {34: {"buy": Decimal("10"), "sell": Decimal("11")}}
+
+        # Stale aggregated data misses type 35, while raw asset data still contains it.
+        mock_fetch_assets_for_structures.return_value = (
+            {34: 5},
+            {9001: {34: 5}},
+            {self.structure_id: {34: 5}},
+            False,
+        )
+        mock_get_user_assets_cached.return_value = (
+            [
+                {
+                    "character_id": 9001,
+                    "item_id": 101,
+                    "raw_location_id": self.structure_id,
+                    "location_id": self.structure_id,
+                    "type_id": 34,
+                    "quantity": 5,
+                    "is_singleton": False,
+                },
+                {
+                    "character_id": 9001,
+                    "item_id": 102,
+                    "raw_location_id": self.structure_id,
+                    "location_id": self.structure_id,
+                    "type_id": 35,
+                    "quantity": 7,
+                    "is_singleton": False,
+                },
+            ],
+            False,
+        )
+        mock_reserved_sell.return_value = {34: 2, 35: 7}
+
+        request = self.factory.get("/material-exchange/sell/")
+        request.user = self.user
+
+        sell_view = material_exchange_sell.__wrapped__.__wrapped__.__wrapped__
+        response = sell_view(request, tokens=None)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(mock_reserved_sell.called)
+        self.assertNotIn("type_ids", mock_reserved_sell.call_args.kwargs)

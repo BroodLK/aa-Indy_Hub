@@ -266,7 +266,7 @@
                                         </td>
                                         <td>
                                             <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
-                                                <strong>{{ item.type_name }}</strong>
+                                                <strong>{% if item.container_path %}- {% endif %}{{ item.type_name }}</strong>
                                                 {% if item.has_sell_price_override %}
                                                 <div class="small text-info">
                                                     <i class="fas fa-sliders-h me-1"></i>

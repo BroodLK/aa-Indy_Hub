@@ -733,6 +733,7 @@ def _sync_stock_impl():
         # Stations (and some locations) use the structure/station id directly.
         effective_location_ids: list[int] = []
         context_to_structure_ids: dict[int, set[int]] = {}
+        hangar_fallback_context_ids: set[int] = set()
         for structure_id in target_structure_ids:
             structure_id_int = int(structure_id)
             office_folder_item_id = get_office_folder_item_id_from_assets(
@@ -749,6 +750,12 @@ def _sync_stock_impl():
                         int(config.hangar_division),
                     )
                 )
+            else:
+                # Some station/direct corp-asset payloads expose hangar context as
+                # location_flag="Hangar" at the structure location (no OfficeFolder row).
+                # Allow a Hangar fallback for those contexts so container-held items
+                # are still included in stock sync.
+                hangar_fallback_context_ids.add(structure_id_int)
 
             for context_id in candidate_context_ids:
                 context_id_int = int(context_id)
@@ -800,6 +807,13 @@ def _sync_stock_impl():
                         location_id=location_id_int,
                         location_flag=str(target_flag),
                     )
+                    if not matched and location_id_int in hangar_fallback_context_ids:
+                        matched = asset_chain_has_context(
+                            asset,
+                            index_by_item_id,
+                            location_id=location_id_int,
+                            location_flag="Hangar",
+                        )
                 if matched:
                     matches_any_location = True
                     structure_candidates = context_to_structure_ids.get(
