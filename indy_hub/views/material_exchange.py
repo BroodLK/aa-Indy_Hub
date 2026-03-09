@@ -1403,11 +1403,22 @@ def _build_sell_material_rows(
     reserved_quantities: dict[int, int],
     allowed_type_ids: set[int] | None,
     sell_override_map: dict[int, dict[str, object]],
+    character_name_by_id: dict[int, str] | None = None,
 ) -> list[dict]:
-    """Build sell rows, grouping assets by containers where possible."""
+    """Build sell rows, grouping assets by containers and character owner."""
 
     if not assets:
         return []
+
+    character_name_map: dict[int, str] = {}
+    for raw_character_id, raw_name in (character_name_by_id or {}).items():
+        try:
+            character_id = int(raw_character_id)
+        except (TypeError, ValueError):
+            continue
+        clean_name = str(raw_name or "").strip()
+        if character_id > 0 and clean_name:
+            character_name_map[character_id] = clean_name
 
     asset_by_item_id: dict[int, dict] = {}
     children_by_parent: dict[int, list[dict]] = {}
@@ -1561,6 +1572,18 @@ def _build_sell_material_rows(
             item_id = 0
         return f"Container {item_id}" if item_id > 0 else "Container"
 
+    def resolve_character_meta(asset: dict) -> tuple[int, str]:
+        try:
+            character_id = int(asset.get("character_id") or 0)
+        except (TypeError, ValueError):
+            character_id = 0
+        if character_id > 0:
+            character_name = character_name_map.get(character_id)
+            if not character_name:
+                character_name = _("Character %(id)s") % {"id": character_id}
+            return int(character_id), str(character_name)
+        return 0, ""
+
     row_index = 0
 
     def next_row_index() -> int:
@@ -1576,6 +1599,8 @@ def _build_sell_material_rows(
         blueprint_variant: str,
         ancestors: list[str],
         depth: int,
+        character_id: int,
+        character_name: str,
     ) -> dict[str, object] | None:
         if quantity <= 0:
             return None
@@ -1610,6 +1635,8 @@ def _build_sell_material_rows(
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
+            "character_id": int(character_id) if int(character_id) > 0 else None,
+            "character_name": str(character_name or ""),
         }
 
     def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
@@ -1626,8 +1653,9 @@ def _build_sell_material_rows(
 
         container_key = f"c{container_item_id}"
         next_ancestors = [*ancestors, container_key]
+        container_character_id, container_character_name = resolve_character_meta(asset)
 
-        grouped_child_items: dict[tuple[int, str], int] = {}
+        grouped_child_items: dict[tuple[int, str, int, str], int] = {}
         nested_container_assets: list[dict] = []
         for child in children:
             try:
@@ -1648,7 +1676,13 @@ def _build_sell_material_rows(
             if child_qty <= 0:
                 continue
             child_blueprint_variant = _asset_blueprint_variant(child)
-            child_key = (child_type_id, child_blueprint_variant)
+            child_character_id, child_character_name = resolve_character_meta(child)
+            child_key = (
+                child_type_id,
+                child_blueprint_variant,
+                child_character_id,
+                child_character_name,
+            )
             grouped_child_items[child_key] = grouped_child_items.get(child_key, 0) + child_qty
 
         child_rows: list[dict] = []
@@ -1663,16 +1697,22 @@ def _build_sell_material_rows(
                 ).lower(),
                 int(pair[0][0]),
                 str(pair[0][1] or ""),
+                str(pair[0][3] or "").lower(),
+                int(pair[0][2] or 0),
             ),
         )
         for child_key, child_qty in grouped_items_sorted:
-            child_type_id, child_blueprint_variant = child_key
+            child_type_id, child_blueprint_variant, child_character_id, child_character_name = (
+                child_key
+            )
             row = build_item_row(
                 type_id=child_type_id,
                 quantity=child_qty,
                 blueprint_variant=child_blueprint_variant,
                 ancestors=next_ancestors,
                 depth=depth + 1,
+                character_id=child_character_id,
+                character_name=child_character_name,
             )
             if row is not None:
                 child_rows.append(row)
@@ -1714,12 +1754,16 @@ def _build_sell_material_rows(
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
+            "character_id": (
+                int(container_character_id) if int(container_character_id) > 0 else None
+            ),
+            "character_name": str(container_character_name or ""),
         }
 
         return [container_row, *child_rows]
 
     root_container_assets: list[dict] = []
-    root_items_by_key: dict[tuple[int, str], int] = {}
+    root_items_by_key: dict[tuple[int, str, int, str], int] = {}
     for asset in assets:
         try:
             item_id = int(asset.get("item_id") or 0)
@@ -1746,7 +1790,8 @@ def _build_sell_material_rows(
         if qty <= 0:
             continue
         blueprint_variant = _asset_blueprint_variant(asset)
-        root_key = (type_id, blueprint_variant)
+        character_id, character_name = resolve_character_meta(asset)
+        root_key = (type_id, blueprint_variant, character_id, character_name)
         root_items_by_key[root_key] = root_items_by_key.get(root_key, 0) + qty
 
     rows: list[dict] = []
@@ -1766,16 +1811,20 @@ def _build_sell_material_rows(
             ).lower(),
             int(pair[0][0]),
             str(pair[0][1] or ""),
+            str(pair[0][3] or "").lower(),
+            int(pair[0][2] or 0),
         ),
     )
     for root_key, qty in root_items_sorted:
-        type_id, blueprint_variant = root_key
+        type_id, blueprint_variant, character_id, character_name = root_key
         row = build_item_row(
             type_id=type_id,
             quantity=qty,
             blueprint_variant=blueprint_variant,
             ancestors=[],
             depth=0,
+            character_id=character_id,
+            character_name=character_name,
         )
         if row is not None:
             rows.append(row)
@@ -3403,6 +3452,7 @@ def material_exchange_sell(request, tokens):
         character_tabs = []
         active_character_tab = ""
         selected_character_id: int | None = None
+        character_names_map = _resolve_user_character_names_map(request.user)
 
         selected_location_param = (request.GET.get("location") or "").strip()
         selected_location_id: int | None = None
@@ -3422,7 +3472,6 @@ def material_exchange_sell(request, tokens):
         show_character_tabs = len(sell_structure_ids) <= 1
 
         if show_character_tabs:
-            character_names_map = _resolve_user_character_names_map(request.user)
             sorted_characters = sorted(
                 user_assets_by_character.keys(),
                 key=lambda character_id: character_names_map.get(
@@ -3576,6 +3625,7 @@ def material_exchange_sell(request, tokens):
             reserved_quantities=reserved_quantities_for_display,
             allowed_type_ids=selected_location_allowed_type_ids,
             sell_override_map=sell_override_map,
+            character_name_by_id=character_names_map,
         )
 
         logger.info(

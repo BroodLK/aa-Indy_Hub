@@ -219,11 +219,13 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
             sell_override_map={
                 35: {"kind": "fixed", "price": Decimal("12.34")}
             },
+            character_name_by_id={1: "Pilot One"},
         )
 
         self.assertTrue(rows)
         self.assertEqual(rows[0]["row_kind"], "container")
         self.assertEqual(rows[0]["container_name"], "Example Production Container")
+        self.assertEqual(rows[0]["character_name"], "Pilot One")
 
         item_rows = [row for row in rows if row.get("row_kind") == "item"]
         self.assertEqual(len(item_rows), 3)
@@ -332,6 +334,57 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertIn("(BPC)", rows[0]["type_name"])
         self.assertIn("/bpc?", rows[0]["icon_url"])
         self.assertIn("_bpc_", rows[0]["form_quantity_field_name"])
+
+    @patch("indy_hub.views.material_exchange.get_type_name")
+    def test_build_sell_material_rows_splits_same_type_by_character(
+        self, mock_get_type_name
+    ) -> None:
+        mock_get_type_name.side_effect = (
+            lambda type_id: "Tritanium" if int(type_id) == 34 else f"Type {type_id}"
+        )
+
+        assets = [
+            {
+                "character_id": 1001,
+                "item_id": 88001,
+                "raw_location_id": self.structure_id,
+                "location_id": self.structure_id,
+                "type_id": 34,
+                "quantity": 5,
+                "is_singleton": False,
+                "is_blueprint": False,
+            },
+            {
+                "character_id": 2002,
+                "item_id": 88002,
+                "raw_location_id": self.structure_id,
+                "location_id": self.structure_id,
+                "type_id": 34,
+                "quantity": 7,
+                "is_singleton": False,
+                "is_blueprint": False,
+            },
+        ]
+        price_data = {34: {"buy": Decimal("5.00"), "sell": Decimal("6.00")}}
+
+        rows = _build_sell_material_rows(
+            assets=assets,
+            config=self.config,
+            price_data=price_data,
+            reserved_quantities={},
+            allowed_type_ids={34},
+            sell_override_map={},
+            character_name_by_id={1001: "Pilot Alpha", 2002: "Pilot Bravo"},
+        )
+
+        item_rows = [row for row in rows if row.get("row_kind") == "item"]
+        self.assertEqual(len(item_rows), 2)
+
+        by_character_name = {str(row["character_name"]): row for row in item_rows}
+        self.assertEqual(by_character_name["Pilot Alpha"]["user_quantity"], 5)
+        self.assertEqual(by_character_name["Pilot Alpha"]["available_quantity"], 5)
+        self.assertEqual(by_character_name["Pilot Bravo"]["user_quantity"], 7)
+        self.assertEqual(by_character_name["Pilot Bravo"]["available_quantity"], 7)
 
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})

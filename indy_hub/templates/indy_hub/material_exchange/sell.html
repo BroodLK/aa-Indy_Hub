@@ -216,7 +216,8 @@
                                         data-container-key="{{ item.container_key }}"
                                         data-container-path="{{ item.container_path }}"
                                         data-type-id="{{ item.container_type_id|default:'' }}"
-                                        data-type-name="{{ item.container_name }}">
+                                        data-type-name="{{ item.container_name }}"
+                                        data-character-name="{{ item.character_name|default:'' }}">
                                         <td>
                                             {% if item.container_type_id %}
                                             <img
@@ -235,6 +236,9 @@
                                             <div class="me-tree-label me-tree-container-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
                                                 <strong>{{ item.container_name }}</strong>
                                                 <div class="small text-muted">{% trans "Container" %}</div>
+                                                {% if item.character_name %}
+                                                <div class="small text-muted">{% trans "Character:" %} {{ item.character_name }}</div>
+                                                {% endif %}
                                             </div>
                                         </td>
                                         <td class="text-end text-muted">-</td>
@@ -258,6 +262,7 @@
                                         data-container-path="{{ item.container_path }}"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
+                                        data-character-name="{{ item.character_name|default:'' }}"
                                         data-blueprint-variant="{{ item.blueprint_variant }}"
                                         data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
                                         data-max-qty="{{ item.available_quantity }}">
@@ -272,6 +277,9 @@
                                         <td>
                                             <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
                                                 <strong>{% if item.container_path %}- {% endif %}{{ item.type_name }}</strong>
+                                                {% if item.character_name %}
+                                                <div class="small text-muted">{% trans "Character:" %} {{ item.character_name }}</div>
+                                                {% endif %}
                                                 {% if item.is_blueprint_copy %}
                                                 <div class="small text-muted">{% trans "Blueprint Copy" %}</div>
                                                 {% elif item.is_blueprint_original %}
@@ -431,7 +439,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function rowMatchesSearch(row, query) {
         const typeName = (row.dataset.typeName || '').toLowerCase();
         const typeId = String(row.dataset.typeId || '').toLowerCase();
-        return !query || typeName.includes(query) || typeId.includes(query);
+        const characterName = (row.dataset.characterName || '').toLowerCase();
+        return !query || typeName.includes(query) || typeId.includes(query) || characterName.includes(query);
     }
 
     function getContainerChildInputs(containerKey) {
@@ -642,6 +651,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateInvoice() {
         const selectedItems = [];
         let totalCents = 0;
+        const characterLabel = '{% trans "Character" %}';
 
         qtyInputs.forEach(input => {
             const qty = parseInt(input.value) || 0;
@@ -651,10 +661,13 @@ document.addEventListener('DOMContentLoaded', function() {
             checkQuantityLimit(input);
 
             if (qty > 0) {
-                const typeId = input.dataset.typeId;
                 const typeName = row.dataset.typeName;
+                const characterName = row.dataset.characterName || '';
                 const unitPrice = parseFloat(row.dataset.unitPrice);
                 const max = parseInt(input.dataset.max);
+                const displayName = characterName
+                    ? `${typeName} (${characterLabel}: ${characterName})`
+                    : typeName;
 
                 // Use actual qty or max, whichever is lower for calculation
                 const effectiveQty = Math.min(qty, max);
@@ -663,7 +676,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const subtotal = subtotalCents / 100;
 
                 selectedItems.push({
-                    name: typeName,
+                    name: displayName,
                     qty: effectiveQty,
                     unitPrice: unitPrice,
                     subtotal: subtotal
