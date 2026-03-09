@@ -3,10 +3,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 # Django
+from django.contrib.auth.models import User
 from django.test import TestCase
 
 # AA Example App
-from indy_hub.models import MaterialExchangeConfig, MaterialExchangeStock
+from indy_hub.models import Blueprint, MaterialExchangeConfig, MaterialExchangeStock
 from indy_hub.services.asset_cache import make_managed_hangar_location_id
 from indy_hub.tasks.material_exchange import _sync_stock_impl
 from indy_hub.views.material_exchange import (
@@ -172,6 +173,7 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
 
 class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
     def setUp(self):
+        self.user = User.objects.create_user("bp_owner", password="secret123")
         self.config = MaterialExchangeConfig.objects.create(
             corporation_id=123456789,
             structure_id=1001,
@@ -219,6 +221,53 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
                     "quantity": -2,
                     "is_singleton": True,
                     "is_blueprint": True,
+                }
+            ],
+            False,
+        )
+
+        variants = _get_buy_stock_blueprint_variant_map(
+            config=self.config,
+            type_ids={77777},
+        )
+
+        self.assertEqual(variants.get(77777), "bpc")
+
+    @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
+    def test_buy_stock_blueprint_variant_map_prefers_corp_blueprint_copy_records(
+        self, mock_get_corp_assets_cached
+    ):
+        self.config.buy_structure_ids = [1001]
+        self.config.hangar_division = 1
+        self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
+
+        item_id = 4001
+        Blueprint.objects.create(
+            owner_user=self.user,
+            owner_kind=Blueprint.OwnerKind.CORPORATION,
+            corporation_id=self.config.corporation_id,
+            corporation_name="Test Corp",
+            item_id=item_id,
+            blueprint_id=item_id,
+            type_id=77777,
+            location_id=1001,
+            location_name="Structure Alpha",
+            location_flag="CorpSAG1",
+            quantity=1,
+            bp_type=Blueprint.BPType.COPY,
+            type_name="Capital Armor Plates Blueprint",
+        )
+
+        mock_get_corp_assets_cached.return_value = (
+            [
+                {
+                    "item_id": item_id,
+                    "location_id": 1001,
+                    "location_flag": "CorpSAG1",
+                    "type_id": 77777,
+                    "quantity": 1,
+                    "is_singleton": True,
+                    "is_blueprint": False,
                 }
             ],
             False,
@@ -299,9 +348,11 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(variants.get(77777), "bpc")
 
     def test_build_buy_material_rows_nests_container_children(self):
+        container_item_id = 5001
+        child_item_id = 5002
         scoped_assets = [
             {
-                "item_id": 5001,
+                "item_id": container_item_id,
                 "location_id": 1001,
                 "location_flag": "CorpSAG1",
                 "type_id": 23,
@@ -311,8 +362,8 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
                 "source_structure_ids": [1001],
             },
             {
-                "item_id": 5002,
-                "location_id": 5001,
+                "item_id": child_item_id,
+                "location_id": container_item_id,
                 "location_flag": "Unlocked",
                 "type_id": 34,
                 "quantity": 25,
@@ -343,9 +394,12 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
             stock_meta_by_type=stock_meta_by_type,
             buy_name_map={1001: "Structure Alpha"},
             fallback_location_label="Structure Alpha",
+            blueprint_variant_by_item_id={child_item_id: "bpc"},
         )
 
         self.assertEqual(rows[0]["row_kind"], "container")
         item_rows = [row for row in rows if row.get("row_kind") == "item"]
         self.assertEqual(len(item_rows), 1)
         self.assertTrue(item_rows[0]["container_path"])
+        self.assertEqual(item_rows[0]["blueprint_variant"], "bpc")
+        self.assertEqual(item_rows[0]["display_sell_price_to_member"], 0)

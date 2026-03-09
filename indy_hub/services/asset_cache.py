@@ -8,6 +8,7 @@ from typing import Any
 
 # Django
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 
@@ -54,6 +55,99 @@ STRUCTURE_NAME_TTL = timedelta(hours=STRUCTURE_NAME_STALE_HOURS)
 
 logger = get_extension_logger(__name__)
 esi = esi_provider
+
+
+def _corp_asset_names_cache_key(corporation_id: int) -> str:
+    return f"indy_hub:corp_asset_names:{int(corporation_id)}:v1"
+
+
+def _set_cached_corp_asset_name_map(corporation_id: int, name_map: dict[int, str]) -> None:
+    cache_key = _corp_asset_names_cache_key(int(corporation_id))
+    normalized: dict[int, str] = {}
+    for raw_item_id, raw_name in (name_map or {}).items():
+        try:
+            item_id = int(raw_item_id)
+        except (TypeError, ValueError):
+            continue
+        clean_name = str(raw_name or "").strip()
+        if item_id > 0 and clean_name:
+            normalized[item_id] = clean_name
+    ttl_seconds = max(300, int(ASSET_CACHE_MAX_AGE_MINUTES) * 60)
+    cache.set(cache_key, normalized, ttl_seconds)
+
+
+def _get_cached_corp_asset_name_map(corporation_id: int) -> dict[int, str]:
+    cache_key = _corp_asset_names_cache_key(int(corporation_id))
+    raw = cache.get(cache_key)
+    if not isinstance(raw, dict):
+        return {}
+    normalized: dict[int, str] = {}
+    for raw_item_id, raw_name in raw.items():
+        try:
+            item_id = int(raw_item_id)
+        except (TypeError, ValueError):
+            continue
+        clean_name = str(raw_name or "").strip()
+        if item_id > 0 and clean_name:
+            normalized[item_id] = clean_name
+    return normalized
+
+
+def _backfill_cached_corp_asset_name_map(
+    *, corporation_id: int, assets: list[dict]
+) -> dict[int, str]:
+    """Best-effort fetch of corp asset names for cached assets."""
+    if not assets:
+        return {}
+
+    parent_item_ids: set[int] = set()
+    for asset in assets:
+        try:
+            parent_item_id = int(asset.get("location_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if parent_item_id > 0:
+            parent_item_ids.add(parent_item_id)
+
+    named_item_ids: list[int] = []
+    for asset in assets:
+        if not bool(asset.get("is_singleton")):
+            continue
+        try:
+            named_item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if named_item_id > 0 and named_item_id in parent_item_ids:
+            named_item_ids.append(named_item_id)
+    if not named_item_ids:
+        _set_cached_corp_asset_name_map(int(corporation_id), {})
+        return {}
+
+    try:
+        character_id = _get_character_for_scope(
+            int(corporation_id),
+            "esi-assets.read_corporation_assets.v1",
+        )
+        name_map = shared_client.fetch_corporation_asset_names(
+            corporation_id=int(corporation_id),
+            character_id=int(character_id),
+            item_ids=named_item_ids,
+        )
+    except (
+        ESITokenError,
+        ESIRateLimitError,
+        ESIForbiddenError,
+        ESIClientError,
+    ) as exc:
+        logger.debug(
+            "Failed to backfill corp asset names for %s: %s",
+            corporation_id,
+            exc,
+        )
+        return {}
+
+    _set_cached_corp_asset_name_map(int(corporation_id), name_map)
+    return _get_cached_corp_asset_name_map(int(corporation_id))
 
 
 def _coerce_role_list(value: object) -> list[str]:
@@ -426,17 +520,67 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
             corporation_id=int(corporation_id),
             character_id=int(character_id),
         )
+        parent_item_ids: set[int] = set()
+        for asset in assets or []:
+            try:
+                parent_item_id = int(asset.get("location_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if parent_item_id > 0:
+                parent_item_ids.add(parent_item_id)
+
+        named_item_ids: list[int] = []
+        for asset in assets or []:
+            if not asset.get("is_singleton"):
+                continue
+            try:
+                named_item_id = int(asset.get("item_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            # Request names only for singleton assets currently acting as parents.
+            if named_item_id > 0 and named_item_id in parent_item_ids:
+                named_item_ids.append(named_item_id)
+
+        asset_name_map: dict[int, str] = {}
+        if named_item_ids:
+            try:
+                asset_name_map = shared_client.fetch_corporation_asset_names(
+                    corporation_id=int(corporation_id),
+                    character_id=int(character_id),
+                    item_ids=named_item_ids,
+                )
+            except (
+                ESITokenError,
+                ESIRateLimitError,
+                ESIForbiddenError,
+                ESIClientError,
+            ) as exc:
+                logger.debug(
+                    "Failed to load corp asset names for %s: %s",
+                    corporation_id,
+                    exc,
+                )
+        _set_cached_corp_asset_name_map(int(corporation_id), asset_name_map)
+
         now = timezone.now()
         rows: list[CachedCorporationAsset] = []
+        assets_with_names: list[dict] = []
         for asset in assets:
+            try:
+                item_id_int = (
+                    int(asset.get("item_id"))
+                    if asset.get("item_id") is not None
+                    else None
+                )
+            except (TypeError, ValueError):
+                item_id_int = None
+            set_name = ""
+            if item_id_int and item_id_int > 0:
+                set_name = str(asset_name_map.get(item_id_int) or "").strip()
             rows.append(
                 CachedCorporationAsset(
                     corporation_id=int(corporation_id),
-                    item_id=(
-                        int(asset.get("item_id"))
-                        if asset.get("item_id") is not None
-                        else None
-                    ),
+                    item_id=item_id_int,
                     location_id=int(asset.get("location_id", 0) or 0),
                     location_flag=str(asset.get("location_flag", "") or ""),
                     type_id=int(asset.get("type_id", 0) or 0),
@@ -446,6 +590,9 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
                     synced_at=now,
                 )
             )
+            asset_entry = dict(asset)
+            asset_entry["set_name"] = set_name
+            assets_with_names.append(asset_entry)
 
         with transaction.atomic():
             CachedCorporationAsset.objects.filter(
@@ -457,7 +604,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
         # Cache all corp structure names while we have a valid corp token
         _cache_corp_structure_names(int(corporation_id))
 
-        return assets, assets_scope_missing
+        return assets_with_names, assets_scope_missing
 
     except ESIUnmodifiedError:
         logger.debug(
@@ -493,6 +640,7 @@ def get_corp_assets_cached(
 
     max_age = max_age_minutes or ASSET_CACHE_MAX_AGE_MINUTES
     qs = CachedCorporationAsset.objects.filter(corporation_id=corporation_id)
+    asset_name_map = _get_cached_corp_asset_name_map(int(corporation_id))
     if location_flags:
         qs = qs.filter(location_flag__in=location_flags)
 
@@ -500,7 +648,23 @@ def get_corp_assets_cached(
     assets_scope_missing = False
     fresh_enough = latest and timezone.now() - latest <= timedelta(minutes=max_age)
 
+    def _seed_assets_for_name_backfill() -> list[dict]:
+        rows = qs.values("item_id", "location_id", "is_singleton")
+        return [
+            {
+                "item_id": row.get("item_id"),
+                "location_id": row.get("location_id"),
+                "is_singleton": bool(row.get("is_singleton", False)),
+            }
+            for row in rows
+        ]
+
     if fresh_enough:
+        if not asset_name_map and allow_refresh:
+            asset_name_map = _backfill_cached_corp_asset_name_map(
+                corporation_id=int(corporation_id),
+                assets=_seed_assets_for_name_backfill(),
+            )
         if as_queryset:
             return (
                 qs.values(*values_fields) if values_fields else qs,
@@ -512,6 +676,7 @@ def get_corp_assets_cached(
                 "location_id": row.location_id,
                 "location_flag": row.location_flag,
                 "type_id": row.type_id,
+                "set_name": str(asset_name_map.get(int(row.item_id or 0)) or "").strip(),
                 "quantity": row.quantity,
                 "is_singleton": row.is_singleton,
                 "is_blueprint": row.is_blueprint,
@@ -537,6 +702,12 @@ def get_corp_assets_cached(
             return refreshed_assets, assets_scope_missing
 
     # Fallback to whatever is in cache even if stale
+    if not asset_name_map and allow_refresh:
+        asset_name_map = _backfill_cached_corp_asset_name_map(
+            corporation_id=int(corporation_id),
+            assets=_seed_assets_for_name_backfill(),
+        )
+
     if as_queryset:
         return (
             qs.values(*values_fields) if values_fields else qs,
@@ -549,6 +720,7 @@ def get_corp_assets_cached(
             "location_id": row.location_id,
             "location_flag": row.location_flag,
             "type_id": row.type_id,
+            "set_name": str(asset_name_map.get(int(row.item_id or 0)) or "").strip(),
             "quantity": row.quantity,
             "is_singleton": row.is_singleton,
             "is_blueprint": row.is_blueprint,

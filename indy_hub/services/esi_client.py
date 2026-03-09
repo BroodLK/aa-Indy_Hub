@@ -721,6 +721,94 @@ class ESIClient:
 
         return name_map
 
+    def fetch_corporation_asset_names(
+        self,
+        *,
+        corporation_id: int,
+        character_id: int,
+        item_ids: list[int],
+        force_refresh: bool = False,
+    ) -> dict[int, str]:
+        """Fetch custom corporation asset names by item ids."""
+        unique_item_ids: list[int] = []
+        seen: set[int] = set()
+        for item_id in item_ids or []:
+            try:
+                item_id_int = int(item_id)
+            except (TypeError, ValueError):
+                continue
+            if item_id_int <= 0 or item_id_int in seen:
+                continue
+            seen.add(item_id_int)
+            unique_item_ids.append(item_id_int)
+        if not unique_item_ids:
+            return {}
+
+        token_obj = self._get_token(character_id, "esi-assets.read_corporation_assets.v1")
+        try:
+            operation_fn = self._resolve_operation(
+                "Assets", "post_corporations_corporation_id_assets_names"
+            )
+        except AttributeError:
+            logger.debug(
+                "ESI operation Assets.post_corporations_corporation_id_assets_names is not available"
+            )
+            return {}
+
+        request_kwargs = {}
+        if force_refresh:
+            request_kwargs["If-None-Match"] = ""
+
+        name_map: dict[int, str] = {}
+
+        for start in range(0, len(unique_item_ids), 1000):
+            batch = unique_item_ids[start : start + 1000]
+
+            def _call_with_payload(payload_kw: dict):
+                return self._call_authed(
+                    token_obj,
+                    character_id=character_id,
+                    endpoint=f"/corporations/{corporation_id}/assets/names/",
+                    scope="esi-assets.read_corporation_assets.v1",
+                    operation=lambda token: operation_fn(
+                        corporation_id=corporation_id,
+                        token=token,
+                        **payload_kw,
+                        **request_kwargs,
+                    ),
+                )
+
+            try:
+                payload = _call_with_payload({"item_ids": batch})
+            except ESIClientError:
+                try:
+                    payload = _call_with_payload({"body": batch})
+                except ESIClientError as exc:
+                    logger.debug(
+                        "Failed to fetch corp asset names for %s (%s items): %s",
+                        corporation_id,
+                        len(batch),
+                        exc,
+                    )
+                    continue
+
+            if isinstance(payload, dict):
+                payload = [payload]
+
+            for item in payload or []:
+                data = self._coerce_mapping(item)
+                if not isinstance(data, dict):
+                    continue
+                try:
+                    named_item_id = int(data.get("item_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                name = str(data.get("name") or "").strip()
+                if named_item_id > 0 and name:
+                    name_map[named_item_id] = name
+
+        return name_map
+
     def fetch_corporation_structures(
         self,
         corporation_id: int,
