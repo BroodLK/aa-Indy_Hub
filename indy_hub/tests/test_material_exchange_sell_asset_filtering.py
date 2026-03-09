@@ -211,7 +211,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
             price_data=price_data,
             reserved_quantities={34: 2},
             allowed_type_ids={34, 35, 36},
-            sell_override_map={35: Decimal("12.34")},
+            sell_override_map={
+                35: {"kind": "fixed", "price": Decimal("12.34")}
+            },
         )
 
         self.assertTrue(rows)

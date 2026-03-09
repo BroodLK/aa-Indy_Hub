@@ -488,7 +488,7 @@
                                     <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
                                 </div>
                                 <p class="small text-muted mb-2">
-                                    {% trans "Use these values instead of markup formulas for specific items." %}
+                                    {% trans "Use per-item markup formulas (same format as defaults) for specific items." %}
                                 </p>
                                 <input type="hidden" name="item_price_overrides_json" id="itemPriceOverridesJson">
                                 <div class="row g-2 mb-2">
@@ -518,8 +518,8 @@
                                         <thead>
                                             <tr>
                                                 <th>{% trans "Item" %}</th>
-                                                <th class="text-end">{% trans "Sell override (hub pays)" %}</th>
-                                                <th class="text-end">{% trans "Buy override (member pays)" %}</th>
+                                                <th class="text-end">{% trans "Sell override (% of Jita)" %}</th>
+                                                <th class="text-end">{% trans "Buy override (% of Jita)" %}</th>
                                                 <th class="text-end">{% trans "Action" %}</th>
                                             </tr>
                                         </thead>
@@ -531,7 +531,7 @@
                                     </table>
                                 </div>
                                 <div class="form-text mt-2">
-                                    {% trans "Leave a side blank to keep the default formula for that side." %}
+                                    {% trans "Each side uses the same format as defaults: markup % and base (Jita Buy/Sell). Leave blank to use global defaults." %}
                                 </div>
                             </div>
                         </div>
@@ -1080,24 +1080,76 @@ document.addEventListener('DOMContentLoaded', function() {
                 return;
             }
             const typeName = String(row.getAttribute('data-type-name') || '').trim();
-            const sellInput = row.querySelector('.item-override-sell');
-            const buyInput = row.querySelector('.item-override-buy');
-            const sellValue = sellInput ? String(sellInput.value || '').trim() : '';
-            const buyValue = buyInput ? String(buyInput.value || '').trim() : '';
-            if (!sellValue && !buyValue) {
+            const sellPercentInput = row.querySelector('.item-override-sell-percent');
+            const sellBaseSelect = row.querySelector('.item-override-sell-base');
+            const buyPercentInput = row.querySelector('.item-override-buy-percent');
+            const buyBaseSelect = row.querySelector('.item-override-buy-base');
+            const sellPercentValue = sellPercentInput ? String(sellPercentInput.value || '').trim() : '';
+            const buyPercentValue = buyPercentInput ? String(buyPercentInput.value || '').trim() : '';
+
+            const sellLegacyValue = String(row.getAttribute('data-legacy-sell-price') || '').trim();
+            const buyLegacyValue = String(row.getAttribute('data-legacy-buy-price') || '').trim();
+
+            const hasSellMarkup = !!sellPercentValue;
+            const hasBuyMarkup = !!buyPercentValue;
+            if (!hasSellMarkup && !hasBuyMarkup && !sellLegacyValue && !buyLegacyValue) {
                 return;
             }
+
+            const sellBaseValue = hasSellMarkup && sellBaseSelect
+                ? String(sellBaseSelect.value || 'buy').trim().toLowerCase()
+                : null;
+            const buyBaseValue = hasBuyMarkup && buyBaseSelect
+                ? String(buyBaseSelect.value || 'buy').trim().toLowerCase()
+                : null;
+
             payload.push({
                 type_id: typeId,
                 type_name: typeName,
-                sell_price_override: sellValue || null,
-                buy_price_override: buyValue || null,
+                sell_markup_percent_override: sellPercentValue || null,
+                sell_markup_base_override: sellBaseValue || null,
+                buy_markup_percent_override: buyPercentValue || null,
+                buy_markup_base_override: buyBaseValue || null,
+                // Keep legacy fixed-price values only while markup fields are empty.
+                sell_price_override: hasSellMarkup ? null : (sellLegacyValue || null),
+                buy_price_override: hasBuyMarkup ? null : (buyLegacyValue || null),
             });
         });
         hiddenInput.value = JSON.stringify(payload);
     };
 
-    const addRow = ({ typeId, typeName, sellPriceOverride = '', buyPriceOverride = '' }) => {
+    const syncOverrideBaseState = (row) => {
+        const sellPercentInput = row.querySelector('.item-override-sell-percent');
+        const sellBaseSelect = row.querySelector('.item-override-sell-base');
+        const buyPercentInput = row.querySelector('.item-override-buy-percent');
+        const buyBaseSelect = row.querySelector('.item-override-buy-base');
+
+        if (sellBaseSelect) {
+            const hasSellPercent = !!String(sellPercentInput ? sellPercentInput.value : '').trim();
+            sellBaseSelect.disabled = !hasSellPercent;
+            if (!hasSellPercent) {
+                sellBaseSelect.value = 'buy';
+            }
+        }
+        if (buyBaseSelect) {
+            const hasBuyPercent = !!String(buyPercentInput ? buyPercentInput.value : '').trim();
+            buyBaseSelect.disabled = !hasBuyPercent;
+            if (!hasBuyPercent) {
+                buyBaseSelect.value = 'buy';
+            }
+        }
+    };
+
+    const addRow = ({
+        typeId,
+        typeName,
+        sellMarkupPercentOverride = '',
+        sellMarkupBaseOverride = 'buy',
+        buyMarkupPercentOverride = '',
+        buyMarkupBaseOverride = 'buy',
+        sellPriceOverride = '',
+        buyPriceOverride = '',
+    }) => {
         const normalizedTypeId = parseInt(typeId, 10);
         if (!Number.isInteger(normalizedTypeId) || normalizedTypeId <= 0) {
             return;
@@ -1105,9 +1157,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const existingRow = findRowByTypeId(normalizedTypeId);
         if (existingRow) {
-            const sellInput = existingRow.querySelector('.item-override-sell');
-            if (sellInput) {
-                sellInput.focus();
+            const sellPercentInput = existingRow.querySelector('.item-override-sell-percent');
+            if (sellPercentInput) {
+                sellPercentInput.focus();
             }
             return;
         }
@@ -1120,30 +1172,54 @@ document.addEventListener('DOMContentLoaded', function() {
         const row = document.createElement('tr');
         row.setAttribute('data-type-id', String(normalizedTypeId));
         row.setAttribute('data-type-name', resolvedName);
+        row.setAttribute('data-legacy-sell-price', String(sellPriceOverride || '').trim());
+        row.setAttribute('data-legacy-buy-price', String(buyPriceOverride || '').trim());
+        const normalizedSellBase = ['buy', 'sell'].includes(String(sellMarkupBaseOverride || '').toLowerCase())
+            ? String(sellMarkupBaseOverride).toLowerCase()
+            : 'buy';
+        const normalizedBuyBase = ['buy', 'sell'].includes(String(buyMarkupBaseOverride || '').toLowerCase())
+            ? String(buyMarkupBaseOverride).toLowerCase()
+            : 'buy';
         row.innerHTML = `
             <td>
                 <div class="fw-semibold">${resolvedName}</div>
                 <div class="small text-muted">Type ID: ${normalizedTypeId}</div>
             </td>
             <td class="text-end">
-                <input
-                    type="number"
-                    class="form-control form-control-sm text-end item-override-sell"
-                    min="0"
-                    step="0.01"
-                    inputmode="decimal"
-                    value="${String(sellPriceOverride || '').replace(/"/g, '&quot;')}"
-                    placeholder="default">
+                <div class="input-group input-group-sm mb-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end item-override-sell-percent"
+                        min="-100"
+                        max="100"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(sellMarkupPercentOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="default">
+                    <span class="input-group-text">%</span>
+                </div>
+                <select class="form-select form-select-sm item-override-sell-base">
+                    <option value="buy" ${normalizedSellBase === 'buy' ? 'selected' : ''}>Jita Buy</option>
+                    <option value="sell" ${normalizedSellBase === 'sell' ? 'selected' : ''}>Jita Sell</option>
+                </select>
             </td>
             <td class="text-end">
-                <input
-                    type="number"
-                    class="form-control form-control-sm text-end item-override-buy"
-                    min="0"
-                    step="0.01"
-                    inputmode="decimal"
-                    value="${String(buyPriceOverride || '').replace(/"/g, '&quot;')}"
-                    placeholder="default">
+                <div class="input-group input-group-sm mb-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end item-override-buy-percent"
+                        min="-100"
+                        max="1000"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(buyMarkupPercentOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="default">
+                    <span class="input-group-text">%</span>
+                </div>
+                <select class="form-select form-select-sm item-override-buy-base">
+                    <option value="buy" ${normalizedBuyBase === 'buy' ? 'selected' : ''}>Jita Buy</option>
+                    <option value="sell" ${normalizedBuyBase === 'sell' ? 'selected' : ''}>Jita Sell</option>
+                </select>
             </td>
             <td class="text-end">
                 <button type="button" class="btn btn-outline-danger btn-sm item-override-remove">
@@ -1152,6 +1228,7 @@ document.addEventListener('DOMContentLoaded', function() {
             </td>
         `;
         rowsBody.appendChild(row);
+        syncOverrideBaseState(row);
         updateEmptyState();
         serializeOverrides();
     };
@@ -1207,8 +1284,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     rowsBody.addEventListener('input', function(event) {
         if (
-            event.target.classList.contains('item-override-sell')
-            || event.target.classList.contains('item-override-buy')
+            event.target.classList.contains('item-override-sell-percent')
+            || event.target.classList.contains('item-override-buy-percent')
+            || event.target.classList.contains('item-override-sell-base')
+            || event.target.classList.contains('item-override-buy-base')
+        ) {
+            const row = event.target.closest('tr[data-type-id]');
+            if (row) {
+                syncOverrideBaseState(row);
+            }
+            serializeOverrides();
+        }
+    });
+    rowsBody.addEventListener('change', function(event) {
+        if (
+            event.target.classList.contains('item-override-sell-base')
+            || event.target.classList.contains('item-override-buy-base')
         ) {
             serializeOverrides();
         }
@@ -1218,6 +1309,10 @@ document.addEventListener('DOMContentLoaded', function() {
         addRow({
             typeId: row.type_id,
             typeName: row.type_name,
+            sellMarkupPercentOverride: row.sell_markup_percent_override,
+            sellMarkupBaseOverride: row.sell_markup_base_override,
+            buyMarkupPercentOverride: row.buy_markup_percent_override,
+            buyMarkupBaseOverride: row.buy_markup_base_override,
             sellPriceOverride: row.sell_price_override,
             buyPriceOverride: row.buy_price_override,
         });

@@ -149,27 +149,39 @@ class MaterialExchangePricingTests(TestCase):
         actual = self.stock.buy_price_from_member
         self.assertAlmostEqual(float(actual), float(expected), places=2)
 
-    def test_effective_sell_unit_price_uses_item_override(self):
+    def test_effective_sell_unit_price_uses_item_markup_override(self):
         effective_price, default_price, has_override = _compute_effective_sell_unit_price(
             config=self.config,
             type_id=self.stock.type_id,
             jita_buy=Decimal("5.00"),
             jita_sell=Decimal("6.00"),
-            sell_override_map={self.stock.type_id: Decimal("8.25")},
+            sell_override_map={
+                self.stock.type_id: {
+                    "kind": "markup",
+                    "percent": Decimal("20.00"),
+                    "base": "sell",
+                }
+            },
         )
 
         self.assertEqual(default_price, Decimal("5.25"))
-        self.assertEqual(effective_price, Decimal("8.25"))
+        self.assertEqual(effective_price, Decimal("7.20"))
         self.assertTrue(has_override)
 
-    def test_effective_buy_unit_price_uses_item_override(self):
+    def test_effective_buy_unit_price_uses_item_markup_override(self):
         effective_price, default_price, has_override = _compute_effective_buy_unit_price(
             stock_item=self.stock,
-            buy_override_map={self.stock.type_id: Decimal("9.90")},
+            buy_override_map={
+                self.stock.type_id: {
+                    "kind": "markup",
+                    "percent": Decimal("-10.00"),
+                    "base": "sell",
+                }
+            },
         )
 
         self.assertEqual(default_price, Decimal("5.50"))
-        self.assertEqual(effective_price, Decimal("9.90"))
+        self.assertEqual(effective_price, Decimal("5.40"))
         self.assertTrue(has_override)
 
     def test_parse_submitted_quantities_sums_split_row_inputs(self):

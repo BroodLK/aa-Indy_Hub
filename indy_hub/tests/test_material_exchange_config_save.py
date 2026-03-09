@@ -315,8 +315,8 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
     def test_item_price_overrides_are_saved_updated_and_removed(self):
         post_data = self._base_post_data()
         post_data["item_price_overrides_json"] = (
-            '[{"type_id":34,"type_name":"Tritanium","sell_price_override":"5.25","buy_price_override":"6.75"},'
-            '{"type_id":35,"type_name":"Pyerite","sell_price_override":"","buy_price_override":"9.50"}]'
+            '[{"type_id":34,"type_name":"Tritanium","sell_markup_percent_override":"-5.00","sell_markup_base_override":"sell","buy_markup_percent_override":"3.25","buy_markup_base_override":"buy"},'
+            '{"type_id":35,"type_name":"Pyerite","sell_markup_percent_override":"","sell_markup_base_override":"buy","buy_markup_percent_override":"9.50","buy_markup_base_override":"sell"}]'
         )
 
         request = self._build_request(post_data)
@@ -330,14 +330,24 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         )
         self.assertEqual(len(overrides), 2)
         self.assertEqual(overrides[0].type_id, 34)
-        self.assertEqual(overrides[0].sell_price_override, Decimal("5.25"))
-        self.assertEqual(overrides[0].buy_price_override, Decimal("6.75"))
+        self.assertEqual(
+            overrides[0].sell_markup_percent_override, Decimal("-5.00")
+        )
+        self.assertEqual(overrides[0].sell_markup_base_override, "sell")
+        self.assertEqual(overrides[0].buy_markup_percent_override, Decimal("3.25"))
+        self.assertEqual(overrides[0].buy_markup_base_override, "buy")
+        self.assertIsNone(overrides[0].sell_price_override)
+        self.assertIsNone(overrides[0].buy_price_override)
         self.assertEqual(overrides[1].type_id, 35)
+        self.assertIsNone(overrides[1].sell_markup_percent_override)
+        self.assertIsNone(overrides[1].sell_markup_base_override)
+        self.assertEqual(overrides[1].buy_markup_percent_override, Decimal("9.50"))
+        self.assertEqual(overrides[1].buy_markup_base_override, "sell")
         self.assertIsNone(overrides[1].sell_price_override)
-        self.assertEqual(overrides[1].buy_price_override, Decimal("9.50"))
+        self.assertIsNone(overrides[1].buy_price_override)
 
         post_data["item_price_overrides_json"] = (
-            '[{"type_id":34,"type_name":"Tritanium","sell_price_override":"7.10","buy_price_override":""}]'
+            '[{"type_id":34,"type_name":"Tritanium","sell_markup_percent_override":"7.10","sell_markup_base_override":"buy","buy_markup_percent_override":"","buy_markup_base_override":"buy"}]'
         )
         request = self._build_request(post_data)
         response = _handle_config_save(request, self.config)
@@ -350,5 +360,9 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         )
         self.assertEqual(len(overrides), 1)
         self.assertEqual(overrides[0].type_id, 34)
-        self.assertEqual(overrides[0].sell_price_override, Decimal("7.10"))
+        self.assertEqual(overrides[0].sell_markup_percent_override, Decimal("7.10"))
+        self.assertEqual(overrides[0].sell_markup_base_override, "buy")
+        self.assertIsNone(overrides[0].buy_markup_percent_override)
+        self.assertIsNone(overrides[0].buy_markup_base_override)
+        self.assertIsNone(overrides[0].sell_price_override)
         self.assertIsNone(overrides[0].buy_price_override)

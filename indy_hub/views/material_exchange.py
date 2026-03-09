@@ -58,7 +58,10 @@ from ..tasks.material_exchange import (
 )
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_type_name
-from ..utils.material_exchange_pricing import compute_buy_price_from_member
+from ..utils.material_exchange_pricing import (
+    apply_markup_with_jita_bounds,
+    compute_buy_price_from_member,
+)
 from .navigation import build_nav_context
 
 logger = get_extension_logger(__name__)
@@ -1106,26 +1109,58 @@ def _parse_submitted_quantities(post_data) -> dict[int, int]:
 
 def _get_item_price_override_maps(
     config: MaterialExchangeConfig,
-) -> tuple[dict[int, Decimal], dict[int, Decimal]]:
+) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
     """Return per-item override maps for sell and buy sides."""
 
-    sell_overrides: dict[int, Decimal] = {}
-    buy_overrides: dict[int, Decimal] = {}
+    sell_overrides: dict[int, dict[str, object]] = {}
+    buy_overrides: dict[int, dict[str, object]] = {}
     try:
         rows = MaterialExchangeItemPriceOverride.objects.filter(config=config).values_list(
             "type_id",
+            "sell_markup_percent_override",
+            "sell_markup_base_override",
+            "buy_markup_percent_override",
+            "buy_markup_base_override",
             "sell_price_override",
             "buy_price_override",
         )
     except Exception:
         return sell_overrides, buy_overrides
 
-    for type_id, sell_override, buy_override in rows:
+    for (
+        type_id,
+        sell_markup_percent_override,
+        sell_markup_base_override,
+        buy_markup_percent_override,
+        buy_markup_base_override,
+        sell_override,
+        buy_override,
+    ) in rows:
         type_id_int = int(type_id)
-        if sell_override is not None:
-            sell_overrides[type_id_int] = Decimal(sell_override)
-        if buy_override is not None:
-            buy_overrides[type_id_int] = Decimal(buy_override)
+        if sell_markup_percent_override is not None:
+            sell_overrides[type_id_int] = {
+                "kind": "markup",
+                "percent": Decimal(sell_markup_percent_override),
+                "base": str(sell_markup_base_override or "buy"),
+            }
+        elif sell_override is not None:
+            # Legacy fallback: keep supporting existing fixed-price rows.
+            sell_overrides[type_id_int] = {
+                "kind": "fixed",
+                "price": Decimal(sell_override),
+            }
+        if buy_markup_percent_override is not None:
+            buy_overrides[type_id_int] = {
+                "kind": "markup",
+                "percent": Decimal(buy_markup_percent_override),
+                "base": str(buy_markup_base_override or "buy"),
+            }
+        elif buy_override is not None:
+            # Legacy fallback: keep supporting existing fixed-price rows.
+            buy_overrides[type_id_int] = {
+                "kind": "fixed",
+                "price": Decimal(buy_override),
+            }
 
     return sell_overrides, buy_overrides
 
@@ -1136,7 +1171,7 @@ def _compute_effective_sell_unit_price(
     type_id: int,
     jita_buy: Decimal,
     jita_sell: Decimal,
-    sell_override_map: dict[int, Decimal],
+    sell_override_map: dict[int, dict[str, object]],
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for sell-page pricing."""
 
@@ -1148,14 +1183,26 @@ def _compute_effective_sell_unit_price(
     override_value = sell_override_map.get(int(type_id))
     if override_value is None:
         return default_unit_price, default_unit_price, False
-    effective_price = Decimal(override_value)
+    if str(override_value.get("kind") or "") == "markup":
+        override_base = str(override_value.get("base") or "buy").strip().lower()
+        if override_base not in {"buy", "sell"}:
+            override_base = "buy"
+        effective_price = apply_markup_with_jita_bounds(
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+            base_choice=override_base,
+            percent=Decimal(override_value.get("percent") or 0),
+            enforce_bounds=bool(getattr(config, "enforce_jita_price_bounds", False)),
+        )
+    else:
+        effective_price = Decimal(override_value.get("price") or 0)
     return effective_price, default_unit_price, effective_price != default_unit_price
 
 
 def _compute_effective_buy_unit_price(
     *,
     stock_item: MaterialExchangeStock,
-    buy_override_map: dict[int, Decimal],
+    buy_override_map: dict[int, dict[str, object]],
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for buy-page pricing."""
 
@@ -1163,7 +1210,21 @@ def _compute_effective_buy_unit_price(
     override_value = buy_override_map.get(int(stock_item.type_id))
     if override_value is None:
         return default_unit_price, default_unit_price, False
-    effective_price = Decimal(override_value)
+    if str(override_value.get("kind") or "") == "markup":
+        override_base = str(override_value.get("base") or "buy").strip().lower()
+        if override_base not in {"buy", "sell"}:
+            override_base = "buy"
+        effective_price = apply_markup_with_jita_bounds(
+            jita_buy=Decimal(stock_item.jita_buy_price or 0),
+            jita_sell=Decimal(stock_item.jita_sell_price or 0),
+            base_choice=override_base,
+            percent=Decimal(override_value.get("percent") or 0),
+            enforce_bounds=bool(
+                getattr(stock_item.config, "enforce_jita_price_bounds", False)
+            ),
+        )
+    else:
+        effective_price = Decimal(override_value.get("price") or 0)
     return effective_price, default_unit_price, effective_price != default_unit_price
 
 
@@ -1184,7 +1245,7 @@ def _build_sell_material_rows(
     price_data: dict[int, dict[str, Decimal]],
     reserved_quantities: dict[int, int],
     allowed_type_ids: set[int] | None,
-    sell_override_map: dict[int, Decimal],
+    sell_override_map: dict[int, dict[str, object]],
 ) -> list[dict]:
     """Build sell rows, grouping assets by containers where possible."""
 

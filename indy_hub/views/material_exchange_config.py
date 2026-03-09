@@ -706,6 +706,10 @@ def material_exchange_config(request, tokens):
             config.item_price_overrides.values(
                 "type_id",
                 "type_name",
+                "sell_markup_percent_override",
+                "sell_markup_base_override",
+                "buy_markup_percent_override",
+                "buy_markup_base_override",
                 "sell_price_override",
                 "buy_price_override",
             )
@@ -719,6 +723,16 @@ def material_exchange_config(request, tokens):
                 {
                     "type_id": type_id,
                     "type_name": type_name,
+                    "sell_markup_percent_override": row.get(
+                        "sell_markup_percent_override"
+                    ),
+                    "sell_markup_base_override": row.get("sell_markup_base_override"),
+                    "buy_markup_percent_override": row.get(
+                        "buy_markup_percent_override"
+                    ),
+                    "buy_markup_base_override": row.get("buy_markup_base_override"),
+                    # Legacy fixed-price values are still surfaced so existing rows can be
+                    # migrated by admins during normal config edits.
                     "sell_price_override": row.get("sell_price_override"),
                     "buy_price_override": row.get("buy_price_override"),
                 }
@@ -1920,6 +1934,27 @@ def _handle_config_save(request, existing_config):
             raise ValueError("Override prices must be positive numbers or empty.")
         return parsed.quantize(Decimal("0.01"))
 
+    def _parse_optional_markup_percent(
+        raw_value, *, minimum: Decimal, maximum: Decimal, label: str
+    ) -> Decimal | None:
+        if raw_value is None:
+            return None
+        normalized = str(raw_value).strip().replace(",", ".")
+        if not normalized:
+            return None
+        parsed = Decimal(normalized).quantize(Decimal("0.01"))
+        if parsed < minimum or parsed > maximum:
+            raise ValueError(
+                f"{label} must be between {minimum} and {maximum}."
+            )
+        return parsed
+
+    def _parse_optional_markup_base(raw_value, *, fallback: str) -> str:
+        base_value = str(raw_value or "").strip().lower()
+        if base_value not in {"buy", "sell"}:
+            return fallback
+        return base_value
+
     def _parse_item_price_overrides(raw_value: str) -> list[dict[str, object]]:
         if not raw_value:
             return []
@@ -1943,15 +1978,57 @@ def _handle_config_save(request, existing_config):
                 continue
 
             type_name = str(row.get("type_name") or "").strip()
+            sell_markup_percent_override = _parse_optional_markup_percent(
+                row.get("sell_markup_percent_override"),
+                minimum=Decimal("-100"),
+                maximum=Decimal("100"),
+                label="Sell override %",
+            )
+            buy_markup_percent_override = _parse_optional_markup_percent(
+                row.get("buy_markup_percent_override"),
+                minimum=Decimal("-100"),
+                maximum=Decimal("1000"),
+                label="Buy override %",
+            )
+            sell_markup_base_override = (
+                _parse_optional_markup_base(
+                    row.get("sell_markup_base_override"),
+                    fallback=str(sell_markup_base or "buy"),
+                )
+                if sell_markup_percent_override is not None
+                else None
+            )
+            buy_markup_base_override = (
+                _parse_optional_markup_base(
+                    row.get("buy_markup_base_override"),
+                    fallback=str(buy_markup_base or "buy"),
+                )
+                if buy_markup_percent_override is not None
+                else None
+            )
+
+            # Legacy fixed-price fields are preserved if the row still carries them.
             sell_price_override = _parse_optional_price(row.get("sell_price_override"))
             buy_price_override = _parse_optional_price(row.get("buy_price_override"))
 
-            if sell_price_override is None and buy_price_override is None:
+            has_markup_override = (
+                sell_markup_percent_override is not None
+                or buy_markup_percent_override is not None
+            )
+            has_legacy_override = (
+                sell_price_override is not None or buy_price_override is not None
+            )
+
+            if not has_markup_override and not has_legacy_override:
                 continue
 
             parsed_by_type[type_id] = {
                 "type_id": type_id,
                 "type_name": type_name,
+                "sell_markup_percent_override": sell_markup_percent_override,
+                "sell_markup_base_override": sell_markup_base_override,
+                "buy_markup_percent_override": buy_markup_percent_override,
+                "buy_markup_base_override": buy_markup_base_override,
                 "sell_price_override": sell_price_override,
                 "buy_price_override": buy_price_override,
             }
@@ -2287,6 +2364,14 @@ def _handle_config_save(request, existing_config):
                 type_id=type_id,
                 defaults={
                     "type_name": type_name,
+                    "sell_markup_percent_override": row.get(
+                        "sell_markup_percent_override"
+                    ),
+                    "sell_markup_base_override": row.get("sell_markup_base_override"),
+                    "buy_markup_percent_override": row.get(
+                        "buy_markup_percent_override"
+                    ),
+                    "buy_markup_base_override": row.get("buy_markup_base_override"),
                     "sell_price_override": row.get("sell_price_override"),
                     "buy_price_override": row.get("buy_price_override"),
                 },

@@ -2123,6 +2123,38 @@ class MaterialExchangeItemPriceOverride(models.Model):
         blank=True,
         help_text=_("Override purchase price per unit when members buy from hub."),
     )
+    sell_markup_percent_override = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_(
+            "Override sell markup % applied when members sell to hub (same format as global sell markup)."
+        ),
+    )
+    sell_markup_base_override = models.CharField(
+        max_length=8,
+        choices=[("buy", _("Jita Buy")), ("sell", _("Jita Sell"))],
+        null=True,
+        blank=True,
+        help_text=_("Override base price for sell side markup (Jita Buy or Jita Sell)."),
+    )
+    buy_markup_percent_override = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_(
+            "Override buy markup % applied when members buy from hub (same format as global buy markup)."
+        ),
+    )
+    buy_markup_base_override = models.CharField(
+        max_length=8,
+        choices=[("buy", _("Jita Buy")), ("sell", _("Jita Sell"))],
+        null=True,
+        blank=True,
+        help_text=_("Override base price for buy side markup (Jita Buy or Jita Sell)."),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
