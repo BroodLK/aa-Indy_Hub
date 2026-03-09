@@ -220,7 +220,9 @@
                                         <td>
                                             {% if item.container_type_id %}
                                             <img
-                                                src="https://images.evetech.net/types/{{ item.container_type_id }}/icon?size=64"
+                                                src="{{ item.container_icon_url }}"
+                                                data-fallback-src="{{ item.container_icon_fallback_url }}"
+                                                onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
                                                 alt="{{ item.container_name }}"
                                                 class="item-icon">
                                             {% else %}
@@ -256,17 +258,25 @@
                                         data-container-path="{{ item.container_path }}"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
+                                        data-blueprint-variant="{{ item.blueprint_variant }}"
                                         data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
                                         data-max-qty="{{ item.available_quantity }}">
                                         <td>
                                             <img
-                                                src="https://images.evetech.net/types/{{ item.type_id }}/icon?size=64"
+                                                src="{{ item.icon_url }}"
+                                                data-fallback-src="{{ item.icon_fallback_url }}"
+                                                onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
                                                 alt="{{ item.type_name }}"
                                                 class="item-icon">
                                         </td>
                                         <td>
                                             <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
                                                 <strong>{% if item.container_path %}- {% endif %}{{ item.type_name }}</strong>
+                                                {% if item.is_blueprint_copy %}
+                                                <div class="small text-muted">{% trans "Blueprint Copy" %}</div>
+                                                {% elif item.is_blueprint_original %}
+                                                <div class="small text-muted">{% trans "Blueprint Original" %}</div>
+                                                {% endif %}
                                                 {% if item.has_sell_price_override %}
                                                 <div class="small text-info">
                                                     <i class="fas fa-sliders-h me-1"></i>
@@ -297,7 +307,7 @@
                                                 {% if item.container_path %}
                                                 <input
                                                     type="hidden"
-                                                    name="qty_{{ item.type_id }}_{{ item.row_index }}"
+                                                    name="{{ item.form_quantity_field_name }}"
                                                     id="qty-{{ item.row_index }}"
                                                     class="qty-input container-child-qty"
                                                     min="0"
@@ -315,7 +325,7 @@
                                                 <div class="qty-input-row">
                                                     <input
                                                         type="number"
-                                                        name="qty_{{ item.type_id }}_{{ item.row_index }}"
+                                                        name="{{ item.form_quantity_field_name }}"
                                                         id="qty-{{ item.row_index }}"
                                                         class="form-control qty-input"
                                                         min="0"

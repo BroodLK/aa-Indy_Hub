@@ -14,6 +14,7 @@ from indy_hub.models import MaterialExchangeConfig, MaterialExchangeStock
 from indy_hub.views.material_exchange import (
     _compute_effective_buy_unit_price,
     _compute_effective_sell_unit_price,
+    _parse_submitted_sell_item_quantities,
     _parse_submitted_quantities,
 )
 
@@ -200,3 +201,30 @@ class MaterialExchangePricingTests(TestCase):
         self.assertEqual(parsed.get(34), 7)
         self.assertEqual(parsed.get(35), 3)
         self.assertNotIn(36, parsed)
+
+    def test_parse_submitted_sell_item_quantities_keeps_blueprint_variant(self):
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "qty_34_std_0": "2",
+                "qty_34_std_1": "3",
+                "qty_33003_bpc_4": "1",
+                "qty_33003_bpo_5": "1",
+                "qty_35_7": "4",  # legacy format
+                "qty_36_bpc_9": "0",
+            }
+        )
+
+        parsed = _parse_submitted_sell_item_quantities(payload)
+        by_key = {
+            (int(entry["type_id"]), str(entry["blueprint_variant"] or "")): int(
+                entry["quantity"]
+            )
+            for entry in parsed
+        }
+
+        self.assertEqual(by_key.get((34, "")), 5)
+        self.assertEqual(by_key.get((33003, "bpc")), 1)
+        self.assertEqual(by_key.get((33003, "bpo")), 1)
+        self.assertEqual(by_key.get((35, "")), 4)
+        self.assertNotIn((36, "bpc"), by_key)

@@ -104,3 +104,78 @@ class MaterialExchangeSellAssetsStructureCacheTests(TestCase):
         self.assertTrue(
             CachedStructureName.objects.filter(structure_id=structure_id).exists()
         )
+
+    def test_refresh_sell_user_assets_persists_container_set_name(self) -> None:
+        user = User.objects.create_user("me_assets_names_user", password="secret123")
+
+        character_id = 54321
+        character = EveCharacter.objects.create(
+            character_id=character_id,
+            character_name="Test Char 2",
+            corporation_id=2000001,
+            corporation_name="Test Corp 2",
+            corporation_ticker="TES2",
+            alliance_id=None,
+            alliance_name="",
+            alliance_ticker="",
+            faction_id=None,
+            faction_name="",
+        )
+        CharacterOwnership.objects.create(
+            user=user,
+            character=character,
+            owner_hash=f"hash-{character_id}-{user.id}",
+        )
+
+        container_item_id = 2002002002001
+        structure_id = 1042090993674
+
+        assets_payload = [
+            {
+                "item_id": container_item_id,
+                "location_id": structure_id,
+                "location_flag": "Hangar",
+                "type_id": 3465,
+                "quantity": 1,
+                "is_singleton": True,
+                "is_blueprint": False,
+            },
+            {
+                "item_id": 2002002002002,
+                "location_id": container_item_id,
+                "location_flag": "Unlocked",
+                "type_id": 34,
+                "quantity": 12,
+                "is_singleton": False,
+                "is_blueprint": False,
+            },
+        ]
+
+        fake_tokens = _FakeTokenQuerySet([object()])
+
+        with (
+            patch.object(
+                material_exchange.Token.objects,
+                "filter",
+                return_value=fake_tokens,
+            ),
+            patch.object(
+                material_exchange.shared_client,
+                "fetch_character_assets",
+                return_value=assets_payload,
+            ),
+            patch.object(
+                material_exchange.shared_client,
+                "fetch_character_asset_names",
+                return_value={container_item_id: "My Named Container"},
+            ),
+            patch.object(
+                material_exchange,
+                "resolve_structure_names",
+                return_value={structure_id: f"Structure {structure_id}"},
+            ),
+        ):
+            material_exchange.refresh_material_exchange_sell_user_assets(int(user.id))
+
+        row = CachedCharacterAsset.objects.get(user=user, item_id=container_item_id)
+        self.assertEqual(row.set_name, "My Named Container")

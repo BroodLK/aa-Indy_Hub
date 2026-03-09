@@ -239,6 +239,100 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
 
         self.assertEqual(by_type[36]["depth"], 0)
 
+    @patch("indy_hub.views.material_exchange.get_type_name")
+    def test_build_sell_material_rows_nests_with_location_parent_fallback(
+        self, mock_get_type_name
+    ):
+        mock_get_type_name.side_effect = lambda type_id: {
+            1000: "Station Container",
+            34: "Tritanium",
+        }.get(int(type_id), f"Type {type_id}")
+
+        assets = [
+            {
+                "character_id": 1,
+                "item_id": 500,
+                "raw_location_id": self.structure_id,
+                "location_id": self.structure_id,
+                "type_id": 1000,
+                "set_name": "Legacy Parent Container",
+                "quantity": 1,
+                "is_singleton": True,
+                "is_blueprint": False,
+            },
+            {
+                "character_id": 1,
+                "item_id": 501,
+                # Legacy-style row: raw parent missing, but location_id points at container item_id.
+                "raw_location_id": None,
+                "location_id": 500,
+                "type_id": 34,
+                "quantity": 8,
+                "is_singleton": False,
+                "is_blueprint": False,
+            },
+        ]
+        price_data = {34: {"buy": Decimal("5.00"), "sell": Decimal("6.00")}}
+
+        rows = _build_sell_material_rows(
+            assets=assets,
+            config=self.config,
+            price_data=price_data,
+            reserved_quantities={},
+            allowed_type_ids={34},
+            sell_override_map={},
+        )
+
+        self.assertTrue(rows)
+        self.assertEqual(rows[0]["row_kind"], "container")
+        item_rows = [row for row in rows if row.get("row_kind") == "item"]
+        self.assertEqual(len(item_rows), 1)
+        self.assertEqual(item_rows[0]["depth"], 1)
+        self.assertTrue(item_rows[0]["container_path"])
+
+    @patch("indy_hub.views.material_exchange.get_type_name")
+    def test_build_sell_material_rows_blueprint_copy_is_zero_priced(
+        self, mock_get_type_name
+    ):
+        mock_get_type_name.side_effect = (
+            lambda type_id: "Capital Armor Plates Blueprint"
+            if int(type_id) == 77777
+            else f"Type {type_id}"
+        )
+
+        assets = [
+            {
+                "character_id": 1,
+                "item_id": 701,
+                "raw_location_id": self.structure_id,
+                "location_id": self.structure_id,
+                "type_id": 77777,
+                "quantity": -2,
+                "is_singleton": True,
+                "is_blueprint": True,
+            }
+        ]
+
+        rows = _build_sell_material_rows(
+            assets=assets,
+            config=self.config,
+            price_data={},
+            reserved_quantities={},
+            allowed_type_ids={77777},
+            sell_override_map={},
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["row_kind"], "item")
+        self.assertEqual(rows[0]["type_id"], 77777)
+        self.assertEqual(rows[0]["buy_price_from_member"], Decimal("0"))
+        self.assertEqual(rows[0]["default_buy_price_from_member"], Decimal("0"))
+        self.assertTrue(rows[0]["is_blueprint_copy"])
+        self.assertEqual(rows[0]["blueprint_variant"], "bpc")
+        self.assertIn("(BPC)", rows[0]["type_name"])
+        self.assertIn("/bpc?", rows[0]["icon_url"])
+        self.assertIn("_bpc_", rows[0]["form_quantity_field_name"])
+
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")

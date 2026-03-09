@@ -1313,6 +1313,7 @@ def get_user_assets_cached(
             "location_id": row.location_id,
             "location_flag": row.location_flag,
             "type_id": row.type_id,
+            "set_name": row.set_name,
             "quantity": row.quantity,
             "is_singleton": row.is_singleton,
             "is_blueprint": row.is_blueprint,

@@ -1112,6 +1112,93 @@ def _parse_submitted_quantities(post_data) -> dict[int, int]:
     return submitted_quantities
 
 
+def _parse_submitted_sell_item_quantities(post_data) -> list[dict[str, object]]:
+    """Parse sell-form `qty_*` fields and keep blueprint variant when present.
+
+    Supports both:
+    - `qty_<type_id>_<row_index>` (legacy)
+    - `qty_<type_id>_<variant>_<row_index>` where variant is `std|bpo|bpc`
+    """
+
+    grouped: dict[tuple[int, str], int] = {}
+    for key, values in post_data.lists():
+        if not key.startswith("qty_"):
+            continue
+
+        suffix = key[4:]
+        parts = suffix.split("_")
+        if not parts:
+            continue
+        type_id_part = parts[0]
+        if not type_id_part.isdigit():
+            continue
+        type_id = int(type_id_part)
+
+        variant = ""
+        if len(parts) >= 3:
+            raw_variant = str(parts[1] or "").strip().lower()
+            if raw_variant in {"std", "bpo", "bpc"}:
+                variant = "" if raw_variant == "std" else raw_variant
+
+        for raw_value in values:
+            qty_raw = (raw_value or "").strip()
+            if not qty_raw:
+                continue
+            try:
+                qty = int(qty_raw)
+            except Exception:
+                continue
+            if qty <= 0:
+                continue
+            key_tuple = (type_id, variant)
+            grouped[key_tuple] = grouped.get(key_tuple, 0) + qty
+
+    entries: list[dict[str, object]] = []
+    for (type_id, variant), quantity in grouped.items():
+        entries.append(
+            {
+                "type_id": int(type_id),
+                "blueprint_variant": str(variant or ""),
+                "quantity": int(quantity),
+            }
+        )
+    return entries
+
+
+def _build_sell_variant_quantities(
+    *, assets: list[dict], location_id: int | None
+) -> dict[tuple[int, str], int]:
+    """Return available quantities keyed by (type_id, blueprint_variant)."""
+
+    quantities: dict[tuple[int, str], int] = {}
+    location_filter = int(location_id or 0)
+
+    for asset in assets:
+        try:
+            asset_location_id = int(asset.get("location_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if location_filter > 0 and asset_location_id != location_filter:
+            continue
+
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+
+        quantity = _asset_quantity(asset)
+        if quantity <= 0:
+            continue
+
+        blueprint_variant = _asset_blueprint_variant(asset)
+        variant_key = (int(type_id), str(blueprint_variant or ""))
+        quantities[variant_key] = quantities.get(variant_key, 0) + int(quantity)
+
+    return quantities
+
+
 def _get_item_price_override_maps(
     config: MaterialExchangeConfig,
 ) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
@@ -1243,6 +1330,47 @@ def _asset_quantity(asset: dict) -> int:
     return quantity
 
 
+def _asset_blueprint_variant(asset: dict) -> str:
+    """Return blueprint variant token for an asset row: 'bpo', 'bpc', or ''."""
+    if not bool(asset.get("is_blueprint", False)):
+        return ""
+    try:
+        raw_quantity = int(asset.get("quantity", 0) or 0)
+    except (TypeError, ValueError):
+        raw_quantity = 0
+    if raw_quantity == -2:
+        return "bpc"
+    return "bpo"
+
+
+def _build_eve_type_icon_urls(
+    type_id: int, *, blueprint_variant: str = ""
+) -> tuple[str, str]:
+    """Return (primary, fallback) icon URLs for a type row."""
+    type_id_int = int(type_id)
+    if blueprint_variant == "bpc":
+        primary_variant = "bpc"
+    elif blueprint_variant == "bpo":
+        primary_variant = "bp"
+    else:
+        primary_variant = "icon"
+    primary = (
+        f"https://images.evetech.net/types/{type_id_int}/{primary_variant}?size=64"
+    )
+    fallback = f"https://images.evetech.net/types/{type_id_int}/render?size=64"
+    return primary, fallback
+
+
+def _format_sell_blueprint_type_name(type_name: str, blueprint_variant: str) -> str:
+    """Return display label that differentiates blueprint originals and copies."""
+    clean_name = str(type_name or "").strip()
+    if blueprint_variant == "bpc":
+        return f"{clean_name} (BPC)"
+    if blueprint_variant == "bpo":
+        return f"{clean_name} (BPO)"
+    return clean_name
+
+
 def _build_sell_material_rows(
     *,
     assets: list[dict],
@@ -1267,35 +1395,77 @@ def _build_sell_material_rows(
         if item_id > 0:
             asset_by_item_id[item_id] = asset
 
+    parent_by_item_id: dict[int, int] = {}
+
+    def resolve_parent_item_id(asset: dict) -> int:
+        # Prefer raw parent linkage, but tolerate legacy rows where only location_id
+        # still points at a container item_id.
+        for field_name in ("raw_location_id", "location_id"):
+            try:
+                candidate = int(asset.get(field_name) or 0)
+            except (TypeError, ValueError):
+                candidate = 0
+            if candidate > 0 and candidate in asset_by_item_id:
+                return candidate
+        return 0
+
     for asset in assets:
         try:
-            parent_id = int(asset.get("raw_location_id") or 0)
+            item_id = int(asset.get("item_id") or 0)
         except (TypeError, ValueError):
-            parent_id = 0
-        if parent_id > 0 and parent_id in asset_by_item_id:
+            item_id = 0
+        parent_id = resolve_parent_item_id(asset)
+        if parent_id > 0:
             children_by_parent.setdefault(parent_id, []).append(asset)
+            if item_id > 0:
+                parent_by_item_id[item_id] = parent_id
 
     container_item_ids = set(children_by_parent.keys())
-    reserved_by_type = {int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()}
+    reserved_by_type = {
+        int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()
+    }
     allowed_types = {int(type_id) for type_id in allowed_type_ids} if allowed_type_ids else None
-    price_meta_cache: dict[int, dict[str, object] | None] = {}
+    price_meta_cache: dict[tuple[int, str], dict[str, object] | None] = {}
 
-    def get_price_meta(type_id: int) -> dict[str, object] | None:
+    def get_price_meta(type_id: int, blueprint_variant: str = "") -> dict[str, object] | None:
         type_id_int = int(type_id)
-        if type_id_int in price_meta_cache:
-            return price_meta_cache[type_id_int]
+        meta_key = (type_id_int, str(blueprint_variant or ""))
+        if meta_key in price_meta_cache:
+            return price_meta_cache[meta_key]
 
         if allowed_types is not None and type_id_int not in allowed_types:
-            price_meta_cache[type_id_int] = None
+            price_meta_cache[meta_key] = None
             return None
 
         type_name = get_type_name(type_id_int)
+        icon_url, icon_fallback_url = _build_eve_type_icon_urls(
+            type_id_int, blueprint_variant=blueprint_variant
+        )
+
+        if blueprint_variant == "bpc":
+            meta = {
+                "type_id": type_id_int,
+                "type_name": _format_sell_blueprint_type_name(
+                    type_name, blueprint_variant
+                ),
+                "buy_price_from_member": Decimal("0"),
+                "default_buy_price_from_member": Decimal("0"),
+                "has_sell_price_override": False,
+                "is_blueprint_copy": True,
+                "is_blueprint_original": False,
+                "blueprint_variant": "bpc",
+                "icon_url": icon_url,
+                "icon_fallback_url": icon_fallback_url,
+            }
+            price_meta_cache[meta_key] = meta
+            return meta
+
         fuzz_prices = price_data.get(type_id_int, {})
         jita_buy = Decimal(fuzz_prices.get("buy") or 0)
         jita_sell = Decimal(fuzz_prices.get("sell") or 0)
         has_market_price = jita_buy > 0 or jita_sell > 0
         if not has_market_price and type_id_int not in sell_override_map:
-            price_meta_cache[type_id_int] = None
+            price_meta_cache[meta_key] = None
             return None
 
         unit_price, default_unit_price, has_override = _compute_effective_sell_unit_price(
@@ -1306,17 +1476,22 @@ def _build_sell_material_rows(
             sell_override_map=sell_override_map,
         )
         if unit_price <= 0:
-            price_meta_cache[type_id_int] = None
+            price_meta_cache[meta_key] = None
             return None
 
         meta = {
             "type_id": type_id_int,
-            "type_name": type_name,
+            "type_name": _format_sell_blueprint_type_name(type_name, blueprint_variant),
             "buy_price_from_member": unit_price,
             "default_buy_price_from_member": default_unit_price,
             "has_sell_price_override": bool(has_override),
+            "is_blueprint_copy": False,
+            "is_blueprint_original": blueprint_variant == "bpo",
+            "blueprint_variant": "bpo" if blueprint_variant == "bpo" else "",
+            "icon_url": icon_url,
+            "icon_fallback_url": icon_fallback_url,
         }
-        price_meta_cache[type_id_int] = meta
+        price_meta_cache[meta_key] = meta
         return meta
 
     total_qty_by_type: dict[int, int] = {}
@@ -1336,7 +1511,8 @@ def _build_sell_material_rows(
         quantity = _asset_quantity(asset)
         if quantity <= 0:
             continue
-        if get_price_meta(type_id) is None:
+        blueprint_variant = _asset_blueprint_variant(asset)
+        if get_price_meta(type_id, blueprint_variant) is None:
             continue
         total_qty_by_type[type_id] = total_qty_by_type.get(type_id, 0) + quantity
 
@@ -1373,12 +1549,13 @@ def _build_sell_material_rows(
         *,
         type_id: int,
         quantity: int,
+        blueprint_variant: str,
         ancestors: list[str],
         depth: int,
     ) -> dict[str, object] | None:
         if quantity <= 0:
             return None
-        meta = get_price_meta(type_id)
+        meta = get_price_meta(type_id, blueprint_variant)
         if meta is None:
             return None
 
@@ -1386,15 +1563,23 @@ def _build_sell_material_rows(
         available_qty = min(int(quantity), int(available_for_type))
         remaining_by_type[int(type_id)] = max(int(available_for_type) - available_qty, 0)
         reserved_qty = max(int(quantity) - available_qty, 0)
+        row_idx = next_row_index()
+        variant_token = str(meta.get("blueprint_variant") or "") or "std"
 
         return {
             "row_kind": "item",
-            "row_index": next_row_index(),
+            "row_index": row_idx,
             "type_id": int(type_id),
             "type_name": str(meta["type_name"]),
             "buy_price_from_member": meta["buy_price_from_member"],
             "default_buy_price_from_member": meta["default_buy_price_from_member"],
             "has_sell_price_override": bool(meta["has_sell_price_override"]),
+            "is_blueprint_copy": bool(meta.get("is_blueprint_copy", False)),
+            "is_blueprint_original": bool(meta.get("is_blueprint_original", False)),
+            "blueprint_variant": str(meta.get("blueprint_variant") or ""),
+            "icon_url": str(meta.get("icon_url") or ""),
+            "icon_fallback_url": str(meta.get("icon_fallback_url") or ""),
+            "form_quantity_field_name": f"qty_{int(type_id)}_{variant_token}_{row_idx}",
             "user_quantity": int(quantity),
             "reserved_quantity": int(reserved_qty),
             "available_quantity": int(available_qty),
@@ -1418,7 +1603,7 @@ def _build_sell_material_rows(
         container_key = f"c{container_item_id}"
         next_ancestors = [*ancestors, container_key]
 
-        grouped_child_items: dict[int, int] = {}
+        grouped_child_items: dict[tuple[int, str], int] = {}
         nested_container_assets: list[dict] = []
         for child in children:
             try:
@@ -1438,20 +1623,30 @@ def _build_sell_material_rows(
             child_qty = _asset_quantity(child)
             if child_qty <= 0:
                 continue
-            grouped_child_items[child_type_id] = grouped_child_items.get(child_type_id, 0) + child_qty
+            child_blueprint_variant = _asset_blueprint_variant(child)
+            child_key = (child_type_id, child_blueprint_variant)
+            grouped_child_items[child_key] = grouped_child_items.get(child_key, 0) + child_qty
 
         child_rows: list[dict] = []
         grouped_items_sorted = sorted(
             grouped_child_items.items(),
             key=lambda pair: (
-                str((get_price_meta(pair[0]) or {}).get("type_name") or get_type_name(pair[0])).lower(),
-                int(pair[0]),
+                str(
+                    (
+                        get_price_meta(pair[0][0], pair[0][1]) or {}
+                    ).get("type_name")
+                    or get_type_name(pair[0][0])
+                ).lower(),
+                int(pair[0][0]),
+                str(pair[0][1] or ""),
             ),
         )
-        for child_type_id, child_qty in grouped_items_sorted:
+        for child_key, child_qty in grouped_items_sorted:
+            child_type_id, child_blueprint_variant = child_key
             row = build_item_row(
                 type_id=child_type_id,
                 quantity=child_qty,
+                blueprint_variant=child_blueprint_variant,
                 ancestors=next_ancestors,
                 depth=depth + 1,
             )
@@ -1478,12 +1673,20 @@ def _build_sell_material_rows(
             container_type_id = int(asset.get("type_id") or 0)
         except (TypeError, ValueError):
             container_type_id = 0
+        container_icon_url = ""
+        container_icon_fallback_url = ""
+        if container_type_id > 0:
+            container_icon_url, container_icon_fallback_url = _build_eve_type_icon_urls(
+                container_type_id
+            )
         container_row = {
             "row_kind": "container",
             "row_index": next_row_index(),
             "container_key": container_key,
             "container_name": container_display_name(asset),
             "container_type_id": container_type_id if container_type_id > 0 else None,
+            "container_icon_url": container_icon_url,
+            "container_icon_fallback_url": container_icon_fallback_url,
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
@@ -1492,16 +1695,13 @@ def _build_sell_material_rows(
         return [container_row, *child_rows]
 
     root_container_assets: list[dict] = []
-    root_items_by_type: dict[int, int] = {}
+    root_items_by_key: dict[tuple[int, str], int] = {}
     for asset in assets:
         try:
             item_id = int(asset.get("item_id") or 0)
         except (TypeError, ValueError):
             item_id = 0
-        try:
-            parent_id = int(asset.get("raw_location_id") or 0)
-        except (TypeError, ValueError):
-            parent_id = 0
+        parent_id = int(parent_by_item_id.get(item_id, 0) or 0)
         is_container = item_id > 0 and item_id in container_item_ids
         has_container_parent = parent_id > 0 and parent_id in container_item_ids
 
@@ -1521,7 +1721,9 @@ def _build_sell_material_rows(
         qty = _asset_quantity(asset)
         if qty <= 0:
             continue
-        root_items_by_type[type_id] = root_items_by_type.get(type_id, 0) + qty
+        blueprint_variant = _asset_blueprint_variant(asset)
+        root_key = (type_id, blueprint_variant)
+        root_items_by_key[root_key] = root_items_by_key.get(root_key, 0) + qty
 
     rows: list[dict] = []
     root_container_assets = sorted(
@@ -1532,14 +1734,25 @@ def _build_sell_material_rows(
         rows.extend(build_container_branch(root_container_asset, ancestors=[], depth=0))
 
     root_items_sorted = sorted(
-        root_items_by_type.items(),
+        root_items_by_key.items(),
         key=lambda pair: (
-            str((get_price_meta(pair[0]) or {}).get("type_name") or get_type_name(pair[0])).lower(),
-            int(pair[0]),
+            str(
+                (get_price_meta(pair[0][0], pair[0][1]) or {}).get("type_name")
+                or get_type_name(pair[0][0])
+            ).lower(),
+            int(pair[0][0]),
+            str(pair[0][1] or ""),
         ),
     )
-    for type_id, qty in root_items_sorted:
-        row = build_item_row(type_id=type_id, quantity=qty, ancestors=[], depth=0)
+    for root_key, qty in root_items_sorted:
+        type_id, blueprint_variant = root_key
+        row = build_item_row(
+            type_id=type_id,
+            quantity=qty,
+            blueprint_variant=blueprint_variant,
+            ancestors=[],
+            depth=0,
+        )
         if row is not None:
             rows.append(row)
 
@@ -2075,9 +2288,16 @@ def material_exchange_sell(request, tokens):
 
         # Parse submitted quantities from the form. Do not iterate over `user_assets` here:
         # doing so can silently drop items if assets changed or a type was filtered out.
-        submitted_quantities = _parse_submitted_quantities(request.POST)
+        submitted_item_quantities = _parse_submitted_sell_item_quantities(request.POST)
+        submitted_quantities: dict[int, int] = {}
+        for submitted_entry in submitted_item_quantities:
+            type_id = int(submitted_entry.get("type_id") or 0)
+            qty = int(submitted_entry.get("quantity") or 0)
+            if type_id <= 0 or qty <= 0:
+                continue
+            submitted_quantities[type_id] = submitted_quantities.get(type_id, 0) + qty
 
-        if not submitted_quantities:
+        if not submitted_item_quantities or not submitted_quantities:
             messages.error(
                 request,
                 _("Please enter a quantity greater than 0 for at least one item."),
@@ -2098,6 +2318,18 @@ def material_exchange_sell(request, tokens):
         total_payout = Decimal("0")
 
         price_data = _fetch_fuzzwork_prices(list(submitted_quantities.keys()))
+
+        try:
+            all_cached_assets_for_pricing, _scope_missing_for_pricing = get_user_assets_cached(
+                request.user,
+                allow_refresh=False,
+            )
+        except Exception:
+            all_cached_assets_for_pricing = []
+        variant_quantities = _build_sell_variant_quantities(
+            assets=all_cached_assets_for_pricing,
+            location_id=selected_location_id,
+        )
 
         for type_id, qty in submitted_quantities.items():
             user_qty = user_assets.get(type_id)
@@ -2156,20 +2388,20 @@ def material_exchange_sell(request, tokens):
                 type_name = get_type_name(type_id)
                 errors.append(
                     _(
-                        f"Insufficient {type_name} in {active_location_name}. You have: {user_qty:,}, requested: {qty:,}"
+                            f"Insufficient {type_name} in {active_location_name}. You have: {user_qty:,}, requested: {qty:,}"
+                        )
                     )
-                )
                 continue
 
             reserved_qty = int(reserved_quantities.get(int(type_id), 0) or 0)
-            available_qty = max(int(user_qty) - reserved_qty, 0)
-            if qty > available_qty:
+            available_by_type = max(int(user_qty) - reserved_qty, 0)
+            if qty > available_by_type:
                 type_name = get_type_name(type_id)
                 if reserved_qty > 0:
                     errors.append(
                         _(
                             f"Insufficient unlocked {type_name} in {active_location_name}. "
-                            f"Available now: {available_qty:,}, reserved in open orders: {reserved_qty:,}, requested: {qty:,}."
+                            f"Available now: {available_by_type:,}, reserved in open orders: {reserved_qty:,}, requested: {qty:,}."
                         )
                     )
                 else:
@@ -2180,27 +2412,60 @@ def material_exchange_sell(request, tokens):
                     )
                 continue
 
-            fuzz_prices = price_data.get(type_id, {})
-            jita_buy = Decimal(fuzz_prices.get("buy") or 0)
-            jita_sell = Decimal(fuzz_prices.get("sell") or 0)
-            unit_price, _default_unit_price, _has_override = (
-                _compute_effective_sell_unit_price(
-                    config=config,
-                    type_id=type_id,
-                    jita_buy=jita_buy,
-                    jita_sell=jita_sell,
-                    sell_override_map=sell_override_map,
-                )
-            )
-            if unit_price <= 0:
-                type_name = get_type_name(type_id)
-                errors.append(_(f"{type_name} has no valid market price."))
+        if errors:
+            for err in errors:
+                messages.error(request, err)
+            return redirect(sell_redirect_url)
+
+        for submitted_entry in submitted_item_quantities:
+            type_id = int(submitted_entry.get("type_id") or 0)
+            qty = int(submitted_entry.get("quantity") or 0)
+            blueprint_variant = str(
+                submitted_entry.get("blueprint_variant") or ""
+            ).strip().lower()
+            if blueprint_variant not in {"", "bpo", "bpc"}:
+                blueprint_variant = ""
+            if type_id <= 0 or qty <= 0:
                 continue
+
+            type_name_base = get_type_name(type_id)
+            type_name = _format_sell_blueprint_type_name(type_name_base, blueprint_variant)
+
+            if blueprint_variant in {"bpo", "bpc"}:
+                variant_available = int(
+                    variant_quantities.get((type_id, blueprint_variant), 0) or 0
+                )
+                if qty > variant_available:
+                    errors.append(
+                        _(
+                            f"Insufficient {type_name} in {active_location_name}. "
+                            f"You have: {variant_available:,}, requested: {qty:,}."
+                        )
+                    )
+                    continue
+
+            if blueprint_variant == "bpc":
+                unit_price = Decimal("0")
+            else:
+                fuzz_prices = price_data.get(type_id, {})
+                jita_buy = Decimal(fuzz_prices.get("buy") or 0)
+                jita_sell = Decimal(fuzz_prices.get("sell") or 0)
+                unit_price, _default_unit_price, _has_override = (
+                    _compute_effective_sell_unit_price(
+                        config=config,
+                        type_id=type_id,
+                        jita_buy=jita_buy,
+                        jita_sell=jita_sell,
+                        sell_override_map=sell_override_map,
+                    )
+                )
+                if unit_price <= 0:
+                    errors.append(_(f"{type_name} has no valid market price."))
+                    continue
 
             total_price = unit_price * qty
             total_payout += total_price
 
-            type_name = get_type_name(type_id)
             items_to_create.append(
                 {
                     "type_id": type_id,

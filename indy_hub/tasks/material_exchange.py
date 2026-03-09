@@ -66,7 +66,8 @@ logger = get_extension_logger(__name__)
 
 # Bump these when a deployment changes how caches are normalized/derived.
 # This lets pages trigger a one-time refresh for already-cached data.
-ME_USER_ASSETS_CACHE_VERSION = 1
+# Bump when cached user-asset semantics used by sell UI change.
+ME_USER_ASSETS_CACHE_VERSION = 3
 ME_STOCK_SYNC_CACHE_VERSION = 2
 ESI_DOWN_COOLDOWN_SECONDS = 5 * 60
 
@@ -416,6 +417,45 @@ def refresh_material_exchange_sell_user_assets(user_id: int) -> None:
             )
             continue
 
+        parent_item_ids: set[int] = set()
+        for asset in assets or []:
+            try:
+                parent_item_id = int(asset.get("location_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if parent_item_id > 0:
+                parent_item_ids.add(parent_item_id)
+
+        named_item_ids: list[int] = []
+        for asset in assets or []:
+            if not asset.get("is_singleton"):
+                continue
+            try:
+                named_item_id = int(asset.get("item_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if named_item_id > 0 and named_item_id in parent_item_ids:
+                named_item_ids.append(named_item_id)
+
+        asset_name_map: dict[int, str] = {}
+        if named_item_ids:
+            try:
+                asset_name_map = shared_client.fetch_character_asset_names(
+                    character_id=int(character_id),
+                    item_ids=named_item_ids,
+                )
+            except (
+                ESITokenError,
+                ESIRateLimitError,
+                ESIForbiddenError,
+                ESIClientError,
+            ) as exc:
+                logger.debug(
+                    "Failed to load asset names for character %s: %s",
+                    character_id,
+                    exc,
+                )
+
         index_by_item_id = build_asset_index_by_item_id(assets or [])
 
         character_structure_ids = structure_ids_by_character.setdefault(
@@ -436,6 +476,10 @@ def refresh_material_exchange_sell_user_assets(user_id: int) -> None:
             except (TypeError, ValueError):
                 raw_location_id = None
 
+            set_name = ""
+            if item_id_int and item_id_int > 0:
+                set_name = str(asset_name_map.get(item_id_int) or "").strip()
+
             resolved_location_id = resolve_asset_root_location_id(
                 asset, index_by_item_id
             )
@@ -451,6 +495,7 @@ def refresh_material_exchange_sell_user_assets(user_id: int) -> None:
                     location_id=int(resolved_location_id),
                     location_flag=str(asset.get("location_flag", "") or ""),
                     type_id=int(asset.get("type_id", 0) or 0),
+                    set_name=set_name,
                     quantity=int(asset.get("quantity", 0) or 0),
                     is_singleton=bool(asset.get("is_singleton", False)),
                     is_blueprint=bool(asset.get("is_blueprint", False)),
