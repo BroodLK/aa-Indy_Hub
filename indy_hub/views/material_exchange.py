@@ -39,8 +39,13 @@ from ..models import (
     MaterialExchangeTransaction,
 )
 from ..services.asset_cache import (
+    asset_chain_has_context,
+    build_asset_index_by_item_id,
+    get_corp_assets_cached,
     get_corp_divisions_cached,
+    get_office_folder_item_id_from_assets,
     get_user_assets_cached,
+    make_managed_hangar_location_id,
     resolve_structure_names,
 )
 from ..tasks.material_exchange import (
@@ -1330,9 +1335,21 @@ def _asset_quantity(asset: dict) -> int:
     return quantity
 
 
+def _asset_is_blueprint(asset: dict) -> bool:
+    """Return True when an asset row represents a blueprint."""
+    if bool(asset.get("is_blueprint", False)) or bool(
+        asset.get("is_blueprint_copy", False)
+    ):
+        return True
+    try:
+        return int(asset.get("quantity", 0) or 0) < 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _asset_blueprint_variant(asset: dict) -> str:
     """Return blueprint variant token for an asset row: 'bpo', 'bpc', or ''."""
-    if not bool(asset.get("is_blueprint", False)):
+    if not _asset_is_blueprint(asset):
         return ""
     try:
         raw_quantity = int(asset.get("quantity", 0) or 0)
@@ -1344,20 +1361,26 @@ def _asset_blueprint_variant(asset: dict) -> str:
 
 
 def _build_eve_type_icon_urls(
-    type_id: int, *, blueprint_variant: str = ""
+    type_id: int, *, blueprint_variant: str = "", is_blueprint_hint: bool = False
 ) -> tuple[str, str]:
     """Return (primary, fallback) icon URLs for a type row."""
     type_id_int = int(type_id)
     if blueprint_variant == "bpc":
         primary_variant = "bpc"
+        fallback_variant = "bp"
     elif blueprint_variant == "bpo":
         primary_variant = "bp"
+        fallback_variant = "icon"
+    elif is_blueprint_hint:
+        primary_variant = "bp"
+        fallback_variant = "icon"
     else:
         primary_variant = "icon"
+        fallback_variant = "render"
     primary = (
         f"https://images.evetech.net/types/{type_id_int}/{primary_variant}?size=64"
     )
-    fallback = f"https://images.evetech.net/types/{type_id_int}/render?size=64"
+    fallback = f"https://images.evetech.net/types/{type_id_int}/{fallback_variant}?size=64"
     return primary, fallback
 
 
@@ -1783,6 +1806,610 @@ def _build_buy_stock_location_label(
             labels.append(resolved_name)
 
     return ", ".join(labels).strip() or str(fallback_label or "").strip()
+
+
+def _get_buy_location_scoped_corp_assets(
+    *,
+    config: MaterialExchangeConfig,
+    corp_assets: list[dict] | None = None,
+) -> list[dict]:
+    """Return cached corp assets matched to configured buy locations/division."""
+
+    if corp_assets is None:
+        try:
+            corp_assets, _scope_missing = get_corp_assets_cached(
+                int(config.corporation_id),
+                allow_refresh=False,
+            )
+        except Exception:
+            return []
+    if not corp_assets:
+        return []
+
+    try:
+        target_structure_ids = [int(sid) for sid in config.get_buy_structure_ids() or []]
+    except Exception:
+        target_structure_ids = []
+    if not target_structure_ids:
+        return []
+
+    hangar_flag_map = {
+        1: "CorpSAG1",
+        2: "CorpSAG2",
+        3: "CorpSAG3",
+        4: "CorpSAG4",
+        5: "CorpSAG5",
+        6: "CorpSAG6",
+        7: "CorpSAG7",
+    }
+    target_flag = hangar_flag_map.get(int(getattr(config, "hangar_division", 0) or 0))
+    if not target_flag:
+        return []
+
+    effective_location_ids: list[int] = []
+    context_to_structure_ids: dict[int, set[int]] = {}
+    hangar_fallback_context_ids: set[int] = set()
+    for structure_id in target_structure_ids:
+        structure_id_int = int(structure_id)
+        office_folder_item_id = get_office_folder_item_id_from_assets(
+            corp_assets,
+            structure_id=structure_id_int,
+        )
+        candidate_context_ids: list[int] = [structure_id_int]
+        if office_folder_item_id is not None:
+            office_folder_item_id_int = int(office_folder_item_id)
+            candidate_context_ids.append(office_folder_item_id_int)
+            candidate_context_ids.append(
+                make_managed_hangar_location_id(
+                    office_folder_item_id_int,
+                    int(config.hangar_division),
+                )
+            )
+        else:
+            hangar_fallback_context_ids.add(structure_id_int)
+
+        for context_id in candidate_context_ids:
+            context_id_int = int(context_id)
+            if context_id_int not in effective_location_ids:
+                effective_location_ids.append(context_id_int)
+            context_to_structure_ids.setdefault(context_id_int, set()).add(
+                structure_id_int
+            )
+
+    index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
+
+    def _asset_chain_contains_location(asset_row: dict, location_id: int) -> bool:
+        current = asset_row
+        seen: set[int] = set()
+        target_id = int(location_id)
+        for _ in range(25):
+            try:
+                current_location_id = int(current.get("location_id", 0) or 0)
+            except (TypeError, ValueError):
+                return False
+            if current_location_id == target_id:
+                return True
+            parent = index_by_item_id.get(current_location_id)
+            if not parent:
+                return False
+            if current_location_id in seen:
+                return False
+            seen.add(current_location_id)
+            current = parent
+        return False
+
+    scoped_assets: list[dict] = []
+    for raw_asset in corp_assets or []:
+        matches_any_location = False
+        matched_structure_ids: set[int] = set()
+        for location_id in effective_location_ids:
+            location_id_int = int(location_id)
+            if location_id_int < 0:
+                matched = _asset_chain_contains_location(raw_asset, location_id_int)
+            else:
+                matched = asset_chain_has_context(
+                    raw_asset,
+                    index_by_item_id,
+                    location_id=location_id_int,
+                    location_flag=str(target_flag),
+                )
+                if not matched and location_id_int in hangar_fallback_context_ids:
+                    matched = asset_chain_has_context(
+                        raw_asset,
+                        index_by_item_id,
+                        location_id=location_id_int,
+                        location_flag="Hangar",
+                    )
+            if not matched:
+                continue
+            matches_any_location = True
+            matched_structure_ids.update(context_to_structure_ids.get(location_id_int, set()))
+            break
+
+        if not matches_any_location:
+            continue
+
+        asset = dict(raw_asset)
+        asset["source_structure_ids"] = sorted(int(sid) for sid in matched_structure_ids)
+        scoped_assets.append(asset)
+
+    return scoped_assets
+
+
+def _format_buy_stock_type_name(type_name: str, blueprint_variant: str) -> str:
+    """Return a buy-table item name with an optional blueprint suffix."""
+    base_name = str(type_name or "").strip()
+    for suffix in (" (BPO/BPC)", " (BPO)", " (BPC)"):
+        if base_name.endswith(suffix):
+            base_name = base_name[: -len(suffix)]
+            break
+
+    variant = str(blueprint_variant or "").strip().lower()
+    if variant == "bpc":
+        return f"{base_name} (BPC)"
+    if variant == "bpo":
+        return f"{base_name} (BPO)"
+    if variant == "mixed":
+        return f"{base_name} (BPO/BPC)"
+    return base_name
+
+
+def _get_buy_stock_blueprint_variant_map(
+    *,
+    config: MaterialExchangeConfig,
+    type_ids: set[int] | None = None,
+) -> dict[int, str]:
+    """Return stock blueprint variant by type_id: bpo/bpc/mixed."""
+
+    try:
+        corp_assets, _scope_missing = get_corp_assets_cached(
+            int(config.corporation_id),
+            allow_refresh=False,
+        )
+    except Exception:
+        return {}
+    if not corp_assets:
+        return {}
+
+    wanted_type_ids: set[int] | None = None
+    if type_ids:
+        wanted_type_ids = {int(type_id) for type_id in type_ids if int(type_id) > 0}
+
+    scoped_assets = _get_buy_location_scoped_corp_assets(
+        config=config,
+        corp_assets=corp_assets,
+    )
+    if not scoped_assets:
+        return {}
+
+    variants_by_type: dict[int, set[str]] = {}
+    for asset in scoped_assets:
+        if not _asset_is_blueprint(asset):
+            continue
+
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+        if wanted_type_ids is not None and type_id not in wanted_type_ids:
+            continue
+
+        try:
+            raw_quantity = int(asset.get("quantity", 0) or 0)
+        except (TypeError, ValueError):
+            raw_quantity = 0
+        variant = "bpc" if raw_quantity == -2 else "bpo"
+        variants_by_type.setdefault(type_id, set()).add(variant)
+
+    variant_map: dict[int, str] = {}
+    for type_id, variants in variants_by_type.items():
+        if not variants:
+            continue
+        if variants == {"bpc"}:
+            variant_map[int(type_id)] = "bpc"
+        elif variants == {"bpo"}:
+            variant_map[int(type_id)] = "bpo"
+        else:
+            variant_map[int(type_id)] = "mixed"
+    return variant_map
+
+
+def _build_buy_material_rows(
+    *,
+    scoped_assets: list[dict],
+    stock_meta_by_type: dict[int, dict[str, object]],
+    buy_name_map: dict[int, str],
+    fallback_location_label: str,
+) -> list[dict]:
+    """Build buy-table rows, grouping corp assets by containers when possible."""
+
+    if not scoped_assets or not stock_meta_by_type:
+        return []
+
+    asset_by_item_id: dict[int, dict] = {}
+    for asset in scoped_assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id > 0:
+            asset_by_item_id[item_id] = asset
+
+    parent_by_item_id: dict[int, int] = {}
+    children_by_parent: dict[int, list[dict]] = {}
+
+    def resolve_parent_item_id(asset: dict) -> int:
+        for field_name in ("raw_location_id", "location_id"):
+            try:
+                candidate = int(asset.get(field_name) or 0)
+            except (TypeError, ValueError):
+                candidate = 0
+            if candidate > 0 and candidate in asset_by_item_id:
+                return candidate
+        return 0
+
+    for asset in scoped_assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        parent_id = resolve_parent_item_id(asset)
+        if parent_id > 0:
+            children_by_parent.setdefault(parent_id, []).append(asset)
+            if item_id > 0:
+                parent_by_item_id[item_id] = parent_id
+
+    container_item_ids = set(children_by_parent.keys())
+    remaining_by_type: dict[int, int] = {
+        int(type_id): max(int(meta.get("available_quantity") or 0), 0)
+        for type_id, meta in stock_meta_by_type.items()
+    }
+    row_index = 0
+
+    def next_row_index() -> int:
+        nonlocal row_index
+        idx = row_index
+        row_index += 1
+        return idx
+
+    def _location_label_from_source_ids(source_ids: list[int]) -> str:
+        labels: list[str] = []
+        for source_id in source_ids:
+            source_name = (buy_name_map.get(int(source_id)) or f"Structure {int(source_id)}").strip()
+            if source_name and source_name not in labels:
+                labels.append(source_name)
+        return ", ".join(labels).strip() or str(fallback_location_label or "").strip()
+
+    def _container_display_name(asset: dict) -> str:
+        named = str(asset.get("set_name") or asset.get("name") or "").strip()
+        if named:
+            return named
+        try:
+            container_type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            container_type_id = 0
+        if container_type_id > 0:
+            return get_type_name(container_type_id)
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        return f"Container {item_id}" if item_id > 0 else "Container"
+
+    def _resolve_item_meta(type_id: int, blueprint_variant: str = "") -> dict[str, object] | None:
+        type_id_int = int(type_id)
+        base_meta = stock_meta_by_type.get(type_id_int)
+        if not base_meta:
+            return None
+
+        base_type_name = str(
+            base_meta.get("base_type_name")
+            or base_meta.get("display_type_name")
+            or get_type_name(type_id_int)
+        ).strip()
+
+        variant = str(blueprint_variant or "").strip().lower()
+        if variant not in {"bpc", "bpo"}:
+            base_variant = str(base_meta.get("blueprint_variant") or "").strip().lower()
+            if base_variant in {"bpc", "bpo"}:
+                variant = base_variant
+            else:
+                variant = ""
+
+        if variant == "bpc":
+            unit_price = Decimal("0")
+            default_unit_price = Decimal("0")
+            has_override = False
+        else:
+            unit_price = Decimal(base_meta.get("display_sell_price_to_member") or 0)
+            default_unit_price = Decimal(base_meta.get("default_sell_price_to_member") or 0)
+            has_override = bool(base_meta.get("has_buy_price_override", False))
+
+        icon_variant = "bpc" if variant == "bpc" else ("bpo" if variant == "bpo" else "")
+        icon_url, icon_fallback_url = _build_eve_type_icon_urls(
+            type_id_int,
+            blueprint_variant=icon_variant,
+            is_blueprint_hint=(bool(variant) or "blueprint" in base_type_name.lower()),
+        )
+        return {
+            "type_id": type_id_int,
+            "display_type_name": _format_buy_stock_type_name(base_type_name, variant),
+            "blueprint_variant": variant,
+            "display_sell_price_to_member": unit_price,
+            "default_sell_price_to_member": default_unit_price,
+            "has_buy_price_override": has_override,
+            "icon_url": icon_url,
+            "icon_fallback_url": icon_fallback_url,
+            "default_source_structure_ids": [
+                int(sid)
+                for sid in (base_meta.get("source_structure_ids") or [])
+                if int(sid) > 0
+            ],
+            "default_buy_location_label": str(
+                base_meta.get("buy_location_label") or fallback_location_label
+            ),
+        }
+
+    def build_item_row(
+        *,
+        type_id: int,
+        quantity: int,
+        blueprint_variant: str,
+        source_structure_ids: list[int],
+        ancestors: list[str],
+        depth: int,
+    ) -> dict[str, object] | None:
+        if int(quantity) <= 0:
+            return None
+
+        item_meta = _resolve_item_meta(type_id, blueprint_variant)
+        if item_meta is None:
+            return None
+
+        available_for_type = int(remaining_by_type.get(int(type_id), 0) or 0)
+        available_qty = min(int(quantity), max(available_for_type, 0))
+        remaining_by_type[int(type_id)] = max(available_for_type - available_qty, 0)
+        reserved_qty = max(int(quantity) - available_qty, 0)
+
+        clean_source_ids: list[int] = []
+        for raw_source_id in source_structure_ids or []:
+            try:
+                source_id = int(raw_source_id)
+            except (TypeError, ValueError):
+                continue
+            if source_id > 0 and source_id not in clean_source_ids:
+                clean_source_ids.append(source_id)
+        if not clean_source_ids:
+            clean_source_ids = list(item_meta.get("default_source_structure_ids") or [])
+
+        location_label = (
+            _location_label_from_source_ids(clean_source_ids)
+            if clean_source_ids
+            else str(item_meta.get("default_buy_location_label") or fallback_location_label)
+        )
+        row_idx = next_row_index()
+        variant_token = str(item_meta.get("blueprint_variant") or "") or "std"
+
+        return {
+            "row_kind": "item",
+            "row_index": row_idx,
+            "type_id": int(type_id),
+            "display_type_name": str(item_meta.get("display_type_name") or ""),
+            "blueprint_variant": str(item_meta.get("blueprint_variant") or ""),
+            "quantity": int(quantity),
+            "reserved_quantity": int(reserved_qty),
+            "available_quantity": int(available_qty),
+            "display_sell_price_to_member": item_meta.get("display_sell_price_to_member"),
+            "default_sell_price_to_member": item_meta.get("default_sell_price_to_member"),
+            "has_buy_price_override": bool(item_meta.get("has_buy_price_override", False)),
+            "icon_url": str(item_meta.get("icon_url") or ""),
+            "icon_fallback_url": str(item_meta.get("icon_fallback_url") or ""),
+            "source_structure_ids": clean_source_ids,
+            "buy_location_label": location_label,
+            "depth": int(depth),
+            "container_path": ",".join(ancestors),
+            "indent_padding_rem": round(max(0, depth) * 1.15, 2),
+            "form_quantity_field_name": f"qty_{int(type_id)}_{variant_token}_{row_idx}",
+        }
+
+    def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
+        try:
+            container_item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            return []
+        if container_item_id <= 0:
+            return []
+
+        children = children_by_parent.get(container_item_id, [])
+        if not children:
+            return []
+
+        container_key = f"c{container_item_id}"
+        next_ancestors = [*ancestors, container_key]
+        nested_container_assets: list[dict] = []
+        grouped_child_items: dict[tuple[int, str, tuple[int, ...]], int] = {}
+
+        for child in children:
+            try:
+                child_item_id = int(child.get("item_id") or 0)
+            except (TypeError, ValueError):
+                child_item_id = 0
+            if child_item_id > 0 and child_item_id in container_item_ids:
+                nested_container_assets.append(child)
+                continue
+
+            try:
+                child_type_id = int(child.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if child_type_id <= 0 or child_type_id not in stock_meta_by_type:
+                continue
+            child_qty = _asset_quantity(child)
+            if child_qty <= 0:
+                continue
+            child_variant = _asset_blueprint_variant(child)
+            child_source_ids: list[int] = []
+            for raw_source_id in child.get("source_structure_ids", []) or []:
+                try:
+                    source_id = int(raw_source_id)
+                except (TypeError, ValueError):
+                    continue
+                if source_id > 0 and source_id not in child_source_ids:
+                    child_source_ids.append(source_id)
+
+            group_key = (
+                int(child_type_id),
+                str(child_variant or ""),
+                tuple(sorted(child_source_ids)),
+            )
+            grouped_child_items[group_key] = grouped_child_items.get(group_key, 0) + int(child_qty)
+
+        child_rows: list[dict] = []
+        grouped_items_sorted = sorted(
+            grouped_child_items.items(),
+            key=lambda pair: (
+                str(
+                    (_resolve_item_meta(pair[0][0], pair[0][1]) or {}).get("display_type_name")
+                    or get_type_name(pair[0][0])
+                ).lower(),
+                int(pair[0][0]),
+                str(pair[0][1] or ""),
+                ",".join(str(x) for x in pair[0][2]),
+            ),
+        )
+        for grouped_key, grouped_qty in grouped_items_sorted:
+            child_type_id, child_variant, source_ids_tuple = grouped_key
+            child_row = build_item_row(
+                type_id=child_type_id,
+                quantity=int(grouped_qty),
+                blueprint_variant=child_variant,
+                source_structure_ids=list(source_ids_tuple),
+                ancestors=next_ancestors,
+                depth=depth + 1,
+            )
+            if child_row is not None:
+                child_rows.append(child_row)
+
+        nested_container_assets = sorted(
+            nested_container_assets,
+            key=lambda nested_asset: _container_display_name(nested_asset).lower(),
+        )
+        for nested_container_asset in nested_container_assets:
+            child_rows.extend(
+                build_container_branch(
+                    nested_container_asset,
+                    ancestors=next_ancestors,
+                    depth=depth + 1,
+                )
+            )
+
+        if not child_rows:
+            return []
+
+        try:
+            container_type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            container_type_id = 0
+
+        container_icon_url = ""
+        container_icon_fallback_url = ""
+        if container_type_id > 0:
+            container_icon_url, container_icon_fallback_url = _build_eve_type_icon_urls(
+                container_type_id
+            )
+
+        container_row = {
+            "row_kind": "container",
+            "row_index": next_row_index(),
+            "container_key": container_key,
+            "container_name": _container_display_name(asset),
+            "container_type_id": container_type_id if container_type_id > 0 else None,
+            "container_icon_url": container_icon_url,
+            "container_icon_fallback_url": container_icon_fallback_url,
+            "depth": int(depth),
+            "container_path": ",".join(ancestors),
+            "indent_padding_rem": round(max(0, depth) * 1.15, 2),
+        }
+
+        return [container_row, *child_rows]
+
+    root_container_assets: list[dict] = []
+    root_items_by_key: dict[tuple[int, str, tuple[int, ...]], int] = {}
+    for asset in scoped_assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        parent_id = int(parent_by_item_id.get(item_id, 0) or 0)
+        is_container = item_id > 0 and item_id in container_item_ids
+        has_container_parent = parent_id > 0 and parent_id in container_item_ids
+
+        if is_container:
+            if not has_container_parent:
+                root_container_assets.append(asset)
+            continue
+        if has_container_parent:
+            continue
+
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0 or type_id not in stock_meta_by_type:
+            continue
+
+        qty = _asset_quantity(asset)
+        if qty <= 0:
+            continue
+        blueprint_variant = _asset_blueprint_variant(asset)
+
+        source_ids: list[int] = []
+        for raw_source_id in asset.get("source_structure_ids", []) or []:
+            try:
+                source_id = int(raw_source_id)
+            except (TypeError, ValueError):
+                continue
+            if source_id > 0 and source_id not in source_ids:
+                source_ids.append(source_id)
+        key = (int(type_id), str(blueprint_variant or ""), tuple(sorted(source_ids)))
+        root_items_by_key[key] = root_items_by_key.get(key, 0) + int(qty)
+
+    rows: list[dict] = []
+    root_container_assets = sorted(
+        root_container_assets,
+        key=lambda container_asset: _container_display_name(container_asset).lower(),
+    )
+    for root_container_asset in root_container_assets:
+        rows.extend(build_container_branch(root_container_asset, ancestors=[], depth=0))
+
+    root_items_sorted = sorted(
+        root_items_by_key.items(),
+        key=lambda pair: (
+            str(
+                (_resolve_item_meta(pair[0][0], pair[0][1]) or {}).get("display_type_name")
+                or get_type_name(pair[0][0])
+            ).lower(),
+            int(pair[0][0]),
+            str(pair[0][1] or ""),
+            ",".join(str(x) for x in pair[0][2]),
+        ),
+    )
+    for root_key, qty in root_items_sorted:
+        type_id, blueprint_variant, source_ids_tuple = root_key
+        row = build_item_row(
+            type_id=type_id,
+            quantity=int(qty),
+            blueprint_variant=blueprint_variant,
+            source_structure_ids=list(source_ids_tuple),
+            ancestors=[],
+            depth=0,
+        )
+        if row is not None:
+            rows.append(row)
+
+    return rows
 
 
 def _selected_buy_stock_items_share_source_location(
@@ -2980,7 +3607,17 @@ def material_exchange_buy(request, tokens):
         # Parse submitted quantities from the form. Do not iterate over `stock_items` here:
         # doing so can silently drop items if stock changed (quantity=0) or an item is no
         # longer visible due to filters.
-        submitted_quantities = _parse_submitted_quantities(request.POST)
+        submitted_entries = _parse_submitted_sell_item_quantities(request.POST)
+        submitted_quantities: dict[int, int] = {}
+        for submitted_entry in submitted_entries:
+            try:
+                type_id = int(submitted_entry.get("type_id") or 0)
+                qty = int(submitted_entry.get("quantity") or 0)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0 or qty <= 0:
+                continue
+            submitted_quantities[type_id] = submitted_quantities.get(type_id, 0) + qty
 
         if not submitted_quantities:
             messages.error(
@@ -2994,6 +3631,10 @@ def material_exchange_buy(request, tokens):
         total_cost = Decimal("0")
 
         submitted_type_ids = set(submitted_quantities.keys())
+        submitted_blueprint_variants = _get_buy_stock_blueprint_variant_map(
+            config=config,
+            type_ids=submitted_type_ids,
+        )
 
         with transaction.atomic():
             override_type_ids = set(buy_override_map.keys())
@@ -3015,6 +3656,7 @@ def material_exchange_buy(request, tokens):
                 config=config,
                 type_ids=submitted_type_ids,
             )
+            available_by_type: dict[int, int] = {}
 
             for type_id, qty in submitted_quantities.items():
                 stock_item = stock_by_type_id.get(type_id)
@@ -3027,47 +3669,91 @@ def material_exchange_buy(request, tokens):
                     )
                     continue
 
+                blueprint_variant = str(
+                    submitted_blueprint_variants.get(int(type_id), "")
+                ).strip().lower()
+                display_type_name = _format_buy_stock_type_name(
+                    stock_item.type_name or get_type_name(type_id),
+                    blueprint_variant,
+                )
+
                 if allowed_type_ids is not None and type_id not in allowed_type_ids:
-                    type_name = get_type_name(type_id)
                     errors.append(
                         _(
-                            f"{type_name} is not available in the currently allowed categories."
+                            f"{display_type_name} is not available in the currently allowed categories."
                         )
                     )
                     continue
 
                 reserved_qty = int(reserved_quantities.get(int(type_id), 0) or 0)
                 available_qty = max(int(stock_item.quantity) - reserved_qty, 0)
+                available_by_type[int(type_id)] = int(available_qty)
                 if qty > available_qty:
                     errors.append(
                         _(
-                            f"Insufficient unlocked stock for {stock_item.type_name}. "
+                            f"Insufficient unlocked stock for {display_type_name}. "
                             f"Available now: {available_qty:,}, reserved in open orders: {reserved_qty:,}, requested: {qty:,}"
                         )
                     )
                     continue
 
-                unit_price, _default_unit_price, _has_override = (
-                    _compute_effective_buy_unit_price(
-                        stock_item=stock_item,
-                        buy_override_map=buy_override_map,
-                    )
-                )
-                if unit_price <= 0:
-                    type_name = get_type_name(type_id)
-                    errors.append(_(f"{type_name} has no valid market price."))
+            if errors:
+                for err in errors:
+                    messages.error(request, err)
+                # Prevent creating a partial order with an unexpected (lower) total.
+                return redirect("indy_hub:material_exchange_buy")
+
+            for submitted_entry in submitted_entries:
+                try:
+                    type_id = int(submitted_entry.get("type_id") or 0)
+                    qty = int(submitted_entry.get("quantity") or 0)
+                except (TypeError, ValueError):
                     continue
+                if type_id <= 0 or qty <= 0:
+                    continue
+
+                stock_item = stock_by_type_id.get(type_id)
+                if stock_item is None:
+                    continue
+
+                requested_variant = str(
+                    submitted_entry.get("blueprint_variant") or ""
+                ).strip().lower()
+                blueprint_variant = (
+                    requested_variant
+                    if requested_variant in {"bpc", "bpo"}
+                    else str(submitted_blueprint_variants.get(int(type_id), "")).strip().lower()
+                )
+                display_type_name = _format_buy_stock_type_name(
+                    stock_item.type_name or get_type_name(type_id),
+                    blueprint_variant,
+                )
+
+                if blueprint_variant == "bpc":
+                    unit_price = Decimal("0")
+                else:
+                    unit_price, _default_unit_price, _has_override = (
+                        _compute_effective_buy_unit_price(
+                            stock_item=stock_item,
+                            buy_override_map=buy_override_map,
+                        )
+                    )
+                    if unit_price <= 0:
+                        errors.append(_(f"{display_type_name} has no valid market price."))
+                        continue
                 total_price = unit_price * qty
                 total_cost += total_price
 
                 items_to_create.append(
                     {
                         "type_id": type_id,
-                        "type_name": stock_item.type_name,
+                        "type_name": display_type_name,
                         "quantity": qty,
                         "unit_price": unit_price,
                         "total_price": total_price,
-                        "stock_available_at_creation": available_qty,
+                        "stock_available_at_creation": int(
+                            available_by_type.get(int(type_id), 0)
+                        ),
                     }
                 )
 
@@ -3076,12 +3762,6 @@ def material_exchange_buy(request, tokens):
                     request,
                     _("Please enter a quantity greater than 0 for at least one item."),
                 )
-                return redirect("indy_hub:material_exchange_buy")
-
-            if errors:
-                for err in errors:
-                    messages.error(request, err)
-                # Prevent creating a partial order with an unexpected (lower) total.
                 return redirect("indy_hub:material_exchange_buy")
 
             selected_stock_rows = [
@@ -3214,13 +3894,49 @@ def material_exchange_buy(request, tokens):
         logger.warning("Failed to apply market group filter: %s", exc)
     post_group_filter_count = len(stock_items)
 
+    stock_blueprint_variants = _get_buy_stock_blueprint_variant_map(
+        config=config,
+        type_ids={int(item.type_id) for item in stock_items},
+    )
+
     priced_stock_items: list[MaterialExchangeStock] = []
     for stock_item in stock_items:
-        unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
-            stock_item=stock_item,
-            buy_override_map=buy_override_map,
+        blueprint_variant = str(
+            stock_blueprint_variants.get(int(stock_item.type_id), "")
+        ).strip().lower()
+        stock_item.blueprint_variant = blueprint_variant
+        stock_item.display_type_name = _format_buy_stock_type_name(
+            stock_item.type_name or get_type_name(int(stock_item.type_id)),
+            blueprint_variant,
         )
-        if unit_price <= 0:
+
+        icon_variant = ""
+        if blueprint_variant == "bpc":
+            icon_variant = "bpc"
+        elif blueprint_variant in {"bpo", "mixed"}:
+            icon_variant = "bpo"
+        icon_url, icon_fallback_url = _build_eve_type_icon_urls(
+            int(stock_item.type_id),
+            blueprint_variant=icon_variant,
+            is_blueprint_hint=("blueprint" in str(stock_item.type_name or "").lower()),
+        )
+        stock_item.icon_url = icon_url
+        stock_item.icon_fallback_url = icon_fallback_url
+
+        if blueprint_variant == "bpc":
+            unit_price = Decimal("0")
+            default_unit_price = Decimal("0")
+            has_override = False
+        else:
+            (
+                unit_price,
+                default_unit_price,
+                has_override,
+            ) = _compute_effective_buy_unit_price(
+                stock_item=stock_item,
+                buy_override_map=buy_override_map,
+            )
+        if unit_price <= 0 and blueprint_variant != "bpc":
             continue
         stock_item.display_sell_price_to_member = unit_price
         stock_item.default_sell_price_to_member = default_unit_price
@@ -3232,7 +3948,7 @@ def material_exchange_buy(request, tokens):
     stock_items.sort(
         key=lambda i: (
             group_map.get(i.type_id, "Other").lower(),
-            (i.type_name or "").lower(),
+            (str(getattr(i, "display_type_name", "") or i.type_name or "")).lower(),
         )
     )
     reserved_quantities = _get_reserved_buy_quantities(
@@ -3248,6 +3964,79 @@ def material_exchange_buy(request, tokens):
             buy_name_map=buy_name_map,
             fallback_label=buy_locations_label,
         )
+
+    stock_rows: list[dict[str, object]] = []
+    stock_meta_by_type: dict[int, dict[str, object]] = {}
+    for stock_item in stock_items:
+        stock_meta_by_type[int(stock_item.type_id)] = {
+            "type_id": int(stock_item.type_id),
+            "base_type_name": str(stock_item.type_name or get_type_name(int(stock_item.type_id))),
+            "display_type_name": str(stock_item.display_type_name or stock_item.type_name or ""),
+            "blueprint_variant": str(stock_item.blueprint_variant or ""),
+            "display_sell_price_to_member": stock_item.display_sell_price_to_member,
+            "default_sell_price_to_member": stock_item.default_sell_price_to_member,
+            "has_buy_price_override": bool(stock_item.has_buy_price_override),
+            "quantity": int(stock_item.quantity),
+            "reserved_quantity": int(stock_item.reserved_quantity),
+            "available_quantity": int(stock_item.available_quantity),
+            "source_structure_ids": [
+                int(sid)
+                for sid in (getattr(stock_item, "source_structure_ids", []) or [])
+                if int(sid) > 0
+            ],
+            "buy_location_label": str(stock_item.buy_location_label or buy_locations_label),
+        }
+
+    try:
+        scoped_buy_assets = _get_buy_location_scoped_corp_assets(config=config)
+    except Exception:
+        scoped_buy_assets = []
+    if scoped_buy_assets:
+        stock_rows = _build_buy_material_rows(
+            scoped_assets=scoped_buy_assets,
+            stock_meta_by_type=stock_meta_by_type,
+            buy_name_map=buy_name_map,
+            fallback_location_label=buy_locations_label,
+        )
+
+    if not stock_rows:
+        for index, stock_item in enumerate(stock_items):
+            variant_token = str(getattr(stock_item, "blueprint_variant", "") or "") or "std"
+            stock_rows.append(
+                {
+                    "row_kind": "item",
+                    "row_index": int(index),
+                    "type_id": int(stock_item.type_id),
+                    "display_type_name": str(
+                        getattr(stock_item, "display_type_name", "")
+                        or stock_item.type_name
+                        or ""
+                    ),
+                    "blueprint_variant": str(getattr(stock_item, "blueprint_variant", "") or ""),
+                    "quantity": int(stock_item.quantity),
+                    "reserved_quantity": int(stock_item.reserved_quantity),
+                    "available_quantity": int(stock_item.available_quantity),
+                    "display_sell_price_to_member": stock_item.display_sell_price_to_member,
+                    "default_sell_price_to_member": stock_item.default_sell_price_to_member,
+                    "has_buy_price_override": bool(stock_item.has_buy_price_override),
+                    "icon_url": str(getattr(stock_item, "icon_url", "") or ""),
+                    "icon_fallback_url": str(
+                        getattr(stock_item, "icon_fallback_url", "") or ""
+                    ),
+                    "source_structure_ids": [
+                        int(sid)
+                        for sid in (getattr(stock_item, "source_structure_ids", []) or [])
+                        if int(sid) > 0
+                    ],
+                    "buy_location_label": str(
+                        getattr(stock_item, "buy_location_label", "") or buy_locations_label
+                    ),
+                    "depth": 0,
+                    "container_path": "",
+                    "indent_padding_rem": 0,
+                    "form_quantity_field_name": f"qty_{int(stock_item.type_id)}_{variant_token}_{int(index)}",
+                }
+            )
 
     if pre_filter_stock_count > 0 and post_group_filter_count == 0:
         messages.info(
@@ -3281,7 +4070,7 @@ def material_exchange_buy(request, tokens):
 
     context = {
         "config": config,
-        "stock": stock_items,
+        "stock": stock_rows,
         "buy_locations_label": buy_locations_label,
         "stock_refreshing": stock_refreshing,
         "buy_stock_progress": buy_stock_progress,

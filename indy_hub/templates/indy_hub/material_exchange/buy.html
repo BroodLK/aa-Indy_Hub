@@ -164,37 +164,94 @@
                                 </thead>
                                 <tbody>
                                     {% for item in stock %}
-                                    <tr class="stock-row"
+                                    {% if item.row_kind == "container" %}
+                                    <tr class="stock-row stock-row-container"
+                                        data-row-kind="container"
+                                        data-container-key="{{ item.container_key }}"
+                                        data-container-path="{{ item.container_path }}"
+                                        data-type-id="{{ item.container_type_id|default:'' }}"
+                                        data-type-name="{{ item.container_name }}">
+                                        <td>
+                                            {% if item.container_type_id %}
+                                            <img
+                                                src="{{ item.container_icon_url }}"
+                                                data-fallback-src="{{ item.container_icon_fallback_url }}"
+                                                onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
+                                                alt="{{ item.container_name }}"
+                                                class="item-icon">
+                                            {% else %}
+                                            <div class="item-icon me-tree-fallback-icon" aria-hidden="true">
+                                                <i class="fas fa-box-open"></i>
+                                            </div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="me-tree-label me-tree-container-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
+                                                <strong>{{ item.container_name }}</strong>
+                                                <div class="small text-muted">{% trans "Container" %}</div>
+                                            </div>
+                                        </td>
+                                        <td class="text-end text-muted">-</td>
+                                        <td class="text-end text-muted">-</td>
+                                        <td class="text-center">
+                                            <button
+                                                type="button"
+                                                class="btn btn-outline-secondary btn-sm container-toggle-btn"
+                                                data-container-key="{{ item.container_key }}"
+                                                data-label-select="{% trans 'Select all' %}"
+                                                data-label-clear="{% trans 'Clear selection' %}"
+                                                aria-pressed="false">
+                                                <i class="fas fa-layer-group me-1"></i>{% trans "Select all" %}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% else %}
+                                    <tr class="stock-row stock-row-item"
+                                        data-row-kind="item"
+                                        data-row-index="{{ item.row_index }}"
+                                        data-container-path="{{ item.container_path }}"
                                         data-type-id="{{ item.type_id }}"
-                                        data-type-name="{{ item.type_name }}"
+                                        data-type-name="{{ item.display_type_name }}"
+                                        data-blueprint-variant="{{ item.blueprint_variant }}"
                                         data-unit-price="{{ item.display_sell_price_to_member|floatformat:2 }}"
                                         data-max-qty="{{ item.available_quantity }}"
                                         data-source-structure-ids="{{ item.source_structure_ids|join:',' }}">
                                         <td>
                                             <img
-                                                src="https://images.evetech.net/types/{{ item.type_id }}/icon?size=64"
-                                                alt="{{ item.type_name }}"
+                                                src="{{ item.icon_url }}"
+                                                data-fallback-src="{{ item.icon_fallback_url }}"
+                                                onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
+                                                alt="{{ item.display_type_name }}"
                                                 class="item-icon">
                                         </td>
                                         <td>
-                                            <strong>{{ item.type_name }}</strong>
-                                            <div class="small text-muted">
-                                                {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}
+                                            <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
+                                                <strong>{% if item.container_path %}- {% endif %}{{ item.display_type_name }}</strong>
+                                                {% if item.blueprint_variant == "bpc" %}
+                                                <div class="small text-muted">{% trans "Blueprint Copy" %}</div>
+                                                {% elif item.blueprint_variant == "bpo" %}
+                                                <div class="small text-muted">{% trans "Blueprint Original" %}</div>
+                                                {% elif item.blueprint_variant == "mixed" %}
+                                                <div class="small text-muted">{% trans "Mixed Blueprint Stock (BPO/BPC)" %}</div>
+                                                {% endif %}
+                                                <div class="small text-muted">
+                                                    {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}
+                                                </div>
+                                                {% if item.has_buy_price_override %}
+                                                <div class="small text-info">
+                                                    <i class="fas fa-sliders-h me-1"></i>
+                                                    {% trans "Custom buy price:" %} {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
+                                                    <span class="text-muted">
+                                                        ({% trans "default" %}: {{ item.default_sell_price_to_member|floatformat:2|intcomma }} ISK)
+                                                    </span>
+                                                </div>
+                                                {% endif %}
+                                                {% if item.reserved_quantity > 0 %}
+                                                <div class="small text-warning">
+                                                    <i class="fas fa-lock me-1"></i>{% trans "Reserved in open orders:" %} {{ item.reserved_quantity|intcomma }}
+                                                </div>
+                                                {% endif %}
                                             </div>
-                                            {% if item.has_buy_price_override %}
-                                            <div class="small text-info">
-                                                <i class="fas fa-sliders-h me-1"></i>
-                                                {% trans "Custom buy price:" %} {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
-                                                <span class="text-muted">
-                                                    ({% trans "default" %}: {{ item.default_sell_price_to_member|floatformat:2|intcomma }} ISK)
-                                                </span>
-                                            </div>
-                                            {% endif %}
-                                            {% if item.reserved_quantity > 0 %}
-                                            <div class="small text-warning">
-                                                <i class="fas fa-lock me-1"></i>{% trans "Reserved in open orders:" %} {{ item.reserved_quantity|intcomma }}
-                                            </div>
-                                            {% endif %}
                                         </td>
                                         <td class="text-end">
                                             <span class="badge bg-primary">{{ item.quantity|intcomma }}</span>
@@ -207,18 +264,37 @@
                                         </td>
                                         <td class="text-center">
                                             <div class="qty-cell">
+                                                {% if item.container_path %}
+                                                <input
+                                                    type="hidden"
+                                                    name="{{ item.form_quantity_field_name }}"
+                                                    id="qty-{{ item.row_index }}"
+                                                    class="qty-input container-child-qty"
+                                                    min="0"
+                                                    max="{{ item.available_quantity }}"
+                                                    value="0"
+                                                    data-type-id="{{ item.type_id }}"
+                                                    data-container-path="{{ item.container_path }}"
+                                                    data-max="{{ item.available_quantity }}"
+                                                    data-error-id=""
+                                                    {% if item.available_quantity <= 0 %}disabled{% endif %}>
+                                                <div class="small text-muted">
+                                                    <i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>{% trans "Selected via container" %}
+                                                </div>
+                                                {% else %}
                                                 <div class="qty-input-row">
                                                     <input
                                                         type="number"
-                                                        name="qty_{{ item.type_id }}"
-                                                        id="qty-{{ forloop.counter0 }}"
+                                                        name="{{ item.form_quantity_field_name }}"
+                                                        id="qty-{{ item.row_index }}"
                                                         class="form-control qty-input"
                                                         min="0"
                                                         max="{{ item.available_quantity }}"
                                                         value="0"
                                                         data-type-id="{{ item.type_id }}"
+                                                        data-container-path="{{ item.container_path }}"
                                                         data-max="{{ item.available_quantity }}"
-                                                        data-error-id="error-{{ forloop.counter0 }}"
+                                                        data-error-id="error-{{ item.row_index }}"
                                                         {% if item.available_quantity <= 0 %}disabled{% endif %}>
                                                     <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="zero" title="{% trans 'Zero' %}" aria-label="{% trans 'Zero' %}">
@@ -227,12 +303,14 @@
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="max">{% trans "Max" %}</button>
                                                     </div>
                                                 </div>
-                                                <div class="qty-error" id="error-{{ forloop.counter0 }}">
+                                                <div class="qty-error" id="error-{{ item.row_index }}">
                                                     {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
                                                 </div>
+                                                {% endif %}
                                             </div>
                                         </td>
                                     </tr>
+                                    {% endif %}
                                     {% endfor %}
                                 </tbody>
                             </table>
@@ -289,8 +367,71 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const buyStockSearch = document.getElementById('buyStockSearch');
-    const stockRows = document.querySelectorAll('.stock-row');
+    const stockRows = Array.from(document.querySelectorAll('.stock-row'));
     const rowLocationIdsCache = new WeakMap();
+    const containerRows = stockRows.filter(row => row.dataset.rowKind === 'container');
+    const containerRowsByKey = new Map(
+        containerRows
+            .map(row => [row.dataset.containerKey, row])
+            .filter(([key]) => Boolean(key))
+    );
+
+    function splitContainerPath(pathValue) {
+        return String(pathValue || '')
+            .split(',')
+            .map(segment => segment.trim())
+            .filter(Boolean);
+    }
+
+    function getContainerChildInputs(containerKey) {
+        return qtyInputs.filter(input =>
+            splitContainerPath(input.dataset.containerPath).includes(containerKey)
+        );
+    }
+
+    function updateContainerSelectionState(containerKey) {
+        const containerRow = containerRowsByKey.get(containerKey);
+        if (!containerRow) {
+            return;
+        }
+        const toggleBtn = containerRow.querySelector('.container-toggle-btn');
+        if (!toggleBtn) {
+            return;
+        }
+        const childInputs = getContainerChildInputs(containerKey);
+        if (!childInputs.length) {
+            containerRow.classList.remove('selected');
+            toggleBtn.setAttribute('aria-pressed', 'false');
+            toggleBtn.innerHTML = `<i class="fas fa-layer-group me-1"></i>${toggleBtn.dataset.labelSelect || 'Select all'}`;
+            return;
+        }
+
+        let hasSelected = false;
+        let allMaxed = true;
+        childInputs.forEach(input => {
+            const currentQty = parseInt(input.value, 10) || 0;
+            const maxQty = parseInt(input.dataset.max, 10) || 0;
+            if (currentQty > 0) {
+                hasSelected = true;
+            }
+            if (currentQty < maxQty) {
+                allMaxed = false;
+            }
+        });
+
+        containerRow.classList.toggle('selected', hasSelected);
+        toggleBtn.setAttribute('aria-pressed', hasSelected ? 'true' : 'false');
+        const label = allMaxed && hasSelected
+            ? (toggleBtn.dataset.labelClear || 'Clear selection')
+            : (toggleBtn.dataset.labelSelect || 'Select all');
+        toggleBtn.innerHTML = `<i class="fas fa-layer-group me-1"></i>${label}`;
+    }
+
+    function updateAllContainerSelectionStates() {
+        containerRowsByKey.forEach((_row, containerKey) => {
+            updateContainerSelectionState(containerKey);
+        });
+    }
 
     function parseLocationIds(rawValue) {
         const ids = new Set();
@@ -417,12 +558,60 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         const query = (buyStockSearch?.value || '').trim().toLowerCase();
+        if (!query) {
+            stockRows.forEach(row => row.classList.remove('d-none'));
+            return;
+        }
+
+        const visibleRows = new Set();
+        const matchedContainerKeys = new Set();
+
         stockRows.forEach(row => {
             const typeName = (row.dataset.typeName || '').toLowerCase();
             const typeId = String(row.dataset.typeId || '').toLowerCase();
-            const matches = !query || typeName.includes(query) || typeId.includes(query);
-            row.classList.toggle('d-none', !matches);
+            const matches = typeName.includes(query) || typeId.includes(query);
+            if (!matches) {
+                return;
+            }
+
+            visibleRows.add(row);
+            const containerKey = row.dataset.containerKey || '';
+            if (containerKey) {
+                matchedContainerKeys.add(containerKey);
+            }
+            splitContainerPath(row.dataset.containerPath).forEach(ancestorKey => {
+                const ancestorRow = containerRowsByKey.get(ancestorKey);
+                if (ancestorRow) {
+                    visibleRows.add(ancestorRow);
+                }
+            });
         });
+
+        if (matchedContainerKeys.size) {
+            stockRows.forEach(row => {
+                const rowKind = row.dataset.rowKind || 'item';
+                const rowContainerKey = row.dataset.containerKey || '';
+                const rowContainerPath = splitContainerPath(row.dataset.containerPath);
+                const hasMatchedAncestor = rowContainerPath.some(pathKey => matchedContainerKeys.has(pathKey));
+                const isMatchedContainer = (
+                    rowKind === 'container'
+                    && rowContainerKey
+                    && matchedContainerKeys.has(rowContainerKey)
+                );
+                if (!hasMatchedAncestor && !isMatchedContainer) {
+                    return;
+                }
+                visibleRows.add(row);
+                rowContainerPath.forEach(ancestorKey => {
+                    const ancestorRow = containerRowsByKey.get(ancestorKey);
+                    if (ancestorRow) {
+                        visibleRows.add(ancestorRow);
+                    }
+                });
+            });
+        }
+
+        stockRows.forEach(row => row.classList.toggle('d-none', !visibleRows.has(row)));
     }
 
     if (buyStockSearch) {
@@ -430,6 +619,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     document.addEventListener('click', function(event) {
+        const containerToggleBtn = event.target.closest('.container-toggle-btn');
+        if (containerToggleBtn) {
+            const containerKey = containerToggleBtn.dataset.containerKey || '';
+            if (!containerKey) {
+                return;
+            }
+            const childInputs = getContainerChildInputs(containerKey).filter(input => !input.disabled);
+            if (!childInputs.length) {
+                return;
+            }
+            const shouldSelectMax = childInputs.some(input => {
+                const currentQty = parseInt(input.value, 10) || 0;
+                const maxQty = parseInt(input.dataset.max, 10) || 0;
+                return currentQty < maxQty;
+            });
+            childInputs.forEach(input => {
+                input.value = shouldSelectMax ? (input.dataset.max || 0) : 0;
+            });
+            updateInvoice();
+            updateAllContainerSelectionStates();
+            return;
+        }
+
         const button = event.target.closest('.qty-btn');
         if (!button) {
             return;
@@ -550,6 +762,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
+        updateAllContainerSelectionStates();
+
         // Match backend `MaterialExchangeBuyOrder.total_price`: ceil to whole ISK.
         const total = Math.ceil(totalCents / 100);
 
@@ -579,7 +793,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             <span class="text-primary fw-semibold">${formatNumber(item.subtotal)} ISK</span>
                         </div>
                         <div class="d-flex justify-content-between small text-muted">
-                            <span>${item.qty.toLocaleString()} × ${formatNumber(item.unitPrice)} ISK</span>
+                            <span>${item.qty.toLocaleString()} x ${formatNumber(item.unitPrice)} ISK</span>
                         </div>
                     </div>
                 `;

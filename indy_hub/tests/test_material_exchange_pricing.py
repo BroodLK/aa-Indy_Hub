@@ -14,6 +14,7 @@ from indy_hub.models import MaterialExchangeConfig, MaterialExchangeStock
 from indy_hub.views.material_exchange import (
     _compute_effective_buy_unit_price,
     _compute_effective_sell_unit_price,
+    _format_buy_stock_type_name,
     _parse_submitted_sell_item_quantities,
     _parse_submitted_quantities,
 )
@@ -228,3 +229,20 @@ class MaterialExchangePricingTests(TestCase):
         self.assertEqual(by_key.get((33003, "bpo")), 1)
         self.assertEqual(by_key.get((35, "")), 4)
         self.assertNotIn((36, "bpc"), by_key)
+
+    def test_format_buy_stock_type_name_appends_blueprint_variant_suffix(self):
+        self.assertEqual(
+            _format_buy_stock_type_name("Capital Armor Plates Blueprint", "bpc"),
+            "Capital Armor Plates Blueprint (BPC)",
+        )
+        self.assertEqual(
+            _format_buy_stock_type_name(
+                "Capital Armor Plates Blueprint (BPC)",
+                "bpo",
+            ),
+            "Capital Armor Plates Blueprint (BPO)",
+        )
+        self.assertEqual(
+            _format_buy_stock_type_name("Tritanium", ""),
+            "Tritanium",
+        )
