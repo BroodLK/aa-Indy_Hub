@@ -210,7 +210,50 @@
                                 </thead>
                                 <tbody>
                                     {% for item in materials %}
-                                    <tr class="stock-row"
+                                    {% if item.row_kind == "container" %}
+                                    <tr class="stock-row stock-row-container"
+                                        data-row-kind="container"
+                                        data-container-key="{{ item.container_key }}"
+                                        data-container-path="{{ item.container_path }}"
+                                        data-type-id="{{ item.container_type_id|default:'' }}"
+                                        data-type-name="{{ item.container_name }}">
+                                        <td>
+                                            {% if item.container_type_id %}
+                                            <img
+                                                src="https://images.evetech.net/types/{{ item.container_type_id }}/icon?size=64"
+                                                alt="{{ item.container_name }}"
+                                                class="item-icon">
+                                            {% else %}
+                                            <div class="item-icon me-tree-fallback-icon" aria-hidden="true">
+                                                <i class="fas fa-box-open"></i>
+                                            </div>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <div class="me-tree-label me-tree-container-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
+                                                <strong>{{ item.container_name }}</strong>
+                                                <div class="small text-muted">{% trans "Container" %}</div>
+                                            </div>
+                                        </td>
+                                        <td class="text-end text-muted">-</td>
+                                        <td class="text-end text-muted">-</td>
+                                        <td class="text-center">
+                                            <button
+                                                type="button"
+                                                class="btn btn-outline-secondary btn-sm container-toggle-btn"
+                                                data-container-key="{{ item.container_key }}"
+                                                data-label-select="{% trans 'Select all' %}"
+                                                data-label-clear="{% trans 'Clear selection' %}"
+                                                aria-pressed="false">
+                                                <i class="fas fa-layer-group me-1"></i>{% trans "Select all" %}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% else %}
+                                    <tr class="stock-row stock-row-item"
+                                        data-row-kind="item"
+                                        data-row-index="{{ item.row_index }}"
+                                        data-container-path="{{ item.container_path }}"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
                                         data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
@@ -222,12 +265,23 @@
                                                 class="item-icon">
                                         </td>
                                         <td>
-                                            <strong>{{ item.type_name }}</strong>
-                                            {% if item.reserved_quantity > 0 %}
-                                            <div class="small text-warning">
-                                                <i class="fas fa-lock me-1"></i>{% trans "Reserved in your open orders:" %} {{ item.reserved_quantity|intcomma }}
+                                            <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
+                                                <strong>{{ item.type_name }}</strong>
+                                                {% if item.has_sell_price_override %}
+                                                <div class="small text-info">
+                                                    <i class="fas fa-sliders-h me-1"></i>
+                                                    {% trans "Custom sell price:" %} {{ item.buy_price_from_member|floatformat:2|intcomma }} ISK
+                                                    <span class="text-muted">
+                                                        ({% trans "default" %}: {{ item.default_buy_price_from_member|floatformat:2|intcomma }} ISK)
+                                                    </span>
+                                                </div>
+                                                {% endif %}
+                                                {% if item.reserved_quantity > 0 %}
+                                                <div class="small text-warning">
+                                                    <i class="fas fa-lock me-1"></i>{% trans "Reserved in your open orders:" %} {{ item.reserved_quantity|intcomma }}
+                                                </div>
+                                                {% endif %}
                                             </div>
-                                            {% endif %}
                                         </td>
                                         <td class="text-end">
                                             <span class="badge bg-success">{{ item.user_quantity|intcomma }}</span>
@@ -240,17 +294,37 @@
                                         </td>
                                         <td class="text-center">
                                             <div class="qty-cell">
+                                                {% if item.container_path %}
+                                                <input
+                                                    type="hidden"
+                                                    name="qty_{{ item.type_id }}_{{ item.row_index }}"
+                                                    id="qty-{{ item.row_index }}"
+                                                    class="qty-input container-child-qty"
+                                                    min="0"
+                                                    max="{{ item.available_quantity }}"
+                                                    value="0"
+                                                    data-type-id="{{ item.type_id }}"
+                                                    data-container-path="{{ item.container_path }}"
+                                                    data-max="{{ item.available_quantity }}"
+                                                    data-error-id=""
+                                                    {% if item.available_quantity <= 0 %}disabled{% endif %}>
+                                                <div class="small text-muted">
+                                                    <i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>{% trans "Selected via container" %}
+                                                </div>
+                                                {% else %}
                                                 <div class="qty-input-row">
                                                     <input
                                                         type="number"
-                                                        name="qty_{{ item.type_id }}"
-                                                        id="qty-{{ item.type_id }}"
+                                                        name="qty_{{ item.type_id }}_{{ item.row_index }}"
+                                                        id="qty-{{ item.row_index }}"
                                                         class="form-control qty-input"
                                                         min="0"
                                                         max="{{ item.available_quantity }}"
                                                         value="0"
                                                         data-type-id="{{ item.type_id }}"
+                                                        data-container-path="{{ item.container_path }}"
                                                         data-max="{{ item.available_quantity }}"
+                                                        data-error-id="error-{{ item.row_index }}"
                                                         {% if item.available_quantity <= 0 %}disabled{% endif %}>
                                                     <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="zero" title="{% trans 'Zero' %}" aria-label="{% trans 'Zero' %}">
@@ -259,12 +333,14 @@
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="max">{% trans "Max" %}</button>
                                                     </div>
                                                 </div>
-                                                <div class="qty-error" id="error-{{ item.type_id }}">
+                                                <div class="qty-error" id="error-{{ item.row_index }}">
                                                     {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
                                                 </div>
+                                                {% endif %}
                                             </div>
                                         </td>
                                     </tr>
+                                    {% endif %}
                                     {% endfor %}
                                 </tbody>
                             </table>
@@ -323,22 +399,142 @@ document.addEventListener('DOMContentLoaded', function() {
         window.history.replaceState({}, document.title, cleanUrl.toString());
     }
 
-    const qtyInputs = document.querySelectorAll('.qty-input');
+    const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const sellAllBtn = document.getElementById('sellAllBtn');
     const sellStockSearch = document.getElementById('sellStockSearch');
-    const stockRows = document.querySelectorAll('.stock-row');
+    const stockRows = Array.from(document.querySelectorAll('.stock-row'));
+    const containerRows = stockRows.filter(row => row.dataset.rowKind === 'container');
+    const itemRows = stockRows.filter(row => row.dataset.rowKind === 'item');
+    const containerRowsByKey = new Map(
+        containerRows
+            .map(row => [row.dataset.containerKey, row])
+            .filter(entry => entry[0])
+    );
+
+    function splitContainerPath(pathValue) {
+        return (pathValue || '')
+            .split(',')
+            .map(chunk => chunk.trim())
+            .filter(Boolean);
+    }
+
+    function rowMatchesSearch(row, query) {
+        const typeName = (row.dataset.typeName || '').toLowerCase();
+        const typeId = String(row.dataset.typeId || '').toLowerCase();
+        return !query || typeName.includes(query) || typeId.includes(query);
+    }
+
+    function getContainerChildInputs(containerKey) {
+        return qtyInputs.filter(input =>
+            splitContainerPath(input.dataset.containerPath).includes(containerKey)
+        );
+    }
+
+    function updateContainerSelectionState(containerKey) {
+        const containerRow = containerRowsByKey.get(containerKey);
+        if (!containerRow) {
+            return;
+        }
+        const toggleBtn = containerRow.querySelector('.container-toggle-btn');
+        if (!toggleBtn) {
+            return;
+        }
+        const childInputs = getContainerChildInputs(containerKey);
+        if (!childInputs.length) {
+            containerRow.classList.remove('selected');
+            toggleBtn.setAttribute('aria-pressed', 'false');
+            return;
+        }
+
+        const hasSelected = childInputs.some(input => (parseInt(input.value, 10) || 0) > 0);
+        const allSelected = childInputs.every(input => {
+            const maxQty = parseInt(input.dataset.max, 10) || 0;
+            const currentQty = parseInt(input.value, 10) || 0;
+            return maxQty <= 0 || currentQty >= maxQty;
+        });
+        const buttonLabel = allSelected
+            ? (toggleBtn.dataset.labelClear || 'Clear selection')
+            : (toggleBtn.dataset.labelSelect || 'Select all');
+
+        containerRow.classList.toggle('selected', hasSelected);
+        toggleBtn.setAttribute('aria-pressed', hasSelected ? 'true' : 'false');
+        toggleBtn.innerHTML = `<i class="fas fa-layer-group me-1"></i>${buttonLabel}`;
+    }
+
+    function updateAllContainerSelectionStates() {
+        containerRowsByKey.forEach((_row, containerKey) => {
+            updateContainerSelectionState(containerKey);
+        });
+    }
 
     function applyStockFilter() {
         if (!stockRows.length) {
             return;
         }
         const query = (sellStockSearch?.value || '').trim().toLowerCase();
-        stockRows.forEach(row => {
-            const typeName = (row.dataset.typeName || '').toLowerCase();
-            const typeId = String(row.dataset.typeId || '').toLowerCase();
-            const matches = !query || typeName.includes(query) || typeId.includes(query);
-            row.classList.toggle('d-none', !matches);
+        if (!query) {
+            stockRows.forEach(row => row.classList.remove('d-none'));
+            return;
+        }
+
+        const visibleRows = new Set();
+        const matchedContainerKeys = new Set();
+
+        containerRows.forEach(row => {
+            if (!rowMatchesSearch(row, query)) {
+                return;
+            }
+            visibleRows.add(row);
+            const containerKey = row.dataset.containerKey || '';
+            if (containerKey) {
+                matchedContainerKeys.add(containerKey);
+            }
+            splitContainerPath(row.dataset.containerPath).forEach(ancestorKey => {
+                const ancestorRow = containerRowsByKey.get(ancestorKey);
+                if (ancestorRow) {
+                    visibleRows.add(ancestorRow);
+                }
+            });
         });
+
+        itemRows.forEach(row => {
+            if (!rowMatchesSearch(row, query)) {
+                return;
+            }
+            visibleRows.add(row);
+            splitContainerPath(row.dataset.containerPath).forEach(ancestorKey => {
+                const ancestorRow = containerRowsByKey.get(ancestorKey);
+                if (ancestorRow) {
+                    visibleRows.add(ancestorRow);
+                }
+            });
+        });
+
+        if (matchedContainerKeys.size) {
+            stockRows.forEach(row => {
+                const rowKind = row.dataset.rowKind || '';
+                const rowContainerKey = row.dataset.containerKey || '';
+                const rowContainerPath = splitContainerPath(row.dataset.containerPath);
+                const hasMatchedAncestor = rowContainerPath.some(pathKey => matchedContainerKeys.has(pathKey));
+                const isMatchedContainer = (
+                    rowKind === 'container'
+                    && rowContainerKey
+                    && matchedContainerKeys.has(rowContainerKey)
+                );
+                if (!hasMatchedAncestor && !isMatchedContainer) {
+                    return;
+                }
+                visibleRows.add(row);
+                rowContainerPath.forEach(ancestorKey => {
+                    const ancestorRow = containerRowsByKey.get(ancestorKey);
+                    if (ancestorRow) {
+                        visibleRows.add(ancestorRow);
+                    }
+                });
+            });
+        }
+
+        stockRows.forEach(row => row.classList.toggle('d-none', !visibleRows.has(row)));
     }
 
     if (sellStockSearch) {
@@ -346,6 +542,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     document.addEventListener('click', function(event) {
+        const containerToggleBtn = event.target.closest('.container-toggle-btn');
+        if (containerToggleBtn) {
+            const containerKey = containerToggleBtn.dataset.containerKey || '';
+            if (!containerKey) {
+                return;
+            }
+            const childInputs = getContainerChildInputs(containerKey);
+            if (!childInputs.length) {
+                return;
+            }
+            const shouldSelectMax = childInputs.some(input => {
+                const currentQty = parseInt(input.value, 10) || 0;
+                const maxQty = parseInt(input.dataset.max, 10) || 0;
+                return currentQty < maxQty;
+            });
+            childInputs.forEach(input => {
+                input.value = shouldSelectMax ? (input.dataset.max || 0) : 0;
+            });
+            updateInvoice();
+            updateAllContainerSelectionStates();
+            return;
+        }
+
         const button = event.target.closest('.qty-btn');
         if (!button) {
             return;
@@ -392,8 +611,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function checkQuantityLimit(input) {
         const qty = parseInt(input.value) || 0;
         const max = parseInt(input.dataset.max);
-        const typeId = input.dataset.typeId;
-        const errorDiv = document.getElementById('error-' + typeId);
+        const errorId = input.dataset.errorId || ('error-' + String(input.dataset.typeId || ''));
+        const errorDiv = document.getElementById(errorId);
 
         if (qty > max) {
             input.classList.add('is-invalid');
@@ -485,6 +704,7 @@ document.addEventListener('DOMContentLoaded', function() {
     qtyInputs.forEach(input => {
         input.addEventListener('input', function() {
             updateInvoice();
+            updateAllContainerSelectionStates();
         });
 
         input.addEventListener('blur', function() {
@@ -494,6 +714,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (qty > max) {
                 this.value = max;
                 updateInvoice();
+                updateAllContainerSelectionStates();
             }
         });
     });
@@ -516,6 +737,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 alert('{% trans "Some quantities exceeded what you own and have been adjusted." %}');
                 updateInvoice();
+                updateAllContainerSelectionStates();
                 return false;
             }
         });
@@ -525,6 +747,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const hasInvoice = document.getElementById('invoiceContent') && document.getElementById('invoiceItems');
     if (hasInvoice) {
         updateInvoice();
+        updateAllContainerSelectionStates();
     }
     applyStockFilter();
 
@@ -534,6 +757,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 input.value = input.dataset.max || 0;
             });
             updateInvoice();
+            updateAllContainerSelectionStates();
         });
     }
 

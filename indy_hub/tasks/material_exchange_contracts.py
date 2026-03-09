@@ -2377,7 +2377,7 @@ def _matches_buy_order_criteria_db(
 
 
 def _contract_items_match_order_db(contract, order):
-    """Check if database contract items exactly match the order items."""
+    """Check if contract included items match order quantities by type."""
     # Only validate included items (not requested)
     included_items = contract.items.filter(is_included=True)
     if not included_items.exists():
@@ -2390,19 +2390,21 @@ def _contract_items_match_order_db(contract, order):
         ]
 
     order_items = list(order.items.all())
-
-    if included_items.count() != len(order_items):
-        return False
-
-    # Check each order item has a matching contract item
+    expected_by_type: dict[int, int] = {}
     for order_item in order_items:
-        found = included_items.filter(
-            type_id=order_item.type_id, quantity=order_item.quantity
-        ).exists()
-        if not found:
-            return False
+        type_id = int(order_item.type_id)
+        expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(
+            order_item.quantity
+        )
 
-    return True
+    actual_by_type: dict[int, int] = {}
+    for contract_item in included_items:
+        type_id = int(contract_item.type_id)
+        actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
+            contract_item.quantity
+        )
+
+    return expected_by_type == actual_by_type
 
 
 def _get_items_mismatch_breakdown(

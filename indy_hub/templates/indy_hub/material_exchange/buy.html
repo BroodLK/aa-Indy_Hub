@@ -167,8 +167,9 @@
                                     <tr class="stock-row"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
-                                        data-unit-price="{{ item.sell_price_to_member|floatformat:2 }}"
-                                        data-max-qty="{{ item.available_quantity }}">
+                                        data-unit-price="{{ item.display_sell_price_to_member|floatformat:2 }}"
+                                        data-max-qty="{{ item.available_quantity }}"
+                                        data-source-structure-ids="{{ item.source_structure_ids|join:',' }}">
                                         <td>
                                             <img
                                                 src="https://images.evetech.net/types/{{ item.type_id }}/icon?size=64"
@@ -180,6 +181,15 @@
                                             <div class="small text-muted">
                                                 {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}
                                             </div>
+                                            {% if item.has_buy_price_override %}
+                                            <div class="small text-info">
+                                                <i class="fas fa-sliders-h me-1"></i>
+                                                {% trans "Custom buy price:" %} {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
+                                                <span class="text-muted">
+                                                    ({% trans "default" %}: {{ item.default_sell_price_to_member|floatformat:2|intcomma }} ISK)
+                                                </span>
+                                            </div>
+                                            {% endif %}
                                             {% if item.reserved_quantity > 0 %}
                                             <div class="small text-warning">
                                                 <i class="fas fa-lock me-1"></i>{% trans "Reserved in open orders:" %} {{ item.reserved_quantity|intcomma }}
@@ -193,7 +203,7 @@
                                             </div>
                                         </td>
                                         <td class="text-end text-primary fw-semibold">
-                                            {{ item.sell_price_to_member|floatformat:2|intcomma }} ISK
+                                            {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
                                         </td>
                                         <td class="text-center">
                                             <div class="qty-cell">
@@ -201,13 +211,14 @@
                                                     <input
                                                         type="number"
                                                         name="qty_{{ item.type_id }}"
-                                                        id="qty-{{ item.type_id }}"
+                                                        id="qty-{{ forloop.counter0 }}"
                                                         class="form-control qty-input"
                                                         min="0"
                                                         max="{{ item.available_quantity }}"
                                                         value="0"
                                                         data-type-id="{{ item.type_id }}"
                                                         data-max="{{ item.available_quantity }}"
+                                                        data-error-id="error-{{ forloop.counter0 }}"
                                                         {% if item.available_quantity <= 0 %}disabled{% endif %}>
                                                     <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="zero" title="{% trans 'Zero' %}" aria-label="{% trans 'Zero' %}">
@@ -216,7 +227,7 @@
                                                         <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="max">{% trans "Max" %}</button>
                                                     </div>
                                                 </div>
-                                                <div class="qty-error" id="error-{{ item.type_id }}">
+                                                <div class="qty-error" id="error-{{ forloop.counter0 }}">
                                                     {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
                                                 </div>
                                             </div>
@@ -276,9 +287,130 @@ document.addEventListener('DOMContentLoaded', function() {
         window.history.replaceState({}, document.title, cleanUrl.toString());
     }
 
-    const qtyInputs = document.querySelectorAll('.qty-input');
+    const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const buyStockSearch = document.getElementById('buyStockSearch');
     const stockRows = document.querySelectorAll('.stock-row');
+    const rowLocationIdsCache = new WeakMap();
+
+    function parseLocationIds(rawValue) {
+        const ids = new Set();
+        String(rawValue || '').split(',').forEach(part => {
+            const parsed = Number.parseInt(part.trim(), 10);
+            if (Number.isInteger(parsed) && parsed > 0) {
+                ids.add(parsed);
+            }
+        });
+        return ids;
+    }
+
+    function getRowLocationIds(row) {
+        if (!row) {
+            return new Set();
+        }
+        if (!rowLocationIdsCache.has(row)) {
+            rowLocationIdsCache.set(
+                row,
+                parseLocationIds(row.dataset.sourceStructureIds)
+            );
+        }
+        return rowLocationIdsCache.get(row);
+    }
+
+    function intersectSets(left, right) {
+        const intersection = new Set();
+        left.forEach(value => {
+            if (right.has(value)) {
+                intersection.add(value);
+            }
+        });
+        return intersection;
+    }
+
+    function hasIntersection(left, right) {
+        for (const value of left) {
+            if (right.has(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function resolveLockedLocationIds(selectedRows) {
+        let commonIds = null;
+        let fallbackIds = null;
+
+        selectedRows.forEach(row => {
+            const rowLocationIds = getRowLocationIds(row);
+            if (!rowLocationIds.size) {
+                return;
+            }
+            if (!fallbackIds) {
+                fallbackIds = new Set(rowLocationIds);
+            }
+            if (commonIds === null) {
+                commonIds = new Set(rowLocationIds);
+            } else {
+                commonIds = intersectSets(commonIds, rowLocationIds);
+            }
+        });
+
+        if (commonIds && commonIds.size === 0 && fallbackIds) {
+            return fallbackIds;
+        }
+
+        return commonIds && commonIds.size ? commonIds : null;
+    }
+
+    function applyLocationLocking(lockedLocationIds) {
+        let correctedSelection = false;
+
+        qtyInputs.forEach(input => {
+            const row = input.closest('tr');
+            if (!row) {
+                return;
+            }
+
+            const rowLocationIds = getRowLocationIds(row);
+            const baseDisabled = input.dataset.baseDisabled === '1';
+            const locationLocked = Boolean(
+                lockedLocationIds &&
+                lockedLocationIds.size > 0 &&
+                rowLocationIds.size > 0 &&
+                !hasIntersection(rowLocationIds, lockedLocationIds)
+            );
+
+            if (locationLocked && (parseInt(input.value, 10) || 0) > 0) {
+                input.value = '0';
+                correctedSelection = true;
+            }
+
+            const shouldDisable = baseDisabled || locationLocked;
+            input.disabled = shouldDisable;
+
+            row.classList.toggle('location-locked', locationLocked);
+            row.setAttribute('aria-disabled', locationLocked ? 'true' : 'false');
+
+            row.querySelectorAll('.qty-btn').forEach(button => {
+                const buttonBaseDisabled = button.dataset.baseDisabled === '1';
+                button.disabled = buttonBaseDisabled || locationLocked;
+            });
+        });
+
+        return correctedSelection;
+    }
+
+    qtyInputs.forEach(input => {
+        input.dataset.baseDisabled = input.disabled ? '1' : '0';
+        const row = input.closest('tr');
+        if (!row) {
+            return;
+        }
+        row.querySelectorAll('.qty-btn').forEach(button => {
+            const initialDisabled = input.disabled || button.disabled;
+            button.disabled = initialDisabled;
+            button.dataset.baseDisabled = initialDisabled ? '1' : '0';
+        });
+    });
 
     function applyStockFilter() {
         if (!stockRows.length) {
@@ -307,7 +439,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         const input = row.querySelector('.qty-input');
-        if (!input) {
+        if (!input || input.disabled || button.disabled) {
             return;
         }
         const action = button.dataset.action;
@@ -344,8 +476,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function checkQuantityLimit(input) {
         const qty = parseInt(input.value) || 0;
         const max = parseInt(input.dataset.max);
-        const typeId = input.dataset.typeId;
-        const errorDiv = document.getElementById('error-' + typeId);
+        const errorId = input.dataset.errorId || ('error-' + String(input.dataset.typeId || ''));
+        const errorDiv = document.getElementById(errorId);
 
         if (qty > max) {
             input.classList.add('is-invalid');
@@ -362,19 +494,38 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    function updateInvoice() {
+    function updateInvoice(allowRerun = true) {
+        const selectedRows = [];
+        qtyInputs.forEach(input => {
+            const qty = parseInt(input.value, 10) || 0;
+            const row = input.closest('tr');
+            if (!row) {
+                return;
+            }
+            checkQuantityLimit(input);
+            if (qty > 0) {
+                selectedRows.push(row);
+            }
+        });
+
+        const lockedLocationIds = resolveLockedLocationIds(selectedRows);
+        const correctedSelection = applyLocationLocking(lockedLocationIds);
+        if (correctedSelection && allowRerun) {
+            updateInvoice(false);
+            return;
+        }
+
         const selectedItems = [];
         let totalCents = 0;
 
         qtyInputs.forEach(input => {
             const qty = parseInt(input.value) || 0;
             const row = input.closest('tr');
-
-            // Check limit but don't auto-correct during typing
-            checkQuantityLimit(input);
+            if (!row) {
+                return;
+            }
 
             if (qty > 0) {
-                const typeId = input.dataset.typeId;
                 const typeName = row.dataset.typeName;
                 const unitPrice = parseFloat(row.dataset.unitPrice);
                 const max = parseInt(input.dataset.max);

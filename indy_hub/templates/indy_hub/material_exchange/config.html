@@ -473,10 +473,65 @@
                                         </ul>
                                     </div>
                                 </details>
+                    </div>
+                            </div>
+                            <hr class="my-3">
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                    <h6 class="fw-semibold mb-0">
+                                        <i class="fas fa-list-check me-1 text-muted"></i>{% trans "Per-item price overrides" %}
+                                    </h6>
+                                    <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
+                                </div>
+                                <p class="small text-muted mb-2">
+                                    {% trans "Use these values instead of markup formulas for specific items." %}
+                                </p>
+                                <input type="hidden" name="item_price_overrides_json" id="itemPriceOverridesJson">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-lg-8">
+                                        <label class="form-label fw-semibold mb-1" for="itemOverrideChoice">{% trans "Choose item from current stock/overrides" %}</label>
+                                        <div class="input-group input-group-sm">
+                                            <select class="form-select form-select-sm" id="itemOverrideChoice">
+                                                <option value="">{% trans "Select item..." %}</option>
+                                            </select>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="addItemOverrideFromChoice">
+                                                <i class="fas fa-plus me-1"></i>{% trans "Add" %}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1" for="itemOverrideTypeIdManual">{% trans "Or add by Type ID" %}</label>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control form-control-sm" id="itemOverrideTypeIdManual" min="1" step="1" placeholder="{% trans 'Type ID' %}">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="addItemOverrideById">
+                                                <i class="fas fa-plus me-1"></i>{% trans "Add" %}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>{% trans "Item" %}</th>
+                                                <th class="text-end">{% trans "Sell override (hub pays)" %}</th>
+                                                <th class="text-end">{% trans "Buy override (member pays)" %}</th>
+                                                <th class="text-end">{% trans "Action" %}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="itemOverrideRows">
+                                            <tr id="itemOverrideEmpty">
+                                                <td colspan="4" class="text-muted small">{% trans "No item overrides configured." %}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="form-text mt-2">
+                                    {% trans "Leave a side blank to keep the default formula for that side." %}
+                                </div>
                             </div>
                         </div>
                     </div>
-                            </div>
                             </div>
                         </div>
                     </div>
@@ -615,6 +670,8 @@
 {{ selected_sell_market_groups_by_structure|json_script:"selectedSellMarketGroupsByStructure" }}
 {{ selected_market_groups_buy|json_script:"selectedMarketGroupsBuy" }}
 {{ market_group_tree|json_script:"marketGroupTreeData" }}
+{{ item_price_overrides|json_script:"itemPriceOverridesData" }}
+{{ item_override_type_choices|json_script:"itemOverrideTypeChoicesData" }}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -945,6 +1002,232 @@ function validateForm() {
     }
     return true;
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    const rowsBody = document.getElementById('itemOverrideRows');
+    const emptyRow = document.getElementById('itemOverrideEmpty');
+    const choiceSelect = document.getElementById('itemOverrideChoice');
+    const addFromChoiceBtn = document.getElementById('addItemOverrideFromChoice');
+    const manualTypeIdInput = document.getElementById('itemOverrideTypeIdManual');
+    const addByIdBtn = document.getElementById('addItemOverrideById');
+    const hiddenInput = document.getElementById('itemPriceOverridesJson');
+    const form = document.getElementById('configForm');
+    const initialOverridesEl = document.getElementById('itemPriceOverridesData');
+    const choicesEl = document.getElementById('itemOverrideTypeChoicesData');
+
+    if (
+        !rowsBody ||
+        !choiceSelect ||
+        !addFromChoiceBtn ||
+        !manualTypeIdInput ||
+        !addByIdBtn ||
+        !hiddenInput ||
+        !form ||
+        !choicesEl
+    ) {
+        return;
+    }
+
+    let initialOverrides = [];
+    let choices = [];
+    try {
+        initialOverrides = JSON.parse(initialOverridesEl ? (initialOverridesEl.textContent || '[]') : '[]');
+    } catch (e) {
+        initialOverrides = [];
+    }
+    try {
+        choices = JSON.parse(choicesEl.textContent || '[]');
+    } catch (e) {
+        choices = [];
+    }
+
+    const choiceNameById = new Map();
+    choices.forEach(choice => {
+        const typeId = parseInt(choice.id, 10);
+        if (!Number.isInteger(typeId) || typeId <= 0) {
+            return;
+        }
+        const typeName = String(choice.name || '').trim() || `Type ${typeId}`;
+        choiceNameById.set(String(typeId), typeName);
+    });
+
+    const sortedChoices = Array.from(choiceNameById.entries()).sort((a, b) => a[1].localeCompare(b[1]));
+    sortedChoices.forEach(([typeId, typeName]) => {
+        const option = document.createElement('option');
+        option.value = typeId;
+        option.textContent = `${typeName} (${typeId})`;
+        choiceSelect.appendChild(option);
+    });
+
+    const findRowByTypeId = (typeId) => {
+        return rowsBody.querySelector(`tr[data-type-id="${String(typeId)}"]`);
+    };
+
+    const updateEmptyState = () => {
+        const dataRows = rowsBody.querySelectorAll('tr[data-type-id]');
+        if (emptyRow) {
+            emptyRow.classList.toggle('d-none', dataRows.length > 0);
+        }
+    };
+
+    const serializeOverrides = () => {
+        const payload = [];
+        const rows = rowsBody.querySelectorAll('tr[data-type-id]');
+        rows.forEach(row => {
+            const typeId = parseInt(row.getAttribute('data-type-id') || '', 10);
+            if (!Number.isInteger(typeId) || typeId <= 0) {
+                return;
+            }
+            const typeName = String(row.getAttribute('data-type-name') || '').trim();
+            const sellInput = row.querySelector('.item-override-sell');
+            const buyInput = row.querySelector('.item-override-buy');
+            const sellValue = sellInput ? String(sellInput.value || '').trim() : '';
+            const buyValue = buyInput ? String(buyInput.value || '').trim() : '';
+            if (!sellValue && !buyValue) {
+                return;
+            }
+            payload.push({
+                type_id: typeId,
+                type_name: typeName,
+                sell_price_override: sellValue || null,
+                buy_price_override: buyValue || null,
+            });
+        });
+        hiddenInput.value = JSON.stringify(payload);
+    };
+
+    const addRow = ({ typeId, typeName, sellPriceOverride = '', buyPriceOverride = '' }) => {
+        const normalizedTypeId = parseInt(typeId, 10);
+        if (!Number.isInteger(normalizedTypeId) || normalizedTypeId <= 0) {
+            return;
+        }
+
+        const existingRow = findRowByTypeId(normalizedTypeId);
+        if (existingRow) {
+            const sellInput = existingRow.querySelector('.item-override-sell');
+            if (sellInput) {
+                sellInput.focus();
+            }
+            return;
+        }
+
+        const resolvedName = String(typeName || '').trim()
+            || choiceNameById.get(String(normalizedTypeId))
+            || `Type ${normalizedTypeId}`;
+        choiceNameById.set(String(normalizedTypeId), resolvedName);
+
+        const row = document.createElement('tr');
+        row.setAttribute('data-type-id', String(normalizedTypeId));
+        row.setAttribute('data-type-name', resolvedName);
+        row.innerHTML = `
+            <td>
+                <div class="fw-semibold">${resolvedName}</div>
+                <div class="small text-muted">Type ID: ${normalizedTypeId}</div>
+            </td>
+            <td class="text-end">
+                <input
+                    type="number"
+                    class="form-control form-control-sm text-end item-override-sell"
+                    min="0"
+                    step="0.01"
+                    inputmode="decimal"
+                    value="${String(sellPriceOverride || '').replace(/"/g, '&quot;')}"
+                    placeholder="default">
+            </td>
+            <td class="text-end">
+                <input
+                    type="number"
+                    class="form-control form-control-sm text-end item-override-buy"
+                    min="0"
+                    step="0.01"
+                    inputmode="decimal"
+                    value="${String(buyPriceOverride || '').replace(/"/g, '&quot;')}"
+                    placeholder="default">
+            </td>
+            <td class="text-end">
+                <button type="button" class="btn btn-outline-danger btn-sm item-override-remove">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+            </td>
+        `;
+        rowsBody.appendChild(row);
+        updateEmptyState();
+        serializeOverrides();
+    };
+
+    const addSelectedChoice = () => {
+        const typeId = parseInt(choiceSelect.value || '', 10);
+        if (!Number.isInteger(typeId) || typeId <= 0) {
+            return;
+        }
+        const typeName = choiceNameById.get(String(typeId)) || `Type ${typeId}`;
+        addRow({ typeId, typeName });
+        choiceSelect.value = '';
+    };
+
+    const addManualTypeId = () => {
+        const typeId = parseInt(manualTypeIdInput.value || '', 10);
+        if (!Number.isInteger(typeId) || typeId <= 0) {
+            return;
+        }
+        const typeName = choiceNameById.get(String(typeId)) || `Type ${typeId}`;
+        addRow({ typeId, typeName });
+        manualTypeIdInput.value = '';
+    };
+
+    addFromChoiceBtn.addEventListener('click', addSelectedChoice);
+    choiceSelect.addEventListener('change', function() {
+        if (choiceSelect.value) {
+            addSelectedChoice();
+        }
+    });
+    addByIdBtn.addEventListener('click', addManualTypeId);
+    manualTypeIdInput.addEventListener('keydown', function(event) {
+        if (event.key !== 'Enter') {
+            return;
+        }
+        event.preventDefault();
+        addManualTypeId();
+    });
+
+    rowsBody.addEventListener('click', function(event) {
+        const removeBtn = event.target.closest('.item-override-remove');
+        if (!removeBtn) {
+            return;
+        }
+        const row = removeBtn.closest('tr[data-type-id]');
+        if (!row) {
+            return;
+        }
+        row.remove();
+        updateEmptyState();
+        serializeOverrides();
+    });
+
+    rowsBody.addEventListener('input', function(event) {
+        if (
+            event.target.classList.contains('item-override-sell')
+            || event.target.classList.contains('item-override-buy')
+        ) {
+            serializeOverrides();
+        }
+    });
+
+    initialOverrides.forEach(row => {
+        addRow({
+            typeId: row.type_id,
+            typeName: row.type_name,
+            sellPriceOverride: row.sell_price_override,
+            buyPriceOverride: row.buy_price_override,
+        });
+    });
+    updateEmptyState();
+    serializeOverrides();
+
+    form.addEventListener('submit', function() {
+        serializeOverrides();
+    });
+});
 
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('marketGroupSearch');

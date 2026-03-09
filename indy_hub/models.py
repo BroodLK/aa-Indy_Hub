@@ -2097,6 +2097,49 @@ class MaterialExchangeConfig(models.Model):
         return normalized
 
 
+class MaterialExchangeItemPriceOverride(models.Model):
+    """Per-item Material Exchange price override for a configuration."""
+
+    config = models.ForeignKey(
+        MaterialExchangeConfig,
+        on_delete=models.CASCADE,
+        related_name="item_price_overrides",
+    )
+    type_id = models.IntegerField(help_text=_("EVE item type ID"))
+    type_name = models.CharField(max_length=255, blank=True, db_index=True)
+    # Used when a member sells TO hub (sell page): hub pays this price per unit.
+    sell_price_override = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Override payout price per unit when members sell to hub."),
+    )
+    # Used when a member buys FROM hub (buy page): member pays this price per unit.
+    buy_price_override = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Override purchase price per unit when members buy from hub."),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Material Exchange Item Price Override")
+        verbose_name_plural = _("Material Exchange Item Price Overrides")
+        default_permissions = ()
+        unique_together = ("config", "type_id")
+        indexes = [
+            models.Index(fields=["config", "type_id"], name="me_ovr_cfg_type_idx"),
+            models.Index(fields=["type_name"], name="me_ovr_typename_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.type_name or self.type_id} override @ config {self.config_id}"
+
+
 class CachedCorporationAsset(models.Model):
     """Cached corporation assets fetched from ESI for reuse across views/tasks."""
 

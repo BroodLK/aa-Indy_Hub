@@ -25,7 +25,12 @@ from indy_hub.services.providers import esi_provider
 
 from ..app_settings import ROLE_SNAPSHOT_STALE_HOURS
 from ..decorators import indy_hub_permission_required, tokens_required
-from ..models import CharacterRoles, MaterialExchangeConfig, MaterialExchangeSettings
+from ..models import (
+    CharacterRoles,
+    MaterialExchangeConfig,
+    MaterialExchangeItemPriceOverride,
+    MaterialExchangeSettings,
+)
 from ..services.asset_cache import (
     get_corp_assets_cached,
     get_corp_divisions_cached,
@@ -33,7 +38,7 @@ from ..services.asset_cache import (
 )
 from ..services.esi_client import ESIUnmodifiedError
 from ..utils.analytics import emit_view_analytics_event
-from ..utils.eve import PLACEHOLDER_PREFIX
+from ..utils.eve import PLACEHOLDER_PREFIX, get_type_name
 
 esi = esi_provider
 logger = get_extension_logger(__name__)
@@ -694,6 +699,50 @@ def material_exchange_config(request, tokens):
     except Exception as exc:
         logger.warning("Failed to build market group search index: %s", exc)
 
+    item_price_overrides: list[dict[str, object]] = []
+    item_override_type_choices: list[dict[str, object]] = []
+    if config:
+        override_rows = list(
+            config.item_price_overrides.values(
+                "type_id",
+                "type_name",
+                "sell_price_override",
+                "buy_price_override",
+            )
+        )
+        for row in override_rows:
+            type_id = int(row.get("type_id") or 0)
+            if type_id <= 0:
+                continue
+            type_name = str(row.get("type_name") or "").strip() or get_type_name(type_id)
+            item_price_overrides.append(
+                {
+                    "type_id": type_id,
+                    "type_name": type_name,
+                    "sell_price_override": row.get("sell_price_override"),
+                    "buy_price_override": row.get("buy_price_override"),
+                }
+            )
+
+        choice_map: dict[int, str] = {}
+        for stock_row in config.stock_items.values("type_id", "type_name"):
+            type_id = int(stock_row.get("type_id") or 0)
+            if type_id <= 0:
+                continue
+            type_name = str(stock_row.get("type_name") or "").strip() or get_type_name(type_id)
+            choice_map[type_id] = type_name
+        for row in item_price_overrides:
+            type_id = int(row["type_id"])
+            if type_id not in choice_map:
+                choice_map[type_id] = str(row.get("type_name") or "").strip() or get_type_name(type_id)
+
+        item_override_type_choices = [
+            {"id": int(type_id), "name": str(type_name)}
+            for type_id, type_name in sorted(
+                choice_map.items(), key=lambda pair: pair[1].lower()
+            )
+        ]
+
     context = {
         "config": config,
         "available_corps": available_corps,
@@ -718,6 +767,8 @@ def material_exchange_config(request, tokens):
         "buy_enabled": buy_enabled,
         "allow_fitted_ships": allow_fitted_ships,
         "location_match_mode": location_match_mode,
+        "item_price_overrides": item_price_overrides,
+        "item_override_type_choices": item_override_type_choices,
     }
 
     from .navigation import build_nav_context
@@ -1816,6 +1867,9 @@ def _handle_config_save(request, existing_config):
     allowed_market_groups_sell_by_structure_raw = (
         request.POST.get("allowed_market_groups_sell_by_structure_json", "") or ""
     ).strip()
+    item_price_overrides_raw = (
+        request.POST.get("item_price_overrides_json", "") or ""
+    ).strip()
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
@@ -1855,6 +1909,55 @@ def _handle_config_save(request, existing_config):
                 continue
         return parsed
 
+    def _parse_optional_price(raw_value) -> Decimal | None:
+        if raw_value is None:
+            return None
+        normalized = str(raw_value).strip().replace(",", ".")
+        if not normalized:
+            return None
+        parsed = Decimal(normalized)
+        if parsed < Decimal("0"):
+            raise ValueError("Override prices must be positive numbers or empty.")
+        return parsed.quantize(Decimal("0.01"))
+
+    def _parse_item_price_overrides(raw_value: str) -> list[dict[str, object]]:
+        if not raw_value:
+            return []
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        parsed_by_type: dict[int, dict[str, object]] = {}
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+
+            try:
+                type_id = int(row.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0:
+                continue
+
+            type_name = str(row.get("type_name") or "").strip()
+            sell_price_override = _parse_optional_price(row.get("sell_price_override"))
+            buy_price_override = _parse_optional_price(row.get("buy_price_override"))
+
+            if sell_price_override is None and buy_price_override is None:
+                continue
+
+            parsed_by_type[type_id] = {
+                "type_id": type_id,
+                "type_name": type_name,
+                "sell_price_override": sell_price_override,
+                "buy_price_override": buy_price_override,
+            }
+
+        return list(parsed_by_type.values())
+
     # Validation
     try:
         if allowed_market_groups_buy_json_raw:
@@ -1879,6 +1982,7 @@ def _handle_config_save(request, existing_config):
         hangar_division = int(hangar_division)
         sell_markup_percent = _parse_decimal(sell_markup_percent, "0")
         buy_markup_percent = _parse_decimal(buy_markup_percent, "5")
+        item_price_overrides = _parse_item_price_overrides(item_price_overrides_raw)
 
         market_group_tree = _get_market_group_tree()
         allowed_ids: set[int] = _collect_market_group_tree_ids(market_group_tree)
@@ -2107,6 +2211,7 @@ def _handle_config_save(request, existing_config):
         if primary_structure_id and not primary_structure_name:
             primary_structure_name = f"Structure {primary_structure_id}"
 
+        target_config: MaterialExchangeConfig
         if existing_config:
             existing_config.corporation_id = corporation_id
             existing_config.structure_id = primary_structure_id
@@ -2134,11 +2239,12 @@ def _handle_config_save(request, existing_config):
             )
             existing_config.is_active = is_active
             existing_config.save()
+            target_config = existing_config
             messages.success(
                 request, _("Material Exchange configuration updated successfully.")
             )
         else:
-            MaterialExchangeConfig.objects.create(
+            target_config = MaterialExchangeConfig.objects.create(
                 corporation_id=corporation_id,
                 structure_id=primary_structure_id,
                 structure_name=primary_structure_name,
@@ -2163,6 +2269,27 @@ def _handle_config_save(request, existing_config):
             )
             messages.success(
                 request, _("Material Exchange configuration created successfully.")
+            )
+
+        desired_type_ids = {
+            int(row["type_id"]) for row in item_price_overrides if row.get("type_id")
+        }
+        MaterialExchangeItemPriceOverride.objects.filter(config=target_config).exclude(
+            type_id__in=desired_type_ids
+        ).delete()
+        for row in item_price_overrides:
+            type_id = int(row["type_id"])
+            type_name = str(row.get("type_name") or "").strip()
+            if not type_name:
+                type_name = get_type_name(type_id)
+            MaterialExchangeItemPriceOverride.objects.update_or_create(
+                config=target_config,
+                type_id=type_id,
+                defaults={
+                    "type_name": type_name,
+                    "sell_price_override": row.get("sell_price_override"),
+                    "buy_price_override": row.get("buy_price_override"),
+                },
             )
 
     return redirect("indy_hub:material_exchange_index")

@@ -426,11 +426,52 @@ html[data-theme="darkly"] .status-pending {
     border-left: 3px solid;
 }
 
+.stock-row-container {
+    background: rgba(var(--bs-secondary-rgb), 0.06);
+}
+
+.stock-row-container td {
+    border-top-style: dashed;
+}
+
+.stock-row-container.selected {
+    border-left: 3px solid var(--bs-success);
+    background: rgba(var(--bs-success-rgb), 0.1);
+}
+
 .item-icon {
     width: 48px;
     height: 48px;
     border-radius: 6px;
     padding: 4px;
+}
+
+.me-tree-fallback-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bs-secondary-color);
+    background: rgba(var(--bs-secondary-rgb), 0.12);
+}
+
+.me-tree-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.me-tree-container-label strong {
+    color: var(--bs-body-color);
+}
+
+.container-toggle-btn {
+    white-space: nowrap;
+}
+
+.stock-row-container.selected .container-toggle-btn {
+    border-color: rgba(var(--bs-success-rgb), 0.55);
+    color: var(--bs-success);
+    background: rgba(var(--bs-success-rgb), 0.12);
 }
 
 .qty-input {
@@ -584,6 +625,14 @@ html[data-theme="darkly"] .me-instruction-chip {
     border-bottom: none;
 }
 
+.stock-table tbody tr.location-locked {
+    opacity: 0.45;
+}
+
+.stock-table tbody tr.location-locked td {
+    background: rgba(var(--bs-secondary-rgb), 0.06);
+}
+
 /* Buy.html specific */
 html[data-theme="darkly"] .stock-table th {
     background: rgba(var(--bs-primary-rgb), 0.1);
@@ -591,6 +640,18 @@ html[data-theme="darkly"] .stock-table th {
 
 html[data-theme="darkly"] .stock-table tbody tr:hover {
     background: rgba(var(--bs-primary-rgb), 0.03);
+}
+
+html[data-theme="darkly"] .stock-table tbody tr.location-locked td {
+    background: rgba(148, 163, 184, 0.08);
+}
+
+html[data-theme="darkly"] .stock-row-container {
+    background: rgba(148, 163, 184, 0.12);
+}
+
+html[data-theme="darkly"] .stock-row-container.selected {
+    background: rgba(var(--bs-success-rgb), 0.18);
 }
 
 html[data-theme="darkly"] .stock-table tbody tr.selected {

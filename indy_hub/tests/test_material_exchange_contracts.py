@@ -222,6 +222,60 @@ class ContractValidationTaskTest(TestCase):
         # Check admins were notified
         mock_notify_multi.assert_called()
 
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_validate_sell_orders_contract_found_with_split_item_stack(
+        self, mock_notify_multi, mock_user_chars
+    ):
+        """Split contract stacks for the same type should still match total quantity."""
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        seller_char_id = 111111111
+        mock_user_chars.return_value = [seller_char_id]
+
+        contract = ESIContract.objects.create(
+            contract_id=101,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=0,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=self.sell_item.total_price,
+            title=self.sell_order.order_reference,
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+        )
+
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1011,
+            type_id=self.sell_item.type_id,
+            quantity=400,
+            is_included=True,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1012,
+            type_id=self.sell_item.type_id,
+            quantity=600,
+            is_included=True,
+        )
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(
+            self.sell_order.status,
+            MaterialExchangeSellOrder.Status.VALIDATED,
+        )
+        self.assertEqual(self.sell_order.esi_contract_id, contract.contract_id)
+        mock_notify_multi.assert_called()
+
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")

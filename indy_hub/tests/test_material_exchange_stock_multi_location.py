@@ -1,4 +1,5 @@
 # Standard Library
+from types import SimpleNamespace
 from unittest.mock import patch
 
 # Django
@@ -8,6 +9,9 @@ from django.test import TestCase
 from indy_hub.models import MaterialExchangeConfig, MaterialExchangeStock
 from indy_hub.services.asset_cache import make_managed_hangar_location_id
 from indy_hub.tasks.material_exchange import _sync_stock_impl
+from indy_hub.views.material_exchange import (
+    _selected_buy_stock_items_share_source_location,
+)
 
 
 class MaterialExchangeStockMultiLocationTests(TestCase):
@@ -114,3 +118,25 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         self.assertEqual(stock.quantity, 12)
         self.assertEqual(stock.source_structure_ids, [1002])
         self.assertEqual(stock.source_structure_names, ["Structure Beta"])
+
+
+class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
+    def test_selected_buy_stock_items_share_source_location_when_overlapping(self):
+        selected_rows = [
+            SimpleNamespace(source_structure_ids=[1001, 1002]),
+            SimpleNamespace(source_structure_ids=[1002]),
+        ]
+
+        self.assertTrue(
+            _selected_buy_stock_items_share_source_location(selected_rows)
+        )
+
+    def test_selected_buy_stock_items_share_source_location_when_disjoint(self):
+        selected_rows = [
+            SimpleNamespace(source_structure_ids=[1001]),
+            SimpleNamespace(source_structure_ids=[1002]),
+        ]
+
+        self.assertFalse(
+            _selected_buy_stock_items_share_source_location(selected_rows)
+        )

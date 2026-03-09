@@ -6,10 +6,16 @@ Tests for Material Exchange pricing with configurable base prices.
 from decimal import Decimal
 
 # Django
+from django.http import QueryDict
 from django.test import TestCase
 
 # AA Example App
 from indy_hub.models import MaterialExchangeConfig, MaterialExchangeStock
+from indy_hub.views.material_exchange import (
+    _compute_effective_buy_unit_price,
+    _compute_effective_sell_unit_price,
+    _parse_submitted_quantities,
+)
 
 
 class MaterialExchangePricingTests(TestCase):
@@ -142,3 +148,43 @@ class MaterialExchangePricingTests(TestCase):
         expected = Decimal("6.00")
         actual = self.stock.buy_price_from_member
         self.assertAlmostEqual(float(actual), float(expected), places=2)
+
+    def test_effective_sell_unit_price_uses_item_override(self):
+        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
+            config=self.config,
+            type_id=self.stock.type_id,
+            jita_buy=Decimal("5.00"),
+            jita_sell=Decimal("6.00"),
+            sell_override_map={self.stock.type_id: Decimal("8.25")},
+        )
+
+        self.assertEqual(default_price, Decimal("5.25"))
+        self.assertEqual(effective_price, Decimal("8.25"))
+        self.assertTrue(has_override)
+
+    def test_effective_buy_unit_price_uses_item_override(self):
+        effective_price, default_price, has_override = _compute_effective_buy_unit_price(
+            stock_item=self.stock,
+            buy_override_map={self.stock.type_id: Decimal("9.90")},
+        )
+
+        self.assertEqual(default_price, Decimal("5.50"))
+        self.assertEqual(effective_price, Decimal("9.90"))
+        self.assertTrue(has_override)
+
+    def test_parse_submitted_quantities_sums_split_row_inputs(self):
+        payload = QueryDict("", mutable=True)
+        payload.update(
+            {
+                "qty_34_0": "2",
+                "qty_34_7": "5",
+                "qty_35": "3",
+                "qty_invalid": "10",
+                "qty_36_1": "0",
+            }
+        )
+
+        parsed = _parse_submitted_quantities(payload)
+        self.assertEqual(parsed.get(34), 7)
+        self.assertEqual(parsed.get(35), 3)
+        self.assertNotIn(36, parsed)

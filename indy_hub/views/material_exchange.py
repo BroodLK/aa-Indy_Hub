@@ -31,6 +31,7 @@ from ..models import (
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
+    MaterialExchangeItemPriceOverride,
     MaterialExchangeSellOrder,
     MaterialExchangeSellOrderItem,
     MaterialExchangeSettings,
@@ -1078,6 +1079,407 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
         return {}
 
 
+def _parse_submitted_quantities(post_data) -> dict[int, int]:
+    """Parse `qty_*` POST fields and return summed quantities by type_id."""
+
+    submitted_quantities: dict[int, int] = {}
+    for key, values in post_data.lists():
+        if not key.startswith("qty_"):
+            continue
+        type_id_part = key[4:].split("_", 1)[0]
+        if not type_id_part.isdigit():
+            continue
+        type_id = int(type_id_part)
+        for raw_value in values:
+            qty_raw = (raw_value or "").strip()
+            if not qty_raw:
+                continue
+            try:
+                qty = int(qty_raw)
+            except Exception:
+                continue
+            if qty <= 0:
+                continue
+            submitted_quantities[type_id] = submitted_quantities.get(type_id, 0) + qty
+    return submitted_quantities
+
+
+def _get_item_price_override_maps(
+    config: MaterialExchangeConfig,
+) -> tuple[dict[int, Decimal], dict[int, Decimal]]:
+    """Return per-item override maps for sell and buy sides."""
+
+    sell_overrides: dict[int, Decimal] = {}
+    buy_overrides: dict[int, Decimal] = {}
+    try:
+        rows = MaterialExchangeItemPriceOverride.objects.filter(config=config).values_list(
+            "type_id",
+            "sell_price_override",
+            "buy_price_override",
+        )
+    except Exception:
+        return sell_overrides, buy_overrides
+
+    for type_id, sell_override, buy_override in rows:
+        type_id_int = int(type_id)
+        if sell_override is not None:
+            sell_overrides[type_id_int] = Decimal(sell_override)
+        if buy_override is not None:
+            buy_overrides[type_id_int] = Decimal(buy_override)
+
+    return sell_overrides, buy_overrides
+
+
+def _compute_effective_sell_unit_price(
+    *,
+    config: MaterialExchangeConfig,
+    type_id: int,
+    jita_buy: Decimal,
+    jita_sell: Decimal,
+    sell_override_map: dict[int, Decimal],
+) -> tuple[Decimal, Decimal, bool]:
+    """Return (effective, default, has_override) for sell-page pricing."""
+
+    default_unit_price = compute_buy_price_from_member(
+        config=config,
+        jita_buy=jita_buy,
+        jita_sell=jita_sell,
+    )
+    override_value = sell_override_map.get(int(type_id))
+    if override_value is None:
+        return default_unit_price, default_unit_price, False
+    effective_price = Decimal(override_value)
+    return effective_price, default_unit_price, effective_price != default_unit_price
+
+
+def _compute_effective_buy_unit_price(
+    *,
+    stock_item: MaterialExchangeStock,
+    buy_override_map: dict[int, Decimal],
+) -> tuple[Decimal, Decimal, bool]:
+    """Return (effective, default, has_override) for buy-page pricing."""
+
+    default_unit_price = Decimal(stock_item.sell_price_to_member)
+    override_value = buy_override_map.get(int(stock_item.type_id))
+    if override_value is None:
+        return default_unit_price, default_unit_price, False
+    effective_price = Decimal(override_value)
+    return effective_price, default_unit_price, effective_price != default_unit_price
+
+
+def _asset_quantity(asset: dict) -> int:
+    try:
+        quantity = int(asset.get("quantity", 0) or 0)
+    except (TypeError, ValueError):
+        quantity = 0
+    if quantity <= 0:
+        return 1 if asset.get("is_singleton") else 0
+    return quantity
+
+
+def _build_sell_material_rows(
+    *,
+    assets: list[dict],
+    config: MaterialExchangeConfig,
+    price_data: dict[int, dict[str, Decimal]],
+    reserved_quantities: dict[int, int],
+    allowed_type_ids: set[int] | None,
+    sell_override_map: dict[int, Decimal],
+) -> list[dict]:
+    """Build sell rows, grouping assets by containers where possible."""
+
+    if not assets:
+        return []
+
+    asset_by_item_id: dict[int, dict] = {}
+    children_by_parent: dict[int, list[dict]] = {}
+    for asset in assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id > 0:
+            asset_by_item_id[item_id] = asset
+
+    for asset in assets:
+        try:
+            parent_id = int(asset.get("raw_location_id") or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+        if parent_id > 0 and parent_id in asset_by_item_id:
+            children_by_parent.setdefault(parent_id, []).append(asset)
+
+    container_item_ids = set(children_by_parent.keys())
+    reserved_by_type = {int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()}
+    allowed_types = {int(type_id) for type_id in allowed_type_ids} if allowed_type_ids else None
+    price_meta_cache: dict[int, dict[str, object] | None] = {}
+
+    def get_price_meta(type_id: int) -> dict[str, object] | None:
+        type_id_int = int(type_id)
+        if type_id_int in price_meta_cache:
+            return price_meta_cache[type_id_int]
+
+        if allowed_types is not None and type_id_int not in allowed_types:
+            price_meta_cache[type_id_int] = None
+            return None
+
+        type_name = get_type_name(type_id_int)
+        fuzz_prices = price_data.get(type_id_int, {})
+        jita_buy = Decimal(fuzz_prices.get("buy") or 0)
+        jita_sell = Decimal(fuzz_prices.get("sell") or 0)
+        has_market_price = jita_buy > 0 or jita_sell > 0
+        if not has_market_price and type_id_int not in sell_override_map:
+            price_meta_cache[type_id_int] = None
+            return None
+
+        unit_price, default_unit_price, has_override = _compute_effective_sell_unit_price(
+            config=config,
+            type_id=type_id_int,
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+            sell_override_map=sell_override_map,
+        )
+        if unit_price <= 0:
+            price_meta_cache[type_id_int] = None
+            return None
+
+        meta = {
+            "type_id": type_id_int,
+            "type_name": type_name,
+            "buy_price_from_member": unit_price,
+            "default_buy_price_from_member": default_unit_price,
+            "has_sell_price_override": bool(has_override),
+        }
+        price_meta_cache[type_id_int] = meta
+        return meta
+
+    total_qty_by_type: dict[int, int] = {}
+    for asset in assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id > 0 and item_id in container_item_ids:
+            continue
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+        quantity = _asset_quantity(asset)
+        if quantity <= 0:
+            continue
+        if get_price_meta(type_id) is None:
+            continue
+        total_qty_by_type[type_id] = total_qty_by_type.get(type_id, 0) + quantity
+
+    remaining_by_type = {
+        int(type_id): max(int(total_qty) - int(reserved_by_type.get(int(type_id), 0)), 0)
+        for type_id, total_qty in total_qty_by_type.items()
+    }
+
+    def container_display_name(asset: dict) -> str:
+        named = str(asset.get("set_name") or asset.get("name") or "").strip()
+        if named:
+            return named
+        try:
+            container_type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            container_type_id = 0
+        if container_type_id > 0:
+            return get_type_name(container_type_id)
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        return f"Container {item_id}" if item_id > 0 else "Container"
+
+    row_index = 0
+
+    def next_row_index() -> int:
+        nonlocal row_index
+        idx = row_index
+        row_index += 1
+        return idx
+
+    def build_item_row(
+        *,
+        type_id: int,
+        quantity: int,
+        ancestors: list[str],
+        depth: int,
+    ) -> dict[str, object] | None:
+        if quantity <= 0:
+            return None
+        meta = get_price_meta(type_id)
+        if meta is None:
+            return None
+
+        available_for_type = remaining_by_type.get(int(type_id), 0)
+        available_qty = min(int(quantity), int(available_for_type))
+        remaining_by_type[int(type_id)] = max(int(available_for_type) - available_qty, 0)
+        reserved_qty = max(int(quantity) - available_qty, 0)
+
+        return {
+            "row_kind": "item",
+            "row_index": next_row_index(),
+            "type_id": int(type_id),
+            "type_name": str(meta["type_name"]),
+            "buy_price_from_member": meta["buy_price_from_member"],
+            "default_buy_price_from_member": meta["default_buy_price_from_member"],
+            "has_sell_price_override": bool(meta["has_sell_price_override"]),
+            "user_quantity": int(quantity),
+            "reserved_quantity": int(reserved_qty),
+            "available_quantity": int(available_qty),
+            "depth": int(depth),
+            "container_path": ",".join(ancestors),
+            "indent_padding_rem": round(max(0, depth) * 1.15, 2),
+        }
+
+    def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
+        try:
+            container_item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            return []
+        if container_item_id <= 0:
+            return []
+
+        children = children_by_parent.get(container_item_id, [])
+        if not children:
+            return []
+
+        container_key = f"c{container_item_id}"
+        next_ancestors = [*ancestors, container_key]
+
+        grouped_child_items: dict[int, int] = {}
+        nested_container_assets: list[dict] = []
+        for child in children:
+            try:
+                child_item_id = int(child.get("item_id") or 0)
+            except (TypeError, ValueError):
+                child_item_id = 0
+            if child_item_id > 0 and child_item_id in container_item_ids:
+                nested_container_assets.append(child)
+                continue
+
+            try:
+                child_type_id = int(child.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if child_type_id <= 0:
+                continue
+            child_qty = _asset_quantity(child)
+            if child_qty <= 0:
+                continue
+            grouped_child_items[child_type_id] = grouped_child_items.get(child_type_id, 0) + child_qty
+
+        child_rows: list[dict] = []
+        grouped_items_sorted = sorted(
+            grouped_child_items.items(),
+            key=lambda pair: (
+                str((get_price_meta(pair[0]) or {}).get("type_name") or get_type_name(pair[0])).lower(),
+                int(pair[0]),
+            ),
+        )
+        for child_type_id, child_qty in grouped_items_sorted:
+            row = build_item_row(
+                type_id=child_type_id,
+                quantity=child_qty,
+                ancestors=next_ancestors,
+                depth=depth + 1,
+            )
+            if row is not None:
+                child_rows.append(row)
+
+        nested_container_assets = sorted(
+            nested_container_assets,
+            key=lambda nested_asset: container_display_name(nested_asset).lower(),
+        )
+        for nested_asset in nested_container_assets:
+            child_rows.extend(
+                build_container_branch(
+                    nested_asset,
+                    ancestors=next_ancestors,
+                    depth=depth + 1,
+                )
+            )
+
+        if not child_rows:
+            return []
+
+        try:
+            container_type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            container_type_id = 0
+        container_row = {
+            "row_kind": "container",
+            "row_index": next_row_index(),
+            "container_key": container_key,
+            "container_name": container_display_name(asset),
+            "container_type_id": container_type_id if container_type_id > 0 else None,
+            "depth": int(depth),
+            "container_path": ",".join(ancestors),
+            "indent_padding_rem": round(max(0, depth) * 1.15, 2),
+        }
+
+        return [container_row, *child_rows]
+
+    root_container_assets: list[dict] = []
+    root_items_by_type: dict[int, int] = {}
+    for asset in assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        try:
+            parent_id = int(asset.get("raw_location_id") or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+        is_container = item_id > 0 and item_id in container_item_ids
+        has_container_parent = parent_id > 0 and parent_id in container_item_ids
+
+        if is_container:
+            if not has_container_parent:
+                root_container_assets.append(asset)
+            continue
+        if has_container_parent:
+            continue
+
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+        qty = _asset_quantity(asset)
+        if qty <= 0:
+            continue
+        root_items_by_type[type_id] = root_items_by_type.get(type_id, 0) + qty
+
+    rows: list[dict] = []
+    root_container_assets = sorted(
+        root_container_assets,
+        key=lambda container_asset: container_display_name(container_asset).lower(),
+    )
+    for root_container_asset in root_container_assets:
+        rows.extend(build_container_branch(root_container_asset, ancestors=[], depth=0))
+
+    root_items_sorted = sorted(
+        root_items_by_type.items(),
+        key=lambda pair: (
+            str((get_price_meta(pair[0]) or {}).get("type_name") or get_type_name(pair[0])).lower(),
+            int(pair[0]),
+        ),
+    )
+    for type_id, qty in root_items_sorted:
+        row = build_item_row(type_id=type_id, quantity=qty, ancestors=[], depth=0)
+        if row is not None:
+            rows.append(row)
+
+    return rows
+
+
 def _build_buy_stock_location_label(
     stock_item: MaterialExchangeStock,
     *,
@@ -1102,6 +1504,36 @@ def _build_buy_stock_location_label(
             labels.append(resolved_name)
 
     return ", ".join(labels).strip() or str(fallback_label or "").strip()
+
+
+def _selected_buy_stock_items_share_source_location(
+    stock_items: list[MaterialExchangeStock],
+) -> bool:
+    """Return True when selected stock rows can be sourced from one common location."""
+
+    common_location_ids: set[int] | None = None
+    for stock_item in stock_items:
+        source_location_ids: set[int] = set()
+        for raw_structure_id in getattr(stock_item, "source_structure_ids", []) or []:
+            try:
+                structure_id = int(raw_structure_id)
+            except (TypeError, ValueError):
+                continue
+            if structure_id > 0:
+                source_location_ids.add(structure_id)
+
+        if not source_location_ids:
+            continue
+
+        if common_location_ids is None:
+            common_location_ids = set(source_location_ids)
+        else:
+            common_location_ids &= source_location_ids
+
+        if not common_location_ids:
+            return False
+
+    return True
 
 
 @login_required
@@ -1437,6 +1869,7 @@ def material_exchange_sell(request, tokens):
             pass
     materials_with_qty: list[dict] = []
     assets_refreshing = False
+    sell_override_map, _buy_override_map = _get_item_price_override_maps(config)
 
     sell_last_update = (
         CachedCharacterAsset.objects.filter(user=request.user)
@@ -1576,23 +2009,7 @@ def material_exchange_sell(request, tokens):
 
         # Parse submitted quantities from the form. Do not iterate over `user_assets` here:
         # doing so can silently drop items if assets changed or a type was filtered out.
-        submitted_quantities: dict[int, int] = {}
-        for key, value in request.POST.items():
-            if not key.startswith("qty_"):
-                continue
-            type_id_str = key[4:]
-            if not type_id_str.isdigit():
-                continue
-            qty_raw = (value or "").strip()
-            if not qty_raw:
-                continue
-            try:
-                qty = int(qty_raw)
-            except Exception:
-                continue
-            if qty <= 0:
-                continue
-            submitted_quantities[int(type_id_str)] = qty
+        submitted_quantities = _parse_submitted_quantities(request.POST)
 
         if not submitted_quantities:
             messages.error(
@@ -1698,22 +2115,22 @@ def material_exchange_sell(request, tokens):
                 continue
 
             fuzz_prices = price_data.get(type_id, {})
-            jita_buy = fuzz_prices.get("buy") or Decimal(0)
-            jita_sell = fuzz_prices.get("sell") or Decimal(0)
-            if jita_buy <= 0 and jita_sell <= 0:
-                type_name = get_type_name(type_id)
-                errors.append(_(f"{type_name} has no valid market price."))
-                continue
-
-            unit_price = compute_buy_price_from_member(
-                config=config,
-                jita_buy=jita_buy,
-                jita_sell=jita_sell,
+            jita_buy = Decimal(fuzz_prices.get("buy") or 0)
+            jita_sell = Decimal(fuzz_prices.get("sell") or 0)
+            unit_price, _default_unit_price, _has_override = (
+                _compute_effective_sell_unit_price(
+                    config=config,
+                    type_id=type_id,
+                    jita_buy=jita_buy,
+                    jita_sell=jita_sell,
+                    sell_override_map=sell_override_map,
+                )
             )
             if unit_price <= 0:
                 type_name = get_type_name(type_id)
                 errors.append(_(f"{type_name} has no valid market price."))
                 continue
+
             total_price = unit_price * qty
             total_payout += total_price
 
@@ -1928,14 +2345,16 @@ def material_exchange_sell(request, tokens):
 
         def _is_sellable_type(type_id: int) -> bool:
             fuzz_prices = price_data.get(type_id, {})
-            jita_buy = fuzz_prices.get("buy") or Decimal(0)
-            jita_sell = fuzz_prices.get("sell") or Decimal(0)
-            if jita_buy <= 0 and jita_sell <= 0:
-                return False
-            buy_price = compute_buy_price_from_member(
-                config=config,
-                jita_buy=jita_buy,
-                jita_sell=jita_sell,
+            jita_buy = Decimal(fuzz_prices.get("buy") or 0)
+            jita_sell = Decimal(fuzz_prices.get("sell") or 0)
+            buy_price, _default_buy_price, _has_override = (
+                _compute_effective_sell_unit_price(
+                    config=config,
+                    type_id=type_id,
+                    jita_buy=jita_buy,
+                    jita_sell=jita_sell,
+                    sell_override_map=sell_override_map,
+                )
             )
             return buy_price > 0
 
@@ -1943,6 +2362,7 @@ def material_exchange_sell(request, tokens):
         location_tabs = []
         character_tabs = []
         active_character_tab = ""
+        selected_character_id: int | None = None
 
         selected_location_param = (request.GET.get("location") or "").strip()
         selected_location_id: int | None = None
@@ -1988,7 +2408,6 @@ def material_exchange_sell(request, tokens):
                 )
 
             selected_character_param = (request.GET.get("character") or "").strip()
-            selected_character_id: int | None = None
             if selected_character_param:
                 try:
                     selected_character_id = int(selected_character_param)
@@ -2061,43 +2480,68 @@ def material_exchange_sell(request, tokens):
             assets_synced_at=assets_last_sync,
         )
 
-        for type_id, user_qty in assets_for_display.items():
-            fuzz_prices = price_data.get(type_id, {})
-            jita_buy = fuzz_prices.get("buy") or Decimal(0)
-            jita_sell = fuzz_prices.get("sell") or Decimal(0)
-            if jita_buy <= 0 and jita_sell <= 0:
-                logger.debug(
-                    f"SELL DEBUG: Skipping type_id {type_id} - no valid price (buy={jita_buy}, sell={jita_sell})"
-                )
+        selected_location_allowed_type_ids: set[int] | None = None
+        if selected_location_id:
+            selected_location_allowed_type_ids = _get_allowed_type_ids_for_config(
+                config,
+                "sell",
+                structure_id=int(selected_location_id),
+            )
+
+        display_assets_raw: list[dict] = []
+        try:
+            all_cached_assets, _raw_scope_missing = get_user_assets_cached(
+                request.user,
+                allow_refresh=False,
+            )
+        except Exception:
+            all_cached_assets = []
+
+        excluded_item_ids: set[int] = set()
+        try:
+            if not bool(getattr(config, "allow_fitted_ships", False)):
+                excluded_item_ids = _build_fitted_ship_excluded_item_ids(all_cached_assets)
+        except Exception:
+            excluded_item_ids = set()
+
+        for asset in all_cached_assets:
+            try:
+                asset_location_id = int(asset.get("location_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if selected_location_id and asset_location_id != int(selected_location_id):
                 continue
 
-            buy_price = compute_buy_price_from_member(
-                config=config,
-                jita_buy=jita_buy,
-                jita_sell=jita_sell,
-            )
-            if buy_price <= 0:
-                continue
-            type_name = get_type_name(type_id)
-            reserved_qty = int(
-                reserved_quantities_for_display.get(int(type_id), 0) or 0
-            )
-            available_qty = max(int(user_qty) - reserved_qty, 0)
-            materials_with_qty.append(
-                {
-                    "type_id": type_id,
-                    "type_name": type_name,
-                    "buy_price_from_member": buy_price,
-                    "user_quantity": user_qty,
-                    "reserved_quantity": reserved_qty,
-                    "available_quantity": available_qty,
-                }
-            )
+            if show_character_tabs and selected_character_id:
+                try:
+                    asset_character_id = int(asset.get("character_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if asset_character_id != int(selected_character_id):
+                    continue
+
+            if excluded_item_ids:
+                try:
+                    asset_item_id = int(asset.get("item_id") or 0)
+                except (TypeError, ValueError):
+                    asset_item_id = 0
+                if asset_item_id > 0 and asset_item_id in excluded_item_ids:
+                    continue
+
+            display_assets_raw.append(asset)
+
+        materials_with_qty = _build_sell_material_rows(
+            assets=display_assets_raw,
+            config=config,
+            price_data=price_data,
+            reserved_quantities=reserved_quantities_for_display,
+            allowed_type_ids=selected_location_allowed_type_ids,
+            sell_override_map=sell_override_map,
+        )
 
         logger.info(
             f"SELL DEBUG: Final materials_with_qty count: {len(materials_with_qty)}"
         )
-        materials_with_qty.sort(key=lambda x: x["type_name"])
 
         if pre_filter_count > 0 and not materials_with_qty and not message_shown:
             messages.info(
@@ -2174,6 +2618,7 @@ def material_exchange_buy(request, tokens):
         messages.info(request, _("Buy orders are currently disabled for this hub."))
         return redirect("indy_hub:material_exchange_index")
     stock_refreshing = False
+    _sell_override_map, buy_override_map = _get_item_price_override_maps(config)
 
     buy_structure_ids = config.get_buy_structure_ids()
     buy_name_map = config.get_buy_structure_name_map()
@@ -2205,23 +2650,7 @@ def material_exchange_buy(request, tokens):
         # Parse submitted quantities from the form. Do not iterate over `stock_items` here:
         # doing so can silently drop items if stock changed (quantity=0) or an item is no
         # longer visible due to filters.
-        submitted_quantities: dict[int, int] = {}
-        for key, value in request.POST.items():
-            if not key.startswith("qty_"):
-                continue
-            type_id_str = key[4:]
-            if not type_id_str.isdigit():
-                continue
-            qty_raw = (value or "").strip()
-            if not qty_raw:
-                continue
-            try:
-                qty = int(qty_raw)
-            except Exception:
-                continue
-            if qty <= 0:
-                continue
-            submitted_quantities[int(type_id_str)] = qty
+        submitted_quantities = _parse_submitted_quantities(request.POST)
 
         if not submitted_quantities:
             messages.error(
@@ -2237,9 +2666,11 @@ def material_exchange_buy(request, tokens):
         submitted_type_ids = set(submitted_quantities.keys())
 
         with transaction.atomic():
+            override_type_ids = set(buy_override_map.keys())
             stock_items = list(
                 config.stock_items.select_for_update()
-                .filter(type_id__in=submitted_type_ids, quantity__gt=0, jita_buy_price__gt=0)
+                .filter(type_id__in=submitted_type_ids, quantity__gt=0)
+                .filter(Q(jita_buy_price__gt=0) | Q(type_id__in=override_type_ids))
             )
             stock_by_type_id = {item.type_id: item for item in stock_items}
 
@@ -2286,7 +2717,16 @@ def material_exchange_buy(request, tokens):
                     )
                     continue
 
-                unit_price = stock_item.sell_price_to_member
+                unit_price, _default_unit_price, _has_override = (
+                    _compute_effective_buy_unit_price(
+                        stock_item=stock_item,
+                        buy_override_map=buy_override_map,
+                    )
+                )
+                if unit_price <= 0:
+                    type_name = get_type_name(type_id)
+                    errors.append(_(f"{type_name} has no valid market price."))
+                    continue
                 total_price = unit_price * qty
                 total_cost += total_price
 
@@ -2312,6 +2752,25 @@ def material_exchange_buy(request, tokens):
                 for err in errors:
                     messages.error(request, err)
                 # Prevent creating a partial order with an unexpected (lower) total.
+                return redirect("indy_hub:material_exchange_buy")
+
+            selected_stock_rows = [
+                stock_by_type_id[item_data["type_id"]]
+                for item_data in items_to_create
+                if item_data["type_id"] in stock_by_type_id
+            ]
+            if (
+                len(selected_stock_rows) > 1
+                and not _selected_buy_stock_items_share_source_location(
+                    selected_stock_rows
+                )
+            ):
+                messages.error(
+                    request,
+                    _(
+                        "Selected items must come from one buy location. Deselect items from other stations and try again."
+                    ),
+                )
                 return redirect("indy_hub:material_exchange_buy")
 
             # Get order reference from client (generated in JavaScript)
@@ -2410,8 +2869,8 @@ def material_exchange_buy(request, tokens):
         except Exception as exc:  # pragma: no cover - defensive
             messages.warning(request, f"Price sync failed automatically: {exc}")
 
-    # Show available stock (quantity > 0 and price available)
-    stock_items = list(config.stock_items.filter(quantity__gt=0, jita_buy_price__gt=0))
+    # Show available stock.
+    stock_items = list(config.stock_items.filter(quantity__gt=0))
     pre_filter_stock_count = len(stock_items)
 
     # Apply market group filter strictly (empty config means no allowed items)
@@ -2423,6 +2882,21 @@ def material_exchange_buy(request, tokens):
             ]
     except Exception as exc:
         logger.warning("Failed to apply market group filter: %s", exc)
+    post_group_filter_count = len(stock_items)
+
+    priced_stock_items: list[MaterialExchangeStock] = []
+    for stock_item in stock_items:
+        unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
+            stock_item=stock_item,
+            buy_override_map=buy_override_map,
+        )
+        if unit_price <= 0:
+            continue
+        stock_item.display_sell_price_to_member = unit_price
+        stock_item.default_sell_price_to_member = default_unit_price
+        stock_item.has_buy_price_override = bool(has_override)
+        priced_stock_items.append(stock_item)
+    stock_items = priced_stock_items
 
     group_map = _get_group_map([item.type_id for item in stock_items])
     stock_items.sort(
@@ -2445,7 +2919,7 @@ def material_exchange_buy(request, tokens):
             fallback_label=buy_locations_label,
         )
 
-    if pre_filter_stock_count > 0 and not stock_items:
+    if pre_filter_stock_count > 0 and post_group_filter_count == 0:
         messages.info(
             request,
             _(
