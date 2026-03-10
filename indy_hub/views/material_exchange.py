@@ -1569,7 +1569,10 @@ def _asset_is_blueprint(asset: dict) -> bool:
     ):
         return True
     try:
-        return int(asset.get("quantity", 0) or 0) < 0
+        raw_quantity = int(asset.get("quantity", 0) or 0)
+        # In asset list ESI, BPO/BPC are singletons and often have quantity = -1 or -2
+        # In corporate blueprint ESI, they are often represented as -1 (BPO) or >0 (runs)
+        return raw_quantity == -1 or raw_quantity == -2 or raw_quantity > 0
     except (TypeError, ValueError):
         return False
 
@@ -1582,9 +1585,21 @@ def _asset_blueprint_variant(asset: dict) -> str:
         raw_quantity = int(asset.get("quantity", 0) or 0)
     except (TypeError, ValueError):
         raw_quantity = 0
+
+    # In asset list ESI, quantity == -2 is often BPC.
     if raw_quantity == -2:
         return "bpc"
 
+    # In corporate blueprint ESI, quantity == -1 is BPO.
+    if raw_quantity == -1:
+        return "bpo"
+
+    # In corporate blueprint ESI, quantity > 0 represents BPC runs.
+    if (raw_quantity or 0) > 0:
+        return "bpc"
+
+    # Fallback to name-based check if still ambiguous, although usually
+    # name-based checks are unreliable as the user noted.
     type_name_lower = str(asset.get("type_name") or asset.get("set_name") or "").lower()
     if " (bpc)" in type_name_lower or "blueprint copy" in type_name_lower:
         return "bpc"
@@ -2146,21 +2161,18 @@ def _get_corp_blueprint_details_by_item_id(
             variant = "bpc"
         elif bp_type == str(Blueprint.BPType.ORIGINAL):
             variant = "bpo"
+        elif quantity == -1 and runs == -1:
+            variant = "bpo"
+        elif (runs or 0) > 0:
+            variant = "bpc"
         elif quantity == -2:
-            variant = "bpc"
-        elif runs > 0:
-            variant = "bpc"
+            variant = "bpo"
         elif quantity == -1:
             variant = "bpo"
         elif runs == -1:
             variant = "bpo"
-        elif quantity > 0:
-            # If we don't have definitive BPType, and it's not a singleton or has no runs,
-            # it might be a BPO, but usually blueprints are singletons in ESI assets.
-            # If quantity > 0 and it's a blueprint, and it's not marked as BPO,
-            # and it has no runs=0, we should be careful.
-            # However, in corporate blueprint ESI, BPCs have quantity > 0 (number of runs).
-            # Wait, ESI 'blueprints' endpoint: quantity is -1 for BPO, >0 for BPC (runs).
+        elif (quantity or 0) > 0:
+            # For corp blueprints, quantity > 0 usually represents runs for BPCs.
             variant = "bpc"
 
         if not variant:
@@ -2407,7 +2419,11 @@ def _get_buy_stock_blueprint_variant_map(
                 raw_quantity = 0
 
             is_bpc_likely = raw_quantity == -2
-            if not is_bpc_likely:
+            if not is_bpc_likely and raw_quantity == -1:
+                is_bpc_likely = False # Explicitly BPO
+            elif not is_bpc_likely and (raw_quantity or 0) > 0:
+                is_bpc_likely = True # Likely BPC runs
+            elif not is_bpc_likely:
                 type_name_lower = str(asset.get("type_name") or get_type_name(type_id)).lower()
                 if " (bpc)" in type_name_lower or "blueprint copy" in type_name_lower:
                     is_bpc_likely = True
@@ -4711,7 +4727,6 @@ def material_exchange_sync_prices(request):
     except Exception as e:
         messages.error(request, _(f"Price sync failed: {str(e)}"))
 
-    # Redirect back to buy page or referrer
     referrer = request.headers.get("referer", "")
     if "material-exchange/buy" in referrer:
         return redirect("indy_hub:material_exchange_buy")

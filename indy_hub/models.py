@@ -209,13 +209,15 @@ class Blueprint(models.Model):
         if "formula" in name or "reaction" in name:
             return cls.BPType.REACTION
 
+        if quantity == -1 and runs == -1:
+            return cls.BPType.ORIGINAL
         if quantity == -2:
             return cls.BPType.COPY
         if quantity == -1:
             return cls.BPType.ORIGINAL
-        if quantity and quantity > 0:
+        if (quantity or 0) > 0:
             return cls.BPType.COPY
-        if runs and runs > 0:
+        if (runs or 0) > 0:
             return cls.BPType.COPY
         if runs == -1:
             return cls.BPType.ORIGINAL
