@@ -228,7 +228,13 @@
                                             <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
                                                 <strong>{% if item.container_path %}- {% endif %}{{ item.display_type_name }}</strong>
                                                 {% if item.blueprint_variant == "bpc" %}
-                                                <div class="small text-muted">{% trans "Blueprint Copy" %}</div>
+                                                <div class="small text-muted">
+                                                    {% if item.bpc_runs %}
+                                                        {% blocktrans count run_count=item.bpc_runs %}Blueprint Copy ({{ run_count }} run){% plural %}Blueprint Copy ({{ run_count }} runs){% endblocktrans %}
+                                                    {% else %}
+                                                        {% trans "Blueprint Copy" %}
+                                                    {% endif %}
+                                                </div>
                                                 {% elif item.blueprint_variant == "bpo" %}
                                                 <div class="small text-muted">{% trans "Blueprint Original" %}</div>
                                                 {% elif item.blueprint_variant == "mixed" %}

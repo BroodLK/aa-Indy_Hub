@@ -147,7 +147,14 @@ def _backfill_cached_corp_asset_name_map(
         return {}
 
     _set_cached_corp_asset_name_map(int(corporation_id), name_map)
-    return _get_cached_corp_asset_name_map(int(corporation_id))
+    normalized_name_map = _get_cached_corp_asset_name_map(int(corporation_id))
+    if normalized_name_map:
+        for item_id, set_name in normalized_name_map.items():
+            CachedCorporationAsset.objects.filter(
+                corporation_id=int(corporation_id),
+                item_id=int(item_id),
+            ).update(set_name=str(set_name or "").strip()[:255])
+    return normalized_name_map
 
 
 def _coerce_role_list(value: object) -> list[str]:
@@ -576,7 +583,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
                 item_id_int = None
             set_name = ""
             if item_id_int and item_id_int > 0:
-                set_name = str(asset_name_map.get(item_id_int) or "").strip()
+                set_name = str(asset_name_map.get(item_id_int) or "").strip()[:255]
             rows.append(
                 CachedCorporationAsset(
                     corporation_id=int(corporation_id),
@@ -584,6 +591,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
                     location_id=int(asset.get("location_id", 0) or 0),
                     location_flag=str(asset.get("location_flag", "") or ""),
                     type_id=int(asset.get("type_id", 0) or 0),
+                    set_name=set_name,
                     quantity=int(asset.get("quantity", 0) or 0),
                     is_singleton=bool(asset.get("is_singleton", False)),
                     is_blueprint=bool(asset.get("is_blueprint", False)),
@@ -659,8 +667,14 @@ def get_corp_assets_cached(
             for row in rows
         ]
 
+    def _has_persisted_set_names() -> bool:
+        try:
+            return qs.exclude(set_name="").exists()
+        except Exception:
+            return False
+
     if fresh_enough:
-        if not asset_name_map and allow_refresh:
+        if not asset_name_map and allow_refresh and not _has_persisted_set_names():
             asset_name_map = _backfill_cached_corp_asset_name_map(
                 corporation_id=int(corporation_id),
                 assets=_seed_assets_for_name_backfill(),
@@ -676,7 +690,8 @@ def get_corp_assets_cached(
                 "location_id": row.location_id,
                 "location_flag": row.location_flag,
                 "type_id": row.type_id,
-                "set_name": str(asset_name_map.get(int(row.item_id or 0)) or "").strip(),
+                "set_name": str(row.set_name or "").strip()
+                or str(asset_name_map.get(int(row.item_id or 0)) or "").strip(),
                 "quantity": row.quantity,
                 "is_singleton": row.is_singleton,
                 "is_blueprint": row.is_blueprint,
@@ -702,7 +717,7 @@ def get_corp_assets_cached(
             return refreshed_assets, assets_scope_missing
 
     # Fallback to whatever is in cache even if stale
-    if not asset_name_map and allow_refresh:
+    if not asset_name_map and allow_refresh and not _has_persisted_set_names():
         asset_name_map = _backfill_cached_corp_asset_name_map(
             corporation_id=int(corporation_id),
             assets=_seed_assets_for_name_backfill(),
@@ -720,7 +735,8 @@ def get_corp_assets_cached(
             "location_id": row.location_id,
             "location_flag": row.location_flag,
             "type_id": row.type_id,
-            "set_name": str(asset_name_map.get(int(row.item_id or 0)) or "").strip(),
+            "set_name": str(row.set_name or "").strip()
+            or str(asset_name_map.get(int(row.item_id or 0)) or "").strip(),
             "quantity": row.quantity,
             "is_singleton": row.is_singleton,
             "is_blueprint": row.is_blueprint,

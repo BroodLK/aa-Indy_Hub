@@ -254,6 +254,66 @@ class CorporationAssetRefreshNameTests(TestCase):
         self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0].get("set_name"), "Corp Named Can")
 
+    def test_get_corp_assets_cached_uses_persisted_set_name_without_cache(self) -> None:
+        corporation_id = 98123457
+        item_id = 1044300603011
+        cache.clear()
+
+        CachedCorporationAsset.objects.create(
+            corporation_id=corporation_id,
+            item_id=item_id,
+            location_id=1042090993674,
+            location_flag="Hangar",
+            type_id=23,
+            set_name="Persisted Corp Container",
+            quantity=1,
+            is_singleton=True,
+            is_blueprint=False,
+        )
+
+        assets, scope_missing = asset_cache.get_corp_assets_cached(
+            corporation_id,
+            allow_refresh=False,
+            max_age_minutes=60,
+        )
+
+        self.assertFalse(scope_missing)
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0].get("set_name"), "Persisted Corp Container")
+
+    def test_get_corp_assets_cached_skips_backfill_when_set_name_persisted(self) -> None:
+        corporation_id = 98123458
+        item_id = 1044300603012
+        cache.clear()
+
+        CachedCorporationAsset.objects.create(
+            corporation_id=corporation_id,
+            item_id=item_id,
+            location_id=1042090993674,
+            location_flag="Hangar",
+            type_id=23,
+            set_name="Persisted Corp Container",
+            quantity=1,
+            is_singleton=True,
+            is_blueprint=False,
+        )
+
+        with patch.object(
+            asset_cache.shared_client,
+            "fetch_corporation_asset_names",
+            return_value={item_id: "Should Not Be Used"},
+        ) as mocked_fetch_names:
+            assets, scope_missing = asset_cache.get_corp_assets_cached(
+                corporation_id,
+                allow_refresh=True,
+                max_age_minutes=60,
+            )
+
+        self.assertFalse(scope_missing)
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0].get("set_name"), "Persisted Corp Container")
+        mocked_fetch_names.assert_not_called()
+
     def test_get_corp_assets_cached_backfills_set_names_when_missing(self) -> None:
         corporation_id = 98123456
         character_id = 70012345
@@ -312,4 +372,9 @@ class CorporationAssetRefreshNameTests(TestCase):
             "Backfilled Corp Container",
         )
         self.assertEqual(by_item_id[child_item_id].get("set_name"), "")
+        container_row = CachedCorporationAsset.objects.get(
+            corporation_id=corporation_id,
+            item_id=container_item_id,
+        )
+        self.assertEqual(container_row.set_name, "Backfilled Corp Container")
         mocked_fetch_names.assert_called_once()

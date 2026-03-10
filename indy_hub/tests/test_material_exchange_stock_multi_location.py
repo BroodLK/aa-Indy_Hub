@@ -356,6 +356,7 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
                 "location_id": 1001,
                 "location_flag": "CorpSAG1",
                 "type_id": 23,
+                "set_name": "Named Buy Container",
                 "quantity": 1,
                 "is_singleton": True,
                 "is_blueprint": False,
@@ -395,11 +396,14 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
             buy_name_map={1001: "Structure Alpha"},
             fallback_location_label="Structure Alpha",
             blueprint_variant_by_item_id={child_item_id: "bpc"},
+            blueprint_runs_by_item_id={child_item_id: 7},
         )
 
         self.assertEqual(rows[0]["row_kind"], "container")
+        self.assertEqual(rows[0]["container_name"], "Named Buy Container")
         item_rows = [row for row in rows if row.get("row_kind") == "item"]
         self.assertEqual(len(item_rows), 1)
         self.assertTrue(item_rows[0]["container_path"])
         self.assertEqual(item_rows[0]["blueprint_variant"], "bpc")
+        self.assertEqual(item_rows[0]["bpc_runs"], 7)
         self.assertEqual(item_rows[0]["display_sell_price_to_member"], 0)

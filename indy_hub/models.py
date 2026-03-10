@@ -2188,6 +2188,7 @@ class CachedCorporationAsset(models.Model):
     location_id = models.BigIntegerField(db_index=True)
     location_flag = models.CharField(max_length=50, blank=True, db_index=True)
     type_id = models.BigIntegerField(db_index=True)
+    set_name = models.CharField(max_length=255, blank=True)
     quantity = models.BigIntegerField(default=0)
     is_singleton = models.BooleanField(default=False)
     is_blueprint = models.BooleanField(default=False)

@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
 
@@ -1420,10 +1421,36 @@ class BuyOrderSignalTest(TestCase):
             stock_available_at_creation=1000,
         )
 
-        # Task should be queued (async)
-        # Note: In test env, .delay() might not actually queue
-        # but we're testing the signal triggers
+        mock_task.apply_async.assert_called_once_with(
+            args=(buy_order.id,),
+            countdown=2,
+            expires=300,
+        )
         self.assertEqual(buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
+
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_buy_order_created"
+    )
+    def test_buy_order_signal_queues_on_commit(self, mock_task):
+        """Task should queue only after outer transaction commit."""
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            with transaction.atomic():
+                buy_order = MaterialExchangeBuyOrder.objects.create(
+                    config=self.config,
+                    buyer=self.buyer,
+                )
+                self.assertFalse(mock_task.apply_async.called)
+
+            self.assertEqual(len(callbacks), 1)
+            self.assertFalse(mock_task.apply_async.called)
+
+            callbacks[0]()
+
+        mock_task.apply_async.assert_called_once_with(
+            args=(buy_order.id,),
+            countdown=2,
+            expires=300,
+        )
 
 
 class NotificationDeduplicationTest(TestCase):

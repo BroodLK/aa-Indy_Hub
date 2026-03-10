@@ -2100,12 +2100,12 @@ def _build_buy_stock_location_label(
     return ", ".join(labels).strip() or str(fallback_label or "").strip()
 
 
-def _get_corp_blueprint_variant_by_item_id(
+def _get_corp_blueprint_details_by_item_id(
     *,
     config: MaterialExchangeConfig,
     item_ids: set[int] | None = None,
-) -> dict[int, str]:
-    """Return blueprint variant by corp blueprint item_id: bpc/bpo."""
+) -> dict[int, dict[str, object]]:
+    """Return corp blueprint metadata by item_id (variant and optional runs)."""
     try:
         queryset = Blueprint.objects.filter(
             owner_kind=Blueprint.OwnerKind.CORPORATION,
@@ -2113,11 +2113,11 @@ def _get_corp_blueprint_variant_by_item_id(
         )
         if item_ids:
             queryset = queryset.filter(item_id__in=[int(iid) for iid in item_ids if int(iid) > 0])
-        rows = queryset.values("item_id", "bp_type", "quantity")
+        rows = queryset.values("item_id", "bp_type", "quantity", "runs")
     except Exception:
         return {}
 
-    variants_by_item_id: dict[int, str] = {}
+    details_by_item_id: dict[int, dict[str, object]] = {}
     for row in rows:
         try:
             item_id = int(row.get("item_id") or 0)
@@ -2131,20 +2131,47 @@ def _get_corp_blueprint_variant_by_item_id(
             quantity = int(row.get("quantity") or 0)
         except (TypeError, ValueError):
             quantity = 0
+        try:
+            runs = int(row.get("runs") or 0)
+        except (TypeError, ValueError):
+            runs = 0
 
+        variant = ""
         if bp_type == str(Blueprint.BPType.COPY):
-            variants_by_item_id[item_id] = "bpc"
-            continue
-        if bp_type == str(Blueprint.BPType.ORIGINAL):
-            variants_by_item_id[item_id] = "bpo"
-            continue
-        if quantity == -2 or quantity > 0:
-            variants_by_item_id[item_id] = "bpc"
-            continue
-        if quantity == -1:
-            variants_by_item_id[item_id] = "bpo"
+            variant = "bpc"
+        elif bp_type == str(Blueprint.BPType.ORIGINAL):
+            variant = "bpo"
+        elif quantity == -2 or quantity > 0:
+            variant = "bpc"
+        elif quantity == -1:
+            variant = "bpo"
 
-    return variants_by_item_id
+        if not variant:
+            continue
+
+        details: dict[str, object] = {"variant": variant}
+        if variant == "bpc" and runs > 0:
+            details["runs"] = int(runs)
+        details_by_item_id[item_id] = details
+
+    return details_by_item_id
+
+
+def _get_corp_blueprint_variant_by_item_id(
+    *,
+    config: MaterialExchangeConfig,
+    item_ids: set[int] | None = None,
+) -> dict[int, str]:
+    """Return blueprint variant by corp blueprint item_id: bpc/bpo."""
+    details_by_item_id = _get_corp_blueprint_details_by_item_id(
+        config=config,
+        item_ids=item_ids,
+    )
+    return {
+        int(item_id): str(details.get("variant") or "").strip().lower()
+        for item_id, details in details_by_item_id.items()
+        if str(details.get("variant") or "").strip().lower() in {"bpc", "bpo"}
+    }
 
 
 def _get_buy_location_scoped_corp_assets(
@@ -2380,6 +2407,7 @@ def _build_buy_material_rows(
     buy_name_map: dict[int, str],
     fallback_location_label: str,
     blueprint_variant_by_item_id: dict[int, str] | None = None,
+    blueprint_runs_by_item_id: dict[int, int] | None = None,
 ) -> list[dict]:
     """Build buy-table rows, grouping corp assets by containers when possible."""
 
@@ -2429,6 +2457,11 @@ def _build_buy_material_rows(
         int(item_id): str(variant or "").strip().lower()
         for item_id, variant in (blueprint_variant_by_item_id or {}).items()
         if int(item_id) > 0 and str(variant or "").strip().lower() in {"bpc", "bpo"}
+    }
+    explicit_runs_by_item_id = {
+        int(item_id): int(runs or 0)
+        for item_id, runs in (blueprint_runs_by_item_id or {}).items()
+        if int(item_id) > 0 and int(runs or 0) > 0
     }
 
     def next_row_index() -> int:
@@ -2530,6 +2563,7 @@ def _build_buy_material_rows(
         type_id: int,
         quantity: int,
         blueprint_variant: str,
+        bpc_runs: int | None,
         source_structure_ids: list[int],
         ancestors: list[str],
         depth: int,
@@ -2564,6 +2598,14 @@ def _build_buy_material_rows(
         )
         row_idx = next_row_index()
         variant_token = str(item_meta.get("blueprint_variant") or "") or "std"
+        clean_bpc_runs: int | None = None
+        if str(item_meta.get("blueprint_variant") or "").strip().lower() == "bpc":
+            try:
+                parsed_runs = int(bpc_runs or 0)
+            except (TypeError, ValueError):
+                parsed_runs = 0
+            if parsed_runs > 0:
+                clean_bpc_runs = int(parsed_runs)
 
         return {
             "row_kind": "item",
@@ -2571,6 +2613,7 @@ def _build_buy_material_rows(
             "type_id": int(type_id),
             "display_type_name": str(item_meta.get("display_type_name") or ""),
             "blueprint_variant": str(item_meta.get("blueprint_variant") or ""),
+            "bpc_runs": clean_bpc_runs,
             "quantity": int(quantity),
             "reserved_quantity": int(reserved_qty),
             "available_quantity": int(available_qty),
@@ -2602,7 +2645,7 @@ def _build_buy_material_rows(
         container_key = f"c{container_item_id}"
         next_ancestors = [*ancestors, container_key]
         nested_container_assets: list[dict] = []
-        grouped_child_items: dict[tuple[int, str, tuple[int, ...]], int] = {}
+        grouped_child_items: dict[tuple[int, str, int, tuple[int, ...]], int] = {}
 
         for child in children:
             try:
@@ -2623,6 +2666,9 @@ def _build_buy_material_rows(
             if child_qty <= 0:
                 continue
             child_variant = _resolve_asset_blueprint_variant(child)
+            child_runs = 0
+            if child_variant == "bpc" and child_item_id > 0:
+                child_runs = int(explicit_runs_by_item_id.get(child_item_id, 0) or 0)
             child_source_ids: list[int] = []
             for raw_source_id in child.get("source_structure_ids", []) or []:
                 try:
@@ -2635,6 +2681,7 @@ def _build_buy_material_rows(
             group_key = (
                 int(child_type_id),
                 str(child_variant or ""),
+                int(child_runs),
                 tuple(sorted(child_source_ids)),
             )
             grouped_child_items[group_key] = grouped_child_items.get(group_key, 0) + int(child_qty)
@@ -2649,15 +2696,17 @@ def _build_buy_material_rows(
                 ).lower(),
                 int(pair[0][0]),
                 str(pair[0][1] or ""),
-                ",".join(str(x) for x in pair[0][2]),
+                int(pair[0][2] or 0),
+                ",".join(str(x) for x in pair[0][3]),
             ),
         )
         for grouped_key, grouped_qty in grouped_items_sorted:
-            child_type_id, child_variant, source_ids_tuple = grouped_key
+            child_type_id, child_variant, child_runs, source_ids_tuple = grouped_key
             child_row = build_item_row(
                 type_id=child_type_id,
                 quantity=int(grouped_qty),
                 blueprint_variant=child_variant,
+                bpc_runs=child_runs,
                 source_structure_ids=list(source_ids_tuple),
                 ancestors=next_ancestors,
                 depth=depth + 1,
@@ -2709,7 +2758,7 @@ def _build_buy_material_rows(
         return [container_row, *child_rows]
 
     root_container_assets: list[dict] = []
-    root_items_by_key: dict[tuple[int, str, tuple[int, ...]], int] = {}
+    root_items_by_key: dict[tuple[int, str, int, tuple[int, ...]], int] = {}
     for asset in scoped_assets:
         try:
             item_id = int(asset.get("item_id") or 0)
@@ -2737,6 +2786,9 @@ def _build_buy_material_rows(
         if qty <= 0:
             continue
         blueprint_variant = _resolve_asset_blueprint_variant(asset)
+        bpc_runs = 0
+        if blueprint_variant == "bpc" and item_id > 0:
+            bpc_runs = int(explicit_runs_by_item_id.get(item_id, 0) or 0)
 
         source_ids: list[int] = []
         for raw_source_id in asset.get("source_structure_ids", []) or []:
@@ -2746,7 +2798,12 @@ def _build_buy_material_rows(
                 continue
             if source_id > 0 and source_id not in source_ids:
                 source_ids.append(source_id)
-        key = (int(type_id), str(blueprint_variant or ""), tuple(sorted(source_ids)))
+        key = (
+            int(type_id),
+            str(blueprint_variant or ""),
+            int(bpc_runs),
+            tuple(sorted(source_ids)),
+        )
         root_items_by_key[key] = root_items_by_key.get(key, 0) + int(qty)
 
     rows: list[dict] = []
@@ -2766,15 +2823,17 @@ def _build_buy_material_rows(
             ).lower(),
             int(pair[0][0]),
             str(pair[0][1] or ""),
-            ",".join(str(x) for x in pair[0][2]),
+            int(pair[0][2] or 0),
+            ",".join(str(x) for x in pair[0][3]),
         ),
     )
     for root_key, qty in root_items_sorted:
-        type_id, blueprint_variant, source_ids_tuple = root_key
+        type_id, blueprint_variant, bpc_runs, source_ids_tuple = root_key
         row = build_item_row(
             type_id=type_id,
             quantity=int(qty),
             blueprint_variant=blueprint_variant,
+            bpc_runs=bpc_runs,
             source_structure_ids=list(source_ids_tuple),
             ancestors=[],
             depth=0,
@@ -4401,16 +4460,28 @@ def material_exchange_buy(request, tokens):
                 scoped_item_id = 0
             if scoped_item_id > 0:
                 scoped_item_ids.add(scoped_item_id)
-        blueprint_variant_by_item_id = _get_corp_blueprint_variant_by_item_id(
+        blueprint_details_by_item_id = _get_corp_blueprint_details_by_item_id(
             config=config,
             item_ids=scoped_item_ids,
         )
+        blueprint_variant_by_item_id = {
+            int(item_id): str(details.get("variant") or "").strip().lower()
+            for item_id, details in blueprint_details_by_item_id.items()
+            if str(details.get("variant") or "").strip().lower() in {"bpc", "bpo"}
+        }
+        blueprint_runs_by_item_id = {
+            int(item_id): int(details.get("runs") or 0)
+            for item_id, details in blueprint_details_by_item_id.items()
+            if str(details.get("variant") or "").strip().lower() == "bpc"
+            and int(details.get("runs") or 0) > 0
+        }
         stock_rows = _build_buy_material_rows(
             scoped_assets=scoped_buy_assets,
             stock_meta_by_type=stock_meta_by_type,
             buy_name_map=buy_name_map,
             fallback_location_label=buy_locations_label,
             blueprint_variant_by_item_id=blueprint_variant_by_item_id,
+            blueprint_runs_by_item_id=blueprint_runs_by_item_id,
         )
 
     if not stock_rows:
@@ -4427,6 +4498,7 @@ def material_exchange_buy(request, tokens):
                         or ""
                     ),
                     "blueprint_variant": str(getattr(stock_item, "blueprint_variant", "") or ""),
+                    "bpc_runs": None,
                     "quantity": int(stock_item.quantity),
                     "reserved_quantity": int(stock_item.reserved_quantity),
                     "available_quantity": int(stock_item.available_quantity),
