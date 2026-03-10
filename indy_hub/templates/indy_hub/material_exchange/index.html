@@ -146,17 +146,14 @@
                                     {% endif %}
                                     <span class="me-order-progress-points" aria-hidden="true">
                                         {% for step in order.timeline_breadcrumb %}
-                                        <span class="me-order-progress-point {% if step.completed %}done{% endif %}{% if step.status == order.progress_current_label %} current{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
+                                        <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
                                         {% endfor %}
                                     </span>
                                 </span>
-                                <span class="me-order-breadcrumb-inline" aria-live="polite">
-                                    {% if order.progress_current_label %}
-                                    <span class="me-order-crumb-inline current">
-                                        <span class="me-order-crumb-prefix">{% trans "Waiting for:" %}</span>
-                                        <span class="me-order-crumb-value">{{ order.progress_current_label }}</span>
-                                    </span>
-                                    {% endif %}
+                                <span class="me-order-breadcrumb-inline" aria-hidden="true">
+                                    {% for step in order.timeline_breadcrumb %}
+                                    <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
+                                    {% endfor %}
                                 </span>
                             </span>
                         </div>
@@ -243,17 +240,14 @@
                                 {% endif %}
                                 <span class="me-order-progress-points" aria-hidden="true">
                                     {% for step in order.timeline_breadcrumb %}
-                                    <span class="me-order-progress-point {% if step.completed %}done{% endif %}{% if step.status == order.progress_current_label %} current{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
+                                    <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
                                     {% endfor %}
                                 </span>
                             </span>
-                            <span class="me-order-breadcrumb-inline" aria-live="polite">
-                                {% if order.progress_current_label %}
-                                <span class="me-order-crumb-inline current">
-                                    <span class="me-order-crumb-prefix">{% trans "Waiting for:" %}</span>
-                                    <span class="me-order-crumb-value">{{ order.progress_current_label }}</span>
-                                </span>
-                                {% endif %}
+                            <span class="me-order-breadcrumb-inline" aria-hidden="true">
+                                {% for step in order.timeline_breadcrumb %}
+                                <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
+                                {% endfor %}
                             </span>
                         </span>
                     </div>
@@ -318,17 +312,14 @@
                                 {% endif %}
                                 <span class="me-order-progress-points" aria-hidden="true">
                                     {% for step in order.timeline_breadcrumb %}
-                                    <span class="me-order-progress-point {% if step.completed %}done{% endif %}{% if step.status == order.progress_current_label %} current{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
+                                    <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
                                     {% endfor %}
                                 </span>
                             </span>
-                            <span class="me-order-breadcrumb-inline" aria-live="polite">
-                                {% if order.progress_current_label %}
-                                <span class="me-order-crumb-inline current">
-                                    <span class="me-order-crumb-prefix">{% trans "Waiting for:" %}</span>
-                                    <span class="me-order-crumb-value">{{ order.progress_current_label }}</span>
-                                </span>
-                                {% endif %}
+                            <span class="me-order-breadcrumb-inline" aria-hidden="true">
+                                {% for step in order.timeline_breadcrumb %}
+                                <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
+                                {% endfor %}
                             </span>
                         </span>
                     </div>

@@ -1120,64 +1120,68 @@ html[data-theme="darkly"] .me-user-order-row.status-anomaly_rejected {
 }
 
 .me-order-breadcrumb-inline {
-    display: flex;
-    align-items: center;
+    position: relative;
     min-width: 0;
-    min-height: 1.6rem;
+    min-height: 1.95rem;
+    margin-top: 2px;
 }
 
 .me-order-crumb-inline {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    min-width: 0;
-    max-width: 100%;
-    padding: 0.2rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid rgba(15, 23, 42, 0.12);
-    background: rgba(15, 23, 42, 0.06);
-    font-size: 0.72rem;
-    font-weight: 600;
-    color: #334155;
-    line-height: 1.1;
-    white-space: nowrap;
-}
-
-.me-order-crumb-prefix {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    display: inline-block;
+    max-width: 28%;
+    font-size: 0.67rem;
     font-weight: 700;
-    color: #475569;
-    flex: 0 0 auto;
-}
-
-.me-order-crumb-value {
-    min-width: 0;
-    color: #0f172a;
+    color: #1d4ed8;
+    line-height: 1.15;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    text-align: center;
+    pointer-events: none;
+    text-shadow: 0 0 1px rgba(15, 23, 42, 0.22);
+}
+
+.me-order-crumb-inline.start {
+    left: 0 !important;
+    transform: none;
+    text-align: left;
+}
+
+.me-order-crumb-inline.end {
+    left: 100% !important;
+    transform: translateX(-100%);
+    text-align: right;
 }
 
 .me-order-crumb-inline.done {
-    color: var(--bs-success);
+    color: #475569;
+}
+
+.me-order-crumb-inline.pending {
+    color: #1d4ed8;
 }
 
 .me-order-crumb-inline.current {
-    color: #334155;
+    color: #dc2626;
 }
 
 html[data-theme="darkly"] .me-order-crumb-inline {
-    border-color: rgba(148, 163, 184, 0.45);
-    background: rgba(15, 23, 42, 0.35);
-    color: #cbd5e1;
+    text-shadow: 0 0 2px rgba(15, 23, 42, 0.55);
 }
 
-html[data-theme="darkly"] .me-order-crumb-prefix {
-    color: #93c5fd;
-}
-
-html[data-theme="darkly"] .me-order-crumb-value,
-html[data-theme="darkly"] .me-order-crumb-inline.current {
+html[data-theme="darkly"] .me-order-crumb-inline.done {
     color: #f8fafc;
+}
+
+html[data-theme="darkly"] .me-order-crumb-inline.pending {
+    color: #60a5fa;
+}
+
+html[data-theme="darkly"] .me-order-crumb-inline.current {
+    color: #f87171;
 }
 
 html[data-theme="darkly"] .me-user-order-ref {
@@ -1424,8 +1428,15 @@ html[data-theme="darkly"] .me-order-progress-compact .step {
 }
 
 .me-order-progress-point.done {
-    border-color: rgba(var(--bs-success-rgb), 0.95);
-    background: var(--bs-success);
+    border-color: rgba(255, 255, 255, 0.98);
+    background: #ffffff;
+    box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.45);
+}
+
+.me-order-progress-point.pending {
+    border-color: rgba(37, 99, 235, 0.95);
+    background: #2563eb;
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.28);
 }
 
 .me-order-progress-point.current {
@@ -1480,6 +1491,18 @@ html[data-theme="darkly"] .me-order-progress-point {
     background: #1e293b;
 }
 
+html[data-theme="darkly"] .me-order-progress-point.done {
+    border-color: rgba(255, 255, 255, 0.98);
+    background: #ffffff;
+    box-shadow: 0 0 0 1px rgba(241, 245, 249, 0.24);
+}
+
+html[data-theme="darkly"] .me-order-progress-point.pending {
+    border-color: rgba(96, 165, 250, 0.95);
+    background: #60a5fa;
+    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.3);
+}
+
 html[data-theme="darkly"] .me-order-progress-point.current {
     border-color: rgba(248, 113, 113, 0.95);
     background: #ef4444;
@@ -1514,11 +1537,15 @@ html[data-theme="darkly"] .me-order-progress-active-segment {
 }
 
 html[data-theme="darkly"] .me-order-crumb-inline {
-    color: rgba(226, 232, 240, 0.75);
+    color: #60a5fa;
 }
 
 html[data-theme="darkly"] .me-order-crumb-inline.done {
-    color: #86efac;
+    color: #f8fafc;
+}
+
+html[data-theme="darkly"] .me-order-crumb-inline.current {
+    color: #f87171;
 }
 
 @media (max-width: 1200px) {
@@ -1533,7 +1560,7 @@ html[data-theme="darkly"] .me-order-crumb-inline.done {
         grid-template-columns: minmax(180px, 280px) minmax(220px, 1fr);
     }
     .me-order-crumb-inline {
-        max-width: 68%;
+        max-width: 34%;
     }
 }
 
