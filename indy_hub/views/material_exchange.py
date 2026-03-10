@@ -315,10 +315,8 @@ def _attach_order_progress_data(order, order_kind: str, perspective: str = "user
             next_step_position = order.timeline_breadcrumb[current_step_index + 1].get(
                 "position_percent", current_step_position
             )
-            order.progress_active_start = current_step_position
-            order.progress_active_width = max(
-                0, round(next_step_position - current_step_position, 2)
-            )
+            order.progress_active_start = 0
+            order.progress_active_width = max(0, round(next_step_position, 2))
     else:
         order.progress_current_label = ""
 
@@ -2467,6 +2465,7 @@ def _build_buy_material_rows(
         for item_id, runs in (blueprint_runs_by_item_id or {}).items()
         if int(item_id) > 0 and int(runs or 0) > 0
     }
+    container_name_by_key: dict[str, str] = {}
 
     def next_row_index() -> int:
         nonlocal row_index
@@ -2610,6 +2609,13 @@ def _build_buy_material_rows(
                 parsed_runs = 0
             if parsed_runs > 0:
                 clean_bpc_runs = int(parsed_runs)
+        container_names = [
+            str(container_name_by_key.get(str(container_key), "")).strip()
+            for container_key in ancestors
+        ]
+        container_name_path = " > ".join(
+            container_name for container_name in container_names if container_name
+        )
 
         return {
             "row_kind": "item",
@@ -2630,6 +2636,7 @@ def _build_buy_material_rows(
             "buy_location_label": location_label,
             "depth": int(depth),
             "container_path": ",".join(ancestors),
+            "container_name_path": str(container_name_path),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
             "form_quantity_field_name": f"qty_{int(type_id)}_{variant_token}_{row_idx}",
         }
@@ -2647,6 +2654,8 @@ def _build_buy_material_rows(
             return []
 
         container_key = f"c{container_item_id}"
+        container_name = _container_display_name(asset)
+        container_name_by_key[container_key] = container_name
         next_ancestors = [*ancestors, container_key]
         nested_container_assets: list[dict] = []
         grouped_child_items: dict[tuple[int, str, int, tuple[int, ...]], int] = {}
@@ -2750,7 +2759,7 @@ def _build_buy_material_rows(
             "row_kind": "container",
             "row_index": next_row_index(),
             "container_key": container_key,
-            "container_name": _container_display_name(asset),
+            "container_name": container_name,
             "container_type_id": container_type_id if container_type_id > 0 else None,
             "container_icon_url": container_icon_url,
             "container_icon_fallback_url": container_icon_fallback_url,

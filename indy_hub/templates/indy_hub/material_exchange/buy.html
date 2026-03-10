@@ -241,7 +241,7 @@
                                                 <div class="small text-muted">{% trans "Mixed Blueprint Stock (BPO/BPC)" %}</div>
                                                 {% endif %}
                                                 <div class="small text-muted">
-                                                    {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}
+                                                    {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}{% if item.container_name_path %} &middot; {{ item.container_name_path }}{% endif %}
                                                 </div>
                                                 {% if item.has_buy_price_override %}
                                                 <div class="small text-info">
