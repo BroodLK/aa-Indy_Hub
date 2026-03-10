@@ -1568,13 +1568,32 @@ def _asset_is_blueprint(asset: dict) -> bool:
         asset.get("is_blueprint_copy", False)
     ):
         return True
+    explicit_variant = str(asset.get("blueprint_variant") or "").strip().lower()
+    if explicit_variant in {"bpc", "bpo"}:
+        return True
     try:
         raw_quantity = int(asset.get("quantity", 0) or 0)
-        # In asset list ESI, BPO/BPC are singletons and often have quantity = -1 or -2
-        # In corporate blueprint ESI, they are often represented as -1 (BPO) or >0 (runs)
-        return raw_quantity == -1 or raw_quantity == -2 or raw_quantity > 0
     except (TypeError, ValueError):
-        return False
+        raw_quantity = 0
+
+    # ESI asset rows encode blueprint singletons as -1 (BPO) or -2 (BPC).
+    # Positive quantities are normal stackable items and must not be treated as blueprints.
+    if raw_quantity in {-1, -2}:
+        return True
+
+    bp_type = str(asset.get("bp_type") or "").strip().lower()
+    if bp_type in {"copy", "original", "bpc", "bpo"}:
+        return True
+
+    try:
+        runs = int(asset.get("runs", 0) or 0)
+    except (TypeError, ValueError):
+        runs = 0
+    if runs == -1 or runs > 0:
+        return True
+
+    type_name_lower = str(asset.get("type_name") or "").strip().lower()
+    return "blueprint" in type_name_lower
 
 
 def _asset_blueprint_variant(asset: dict) -> str:

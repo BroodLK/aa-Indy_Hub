@@ -12,6 +12,7 @@ from django.utils import timezone
 # AA Example App
 from indy_hub.models import MaterialExchangeConfig
 from indy_hub.views.material_exchange import (
+    _asset_is_blueprint,
     _build_sell_material_rows,
     _fetch_user_assets_for_structure_data,
     material_exchange_sell,
@@ -32,6 +33,28 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         )
         self.structure_id = 60003760
         self.factory = RequestFactory()
+
+    def test_asset_is_blueprint_does_not_treat_positive_stacks_as_blueprints(self):
+        self.assertFalse(
+            _asset_is_blueprint(
+                {
+                    "type_id": 34,
+                    "quantity": 5000,
+                    "is_singleton": False,
+                    "is_blueprint": False,
+                }
+            )
+        )
+        self.assertTrue(
+            _asset_is_blueprint(
+                {
+                    "type_id": 77777,
+                    "quantity": -2,
+                    "is_singleton": True,
+                    "is_blueprint": False,
+                }
+            )
+        )
 
     @patch("indy_hub.views.material_exchange._get_ship_type_ids", return_value={999})
     @patch("indy_hub.views.material_exchange.get_user_assets_cached")
