@@ -136,8 +136,8 @@
 .order-progress-modern .progress-track {
     position: absolute;
     top: 16px;
-    left: 2%;
-    right: 2%;
+    left: 14px;
+    right: 14px;
     height: 6px;
     background: rgba(var(--bs-secondary-rgb), 0.25);
     border-radius: 999px;
@@ -146,12 +146,13 @@
 .order-progress-modern .progress-fill {
     position: absolute;
     top: 16px;
-    left: 2%;
+    left: 14px;
     height: 6px;
     border-radius: 999px;
     background: linear-gradient(90deg, rgba(var(--bs-info-rgb), 0.8) 0%, rgba(var(--bs-success-rgb), 0.9) 100%);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
     transition: width 0.25s ease;
+    width: calc(var(--progress-width, 0) * (100% - 28px) / 100);
 }
 
 .order-progress-modern .steps {

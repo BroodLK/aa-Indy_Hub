@@ -200,6 +200,7 @@ class Blueprint(models.Model):
         quantity: int | None,
         type_name: str | None,
         type_id: int | None,
+        runs: int | None = None,
     ) -> str:
         if type_id and is_reaction_blueprint(type_id):
             return cls.BPType.REACTION
@@ -214,6 +215,10 @@ class Blueprint(models.Model):
             return cls.BPType.ORIGINAL
         if quantity and quantity > 0:
             return cls.BPType.COPY
+        if runs and runs > 0:
+            return cls.BPType.COPY
+        if runs == -1:
+            return cls.BPType.ORIGINAL
 
         return cls.BPType.ORIGINAL
 
@@ -222,6 +227,7 @@ class Blueprint(models.Model):
             quantity=self.quantity,
             type_name=self.type_name,
             type_id=self.type_id,
+            runs=self.runs,
         )
         if self.bp_type == "STACK":
             self.bp_type = self.BPType.COPY

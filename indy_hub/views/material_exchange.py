@@ -2141,9 +2141,13 @@ def _get_corp_blueprint_details_by_item_id(
             variant = "bpc"
         elif bp_type == str(Blueprint.BPType.ORIGINAL):
             variant = "bpo"
-        elif quantity == -2 or quantity > 0:
+        elif quantity == -2 or (quantity > 0 and bp_type != str(Blueprint.BPType.ORIGINAL)):
+            variant = "bpc"
+        elif runs > 0 and bp_type != str(Blueprint.BPType.ORIGINAL):
             variant = "bpc"
         elif quantity == -1:
+            variant = "bpo"
+        elif runs == -1:
             variant = "bpo"
 
         if not variant:

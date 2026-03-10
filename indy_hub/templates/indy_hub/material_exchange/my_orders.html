@@ -104,9 +104,9 @@
                         <div class="value text-warning">{{ item.total_price|floatformat:2|intcomma }} ISK</div>
                     </div>
 
-                    <div class="order-progress-modern">
+                    <div class="order-progress-modern" style="--progress-width: {{ item.progress_width }};">
                         <div class="progress-track"></div>
-                        <div class="progress-fill" style="width: {{ item.progress_width }}%;"></div>
+                        <div class="progress-fill"></div>
                         <div class="steps">
                             {% for step in item.timeline_breadcrumb %}
                                 <span class="step {% if step.completed %}done{% endif %}" title="{{ step.status }}">

@@ -374,7 +374,7 @@ def _build_timeline_breadcrumb(order, order_type):
                 "status": _("Auth Validation"),
                 "completed": order.status in ["validated", "completed"],
                 "icon": "fa-check-circle",
-                "color": "info",
+                "color": "success",
             }
         )
 
@@ -414,7 +414,7 @@ def _build_timeline_breadcrumb(order, order_type):
                 "status": _("Auth Validation"),
                 "completed": order.status in ["validated", "completed"],
                 "icon": "fa-check-circle",
-                "color": "info",
+                "color": "success",
             }
         )
 
