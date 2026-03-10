@@ -150,13 +150,28 @@ def _fetch_character_skill_levels(
         raise ESIUnmodifiedError("ESI skills operation unavailable")
     try:
         request_kwargs = {"If-None-Match": ""} if force_refresh else {}
-        payload = operation_fn(
+        result_obj = operation_fn(
             character_id=character_id,
             token=token,
             **request_kwargs,
-        ).results()
-    except HTTPNotModified as exc:
-        raise ESIUnmodifiedError("ESI skills not modified") from exc
+        )
+        payload = result_obj.results()
+    except HTTPNotModified:
+        # 304 means data hasn't changed. Try to get cached data from django-esi.
+        try:
+            result_obj = operation_fn(
+                character_id=character_id,
+                token=token,
+                **request_kwargs,
+            )
+            payload = result_obj.results(use_cache=True)
+        except Exception as cache_exc:
+            logger.debug(
+                "Failed to retrieve cached skills for character %s after 304: %s",
+                character_id,
+                cache_exc,
+            )
+            raise ESIUnmodifiedError("ESI skills not modified and no cache available") from cache_exc
     except Exception as exc:
         exc_text = str(exc)
         if "GetCharactersCharacterIdSkills" in exc_text and "not found" in exc_text:

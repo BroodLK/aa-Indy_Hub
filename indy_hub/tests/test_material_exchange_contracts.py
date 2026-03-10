@@ -1241,6 +1241,66 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Surplus:", admin_message)
         self.assertIn("- 3 Isogen", admin_message)
 
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins"
+    )
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_validate_buy_order_pending_mismatch_notifies_immediately(
+        self, mock_user_chars, mock_notify_admins
+    ):
+        """Buy mismatch should notify admins immediately, even for newly created orders."""
+        # Standard Library
+        from datetime import timedelta
+
+        # Django
+        from django.core.cache import cache
+        from django.utils import timezone
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        buyer_char_id = 999999999
+        mock_user_chars.return_value = [buyer_char_id]
+
+        pending_contract = ESIContract.objects.create(
+            contract_id=227079149,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=0,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            title=self.buy_order.order_reference,
+            price=self.buy_order.total_price,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=pending_contract,
+            record_id=149,
+            type_id=self.buy_item.type_id,
+            quantity=self.buy_item.quantity + 2,
+            is_included=True,
+        )
+
+        cache.delete(
+            f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder"
+        )
+
+        validate_material_exchange_buy_orders()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
+        self.assertIn("Issue(s): items mismatch", self.buy_order.notes)
+        self.assertEqual(mock_notify_admins.call_count, 1)
+
+        admin_title = mock_notify_admins.call_args[0][1]
+        admin_message = mock_notify_admins.call_args[0][2]
+        self.assertIn("Buy Order Contract Issue Detected", admin_title)
+        self.assertIn("Issue(s): items mismatch", admin_message)
+
 
 class StructureNameMatchingTest(TestCase):
     """Tests for structure name-based matching instead of ID-only"""

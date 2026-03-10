@@ -467,7 +467,8 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
             operation = getattr(
                 character_resource, "get_characters_character_id", None
             ) or getattr(character_resource, "GetCharactersCharacterId")
-            char_info = operation(character_id=int(token.character_id)).results()
+            result_obj = operation(character_id=int(token.character_id))
+            char_info = result_obj.results()
             if isinstance(char_info, dict):
                 corp_id = char_info.get("corporation_id")
             else:
@@ -1197,10 +1198,11 @@ def _refresh_corp_divisions(corporation_id: int) -> tuple[dict[int, str], bool]:
             )
         if operation is None:
             raise AttributeError("Corporation divisions operation not available")
-        divisions_data = operation(
+        result_obj = operation(
             corporation_id=corporation_id,
             token=token_obj,
-        ).results()
+        )
+        divisions_data = result_obj.results()
         divisions_data = _coerce_payload(divisions_data)
         hangar_divisions = divisions_data.get("hangar", []) if divisions_data else []
 

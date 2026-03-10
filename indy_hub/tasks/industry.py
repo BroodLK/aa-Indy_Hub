@@ -419,13 +419,28 @@ def _fetch_character_skill_levels_with_token(
         request_kwargs = {}
         if force_refresh:
             request_kwargs["If-None-Match"] = ""
-        payload = operation_fn(
+        result_obj = operation_fn(
             character_id=token_obj.character_id,
             token=token_obj,
             **request_kwargs,
-        ).results()
-    except HTTPNotModified as exc:
-        raise ESIUnmodifiedError("ESI skills not modified") from exc
+        )
+        payload = result_obj.results()
+    except HTTPNotModified:
+        # 304 means data hasn't changed. Try to get cached data from django-esi.
+        try:
+            result_obj = operation_fn(
+                character_id=token_obj.character_id,
+                token=token_obj,
+                **request_kwargs,
+            )
+            payload = result_obj.results(use_cache=True)
+        except Exception as cache_exc:
+            logger.debug(
+                "Failed to retrieve cached skills for character %s after 304: %s",
+                token_obj.character_id,
+                cache_exc,
+            )
+            raise ESIUnmodifiedError("ESI skills not modified and no cache available") from cache_exc
     except Exception as exc:
         if "GetCharactersCharacterIdSkills" in str(exc):
             _SKILLS_OPERATION_UNAVAILABLE = True
@@ -437,13 +452,28 @@ def _fetch_character_skill_levels_with_token(
         if force_refresh:
             request_kwargs["If-None-Match"] = ""
         try:
-            payload = operation_fn(
+            result_obj = operation_fn(
                 character_id=token_obj.character_id,
                 token=access_token,
                 **request_kwargs,
-            ).results()
-        except HTTPNotModified as nested_exc:
-            raise ESIUnmodifiedError("ESI skills not modified") from nested_exc
+            )
+            payload = result_obj.results()
+        except HTTPNotModified:
+            # 304 means data hasn't changed. Try to get cached data from django-esi.
+            try:
+                result_obj = operation_fn(
+                    character_id=token_obj.character_id,
+                    token=access_token,
+                    **request_kwargs,
+                )
+                payload = result_obj.results(use_cache=True)
+            except Exception as cache_exc:
+                logger.debug(
+                    "Failed to retrieve cached skills for character %s after 304: %s",
+                    token_obj.character_id,
+                    cache_exc,
+                )
+                raise ESIUnmodifiedError("ESI skills not modified and no cache available") from cache_exc
         except Exception as nested_exc:
             if "GetCharactersCharacterIdSkills" in str(nested_exc):
                 _SKILLS_OPERATION_UNAVAILABLE = True

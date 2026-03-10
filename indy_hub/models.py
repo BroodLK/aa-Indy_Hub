@@ -2980,6 +2980,11 @@ class ESIContractItem(models.Model):
     record_id = models.BigIntegerField(help_text="ESI record_id for this item")
     type_id = models.IntegerField(db_index=True)
     quantity = models.BigIntegerField()
+    raw_quantity = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Raw quantity from ESI; -1 or -2 indicates item is inside a container",
+    )
     is_included = models.BooleanField(
         default=False, help_text="Item is given by issuer"
     )

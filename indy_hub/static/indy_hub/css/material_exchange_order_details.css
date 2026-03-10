@@ -278,7 +278,7 @@ html[data-theme="darkly"] .sell-order-detail .order-reference-display h1 {
 .timeline-item::before {
     content: '';
     position: absolute;
-    left: -29px;
+    left: -28px;
     top: 0;
     bottom: -2rem;
     width: 2px;
@@ -303,6 +303,11 @@ html[data-theme="darkly"] .sell-order-detail .order-reference-display h1 {
 }
 
 .timeline-icon.completed {
+    background: var(--bs-success);
+    color: white;
+}
+
+.timeline-icon.verified {
     background: var(--bs-success);
     color: white;
 }

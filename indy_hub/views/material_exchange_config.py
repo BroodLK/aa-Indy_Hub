@@ -2632,7 +2632,8 @@ def material_exchange_debug_tokens(request, corp_id, tokens):
             operation = getattr(
                 character_resource, "get_characters_character_id", None
             ) or getattr(character_resource, "GetCharactersCharacterId")
-            char_info = operation(character_id=char_id).results()
+            result_obj = operation(character_id=char_id)
+            char_info = result_obj.results()
             if isinstance(char_info, dict):
                 corp_value = char_info.get("corporation_id")
             else:

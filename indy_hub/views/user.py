@@ -305,35 +305,47 @@ def _fetch_character_corporation_roles_with_token(
         ) or getattr(character_resource, "GetCharactersCharacterIdRoles")
         try:
             request_kwargs = {"If-None-Match": ""} if force_refresh else {}
-            payload = operation_fn(
+            result_obj = operation_fn(
                 character_id=token_obj.character_id,
                 token=token_obj,
                 **request_kwargs,
-            ).results()
+            )
+            payload = result_obj.results()
         except Exception as exc:
             if "is not of type 'string'" not in str(exc):
                 raise
             access_token = token_obj.valid_access_token()
             request_kwargs = {"If-None-Match": ""} if force_refresh else {}
-            payload = operation_fn(
+            result_obj = operation_fn(
                 character_id=token_obj.character_id,
                 token=access_token,
                 **request_kwargs,
-            ).results()
+            )
+            payload = result_obj.results()
     except HTTPNotModified:
-        cached_roles = cache.get(cache_key)
-        if cached_roles:
-            return {str(role).upper() for role in cached_roles if role}
-        snapshot = CharacterRoles.objects.filter(
-            character_id=token_obj.character_id
-        ).first()
-        if snapshot:
-            return _roles_from_snapshot(snapshot)
-        logger.debug(
-            "ESI roles endpoint returned 304 without cache for character %s",
-            token_obj.character_id,
-        )
-        return None
+        # Try to get cached data from django-esi first
+        try:
+            result_obj = operation_fn(
+                character_id=token_obj.character_id,
+                token=token_obj,
+            )
+            payload = result_obj.results(use_cache=True)
+            # If we got here, we successfully retrieved cached data, continue to process it
+        except Exception:
+            # Fall back to our local cache/database
+            cached_roles = cache.get(cache_key)
+            if cached_roles:
+                return {str(role).upper() for role in cached_roles if role}
+            snapshot = CharacterRoles.objects.filter(
+                character_id=token_obj.character_id
+            ).first()
+            if snapshot:
+                return _roles_from_snapshot(snapshot)
+            logger.debug(
+                "ESI roles endpoint returned 304 without cache for character %s",
+                token_obj.character_id,
+            )
+            return None
     except (ESIErrorLimitException, ESIBucketLimitException) as exc:
         raise ESIClientError(
             "ESI rate limit reached while fetching roles for character "

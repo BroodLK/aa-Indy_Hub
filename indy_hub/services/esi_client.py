@@ -383,39 +383,26 @@ class ESIClient:
             operation_fn = self._resolve_operation(
                 "Universe", "get_universe_structures_structure_id"
             )
+            # Use etag by default to benefit from caching
             payload = self._call_authed(
                 token_obj,
                 character_id=int(character_id),
                 structure_id=int(structure_id),
                 endpoint=f"/universe/structures/{int(structure_id)}/",
                 scope="esi-universe.read_structures.v1",
-                results_kwargs={"use_etag": False},
                 operation=lambda token: operation_fn(
                     structure_id=int(structure_id),
                     token=token,
                 ),
             )
         except ESIUnmodifiedError:
-            try:
-                payload = self._call_authed(
-                    token_obj,
-                    character_id=int(character_id),
-                    structure_id=int(structure_id),
-                    endpoint=f"/universe/structures/{int(structure_id)}/",
-                    scope="esi-universe.read_structures.v1",
-                    results_kwargs={"use_etag": False, "force_refresh": True},
-                    operation=lambda token: operation_fn(
-                        structure_id=int(structure_id),
-                        token=token,
-                        **{"If-None-Match": ""},
-                    ),
-                )
-            except ESIForbiddenError:
-                raise
-            except ESITokenError:
-                return None
-            except ESIClientError:
-                return None
+            # If we get 304 and couldn't retrieve cached data, this is an error
+            logger.debug(
+                "Structure %s name not available (304 without cache) for character %s",
+                structure_id,
+                character_id,
+            )
+            return None
         except ESIForbiddenError:
             raise
         except ESITokenError:
@@ -469,11 +456,30 @@ class ESIClient:
             request_kwargs["If-None-Match"] = ""
 
         try:
-            payload = operation_fn(
+            result_obj = operation_fn(
                 **params, token=token_obj, **request_kwargs
-            ).results()
-        except HTTPNotModified as exc:
-            raise ESIUnmodifiedError(f"ESI returned 304 for {endpoint}") from exc
+            )
+            # When ESI returns 304, django-esi will handle it and return cached data
+            # if use_etag is True (default). We call results() to get either fresh or cached data.
+            payload = result_obj.results()
+        except HTTPNotModified:
+            # 304 means data hasn't changed. Try to get cached data from django-esi.
+            # According to django-esi docs, calling results() after 304 should return cached data.
+            try:
+                result_obj = operation_fn(
+                    **params, token=token_obj, **request_kwargs
+                )
+                payload = result_obj.results(use_cache=True)
+            except Exception as cache_exc:
+                logger.debug(
+                    "Failed to retrieve cached data for %s after 304: %s",
+                    endpoint,
+                    cache_exc,
+                )
+                # If we can't get cached data, raise the original error
+                raise ESIUnmodifiedError(
+                    f"ESI returned 304 for {endpoint} and no cached data available"
+                ) from cache_exc
         except (ESIErrorLimitException, ESIBucketLimitException) as exc:
             retry_after = getattr(exc, "reset", None)
             raise ESIRateLimitError(
@@ -896,11 +902,26 @@ class ESIClient:
         try:
             if results_kwargs is None:
                 results_kwargs = {}
-            return operation(token_obj).results(**results_kwargs)
-        except HTTPNotModified as exc:
-            raise ESIUnmodifiedError(
-                f"ESI returned 304 for {endpoint or 'request'}"
-            ) from exc
+            result_obj = operation(token_obj)
+            # When ESI returns 304, django-esi should return cached data
+            return result_obj.results(**results_kwargs)
+        except HTTPNotModified:
+            # 304 means data hasn't changed. Try to get cached data from django-esi.
+            try:
+                result_obj = operation(token_obj)
+                cache_kwargs = dict(results_kwargs or {})
+                cache_kwargs["use_cache"] = True
+                return result_obj.results(**cache_kwargs)
+            except Exception as cache_exc:
+                logger.debug(
+                    "Failed to retrieve cached data for %s after 304: %s",
+                    endpoint or "request",
+                    cache_exc,
+                )
+                # If we can't get cached data, raise the original error
+                raise ESIUnmodifiedError(
+                    f"ESI returned 304 for {endpoint or 'request'} and no cached data available"
+                ) from cache_exc
         except (ESIErrorLimitException, ESIBucketLimitException) as exc:
             retry_after = getattr(exc, "reset", None)
             raise ESIRateLimitError(

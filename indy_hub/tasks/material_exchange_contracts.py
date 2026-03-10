@@ -4,6 +4,7 @@ Handles ESI contract checking, validation, and PM notifications for sell/buy ord
 """
 
 # Standard Library
+import hashlib
 import re
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -510,6 +511,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
                             record_id=item_payload.get("record_id", 0),
                             type_id=item_payload.get("type_id", 0),
                             quantity=item_payload.get("quantity", 0),
+                            raw_quantity=item_payload.get("raw_quantity"),
                             is_included=item_payload.get("is_included", False),
                             is_singleton=item_payload.get("is_singleton", False),
                         )
@@ -1891,8 +1893,50 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     order.notes = new_notes
     order.save(update_fields=["notes", "updated_at"])
 
-    reminder_key = f"material_exchange:buy_order:{order.id}:contract_reminder"
     now = timezone.now()
+    immediate_issue_alert_sent = False
+    if issues:
+        issue_fingerprint = hashlib.sha1(
+            (
+                f"{order_ref}|{';'.join(issues)}|{last_items_mismatch_details or ''}"
+            ).encode("utf-8")
+        ).hexdigest()[:16]
+        issue_alert_key = (
+            f"material_exchange:buy_order:{order.id}:contract_issue:{issue_fingerprint}"
+        )
+        immediate_issue_alert_sent = cache.add(
+            issue_alert_key, now.timestamp(), 60 * 60 * 24
+        )
+
+    if immediate_issue_alert_sent:
+        _notify_material_exchange_admins(
+            config,
+            _("Buy Order Contract Issue Detected"),
+            _(
+                f"Buy order {order.order_reference} has a contract mismatch.\n"
+                f"Buyer: {order.buyer.username}\n"
+                f"Expected location(s): {expected_buy_locations_label}\n"
+                f"Expected price: {order.total_price:,.0f} ISK"
+                + (f"\nIssue(s): {'; '.join(issues)}" if issues else "")
+                + (
+                    f"\n\n{last_items_mismatch_details}"
+                    if last_items_mismatch_details
+                    else ""
+                )
+            ),
+            level="warning",
+            link=(
+                f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                f"?next=/indy_hub/material-exchange/%23admin-panel"
+            ),
+        )
+        emit_analytics_event(
+            task="material_exchange.buy_order_pending_mismatch",
+            label="issues_present_immediate",
+            result="warning",
+        )
+
+    reminder_key = f"material_exchange:buy_order:{order.id}:contract_reminder"
     reminder_set = cache.add(reminder_key, now.timestamp(), 60 * 60 * 24)
     if notes_changed:
         cache.set(reminder_key, now.timestamp(), 60 * 60 * 24)
@@ -1905,7 +1949,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         else:
             should_notify = True
 
-    if should_notify:
+    if should_notify and not immediate_issue_alert_sent:
         _notify_material_exchange_admins(
             config,
             _("Buy Order Pending: contract mismatch"),
@@ -2399,7 +2443,10 @@ def _matches_buy_order_criteria_db(
 
 
 def _contract_items_match_order_db(contract, order):
-    """Check if contract included items match order quantities by type."""
+    """Check if contract included items match order quantities by type.
+
+    Containers are excluded from the comparison.
+    """
     # Only validate included items (not requested)
     included_items = contract.items.filter(is_included=True)
     if not included_items.exists():
@@ -2422,6 +2469,24 @@ def _contract_items_match_order_db(contract, order):
     actual_by_type: dict[int, int] = {}
     for contract_item in included_items:
         type_id = int(contract_item.type_id)
+
+        # Skip containers - they shouldn't affect item matching
+        if _is_container_type(type_id):
+            logger.debug(
+                "Excluding container type_id %s from contract item matching",
+                type_id
+            )
+            continue
+
+        # Skip items that are inside containers (raw_quantity < 0)
+        if _is_item_inside_container(contract_item):
+            logger.debug(
+                "Excluding type_id %s from matching because it's inside a container (raw_quantity=%s)",
+                type_id,
+                getattr(contract_item, 'raw_quantity', None)
+            )
+            continue
+
         actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
             contract_item.quantity
         )
@@ -2429,10 +2494,69 @@ def _contract_items_match_order_db(contract, order):
     return expected_by_type == actual_by_type
 
 
+def _is_item_inside_container(contract_item) -> bool:
+    """Check if a contract item is inside a container based on raw_quantity.
+
+    In ESI contract items, items inside containers have raw_quantity of -1 or -2.
+    """
+    raw_qty = getattr(contract_item, 'raw_quantity', None)
+    if raw_qty is None:
+        return False
+    try:
+        return int(raw_qty) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _is_container_type(type_id: int) -> bool:
+    """Check if a type_id is a container that should be excluded from surplus/missing calculations."""
+    try:
+        from eve_sde.models import ItemType
+
+        # Common container group IDs in EVE SDE
+        CONTAINER_GROUP_IDS = {
+            12,   # Cargo Container
+            340,  # Freight Container
+            448,  # Audit Log Secure Container
+            649,  # Secure Cargo Container
+            1226, # Station Container
+            1246, # Station Vault Container
+            1248, # Station Warehouse Container
+        }
+
+        try:
+            item_type = ItemType.objects.filter(id=int(type_id)).first()
+            if not item_type:
+                return False
+
+            group_id = getattr(item_type, 'group_id', None) or getattr(item_type.group, 'id', None) if hasattr(item_type, 'group') else None
+            if group_id and int(group_id) in CONTAINER_GROUP_IDS:
+                return True
+
+            # Also check if the item name contains "Container" as a fallback
+            item_name = str(getattr(item_type, 'name', '') or '').lower()
+            if 'container' in item_name and 'packaged' not in item_name:
+                return True
+
+            return False
+        except Exception:
+            return False
+    except ImportError:
+        # If eve_sde is not available, fall back to name-based detection
+        try:
+            type_name = str(get_type_name(int(type_id)) or '').lower()
+            return 'container' in type_name and 'packaged' not in type_name
+        except Exception:
+            return False
+
+
 def _get_items_mismatch_breakdown(
     contract, order
 ) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
-    """Return (missing_by_type, surplus_by_type, type_names) for order vs contract items."""
+    """Return (missing_by_type, surplus_by_type, type_names) for order vs contract items.
+
+    Containers and their contents are excluded from surplus calculations.
+    """
     order_items = list(order.items.all())
     included_items = list(contract.items.filter(is_included=True))
 
@@ -2463,6 +2587,24 @@ def _get_items_mismatch_breakdown(
 
     for contract_item in included_items:
         type_id = int(contract_item.type_id)
+
+        # Skip containers - they shouldn't be counted as surplus
+        if _is_container_type(type_id):
+            logger.debug(
+                "Excluding container type_id %s from contract item comparison",
+                type_id
+            )
+            continue
+
+        # Skip items that are inside containers (raw_quantity < 0)
+        if _is_item_inside_container(contract_item):
+            logger.debug(
+                "Excluding type_id %s from surplus/missing because it's inside a container (raw_quantity=%s)",
+                type_id,
+                getattr(contract_item, 'raw_quantity', None)
+            )
+            continue
+
         actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
             contract_item.quantity
         )
