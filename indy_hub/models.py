@@ -1969,6 +1969,14 @@ class MaterialExchangeConfig(models.Model):
             "Value = list of market group IDs, or null to allow all groups."
         ),
     )
+    market_group_price_overrides = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Per-market-group pricing overrides. Each row can define fixed price and/or markup overrides "
+            "for sell and buy sides."
+        ),
+    )
 
     # Stock sync
     last_stock_sync = models.DateTimeField(blank=True, null=True)

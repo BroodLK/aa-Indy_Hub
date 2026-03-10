@@ -488,7 +488,7 @@
                                     <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
                                 </div>
                                 <p class="small text-muted mb-2">
-                                    {% trans "Use per-item markup formulas (same format as defaults) for specific items." %}
+                                    {% trans "Use per-item rules for specific items: either % of Jita, fixed ISK, or both (fixed ISK takes priority)." %}
                                 </p>
                                 <input type="hidden" name="item_price_overrides_json" id="itemPriceOverridesJson">
                                 <div class="row g-2 mb-2">
@@ -518,8 +518,8 @@
                                         <thead>
                                             <tr>
                                                 <th>{% trans "Item" %}</th>
-                                                <th class="text-end">{% trans "Sell override (% of Jita)" %}</th>
-                                                <th class="text-end">{% trans "Buy override (% of Jita)" %}</th>
+                                                <th class="text-end">{% trans "Sell Rule" %}</th>
+                                                <th class="text-end">{% trans "Buy Rule" %}</th>
                                                 <th class="text-end">{% trans "Action" %}</th>
                                             </tr>
                                         </thead>
@@ -531,7 +531,58 @@
                                     </table>
                                 </div>
                                 <div class="form-text mt-2">
-                                    {% trans "Each side uses the same format as defaults: markup % and base (Jita Buy/Sell). Leave blank to use global defaults." %}
+                                    {% trans "Each side supports both % of Jita (with base) and fixed ISK. Leave all fields blank to use global defaults." %}
+                                </div>
+                            </div>
+
+                            <hr class="my-3">
+
+                            <div>
+                                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                    <h6 class="fw-semibold mb-0">
+                                        <i class="fas fa-layer-group me-1 text-muted"></i>{% trans "Per-market-group price overrides" %}
+                                    </h6>
+                                    <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
+                                </div>
+                                <p class="small text-muted mb-2">
+                                    {% trans "Apply pricing rules to whole market groups (item-specific overrides still win)." %}
+                                </p>
+                                <input type="hidden" name="market_group_price_overrides_json" id="marketGroupPriceOverridesJson">
+                                <div class="row g-2 mb-2">
+                                    <div class="col-lg-12">
+                                        <label class="form-label fw-semibold mb-1" for="marketGroupOverrideChoice">{% trans "Choose market group path" %}</label>
+                                        <div class="input-group input-group-sm">
+                                            <select class="form-select form-select-sm" id="marketGroupOverrideChoice">
+                                                <option value="">{% trans "Select market group..." %}</option>
+                                            </select>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="addMarketGroupOverride">
+                                                <i class="fas fa-plus me-1"></i>{% trans "Add" %}
+                                            </button>
+                                        </div>
+                                        <div class="form-text">
+                                            {% trans "Paths are shown as Major -> Child -> Leaf (for example: Manufacture & Research -> Materials -> Atavum)." %}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle mb-0">
+                                        <thead>
+                                            <tr>
+                                                <th>{% trans "Market Group Path" %}</th>
+                                                <th class="text-end">{% trans "Sell Rule" %}</th>
+                                                <th class="text-end">{% trans "Buy Rule" %}</th>
+                                                <th class="text-end">{% trans "Action" %}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="marketGroupOverrideRows">
+                                            <tr id="marketGroupOverrideEmpty">
+                                                <td colspan="4" class="text-muted small">{% trans "No market-group overrides configured." %}</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="form-text mt-2">
+                                    {% trans "Group-level rules are fallback rules used when no per-item override exists." %}
                                 </div>
                             </div>
                         </div>
@@ -673,6 +724,8 @@
 {{ market_group_tree|json_script:"marketGroupTreeData" }}
 {{ item_price_overrides|json_script:"itemPriceOverridesData" }}
 {{ item_override_type_choices|json_script:"itemOverrideTypeChoicesData" }}
+{{ market_group_override_choices|json_script:"marketGroupOverrideChoicesData" }}
+{{ market_group_price_overrides|json_script:"marketGroupPriceOverridesData" }}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -1084,15 +1137,16 @@ document.addEventListener('DOMContentLoaded', function() {
             const sellBaseSelect = row.querySelector('.item-override-sell-base');
             const buyPercentInput = row.querySelector('.item-override-buy-percent');
             const buyBaseSelect = row.querySelector('.item-override-buy-base');
+            const sellFixedInput = row.querySelector('.item-override-sell-fixed');
+            const buyFixedInput = row.querySelector('.item-override-buy-fixed');
             const sellPercentValue = sellPercentInput ? String(sellPercentInput.value || '').trim() : '';
             const buyPercentValue = buyPercentInput ? String(buyPercentInput.value || '').trim() : '';
-
-            const sellLegacyValue = String(row.getAttribute('data-legacy-sell-price') || '').trim();
-            const buyLegacyValue = String(row.getAttribute('data-legacy-buy-price') || '').trim();
+            const sellFixedValue = sellFixedInput ? String(sellFixedInput.value || '').trim() : '';
+            const buyFixedValue = buyFixedInput ? String(buyFixedInput.value || '').trim() : '';
 
             const hasSellMarkup = !!sellPercentValue;
             const hasBuyMarkup = !!buyPercentValue;
-            if (!hasSellMarkup && !hasBuyMarkup && !sellLegacyValue && !buyLegacyValue) {
+            if (!hasSellMarkup && !hasBuyMarkup && !sellFixedValue && !buyFixedValue) {
                 return;
             }
 
@@ -1110,9 +1164,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 sell_markup_base_override: sellBaseValue || null,
                 buy_markup_percent_override: buyPercentValue || null,
                 buy_markup_base_override: buyBaseValue || null,
-                // Keep legacy fixed-price values only while markup fields are empty.
-                sell_price_override: hasSellMarkup ? null : (sellLegacyValue || null),
-                buy_price_override: hasBuyMarkup ? null : (buyLegacyValue || null),
+                sell_price_override: sellFixedValue || null,
+                buy_price_override: buyFixedValue || null,
             });
         });
         hiddenInput.value = JSON.stringify(payload);
@@ -1172,8 +1225,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const row = document.createElement('tr');
         row.setAttribute('data-type-id', String(normalizedTypeId));
         row.setAttribute('data-type-name', resolvedName);
-        row.setAttribute('data-legacy-sell-price', String(sellPriceOverride || '').trim());
-        row.setAttribute('data-legacy-buy-price', String(buyPriceOverride || '').trim());
         const normalizedSellBase = ['buy', 'sell'].includes(String(sellMarkupBaseOverride || '').toLowerCase())
             ? String(sellMarkupBaseOverride).toLowerCase()
             : 'buy';
@@ -1202,6 +1253,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     <option value="buy" ${normalizedSellBase === 'buy' ? 'selected' : ''}>Jita Buy</option>
                     <option value="sell" ${normalizedSellBase === 'sell' ? 'selected' : ''}>Jita Sell</option>
                 </select>
+                <div class="input-group input-group-sm mt-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end item-override-sell-fixed"
+                        min="0"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(sellPriceOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="Fixed ISK">
+                    <span class="input-group-text">ISK</span>
+                </div>
             </td>
             <td class="text-end">
                 <div class="input-group input-group-sm mb-1">
@@ -1220,6 +1282,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     <option value="buy" ${normalizedBuyBase === 'buy' ? 'selected' : ''}>Jita Buy</option>
                     <option value="sell" ${normalizedBuyBase === 'sell' ? 'selected' : ''}>Jita Sell</option>
                 </select>
+                <div class="input-group input-group-sm mt-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end item-override-buy-fixed"
+                        min="0"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(buyPriceOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="Fixed ISK">
+                    <span class="input-group-text">ISK</span>
+                </div>
             </td>
             <td class="text-end">
                 <button type="button" class="btn btn-outline-danger btn-sm item-override-remove">
@@ -1288,6 +1361,8 @@ document.addEventListener('DOMContentLoaded', function() {
             || event.target.classList.contains('item-override-buy-percent')
             || event.target.classList.contains('item-override-sell-base')
             || event.target.classList.contains('item-override-buy-base')
+            || event.target.classList.contains('item-override-sell-fixed')
+            || event.target.classList.contains('item-override-buy-fixed')
         ) {
             const row = event.target.closest('tr[data-type-id]');
             if (row) {
@@ -1320,6 +1395,332 @@ document.addEventListener('DOMContentLoaded', function() {
     updateEmptyState();
     serializeOverrides();
 
+    form.addEventListener('submit', function() {
+        serializeOverrides();
+    });
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    const rowsBody = document.getElementById('marketGroupOverrideRows');
+    const emptyRow = document.getElementById('marketGroupOverrideEmpty');
+    const choiceSelect = document.getElementById('marketGroupOverrideChoice');
+    const addBtn = document.getElementById('addMarketGroupOverride');
+    const hiddenInput = document.getElementById('marketGroupPriceOverridesJson');
+    const form = document.getElementById('configForm');
+    const choicesEl = document.getElementById('marketGroupOverrideChoicesData');
+    const initialOverridesEl = document.getElementById('marketGroupPriceOverridesData');
+
+    if (
+        !rowsBody ||
+        !choiceSelect ||
+        !addBtn ||
+        !hiddenInput ||
+        !form ||
+        !choicesEl
+    ) {
+        return;
+    }
+
+    let choices = [];
+    let initialOverrides = [];
+    try {
+        choices = JSON.parse(choicesEl.textContent || '[]');
+    } catch (e) {
+        choices = [];
+    }
+    try {
+        initialOverrides = JSON.parse(initialOverridesEl ? (initialOverridesEl.textContent || '[]') : '[]');
+    } catch (e) {
+        initialOverrides = [];
+    }
+
+    const groupPathById = new Map();
+    choices.forEach(choice => {
+        const groupId = parseInt(choice.id, 10);
+        if (!Number.isInteger(groupId) || groupId <= 0) {
+            return;
+        }
+        const groupPath = String(choice.path || '').trim() || `Group ${groupId}`;
+        groupPathById.set(String(groupId), groupPath);
+    });
+
+    Array.from(groupPathById.entries())
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .forEach(([groupId, groupPath]) => {
+            const option = document.createElement('option');
+            option.value = groupId;
+            option.textContent = `${groupPath} (${groupId})`;
+            choiceSelect.appendChild(option);
+        });
+
+    const findRowByGroupId = (groupId) => rowsBody.querySelector(`tr[data-group-id="${String(groupId)}"]`);
+
+    const updateEmptyState = () => {
+        const dataRows = rowsBody.querySelectorAll('tr[data-group-id]');
+        if (emptyRow) {
+            emptyRow.classList.toggle('d-none', dataRows.length > 0);
+        }
+    };
+
+    const syncBaseState = (row) => {
+        const sellPercentInput = row.querySelector('.group-override-sell-percent');
+        const sellBaseSelect = row.querySelector('.group-override-sell-base');
+        const buyPercentInput = row.querySelector('.group-override-buy-percent');
+        const buyBaseSelect = row.querySelector('.group-override-buy-base');
+        if (sellBaseSelect) {
+            const hasSellPercent = !!String(sellPercentInput ? sellPercentInput.value : '').trim();
+            sellBaseSelect.disabled = !hasSellPercent;
+            if (!hasSellPercent) {
+                sellBaseSelect.value = 'buy';
+            }
+        }
+        if (buyBaseSelect) {
+            const hasBuyPercent = !!String(buyPercentInput ? buyPercentInput.value : '').trim();
+            buyBaseSelect.disabled = !hasBuyPercent;
+            if (!hasBuyPercent) {
+                buyBaseSelect.value = 'buy';
+            }
+        }
+    };
+
+    const serializeOverrides = () => {
+        const payload = [];
+        const rows = rowsBody.querySelectorAll('tr[data-group-id]');
+        rows.forEach(row => {
+            const groupId = parseInt(row.getAttribute('data-group-id') || '', 10);
+            if (!Number.isInteger(groupId) || groupId <= 0) {
+                return;
+            }
+            const groupPath = String(row.getAttribute('data-group-path') || '').trim()
+                || groupPathById.get(String(groupId))
+                || `Group ${groupId}`;
+
+            const sellPercentInput = row.querySelector('.group-override-sell-percent');
+            const sellBaseSelect = row.querySelector('.group-override-sell-base');
+            const buyPercentInput = row.querySelector('.group-override-buy-percent');
+            const buyBaseSelect = row.querySelector('.group-override-buy-base');
+            const sellFixedInput = row.querySelector('.group-override-sell-fixed');
+            const buyFixedInput = row.querySelector('.group-override-buy-fixed');
+
+            const sellPercentValue = sellPercentInput ? String(sellPercentInput.value || '').trim() : '';
+            const buyPercentValue = buyPercentInput ? String(buyPercentInput.value || '').trim() : '';
+            const sellFixedValue = sellFixedInput ? String(sellFixedInput.value || '').trim() : '';
+            const buyFixedValue = buyFixedInput ? String(buyFixedInput.value || '').trim() : '';
+
+            const hasSellMarkup = !!sellPercentValue;
+            const hasBuyMarkup = !!buyPercentValue;
+            if (!hasSellMarkup && !hasBuyMarkup && !sellFixedValue && !buyFixedValue) {
+                return;
+            }
+
+            const sellBaseValue = hasSellMarkup && sellBaseSelect
+                ? String(sellBaseSelect.value || 'buy').trim().toLowerCase()
+                : null;
+            const buyBaseValue = hasBuyMarkup && buyBaseSelect
+                ? String(buyBaseSelect.value || 'buy').trim().toLowerCase()
+                : null;
+
+            payload.push({
+                market_group_id: groupId,
+                market_group_path: groupPath,
+                sell_markup_percent_override: sellPercentValue || null,
+                sell_markup_base_override: sellBaseValue || null,
+                buy_markup_percent_override: buyPercentValue || null,
+                buy_markup_base_override: buyBaseValue || null,
+                sell_price_override: sellFixedValue || null,
+                buy_price_override: buyFixedValue || null,
+            });
+        });
+        hiddenInput.value = JSON.stringify(payload);
+    };
+
+    const addRow = ({
+        marketGroupId,
+        marketGroupPath,
+        sellMarkupPercentOverride = '',
+        sellMarkupBaseOverride = 'buy',
+        buyMarkupPercentOverride = '',
+        buyMarkupBaseOverride = 'buy',
+        sellPriceOverride = '',
+        buyPriceOverride = '',
+    }) => {
+        const groupId = parseInt(marketGroupId, 10);
+        if (!Number.isInteger(groupId) || groupId <= 0) {
+            return;
+        }
+        const existingRow = findRowByGroupId(groupId);
+        if (existingRow) {
+            const focusInput = existingRow.querySelector('.group-override-sell-percent');
+            if (focusInput) {
+                focusInput.focus();
+            }
+            return;
+        }
+
+        const resolvedPath = String(marketGroupPath || '').trim()
+            || groupPathById.get(String(groupId))
+            || `Group ${groupId}`;
+        groupPathById.set(String(groupId), resolvedPath);
+
+        const normalizedSellBase = ['buy', 'sell'].includes(String(sellMarkupBaseOverride || '').toLowerCase())
+            ? String(sellMarkupBaseOverride).toLowerCase()
+            : 'buy';
+        const normalizedBuyBase = ['buy', 'sell'].includes(String(buyMarkupBaseOverride || '').toLowerCase())
+            ? String(buyMarkupBaseOverride).toLowerCase()
+            : 'buy';
+
+        const row = document.createElement('tr');
+        row.setAttribute('data-group-id', String(groupId));
+        row.setAttribute('data-group-path', resolvedPath);
+        row.innerHTML = `
+            <td>
+                <div class="fw-semibold">${resolvedPath.replace(/"/g, '&quot;')}</div>
+                <div class="small text-muted">Group ID: ${groupId}</div>
+            </td>
+            <td class="text-end">
+                <div class="input-group input-group-sm mb-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end group-override-sell-percent"
+                        min="-100"
+                        max="100"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(sellMarkupPercentOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="default">
+                    <span class="input-group-text">%</span>
+                </div>
+                <select class="form-select form-select-sm group-override-sell-base">
+                    <option value="buy" ${normalizedSellBase === 'buy' ? 'selected' : ''}>Jita Buy</option>
+                    <option value="sell" ${normalizedSellBase === 'sell' ? 'selected' : ''}>Jita Sell</option>
+                </select>
+                <div class="input-group input-group-sm mt-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end group-override-sell-fixed"
+                        min="0"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(sellPriceOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="Fixed ISK">
+                    <span class="input-group-text">ISK</span>
+                </div>
+            </td>
+            <td class="text-end">
+                <div class="input-group input-group-sm mb-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end group-override-buy-percent"
+                        min="-100"
+                        max="1000"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(buyMarkupPercentOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="default">
+                    <span class="input-group-text">%</span>
+                </div>
+                <select class="form-select form-select-sm group-override-buy-base">
+                    <option value="buy" ${normalizedBuyBase === 'buy' ? 'selected' : ''}>Jita Buy</option>
+                    <option value="sell" ${normalizedBuyBase === 'sell' ? 'selected' : ''}>Jita Sell</option>
+                </select>
+                <div class="input-group input-group-sm mt-1">
+                    <input
+                        type="number"
+                        class="form-control form-control-sm text-end group-override-buy-fixed"
+                        min="0"
+                        step="0.01"
+                        inputmode="decimal"
+                        value="${String(buyPriceOverride || '').replace(/"/g, '&quot;')}"
+                        placeholder="Fixed ISK">
+                    <span class="input-group-text">ISK</span>
+                </div>
+            </td>
+            <td class="text-end">
+                <button type="button" class="btn btn-outline-danger btn-sm group-override-remove">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+            </td>
+        `;
+        rowsBody.appendChild(row);
+        syncBaseState(row);
+        updateEmptyState();
+        serializeOverrides();
+    };
+
+    const addSelectedChoice = () => {
+        const groupId = parseInt(choiceSelect.value || '', 10);
+        if (!Number.isInteger(groupId) || groupId <= 0) {
+            return;
+        }
+        const groupPath = groupPathById.get(String(groupId)) || `Group ${groupId}`;
+        addRow({
+            marketGroupId: groupId,
+            marketGroupPath: groupPath,
+        });
+        choiceSelect.value = '';
+    };
+
+    addBtn.addEventListener('click', addSelectedChoice);
+    choiceSelect.addEventListener('change', function() {
+        if (choiceSelect.value) {
+            addSelectedChoice();
+        }
+    });
+
+    rowsBody.addEventListener('click', function(event) {
+        const removeBtn = event.target.closest('.group-override-remove');
+        if (!removeBtn) {
+            return;
+        }
+        const row = removeBtn.closest('tr[data-group-id]');
+        if (!row) {
+            return;
+        }
+        row.remove();
+        updateEmptyState();
+        serializeOverrides();
+    });
+
+    rowsBody.addEventListener('input', function(event) {
+        if (
+            event.target.classList.contains('group-override-sell-percent')
+            || event.target.classList.contains('group-override-buy-percent')
+            || event.target.classList.contains('group-override-sell-base')
+            || event.target.classList.contains('group-override-buy-base')
+            || event.target.classList.contains('group-override-sell-fixed')
+            || event.target.classList.contains('group-override-buy-fixed')
+        ) {
+            const row = event.target.closest('tr[data-group-id]');
+            if (row) {
+                syncBaseState(row);
+            }
+            serializeOverrides();
+        }
+    });
+    rowsBody.addEventListener('change', function(event) {
+        if (
+            event.target.classList.contains('group-override-sell-base')
+            || event.target.classList.contains('group-override-buy-base')
+        ) {
+            serializeOverrides();
+        }
+    });
+
+    initialOverrides.forEach(row => {
+        addRow({
+            marketGroupId: row.market_group_id,
+            marketGroupPath: row.market_group_path,
+            sellMarkupPercentOverride: row.sell_markup_percent_override,
+            sellMarkupBaseOverride: row.sell_markup_base_override,
+            buyMarkupPercentOverride: row.buy_markup_percent_override,
+            buyMarkupBaseOverride: row.buy_markup_base_override,
+            sellPriceOverride: row.sell_price_override,
+            buyPriceOverride: row.buy_price_override,
+        });
+    });
+
+    updateEmptyState();
+    serializeOverrides();
     form.addEventListener('submit', function() {
         serializeOverrides();
     });

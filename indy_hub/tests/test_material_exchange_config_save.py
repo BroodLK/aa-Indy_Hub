@@ -366,3 +366,32 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertIsNone(overrides[0].buy_markup_base_override)
         self.assertIsNone(overrides[0].sell_price_override)
         self.assertIsNone(overrides[0].buy_price_override)
+
+    def test_market_group_price_overrides_are_saved(self):
+        post_data = self._base_post_data()
+        post_data["market_group_price_overrides_json"] = (
+            '[{"market_group_id":300,"market_group_path":"Manufacture & Research -> Materials -> Atavum","sell_price_override":"4.00","buy_markup_percent_override":"5.25","buy_markup_base_override":"sell"}]'
+        )
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        rows = list(self.config.market_group_price_overrides or [])
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(int(row.get("market_group_id") or 0), 300)
+        self.assertEqual(
+            str(row.get("market_group_path") or ""),
+            "Manufacture & Research -> Materials -> Atavum",
+        )
+        self.assertEqual(
+            Decimal(str(row.get("sell_price_override") or 0)),
+            Decimal("4.00"),
+        )
+        self.assertEqual(
+            Decimal(str(row.get("buy_markup_percent_override") or 0)),
+            Decimal("5.25"),
+        )
+        self.assertEqual(str(row.get("buy_markup_base_override") or ""), "sell")

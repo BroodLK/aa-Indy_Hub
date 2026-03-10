@@ -10,11 +10,16 @@ from django.http import QueryDict
 from django.test import TestCase
 
 # AA Example App
-from indy_hub.models import MaterialExchangeConfig, MaterialExchangeStock
+from indy_hub.models import (
+    MaterialExchangeConfig,
+    MaterialExchangeItemPriceOverride,
+    MaterialExchangeStock,
+)
 from indy_hub.views.material_exchange import (
     _compute_effective_buy_unit_price,
     _compute_effective_sell_unit_price,
     _format_buy_stock_type_name,
+    _get_item_price_override_maps,
     _parse_submitted_sell_item_quantities,
     _parse_submitted_quantities,
 )
@@ -185,6 +190,88 @@ class MaterialExchangePricingTests(TestCase):
         self.assertEqual(default_price, Decimal("5.50"))
         self.assertEqual(effective_price, Decimal("5.40"))
         self.assertTrue(has_override)
+
+    def test_effective_sell_unit_price_uses_market_group_override_when_no_item_rule(self):
+        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
+            config=self.config,
+            type_id=self.stock.type_id,
+            jita_buy=Decimal("5.00"),
+            jita_sell=Decimal("6.00"),
+            sell_override_map={},
+            sell_market_group_override_map={
+                300: {
+                    "kind": "markup",
+                    "percent": Decimal("10.00"),
+                    "base": "buy",
+                }
+            },
+            type_market_group_path_map={self.stock.type_id: [100, 200, 300]},
+        )
+
+        self.assertEqual(default_price, Decimal("5.25"))
+        self.assertEqual(effective_price, Decimal("5.50"))
+        self.assertTrue(has_override)
+
+    def test_effective_sell_unit_price_item_rule_beats_market_group_rule(self):
+        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
+            config=self.config,
+            type_id=self.stock.type_id,
+            jita_buy=Decimal("5.00"),
+            jita_sell=Decimal("6.00"),
+            sell_override_map={
+                self.stock.type_id: {
+                    "kind": "fixed",
+                    "price": Decimal("4.00"),
+                }
+            },
+            sell_market_group_override_map={
+                300: {
+                    "kind": "markup",
+                    "percent": Decimal("25.00"),
+                    "base": "sell",
+                }
+            },
+            type_market_group_path_map={self.stock.type_id: [100, 200, 300]},
+        )
+
+        self.assertEqual(default_price, Decimal("5.25"))
+        self.assertEqual(effective_price, Decimal("4.00"))
+        self.assertTrue(has_override)
+
+    def test_effective_buy_unit_price_uses_market_group_override_when_no_item_rule(self):
+        effective_price, default_price, has_override = _compute_effective_buy_unit_price(
+            stock_item=self.stock,
+            buy_override_map={},
+            buy_market_group_override_map={
+                200: {
+                    "kind": "fixed",
+                    "price": Decimal("14.00"),
+                }
+            },
+            type_market_group_path_map={self.stock.type_id: [100, 200]},
+        )
+
+        self.assertEqual(default_price, Decimal("5.50"))
+        self.assertEqual(effective_price, Decimal("14.00"))
+        self.assertTrue(has_override)
+
+    def test_item_override_map_prefers_fixed_over_markup_when_both_are_set(self):
+        MaterialExchangeItemPriceOverride.objects.create(
+            config=self.config,
+            type_id=self.stock.type_id,
+            type_name="Tritanium",
+            sell_markup_percent_override=Decimal("10.00"),
+            sell_markup_base_override="sell",
+            sell_price_override=Decimal("4.00"),
+        )
+
+        sell_override_map, _buy_override_map = _get_item_price_override_maps(self.config)
+        self.assertIn(self.stock.type_id, sell_override_map)
+        self.assertEqual(sell_override_map[self.stock.type_id]["kind"], "fixed")
+        self.assertEqual(
+            sell_override_map[self.stock.type_id]["price"],
+            Decimal("4.00"),
+        )
 
     def test_parse_submitted_quantities_sums_split_row_inputs(self):
         payload = QueryDict("", mutable=True)

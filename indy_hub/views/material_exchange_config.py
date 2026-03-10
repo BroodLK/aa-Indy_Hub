@@ -610,6 +610,21 @@ def material_exchange_config(request, tokens):
         logger.warning("Failed to build market group tree: %s", exc)
 
     all_groups = _build_market_group_index()
+    market_group_override_choices: list[dict[str, object]] = []
+    if all_groups and allowed_choice_ids:
+        market_group_override_choices = [
+            {
+                "id": int(group_id),
+                "path": _build_market_group_path_label(int(group_id), all_groups),
+            }
+            for group_id in sorted(
+                allowed_choice_ids,
+                key=lambda gid: _build_market_group_path_label(
+                    int(gid), all_groups
+                ).lower(),
+            )
+            if int(group_id) in all_groups
+        ]
 
     def _normalize_selected_group_ids_for_ui(raw_group_ids) -> list[int]:
         normalized: set[int] = set()
@@ -701,6 +716,7 @@ def material_exchange_config(request, tokens):
 
     item_price_overrides: list[dict[str, object]] = []
     item_override_type_choices: list[dict[str, object]] = []
+    market_group_price_overrides: list[dict[str, object]] = []
     if config:
         override_rows = list(
             config.item_price_overrides.values(
@@ -757,6 +773,45 @@ def material_exchange_config(request, tokens):
             )
         ]
 
+        raw_group_override_rows = list(
+            getattr(config, "market_group_price_overrides", []) or []
+        )
+        parsed_group_overrides: dict[int, dict[str, object]] = {}
+        for row in raw_group_override_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                market_group_id = int(
+                    row.get("market_group_id") or row.get("group_id") or 0
+                )
+            except (TypeError, ValueError):
+                continue
+            if market_group_id <= 0:
+                continue
+
+            market_group_path = (
+                str(
+                    row.get("market_group_path")
+                    or row.get("group_path")
+                    or _build_market_group_path_label(market_group_id, all_groups)
+                ).strip()
+                or f"Group {market_group_id}"
+            )
+            parsed_group_overrides[market_group_id] = {
+                "market_group_id": market_group_id,
+                "market_group_path": market_group_path,
+                "sell_markup_percent_override": row.get("sell_markup_percent_override"),
+                "sell_markup_base_override": row.get("sell_markup_base_override"),
+                "buy_markup_percent_override": row.get("buy_markup_percent_override"),
+                "buy_markup_base_override": row.get("buy_markup_base_override"),
+                "sell_price_override": row.get("sell_price_override"),
+                "buy_price_override": row.get("buy_price_override"),
+            }
+        market_group_price_overrides = sorted(
+            parsed_group_overrides.values(),
+            key=lambda payload: str(payload.get("market_group_path") or "").lower(),
+        )
+
     context = {
         "config": config,
         "available_corps": available_corps,
@@ -783,6 +838,8 @@ def material_exchange_config(request, tokens):
         "location_match_mode": location_match_mode,
         "item_price_overrides": item_price_overrides,
         "item_override_type_choices": item_override_type_choices,
+        "market_group_override_choices": market_group_override_choices,
+        "market_group_price_overrides": market_group_price_overrides,
     }
 
     from .navigation import build_nav_context
@@ -1628,6 +1685,36 @@ def _get_market_group_path_ids(
     return list(reversed(path))
 
 
+def _build_market_group_path_label(
+    group_id: int,
+    all_groups: dict[int, dict[str, str | int | None]],
+    *,
+    separator: str = " -> ",
+) -> str:
+    """Return readable market-group path label for a group id."""
+
+    try:
+        group_id_int = int(group_id)
+    except (TypeError, ValueError):
+        return ""
+    if group_id_int <= 0:
+        return ""
+
+    path_ids = _get_market_group_path_ids(group_id_int, all_groups)
+    if not path_ids:
+        group_name = str(all_groups.get(group_id_int, {}).get("name") or "").strip()
+        return group_name or f"Group {group_id_int}"
+
+    labels: list[str] = []
+    for path_id in path_ids:
+        label = str(all_groups.get(int(path_id), {}).get("name") or "").strip()
+        if label:
+            labels.append(label)
+    if not labels:
+        return f"Group {group_id_int}"
+    return separator.join(labels)
+
+
 def _normalize_market_group_ids_for_choice_depth(
     raw_group_ids, *, depth_from_root: int
 ) -> list[int]:
@@ -1884,6 +1971,9 @@ def _handle_config_save(request, existing_config):
     item_price_overrides_raw = (
         request.POST.get("item_price_overrides_json", "") or ""
     ).strip()
+    market_group_price_overrides_raw = (
+        request.POST.get("market_group_price_overrides_json", "") or ""
+    ).strip()
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
@@ -2035,6 +2125,119 @@ def _handle_config_save(request, existing_config):
 
         return list(parsed_by_type.values())
 
+    def _normalize_market_group_id_for_config(
+        raw_group_id,
+        *,
+        allowed_ids: set[int],
+        all_groups: dict[int, dict[str, str | int | None]],
+    ) -> int | None:
+        try:
+            group_id = int(raw_group_id or 0)
+        except (TypeError, ValueError):
+            return None
+        if group_id <= 0:
+            return None
+        if not allowed_ids or group_id in allowed_ids:
+            return int(group_id)
+
+        path_ids = _get_market_group_path_ids(group_id, all_groups)
+        for path_id in reversed(path_ids):
+            path_id_int = int(path_id)
+            if path_id_int in allowed_ids:
+                return path_id_int
+        return None
+
+    def _parse_market_group_price_overrides(
+        raw_value: str,
+        *,
+        allowed_ids: set[int],
+        all_groups: dict[int, dict[str, str | int | None]],
+    ) -> list[dict[str, object]]:
+        if not raw_value:
+            return []
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        parsed_by_group: dict[int, dict[str, object]] = {}
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+
+            market_group_id = _normalize_market_group_id_for_config(
+                row.get("market_group_id") or row.get("group_id"),
+                allowed_ids=allowed_ids,
+                all_groups=all_groups,
+            )
+            if market_group_id is None:
+                continue
+
+            sell_markup_percent_override = _parse_optional_markup_percent(
+                row.get("sell_markup_percent_override"),
+                minimum=Decimal("-100"),
+                maximum=Decimal("100"),
+                label="Sell group override %",
+            )
+            buy_markup_percent_override = _parse_optional_markup_percent(
+                row.get("buy_markup_percent_override"),
+                minimum=Decimal("-100"),
+                maximum=Decimal("1000"),
+                label="Buy group override %",
+            )
+            sell_markup_base_override = (
+                _parse_optional_markup_base(
+                    row.get("sell_markup_base_override"),
+                    fallback=str(sell_markup_base or "buy"),
+                )
+                if sell_markup_percent_override is not None
+                else None
+            )
+            buy_markup_base_override = (
+                _parse_optional_markup_base(
+                    row.get("buy_markup_base_override"),
+                    fallback=str(buy_markup_base or "buy"),
+                )
+                if buy_markup_percent_override is not None
+                else None
+            )
+
+            sell_price_override = _parse_optional_price(row.get("sell_price_override"))
+            buy_price_override = _parse_optional_price(row.get("buy_price_override"))
+
+            has_markup_override = (
+                sell_markup_percent_override is not None
+                or buy_markup_percent_override is not None
+            )
+            has_fixed_override = (
+                sell_price_override is not None or buy_price_override is not None
+            )
+            if not has_markup_override and not has_fixed_override:
+                continue
+
+            parsed_by_group[int(market_group_id)] = {
+                "market_group_id": int(market_group_id),
+                "market_group_path": str(
+                    row.get("market_group_path")
+                    or row.get("group_path")
+                    or _build_market_group_path_label(int(market_group_id), all_groups)
+                ).strip()
+                or f"Group {int(market_group_id)}",
+                "sell_markup_percent_override": sell_markup_percent_override,
+                "sell_markup_base_override": sell_markup_base_override,
+                "buy_markup_percent_override": buy_markup_percent_override,
+                "buy_markup_base_override": buy_markup_base_override,
+                "sell_price_override": sell_price_override,
+                "buy_price_override": buy_price_override,
+            }
+
+        return sorted(
+            parsed_by_group.values(),
+            key=lambda payload: str(payload.get("market_group_path") or "").lower(),
+        )
+
     # Validation
     try:
         if allowed_market_groups_buy_json_raw:
@@ -2064,6 +2267,11 @@ def _handle_config_save(request, existing_config):
         market_group_tree = _get_market_group_tree()
         allowed_ids: set[int] = _collect_market_group_tree_ids(market_group_tree)
         all_groups = _build_market_group_index()
+        market_group_price_overrides = _parse_market_group_price_overrides(
+            market_group_price_overrides_raw,
+            allowed_ids=allowed_ids,
+            all_groups=all_groups,
+        )
 
         def _parse_group_ids(raw_list: list[str]) -> list[int]:
             parsed: set[int] = set()
@@ -2314,6 +2522,7 @@ def _handle_config_save(request, existing_config):
             existing_config.allowed_market_groups_sell_by_structure = (
                 allowed_market_groups_sell_by_structure
             )
+            existing_config.market_group_price_overrides = market_group_price_overrides
             existing_config.is_active = is_active
             existing_config.save()
             target_config = existing_config
@@ -2342,6 +2551,7 @@ def _handle_config_save(request, existing_config):
                 allowed_market_groups_buy=allowed_market_groups_buy,
                 allowed_market_groups_sell=allowed_market_groups_sell,
                 allowed_market_groups_sell_by_structure=allowed_market_groups_sell_by_structure,
+                market_group_price_overrides=market_group_price_overrides,
                 is_active=is_active,
             )
             messages.success(

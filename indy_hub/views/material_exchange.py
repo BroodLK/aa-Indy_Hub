@@ -1210,6 +1210,32 @@ def _get_item_price_override_maps(
 ) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
     """Return per-item override maps for sell and buy sides."""
 
+    def _coerce_decimal(raw_value) -> Decimal | None:
+        if raw_value is None:
+            return None
+        try:
+            return Decimal(str(raw_value))
+        except Exception:
+            return None
+
+    def _build_override(
+        *,
+        fixed_price_raw,
+        markup_percent_raw,
+        markup_base_raw,
+    ) -> dict[str, object] | None:
+        fixed_price = _coerce_decimal(fixed_price_raw)
+        if fixed_price is not None:
+            return {"kind": "fixed", "price": fixed_price}
+
+        markup_percent = _coerce_decimal(markup_percent_raw)
+        if markup_percent is None:
+            return None
+        markup_base = str(markup_base_raw or "buy").strip().lower()
+        if markup_base not in {"buy", "sell"}:
+            markup_base = "buy"
+        return {"kind": "markup", "percent": markup_percent, "base": markup_base}
+
     sell_overrides: dict[int, dict[str, object]] = {}
     buy_overrides: dict[int, dict[str, object]] = {}
     try:
@@ -1235,32 +1261,218 @@ def _get_item_price_override_maps(
         buy_override,
     ) in rows:
         type_id_int = int(type_id)
-        if sell_markup_percent_override is not None:
-            sell_overrides[type_id_int] = {
-                "kind": "markup",
-                "percent": Decimal(sell_markup_percent_override),
-                "base": str(sell_markup_base_override or "buy"),
-            }
-        elif sell_override is not None:
-            # Legacy fallback: keep supporting existing fixed-price rows.
-            sell_overrides[type_id_int] = {
-                "kind": "fixed",
-                "price": Decimal(sell_override),
-            }
-        if buy_markup_percent_override is not None:
-            buy_overrides[type_id_int] = {
-                "kind": "markup",
-                "percent": Decimal(buy_markup_percent_override),
-                "base": str(buy_markup_base_override or "buy"),
-            }
-        elif buy_override is not None:
-            # Legacy fallback: keep supporting existing fixed-price rows.
-            buy_overrides[type_id_int] = {
-                "kind": "fixed",
-                "price": Decimal(buy_override),
-            }
+        sell_override_value = _build_override(
+            fixed_price_raw=sell_override,
+            markup_percent_raw=sell_markup_percent_override,
+            markup_base_raw=sell_markup_base_override,
+        )
+        if sell_override_value is not None:
+            sell_overrides[type_id_int] = sell_override_value
+
+        buy_override_value = _build_override(
+            fixed_price_raw=buy_override,
+            markup_percent_raw=buy_markup_percent_override,
+            markup_base_raw=buy_markup_base_override,
+        )
+        if buy_override_value is not None:
+            buy_overrides[type_id_int] = buy_override_value
 
     return sell_overrides, buy_overrides
+
+
+def _get_market_group_price_override_maps(
+    config: MaterialExchangeConfig,
+) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
+    """Return per-market-group override maps for sell and buy sides."""
+
+    def _coerce_decimal(raw_value) -> Decimal | None:
+        if raw_value is None:
+            return None
+        normalized = str(raw_value).strip()
+        if not normalized:
+            return None
+        try:
+            return Decimal(normalized)
+        except Exception:
+            return None
+
+    def _build_override(
+        *,
+        fixed_price_raw,
+        markup_percent_raw,
+        markup_base_raw,
+    ) -> dict[str, object] | None:
+        fixed_price = _coerce_decimal(fixed_price_raw)
+        if fixed_price is not None:
+            return {"kind": "fixed", "price": fixed_price}
+
+        markup_percent = _coerce_decimal(markup_percent_raw)
+        if markup_percent is None:
+            return None
+        markup_base = str(markup_base_raw or "buy").strip().lower()
+        if markup_base not in {"buy", "sell"}:
+            markup_base = "buy"
+        return {"kind": "markup", "percent": markup_percent, "base": markup_base}
+
+    raw_rows = list(getattr(config, "market_group_price_overrides", []) or [])
+    sell_overrides: dict[int, dict[str, object]] = {}
+    buy_overrides: dict[int, dict[str, object]] = {}
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, dict):
+            continue
+        try:
+            market_group_id = int(
+                raw_row.get("market_group_id") or raw_row.get("group_id") or 0
+            )
+        except (TypeError, ValueError):
+            continue
+        if market_group_id <= 0:
+            continue
+
+        sell_override = _build_override(
+            fixed_price_raw=raw_row.get("sell_price_override"),
+            markup_percent_raw=raw_row.get("sell_markup_percent_override"),
+            markup_base_raw=raw_row.get("sell_markup_base_override"),
+        )
+        if sell_override is not None:
+            sell_overrides[int(market_group_id)] = sell_override
+
+        buy_override = _build_override(
+            fixed_price_raw=raw_row.get("buy_price_override"),
+            markup_percent_raw=raw_row.get("buy_markup_percent_override"),
+            markup_base_raw=raw_row.get("buy_markup_base_override"),
+        )
+        if buy_override is not None:
+            buy_overrides[int(market_group_id)] = buy_override
+
+    return sell_overrides, buy_overrides
+
+
+def _get_market_group_parent_map() -> dict[int, int | None]:
+    """Return market-group parent mapping keyed by market_group_id."""
+
+    cache_key = "indy_hub:material_exchange:market_group_parent_map:v1"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        try:
+            return {
+                int(group_id): (
+                    int(parent_id) if parent_id not in (None, "", 0, "0") else None
+                )
+                for group_id, parent_id in cached.items()
+            }
+        except Exception:
+            return {}
+
+    try:
+        from ..models import SdeMarketGroup
+
+        parent_map = {
+            int(group_id): (
+                int(parent_id) if parent_id not in (None, "", 0, "0") else None
+            )
+            for group_id, parent_id in SdeMarketGroup.objects.values_list(
+                "id", "parent_id"
+            )
+        }
+    except Exception as exc:
+        logger.warning("Failed to load market-group parent map: %s", exc)
+        return {}
+
+    cache.set(
+        cache_key,
+        {str(group_id): parent_id for group_id, parent_id in parent_map.items()},
+        3600,
+    )
+    return parent_map
+
+
+def _get_type_market_group_path_map(type_ids: set[int] | list[int]) -> dict[int, list[int]]:
+    """Return type_id -> market-group path IDs (root to leaf)."""
+
+    cleaned_type_ids: set[int] = set()
+    for raw_type_id in type_ids or []:
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id > 0:
+            cleaned_type_ids.add(type_id)
+    if not cleaned_type_ids:
+        return {}
+
+    try:
+        from eve_sde.models import ItemType
+    except Exception:
+        return {}
+
+    parent_map = _get_market_group_parent_map()
+    path_map: dict[int, list[int]] = {}
+    rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list(
+        "id", "market_group_id_raw"
+    )
+    for raw_type_id, raw_market_group_id in rows:
+        try:
+            type_id = int(raw_type_id)
+            market_group_id = int(raw_market_group_id or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0 or market_group_id <= 0:
+            continue
+
+        path_ids: list[int] = []
+        seen: set[int] = set()
+        current_id = int(market_group_id)
+        while current_id > 0 and current_id not in seen:
+            seen.add(current_id)
+            path_ids.append(current_id)
+            parent_id = parent_map.get(current_id)
+            if parent_id in (None, 0):
+                break
+            current_id = int(parent_id)
+        if not path_ids:
+            continue
+        path_map[int(type_id)] = list(reversed(path_ids))
+    return path_map
+
+
+def _resolve_market_group_override_for_type(
+    *,
+    type_id: int,
+    market_group_override_map: dict[int, dict[str, object]] | None,
+    type_market_group_path_map: dict[int, list[int]] | None,
+) -> dict[str, object] | None:
+    """Return nearest market-group override for a type, preferring leaf-most group."""
+
+    if not market_group_override_map or not type_market_group_path_map:
+        return None
+    path_ids = list(type_market_group_path_map.get(int(type_id), []) or [])
+    if not path_ids:
+        return None
+    for path_group_id in reversed(path_ids):
+        override_value = market_group_override_map.get(int(path_group_id))
+        if override_value is not None:
+            return override_value
+    return None
+
+
+def _resolve_price_override_for_type(
+    *,
+    type_id: int,
+    item_override_map: dict[int, dict[str, object]],
+    market_group_override_map: dict[int, dict[str, object]] | None = None,
+    type_market_group_path_map: dict[int, list[int]] | None = None,
+) -> dict[str, object] | None:
+    """Resolve effective override for a type with precedence item > market-group."""
+
+    direct_override = item_override_map.get(int(type_id))
+    if direct_override is not None:
+        return direct_override
+    return _resolve_market_group_override_for_type(
+        type_id=int(type_id),
+        market_group_override_map=market_group_override_map,
+        type_market_group_path_map=type_market_group_path_map,
+    )
 
 
 def _compute_effective_sell_unit_price(
@@ -1270,6 +1482,8 @@ def _compute_effective_sell_unit_price(
     jita_buy: Decimal,
     jita_sell: Decimal,
     sell_override_map: dict[int, dict[str, object]],
+    sell_market_group_override_map: dict[int, dict[str, object]] | None = None,
+    type_market_group_path_map: dict[int, list[int]] | None = None,
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for sell-page pricing."""
 
@@ -1278,7 +1492,12 @@ def _compute_effective_sell_unit_price(
         jita_buy=jita_buy,
         jita_sell=jita_sell,
     )
-    override_value = sell_override_map.get(int(type_id))
+    override_value = _resolve_price_override_for_type(
+        type_id=int(type_id),
+        item_override_map=sell_override_map,
+        market_group_override_map=sell_market_group_override_map,
+        type_market_group_path_map=type_market_group_path_map,
+    )
     if override_value is None:
         return default_unit_price, default_unit_price, False
     if str(override_value.get("kind") or "") == "markup":
@@ -1301,11 +1520,18 @@ def _compute_effective_buy_unit_price(
     *,
     stock_item: MaterialExchangeStock,
     buy_override_map: dict[int, dict[str, object]],
+    buy_market_group_override_map: dict[int, dict[str, object]] | None = None,
+    type_market_group_path_map: dict[int, list[int]] | None = None,
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for buy-page pricing."""
 
     default_unit_price = Decimal(stock_item.sell_price_to_member)
-    override_value = buy_override_map.get(int(stock_item.type_id))
+    override_value = _resolve_price_override_for_type(
+        type_id=int(stock_item.type_id),
+        item_override_map=buy_override_map,
+        market_group_override_map=buy_market_group_override_map,
+        type_market_group_path_map=type_market_group_path_map,
+    )
     if override_value is None:
         return default_unit_price, default_unit_price, False
     if str(override_value.get("kind") or "") == "markup":
@@ -1403,6 +1629,8 @@ def _build_sell_material_rows(
     reserved_quantities: dict[int, int],
     allowed_type_ids: set[int] | None,
     sell_override_map: dict[int, dict[str, object]],
+    sell_market_group_override_map: dict[int, dict[str, object]] | None = None,
+    type_market_group_path_map: dict[int, list[int]] | None = None,
     character_name_by_id: dict[int, str] | None = None,
 ) -> list[dict]:
     """Build sell rows, grouping assets by containers and character owner."""
@@ -1499,7 +1727,19 @@ def _build_sell_material_rows(
         jita_buy = Decimal(fuzz_prices.get("buy") or 0)
         jita_sell = Decimal(fuzz_prices.get("sell") or 0)
         has_market_price = jita_buy > 0 or jita_sell > 0
-        if not has_market_price and type_id_int not in sell_override_map:
+        has_group_override = (
+            _resolve_market_group_override_for_type(
+                type_id=type_id_int,
+                market_group_override_map=sell_market_group_override_map,
+                type_market_group_path_map=type_market_group_path_map,
+            )
+            is not None
+        )
+        if (
+            not has_market_price
+            and type_id_int not in sell_override_map
+            and not has_group_override
+        ):
             price_meta_cache[meta_key] = None
             return None
 
@@ -1509,6 +1749,8 @@ def _build_sell_material_rows(
             jita_buy=jita_buy,
             jita_sell=jita_sell,
             sell_override_map=sell_override_map,
+            sell_market_group_override_map=sell_market_group_override_map,
+            type_market_group_path_map=type_market_group_path_map,
         )
         if unit_price <= 0:
             price_meta_cache[meta_key] = None
@@ -2907,6 +3149,9 @@ def material_exchange_sell(request, tokens):
     materials_with_qty: list[dict] = []
     assets_refreshing = False
     sell_override_map, _buy_override_map = _get_item_price_override_maps(config)
+    sell_market_group_override_map, _buy_market_group_override_map = (
+        _get_market_group_price_override_maps(config)
+    )
 
     sell_last_update = (
         CachedCharacterAsset.objects.filter(user=request.user)
@@ -3062,6 +3307,10 @@ def material_exchange_sell(request, tokens):
             )
             return redirect(sell_redirect_url)
 
+        submitted_type_market_group_path_map = _get_type_market_group_path_map(
+            set(submitted_quantities.keys())
+        )
+
         assets_last_sync = _get_user_assets_last_sync(request.user)
         reserved_quantities = _get_reserved_sell_quantities(
             config=config,
@@ -3215,6 +3464,8 @@ def material_exchange_sell(request, tokens):
                         jita_buy=jita_buy,
                         jita_sell=jita_sell,
                         sell_override_map=sell_override_map,
+                        sell_market_group_override_map=sell_market_group_override_map,
+                        type_market_group_path_map=submitted_type_market_group_path_map,
                     )
                 )
                 if unit_price <= 0:
@@ -3431,6 +3682,9 @@ def material_exchange_sell(request, tokens):
 
         price_data = _fetch_fuzzwork_prices(list(user_assets.keys()))
         logger.info(f"SELL DEBUG: Got prices for {len(price_data)} items from Fuzzwork")
+        display_type_market_group_path_map = _get_type_market_group_path_map(
+            set(user_assets.keys())
+        )
 
         def _is_sellable_type(type_id: int) -> bool:
             fuzz_prices = price_data.get(type_id, {})
@@ -3443,6 +3697,8 @@ def material_exchange_sell(request, tokens):
                     jita_buy=jita_buy,
                     jita_sell=jita_sell,
                     sell_override_map=sell_override_map,
+                    sell_market_group_override_map=sell_market_group_override_map,
+                    type_market_group_path_map=display_type_market_group_path_map,
                 )
             )
             return buy_price > 0
@@ -3625,6 +3881,8 @@ def material_exchange_sell(request, tokens):
             reserved_quantities=reserved_quantities_for_display,
             allowed_type_ids=selected_location_allowed_type_ids,
             sell_override_map=sell_override_map,
+            sell_market_group_override_map=sell_market_group_override_map,
+            type_market_group_path_map=display_type_market_group_path_map,
             character_name_by_id=character_names_map,
         )
 
@@ -3708,6 +3966,9 @@ def material_exchange_buy(request, tokens):
         return redirect("indy_hub:material_exchange_index")
     stock_refreshing = False
     _sell_override_map, buy_override_map = _get_item_price_override_maps(config)
+    _sell_market_group_override_map, buy_market_group_override_map = (
+        _get_market_group_price_override_maps(config)
+    )
 
     buy_structure_ids = config.get_buy_structure_ids()
     buy_name_map = config.get_buy_structure_name_map()
@@ -3763,17 +4024,18 @@ def material_exchange_buy(request, tokens):
         total_cost = Decimal("0")
 
         submitted_type_ids = set(submitted_quantities.keys())
+        submitted_type_market_group_path_map = _get_type_market_group_path_map(
+            submitted_type_ids
+        )
         submitted_blueprint_variants = _get_buy_stock_blueprint_variant_map(
             config=config,
             type_ids=submitted_type_ids,
         )
 
         with transaction.atomic():
-            override_type_ids = set(buy_override_map.keys())
             stock_items = list(
                 config.stock_items.select_for_update()
                 .filter(type_id__in=submitted_type_ids, quantity__gt=0)
-                .filter(Q(jita_buy_price__gt=0) | Q(type_id__in=override_type_ids))
             )
             stock_by_type_id = {item.type_id: item for item in stock_items}
 
@@ -3868,6 +4130,8 @@ def material_exchange_buy(request, tokens):
                         _compute_effective_buy_unit_price(
                             stock_item=stock_item,
                             buy_override_map=buy_override_map,
+                            buy_market_group_override_map=buy_market_group_override_map,
+                            type_market_group_path_map=submitted_type_market_group_path_map,
                         )
                     )
                     if unit_price <= 0:
@@ -4030,6 +4294,9 @@ def material_exchange_buy(request, tokens):
         config=config,
         type_ids={int(item.type_id) for item in stock_items},
     )
+    displayed_type_market_group_path_map = _get_type_market_group_path_map(
+        {int(item.type_id) for item in stock_items}
+    )
 
     priced_stock_items: list[MaterialExchangeStock] = []
     for stock_item in stock_items:
@@ -4067,6 +4334,8 @@ def material_exchange_buy(request, tokens):
             ) = _compute_effective_buy_unit_price(
                 stock_item=stock_item,
                 buy_override_map=buy_override_map,
+                buy_market_group_override_map=buy_market_group_override_map,
+                type_market_group_path_map=displayed_type_market_group_path_map,
             )
         if unit_price <= 0 and blueprint_variant != "bpc":
             continue
