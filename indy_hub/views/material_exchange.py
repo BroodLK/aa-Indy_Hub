@@ -311,12 +311,10 @@ def _attach_order_progress_data(order, order_kind: str, perspective: str = "user
         current_step_position = order.timeline_breadcrumb[current_step_index].get(
             "position_percent", 0
         )
-        if current_step_index < order.progress_total_steps - 1:
-            next_step_position = order.timeline_breadcrumb[current_step_index + 1].get(
-                "position_percent", current_step_position
-            )
-            order.progress_active_start = 0
-            order.progress_active_width = max(0, round(next_step_position, 2))
+        order.progress_active_start = 0
+        order.progress_active_width = max(
+            0, min(100, round(current_step_position, 2))
+        )
     else:
         order.progress_current_label = ""
 
