@@ -3024,19 +3024,39 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
 
 
 def _get_user_character_ids(user: User) -> list[int]:
-    """Get all character IDs for a user."""
+    """Get character IDs for a user from valid tokens and linked ownership."""
+    character_ids: set[int] = set()
+
     try:
         # Alliance Auth
         from esi.models import Token
 
-        return list(
+        for character_id in (
             Token.objects.filter(user=user)
             .require_valid()
             .values_list("character_id", flat=True)
             .distinct()
-        )
+        ):
+            if character_id:
+                character_ids.add(int(character_id))
     except Exception:
-        return []
+        pass
+
+    try:
+        # Alliance Auth
+        from allianceauth.authentication.models import CharacterOwnership
+
+        for character_id in (
+            CharacterOwnership.objects.filter(user=user)
+            .values_list("character__character_id", flat=True)
+            .distinct()
+        ):
+            if character_id:
+                character_ids.add(int(character_id))
+    except Exception:
+        pass
+
+    return sorted(character_ids)
 
 
 def _notify_material_exchange_admins(
