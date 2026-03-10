@@ -1,5 +1,6 @@
 # Django
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
@@ -495,24 +496,28 @@ def notify_admins_on_buy_order_created(sender, instance, created, **kwargs):
     if not created:
         return
 
-    try:
-        # Use apply_async with countdown to batch orders created within 2 seconds
-        # This reduces queue overhead: 10 orders → 1 batch task instead of 10 tasks
-        # AA Example App
-        from indy_hub.tasks.material_exchange_contracts import (
-            handle_material_exchange_buy_order_created,
-        )
+    def _enqueue_notification_task():
+        try:
+            # Use apply_async with countdown to batch orders created within 2 seconds
+            # This reduces queue overhead: 10 orders -> 1 batch task instead of 10 tasks
+            # AA Example App
+            from indy_hub.tasks.material_exchange_contracts import (
+                handle_material_exchange_buy_order_created,
+            )
 
-        handle_material_exchange_buy_order_created.apply_async(
-            args=(instance.id,),
-            countdown=2,  # Wait 2 seconds to batch with other orders
-            # Keep an expiry to avoid very late processing, but allow for queue lag / clock skew.
-            expires=300,
-        )
-    except Exception as exc:
-        logger.error(
-            "Failed to queue buy order notification for order %s: %s",
-            instance.id,
-            exc,
-            exc_info=True,
-        )
+            handle_material_exchange_buy_order_created.apply_async(
+                args=(instance.id,),
+                countdown=2,  # Wait 2 seconds to batch with other orders
+                # Keep an expiry to avoid very late processing, but allow for queue lag / clock skew.
+                expires=300,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to queue buy order notification for order %s: %s",
+                instance.id,
+                exc,
+                exc_info=True,
+            )
+
+    # Queue only after transaction commit so workers do not fetch an uncommitted order.
+    transaction.on_commit(_enqueue_notification_task)
