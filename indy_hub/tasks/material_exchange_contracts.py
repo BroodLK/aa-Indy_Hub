@@ -1041,10 +1041,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     contract_with_correct_ref_items_mismatch: dict | None = None
     contract_with_wrong_ref_only: dict | None = None
 
+    order_ref_lower = str(order_ref or "").strip().lower()
     for contract in contracts:
         # Track contracts with correct order reference in title (for better diagnostics)
-        title = contract.title or ""
-        has_correct_ref = order_ref in title
+        title = str(contract.title or "")
+        has_correct_ref = bool(order_ref_lower and order_ref_lower in title.lower())
 
         # Basic criteria
         criteria_match = _matches_sell_order_criteria_db(
@@ -1758,9 +1759,10 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             result="success",
         )
 
+    order_ref_lower = str(order_ref or "").strip().lower()
     for contract in contracts:
-        title = contract.title or ""
-        has_correct_ref = order_ref in title
+        title = str(contract.title or "")
+        has_correct_ref = bool(order_ref_lower and order_ref_lower in title.lower())
 
         if not has_correct_ref:
             criteria_match_without_ref = _matches_buy_order_criteria_db(
@@ -2358,7 +2360,9 @@ def _matches_buy_order_criteria_db(
     """Check if a database contract matches buy order basic criteria."""
 
     # Issuer corporation must be the hub corporation
-    if contract.issuer_corporation_id != config.corporation_id:
+    issuer_corporation_id = int(getattr(contract, "issuer_corporation_id", 0) or 0)
+    config_corporation_id = int(getattr(config, "corporation_id", 0) or 0)
+    if issuer_corporation_id not in {0, config_corporation_id}:
         return False
 
     # Assignee must be one of the buyer's characters

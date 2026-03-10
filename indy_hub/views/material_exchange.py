@@ -2497,6 +2497,27 @@ def _build_buy_material_rows(
             item_id = 0
         return f"Container {item_id}" if item_id > 0 else "Container"
 
+    def _resolve_container_name_for_key(container_key: str) -> str:
+        clean_key = str(container_key or "").strip()
+        if not clean_key:
+            return ""
+        cached_name = str(container_name_by_key.get(clean_key, "")).strip()
+        if cached_name:
+            return cached_name
+        if clean_key.startswith("c"):
+            try:
+                container_item_id = int(clean_key[1:] or 0)
+            except (TypeError, ValueError):
+                container_item_id = 0
+            if container_item_id > 0:
+                asset = asset_by_item_id.get(container_item_id)
+                if asset:
+                    resolved_name = _container_display_name(asset)
+                    container_name_by_key[clean_key] = resolved_name
+                    return resolved_name
+                return f"Container {container_item_id}"
+        return ""
+
     def _resolve_item_meta(type_id: int, blueprint_variant: str = "") -> dict[str, object] | None:
         type_id_int = int(type_id)
         base_meta = stock_meta_by_type.get(type_id_int)
@@ -2610,7 +2631,7 @@ def _build_buy_material_rows(
             if parsed_runs > 0:
                 clean_bpc_runs = int(parsed_runs)
         container_names = [
-            str(container_name_by_key.get(str(container_key), "")).strip()
+            _resolve_container_name_for_key(str(container_key))
             for container_key in ancestors
         ]
         container_name_path = " > ".join(
