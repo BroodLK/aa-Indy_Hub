@@ -150,12 +150,13 @@
                                         {% endfor %}
                                     </span>
                                 </span>
-                                <span class="me-order-breadcrumb-inline" aria-hidden="true">
-                                    {% for step in order.timeline_breadcrumb %}
-                                    {% if step.status == order.progress_current_label %}
-                                    <span class="me-order-crumb-inline current {% if forloop.first %}start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
+                                <span class="me-order-breadcrumb-inline" aria-live="polite">
+                                    {% if order.progress_current_label %}
+                                    <span class="me-order-crumb-inline current">
+                                        <span class="me-order-crumb-prefix">{% trans "Waiting for:" %}</span>
+                                        <span class="me-order-crumb-value">{{ order.progress_current_label }}</span>
+                                    </span>
                                     {% endif %}
-                                    {% endfor %}
                                 </span>
                             </span>
                         </div>
@@ -246,12 +247,13 @@
                                     {% endfor %}
                                 </span>
                             </span>
-                            <span class="me-order-breadcrumb-inline" aria-hidden="true">
-                                {% for step in order.timeline_breadcrumb %}
-                                {% if step.status == order.progress_current_label %}
-                                <span class="me-order-crumb-inline current {% if forloop.first %}start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
+                            <span class="me-order-breadcrumb-inline" aria-live="polite">
+                                {% if order.progress_current_label %}
+                                <span class="me-order-crumb-inline current">
+                                    <span class="me-order-crumb-prefix">{% trans "Waiting for:" %}</span>
+                                    <span class="me-order-crumb-value">{{ order.progress_current_label }}</span>
+                                </span>
                                 {% endif %}
-                                {% endfor %}
                             </span>
                         </span>
                     </div>
@@ -259,13 +261,13 @@
                         <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
                         <div class="me-admin-order-actions">
                         {% url 'indy_hub:material_exchange_index' as exchange_index %}
-                        <a class="btn btn-outline-secondary btn-sm" href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
+                        <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn" href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
                             <i class="fas fa-eye me-1"></i>{% trans "Details" %}
                         </a>
                         {% if order.status not in 'completed,rejected,cancelled' %}
-                        <form method="post" class="d-inline">
+                        <form method="post" class="me-admin-order-action-form">
                             {% csrf_token %}
-                            <button formaction="{% url 'indy_hub:material_exchange_reject_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-danger">
+                            <button formaction="{% url 'indy_hub:material_exchange_reject_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn">
                                 <i class="fas fa-times me-1"></i>{% trans "Reject" %}
                             </button>
                         </form>
@@ -320,12 +322,13 @@
                                     {% endfor %}
                                 </span>
                             </span>
-                            <span class="me-order-breadcrumb-inline" aria-hidden="true">
-                                {% for step in order.timeline_breadcrumb %}
-                                {% if step.status == order.progress_current_label %}
-                                <span class="me-order-crumb-inline current {% if forloop.first %}start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
+                            <span class="me-order-breadcrumb-inline" aria-live="polite">
+                                {% if order.progress_current_label %}
+                                <span class="me-order-crumb-inline current">
+                                    <span class="me-order-crumb-prefix">{% trans "Waiting for:" %}</span>
+                                    <span class="me-order-crumb-value">{{ order.progress_current_label }}</span>
+                                </span>
                                 {% endif %}
-                                {% endfor %}
                             </span>
                         </span>
                     </div>
@@ -333,13 +336,13 @@
                         <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
                         <div class="me-admin-order-actions">
                         {% url 'indy_hub:material_exchange_index' as exchange_index %}
-                        <a class="btn btn-outline-secondary btn-sm" href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
+                        <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn" href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
                             <i class="fas fa-eye me-1"></i>{% trans "Details" %}
                         </a>
                         {% if order.status not in 'completed,rejected,cancelled' %}
-                        <form method="post" class="d-inline">
+                        <form method="post" class="me-admin-order-action-form">
                             {% csrf_token %}
-                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-danger">
+                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn">
                                 <i class="fas fa-times me-1"></i>{% trans "Reject" %}
                             </button>
                         </form>

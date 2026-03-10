@@ -297,8 +297,12 @@ def _attach_order_progress_data(order, order_kind: str, perspective: str = "user
 
     current_step_index = 0
     for idx, step in enumerate(order.timeline_breadcrumb):
-        if step.get("completed"):
+        if not step.get("completed"):
             current_step_index = idx
+            break
+    else:
+        if order.progress_total_steps:
+            current_step_index = order.progress_total_steps - 1
 
     if order.timeline_breadcrumb:
         order.progress_current_label = order.timeline_breadcrumb[current_step_index][
