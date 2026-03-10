@@ -2176,23 +2176,25 @@ def _get_corp_blueprint_details_by_item_id(
             runs = 0
 
         variant = ""
-        if bp_type == str(Blueprint.BPType.COPY):
+        # Prefer hard quantity/runs signals first, because bp_type can be stale
+        # in rows created before classification logic updates.
+        if quantity == -2:
             variant = "bpc"
-        elif bp_type == str(Blueprint.BPType.ORIGINAL):
-            variant = "bpo"
-        elif quantity == -1 and runs == -1:
-            variant = "bpo"
         elif (runs or 0) > 0:
             variant = "bpc"
-        elif quantity == -2:
+        elif (quantity or 0) > 0:
+            # For corp blueprints, quantity > 0 usually represents runs for BPCs.
+            variant = "bpc"
+        elif quantity == -1 and runs == -1:
             variant = "bpo"
         elif quantity == -1:
             variant = "bpo"
         elif runs == -1:
             variant = "bpo"
-        elif (quantity or 0) > 0:
-            # For corp blueprints, quantity > 0 usually represents runs for BPCs.
+        elif bp_type == str(Blueprint.BPType.COPY):
             variant = "bpc"
+        elif bp_type == str(Blueprint.BPType.ORIGINAL):
+            variant = "bpo"
 
         if not variant:
             continue

@@ -281,6 +281,55 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(variants.get(77777), "bpc")
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
+    def test_buy_stock_blueprint_variant_map_uses_quantity_signal_when_bp_type_stale(
+        self, mock_get_corp_assets_cached
+    ):
+        self.config.buy_structure_ids = [1001]
+        self.config.hangar_division = 1
+        self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
+
+        item_id = 4002
+        Blueprint.objects.create(
+            owner_user=self.user,
+            owner_kind=Blueprint.OwnerKind.CORPORATION,
+            corporation_id=self.config.corporation_id,
+            corporation_name="Test Corp",
+            item_id=item_id,
+            blueprint_id=item_id,
+            type_id=77778,
+            location_id=1001,
+            location_name="Structure Alpha",
+            location_flag="CorpSAG1",
+            quantity=-2,
+            runs=0,
+            # Simulate stale/inaccurate type persisted in DB.
+            bp_type=Blueprint.BPType.ORIGINAL,
+            type_name="Capital Construction Parts Blueprint",
+        )
+
+        mock_get_corp_assets_cached.return_value = (
+            [
+                {
+                    "item_id": item_id,
+                    "location_id": 1001,
+                    "location_flag": "CorpSAG1",
+                    "type_id": 77778,
+                    "quantity": -2,
+                    "is_singleton": True,
+                    "is_blueprint": False,
+                }
+            ],
+            False,
+        )
+
+        variants = _get_buy_stock_blueprint_variant_map(
+            config=self.config,
+            type_ids={77778},
+        )
+
+        self.assertEqual(variants.get(77778), "bpc")
+
+    @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
     def test_buy_stock_blueprint_variant_map_detects_mixed(self, mock_get_corp_assets_cached):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
