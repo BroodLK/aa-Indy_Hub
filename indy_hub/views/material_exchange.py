@@ -1584,6 +1584,11 @@ def _asset_blueprint_variant(asset: dict) -> str:
         raw_quantity = 0
     if raw_quantity == -2:
         return "bpc"
+
+    type_name_lower = str(asset.get("type_name") or asset.get("set_name") or "").lower()
+    if " (bpc)" in type_name_lower or "blueprint copy" in type_name_lower:
+        return "bpc"
+
     return "bpo"
 
 
@@ -2141,14 +2146,22 @@ def _get_corp_blueprint_details_by_item_id(
             variant = "bpc"
         elif bp_type == str(Blueprint.BPType.ORIGINAL):
             variant = "bpo"
-        elif quantity == -2 or (quantity > 0 and bp_type != str(Blueprint.BPType.ORIGINAL)):
+        elif quantity == -2:
             variant = "bpc"
-        elif runs > 0 and bp_type != str(Blueprint.BPType.ORIGINAL):
+        elif runs > 0:
             variant = "bpc"
         elif quantity == -1:
             variant = "bpo"
         elif runs == -1:
             variant = "bpo"
+        elif quantity > 0:
+            # If we don't have definitive BPType, and it's not a singleton or has no runs,
+            # it might be a BPO, but usually blueprints are singletons in ESI assets.
+            # If quantity > 0 and it's a blueprint, and it's not marked as BPO,
+            # and it has no runs=0, we should be careful.
+            # However, in corporate blueprint ESI, BPCs have quantity > 0 (number of runs).
+            # Wait, ESI 'blueprints' endpoint: quantity is -1 for BPO, >0 for BPC (runs).
+            variant = "bpc"
 
         if not variant:
             continue
@@ -2384,11 +2397,22 @@ def _get_buy_stock_blueprint_variant_map(
         if variant not in {"bpc", "bpo"}:
             if not _asset_is_blueprint(asset):
                 continue
+            # Fallback for when Blueprint record is missing:
+            # -2 usually means BPC in some contexts.
+            # is_singleton=True is characteristic of both BPO and BPC in asset lists.
+            # Without 'runs', we can't be 100% sure, but we can look for "Copy" in the name if available.
             try:
                 raw_quantity = int(asset.get("quantity", 0) or 0)
             except (TypeError, ValueError):
                 raw_quantity = 0
-            variant = "bpc" if raw_quantity == -2 else "bpo"
+
+            is_bpc_likely = raw_quantity == -2
+            if not is_bpc_likely:
+                type_name_lower = str(asset.get("type_name") or get_type_name(type_id)).lower()
+                if " (bpc)" in type_name_lower or "blueprint copy" in type_name_lower:
+                    is_bpc_likely = True
+
+            variant = "bpc" if is_bpc_likely else "bpo"
         variants_by_type.setdefault(type_id, set()).add(variant)
 
     variant_map: dict[int, str] = {}

@@ -140,7 +140,6 @@
                             </div>
                             <span class="me-order-flow-inline" aria-label="{% trans 'Order workflow' %}" title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
                                 <span class="me-order-progress-inline-bar">
-                                    <span class="me-order-progress-fill" style="width: {{ order.progress_width }}%;"></span>
                                     {% if order.progress_active_width %}
                                     <span class="me-order-progress-active-segment" style="left: {{ order.progress_active_start }}%; width: {{ order.progress_active_width }}%;"></span>
                                     {% endif %}
@@ -234,7 +233,6 @@
                         </span>
                         <span class="me-order-flow-inline" aria-label="{% trans 'Order workflow' %}" title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
                             <span class="me-order-progress-inline-bar">
-                                <span class="me-order-progress-fill" style="width: {{ order.progress_width }}%;"></span>
                                 {% if order.progress_active_width %}
                                 <span class="me-order-progress-active-segment" style="left: {{ order.progress_active_start }}%; width: {{ order.progress_active_width }}%;"></span>
                                 {% endif %}
@@ -306,7 +304,6 @@
                         </span>
                         <span class="me-order-flow-inline" aria-label="{% trans 'Order workflow' %}" title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
                             <span class="me-order-progress-inline-bar">
-                                <span class="me-order-progress-fill" style="width: {{ order.progress_width }}%;"></span>
                                 {% if order.progress_active_width %}
                                 <span class="me-order-progress-active-segment" style="left: {{ order.progress_active_start }}%; width: {{ order.progress_active_width }}%;"></span>
                                 {% endif %}
