@@ -1593,7 +1593,25 @@ def _asset_is_blueprint(asset: dict) -> bool:
         return True
 
     type_name_lower = str(asset.get("type_name") or "").strip().lower()
-    return "blueprint" in type_name_lower
+    if "blueprint" in type_name_lower:
+        return True
+
+    # Cached corp asset rows do not always carry type_name. For singleton rows,
+    # resolve the type name as a last-resort signal to avoid dropping blueprint variants.
+    if bool(asset.get("is_singleton")):
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            type_id = 0
+        if type_id > 0:
+            try:
+                resolved_name = str(get_type_name(type_id) or "").strip().lower()
+            except Exception:
+                resolved_name = ""
+            if "blueprint" in resolved_name:
+                return True
+
+    return False
 
 
 def _asset_blueprint_variant(asset: dict) -> str:
@@ -2146,13 +2164,13 @@ def _get_corp_blueprint_details_by_item_id(
 ) -> dict[int, dict[str, object]]:
     """Return corp blueprint metadata by item_id (variant and optional runs)."""
     try:
+        corporation_id = int(config.corporation_id)
         queryset = Blueprint.objects.filter(
-            owner_kind=Blueprint.OwnerKind.CORPORATION,
-            corporation_id=int(config.corporation_id),
+            corporation_id=corporation_id,
         )
         if item_ids:
             queryset = queryset.filter(item_id__in=[int(iid) for iid in item_ids if int(iid) > 0])
-        rows = queryset.values("item_id", "bp_type", "quantity", "runs")
+        rows = queryset.values("item_id", "bp_type", "quantity", "runs", "type_name")
     except Exception:
         return {}
 
@@ -2174,6 +2192,7 @@ def _get_corp_blueprint_details_by_item_id(
             runs = int(row.get("runs") or 0)
         except (TypeError, ValueError):
             runs = 0
+        type_name_lower = str(row.get("type_name") or "").strip().lower()
 
         variant = ""
         # Prefer hard quantity/runs signals first, because bp_type can be stale
@@ -2188,7 +2207,11 @@ def _get_corp_blueprint_details_by_item_id(
         elif quantity == -1 and runs == -1:
             variant = "bpo"
         elif quantity == -1:
-            variant = "bpo"
+            # Legacy rows may still carry copy hints in type_name.
+            if "blueprint copy" in type_name_lower or " (bpc)" in type_name_lower:
+                variant = "bpc"
+            else:
+                variant = "bpo"
         elif runs == -1:
             variant = "bpo"
         elif bp_type == str(Blueprint.BPType.COPY):
@@ -2200,8 +2223,10 @@ def _get_corp_blueprint_details_by_item_id(
             continue
 
         details: dict[str, object] = {"variant": variant}
-        if variant == "bpc" and runs > 0:
-            details["runs"] = int(runs)
+        if variant == "bpc":
+            runs_value = int(runs) if runs > 0 else int(quantity) if quantity > 0 else 0
+            if runs_value > 0:
+                details["runs"] = int(runs_value)
         details_by_item_id[item_id] = details
 
     return details_by_item_id

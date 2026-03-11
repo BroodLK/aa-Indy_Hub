@@ -45,6 +45,24 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
                 }
             )
         )
+
+    @patch(
+        "indy_hub.views.material_exchange.get_type_name",
+        return_value="Capital Construction Parts Blueprint",
+    )
+    def test_asset_is_blueprint_detects_singleton_blueprint_from_type_name_lookup(
+        self, _mock_get_type_name
+    ):
+        self.assertTrue(
+            _asset_is_blueprint(
+                {
+                    "type_id": 77777,
+                    "quantity": 1,
+                    "is_singleton": True,
+                    "is_blueprint": False,
+                }
+            )
+        )
         self.assertTrue(
             _asset_is_blueprint(
                 {

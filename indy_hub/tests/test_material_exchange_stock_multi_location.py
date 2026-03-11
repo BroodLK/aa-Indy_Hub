@@ -13,6 +13,7 @@ from indy_hub.tasks.material_exchange import _sync_stock_impl
 from indy_hub.views.material_exchange import (
     _build_buy_material_rows,
     _get_buy_stock_blueprint_variant_map,
+    _get_corp_blueprint_details_by_item_id,
     _selected_buy_stock_items_share_source_location,
 )
 
@@ -328,6 +329,82 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         )
 
         self.assertEqual(variants.get(77778), "bpc")
+
+    def test_get_corp_blueprint_details_backfills_bpc_runs_from_quantity(self):
+        item_id = 4010
+        Blueprint.objects.create(
+            owner_user=self.user,
+            owner_kind=Blueprint.OwnerKind.CORPORATION,
+            corporation_id=self.config.corporation_id,
+            corporation_name="Test Corp",
+            item_id=item_id,
+            blueprint_id=item_id,
+            type_id=77779,
+            location_id=1001,
+            location_name="Structure Alpha",
+            location_flag="CorpSAG1",
+            quantity=10,
+            runs=0,
+            bp_type=Blueprint.BPType.COPY,
+            type_name="Capital Construction Parts Blueprint",
+        )
+
+        details = _get_corp_blueprint_details_by_item_id(
+            config=self.config,
+            item_ids={item_id},
+        )
+
+        self.assertEqual(details[item_id]["variant"], "bpc")
+        self.assertEqual(details[item_id]["runs"], 10)
+
+    @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
+    def test_buy_stock_variant_map_uses_legacy_corp_row_even_if_owner_kind_stale(
+        self, mock_get_corp_assets_cached
+    ):
+        self.config.buy_structure_ids = [1001]
+        self.config.hangar_division = 1
+        self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
+
+        item_id = 4011
+        Blueprint.objects.create(
+            owner_user=self.user,
+            # Legacy/stale row: owner_kind not set to corporation yet.
+            owner_kind=Blueprint.OwnerKind.CHARACTER,
+            corporation_id=self.config.corporation_id,
+            corporation_name="Test Corp",
+            item_id=item_id,
+            blueprint_id=item_id,
+            type_id=77780,
+            location_id=1001,
+            location_name="Structure Alpha",
+            location_flag="CorpSAG1",
+            quantity=-2,
+            runs=10,
+            bp_type=Blueprint.BPType.ORIGINAL,
+            type_name="Capital Construction Parts Blueprint",
+        )
+
+        mock_get_corp_assets_cached.return_value = (
+            [
+                {
+                    "item_id": item_id,
+                    "location_id": 1001,
+                    "location_flag": "CorpSAG1",
+                    "type_id": 77780,
+                    "quantity": -1,
+                    "is_singleton": True,
+                    "is_blueprint": False,
+                }
+            ],
+            False,
+        )
+
+        variants = _get_buy_stock_blueprint_variant_map(
+            config=self.config,
+            type_ids={77780},
+        )
+
+        self.assertEqual(variants.get(77780), "bpc")
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
     def test_buy_stock_blueprint_variant_map_detects_mixed(self, mock_get_corp_assets_cached):
