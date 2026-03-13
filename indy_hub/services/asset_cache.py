@@ -56,6 +56,16 @@ STRUCTURE_NAME_TTL = timedelta(hours=STRUCTURE_NAME_STALE_HOURS)
 logger = get_extension_logger(__name__)
 esi = esi_provider
 
+_CORP_HANGAR_FLAG_BY_DIVISION = {
+    1: "CorpSAG1",
+    2: "CorpSAG2",
+    3: "CorpSAG3",
+    4: "CorpSAG4",
+    5: "CorpSAG5",
+    6: "CorpSAG6",
+    7: "CorpSAG7",
+}
+
 
 def _corp_asset_names_cache_key(corporation_id: int) -> str:
     return f"indy_hub:corp_asset_names:{int(corporation_id)}:v1"
@@ -378,6 +388,338 @@ def get_office_folder_item_id_from_assets(
             return None
 
     return None
+
+
+def consume_cached_corp_assets_for_buy_completion(
+    *,
+    corporation_id: int,
+    buy_structure_ids: list[int] | tuple[int, ...] | None,
+    hangar_division: int,
+    consumed_quantities_by_type: dict[int, int] | None,
+) -> dict[str, object]:
+    """Consume cached corp assets for completed buy-order deliveries.
+
+    Buy reservations are released when orders complete, but cached corp assets can remain
+    stale until the next ESI refresh cycle. This helper subtracts fulfilled quantities from
+    the cached rows in the configured buy scopes so stock visibility stays consistent.
+    """
+
+    target_structure_ids: list[int] = []
+    for structure_id in buy_structure_ids or []:
+        try:
+            structure_id_int = int(structure_id)
+        except (TypeError, ValueError):
+            continue
+        if structure_id_int <= 0 or structure_id_int in target_structure_ids:
+            continue
+        target_structure_ids.append(structure_id_int)
+
+    remaining_by_type: dict[int, int] = {}
+    for raw_type_id, raw_quantity in (consumed_quantities_by_type or {}).items():
+        try:
+            type_id = int(raw_type_id)
+            quantity = int(raw_quantity)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0 or quantity <= 0:
+            continue
+        remaining_by_type[type_id] = remaining_by_type.get(type_id, 0) + quantity
+
+    summary = {
+        "consumed_by_type": {},
+        "remaining_by_type": dict(remaining_by_type),
+        "updated_rows": 0,
+        "deleted_rows": 0,
+    }
+    if not target_structure_ids or not remaining_by_type:
+        return summary
+
+    try:
+        target_flag = _CORP_HANGAR_FLAG_BY_DIVISION[int(hangar_division)]
+    except (TypeError, ValueError, KeyError):
+        return summary
+
+    with transaction.atomic():
+        cached_rows = list(
+            CachedCorporationAsset.objects.select_for_update()
+            .filter(corporation_id=int(corporation_id))
+            .order_by("id")
+        )
+        if not cached_rows:
+            return summary
+
+        corp_assets_for_match: list[dict] = [
+            {
+                "item_id": row.item_id,
+                "location_id": row.location_id,
+                "location_flag": row.location_flag,
+                "type_id": row.type_id,
+                "quantity": row.quantity,
+                "is_singleton": row.is_singleton,
+            }
+            for row in cached_rows
+        ]
+        index_by_item_id = build_asset_index_by_item_id(corp_assets_for_match)
+
+        effective_location_ids: list[int] = []
+        hangar_fallback_context_ids: set[int] = set()
+        for structure_id in target_structure_ids:
+            office_folder_item_id = get_office_folder_item_id_from_assets(
+                corp_assets_for_match,
+                structure_id=int(structure_id),
+            )
+            candidate_context_ids: list[int] = [int(structure_id)]
+            if office_folder_item_id is not None:
+                office_folder_item_id_int = int(office_folder_item_id)
+                candidate_context_ids.append(office_folder_item_id_int)
+                candidate_context_ids.append(
+                    make_managed_hangar_location_id(
+                        office_folder_item_id_int,
+                        int(hangar_division),
+                    )
+                )
+            else:
+                hangar_fallback_context_ids.add(int(structure_id))
+
+            for context_id in candidate_context_ids:
+                context_id_int = int(context_id)
+                if context_id_int not in effective_location_ids:
+                    effective_location_ids.append(context_id_int)
+        if not effective_location_ids:
+            return summary
+
+        def _asset_chain_contains_location(asset_row: dict, location_id: int) -> bool:
+            current = asset_row
+            seen: set[int] = set()
+            target_id = int(location_id)
+            for _ in range(25):
+                try:
+                    current_location_id = int(current.get("location_id", 0) or 0)
+                except (TypeError, ValueError):
+                    return False
+                if current_location_id == target_id:
+                    return True
+                parent = index_by_item_id.get(current_location_id)
+                if not parent:
+                    return False
+                if current_location_id in seen:
+                    return False
+                seen.add(current_location_id)
+                current = parent
+            return False
+
+        consumed_by_type: dict[int, int] = {}
+        rows_to_update: list[CachedCorporationAsset] = []
+        row_ids_to_delete: list[int] = []
+        remaining_total = sum(int(qty) for qty in remaining_by_type.values())
+
+        for row in cached_rows:
+            if remaining_total <= 0:
+                break
+
+            type_id = int(row.type_id or 0)
+            wanted_qty = int(remaining_by_type.get(type_id, 0) or 0)
+            if type_id <= 0 or wanted_qty <= 0:
+                continue
+
+            row_for_match = {
+                "item_id": row.item_id,
+                "location_id": row.location_id,
+                "location_flag": row.location_flag,
+                "type_id": row.type_id,
+                "quantity": row.quantity,
+                "is_singleton": row.is_singleton,
+            }
+
+            matches_scope = False
+            for context_id in effective_location_ids:
+                context_id_int = int(context_id)
+                if context_id_int < 0:
+                    matched = _asset_chain_contains_location(row_for_match, context_id_int)
+                else:
+                    matched = asset_chain_has_context(
+                        row_for_match,
+                        index_by_item_id,
+                        location_id=context_id_int,
+                        location_flag=str(target_flag),
+                    )
+                    if not matched and context_id_int in hangar_fallback_context_ids:
+                        matched = asset_chain_has_context(
+                            row_for_match,
+                            index_by_item_id,
+                            location_id=context_id_int,
+                            location_flag="Hangar",
+                        )
+                if matched:
+                    matches_scope = True
+                    break
+            if not matches_scope:
+                continue
+
+            try:
+                raw_quantity = int(row.quantity or 0)
+            except (TypeError, ValueError):
+                raw_quantity = 0
+            available_quantity = (
+                raw_quantity if raw_quantity > 0 else (1 if bool(row.is_singleton) else 0)
+            )
+            if available_quantity <= 0:
+                continue
+
+            consume_quantity = min(int(wanted_qty), int(available_quantity))
+            if consume_quantity <= 0:
+                continue
+
+            remaining_by_type[type_id] = max(wanted_qty - consume_quantity, 0)
+            remaining_total = max(int(remaining_total) - int(consume_quantity), 0)
+            consumed_by_type[type_id] = (
+                int(consumed_by_type.get(type_id, 0)) + int(consume_quantity)
+            )
+
+            if raw_quantity > 0:
+                new_quantity = int(raw_quantity) - int(consume_quantity)
+                if new_quantity <= 0:
+                    row_ids_to_delete.append(int(row.id))
+                else:
+                    row.quantity = int(new_quantity)
+                    rows_to_update.append(row)
+            else:
+                row_ids_to_delete.append(int(row.id))
+
+        if row_ids_to_delete:
+            CachedCorporationAsset.objects.filter(id__in=row_ids_to_delete).delete()
+        if rows_to_update:
+            CachedCorporationAsset.objects.bulk_update(
+                rows_to_update,
+                fields=["quantity"],
+                batch_size=500,
+            )
+
+    summary["consumed_by_type"] = {
+        int(type_id): int(quantity)
+        for type_id, quantity in consumed_by_type.items()
+        if int(quantity) > 0
+    }
+    summary["remaining_by_type"] = {
+        int(type_id): int(quantity)
+        for type_id, quantity in remaining_by_type.items()
+        if int(quantity) > 0
+    }
+    summary["updated_rows"] = int(len(rows_to_update))
+    summary["deleted_rows"] = int(len(row_ids_to_delete))
+    return summary
+
+
+def add_cached_corp_assets_for_sell_completion(
+    *,
+    corporation_id: int,
+    sell_structure_ids: list[int] | tuple[int, ...] | None,
+    hangar_division: int,
+    added_quantities_by_type: dict[int, int] | None,
+    preferred_structure_id: int | None = None,
+) -> dict[str, object]:
+    """Add sold quantities to cached corp assets after sell-order completion."""
+
+    target_structure_ids: list[int] = []
+    try:
+        preferred_structure_id_int = int(preferred_structure_id or 0)
+    except (TypeError, ValueError):
+        preferred_structure_id_int = 0
+    if preferred_structure_id_int > 0:
+        target_structure_ids.append(preferred_structure_id_int)
+
+    for structure_id in sell_structure_ids or []:
+        try:
+            structure_id_int = int(structure_id)
+        except (TypeError, ValueError):
+            continue
+        if structure_id_int <= 0 or structure_id_int in target_structure_ids:
+            continue
+        target_structure_ids.append(structure_id_int)
+    if not target_structure_ids:
+        return {
+            "added_by_type": {},
+            "created_rows": 0,
+            "updated_rows": 0,
+        }
+
+    try:
+        target_flag = _CORP_HANGAR_FLAG_BY_DIVISION[int(hangar_division)]
+    except (TypeError, ValueError, KeyError):
+        return {
+            "added_by_type": {},
+            "created_rows": 0,
+            "updated_rows": 0,
+        }
+
+    normalized_added_by_type: dict[int, int] = {}
+    for raw_type_id, raw_quantity in (added_quantities_by_type or {}).items():
+        try:
+            type_id = int(raw_type_id)
+            quantity = int(raw_quantity)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0 or quantity <= 0:
+            continue
+        normalized_added_by_type[type_id] = (
+            normalized_added_by_type.get(type_id, 0) + quantity
+        )
+    if not normalized_added_by_type:
+        return {
+            "added_by_type": {},
+            "created_rows": 0,
+            "updated_rows": 0,
+        }
+
+    added_by_type: dict[int, int] = {}
+    created_rows = 0
+    updated_rows = 0
+    now = timezone.now()
+
+    with transaction.atomic():
+        for type_id, add_quantity in normalized_added_by_type.items():
+            existing_row = (
+                CachedCorporationAsset.objects.select_for_update()
+                .filter(
+                    corporation_id=int(corporation_id),
+                    type_id=int(type_id),
+                    location_id__in=target_structure_ids,
+                    location_flag=str(target_flag),
+                )
+                .order_by("id")
+                .first()
+            )
+            if existing_row:
+                try:
+                    base_quantity = int(existing_row.quantity or 0)
+                except (TypeError, ValueError):
+                    base_quantity = 0
+                existing_row.quantity = max(base_quantity, 0) + int(add_quantity)
+                existing_row.synced_at = now
+                existing_row.save(update_fields=["quantity", "synced_at"])
+                updated_rows += 1
+            else:
+                location_id = int(target_structure_ids[0])
+                CachedCorporationAsset.objects.create(
+                    corporation_id=int(corporation_id),
+                    item_id=None,
+                    location_id=location_id,
+                    location_flag=str(target_flag),
+                    type_id=int(type_id),
+                    set_name="",
+                    quantity=int(add_quantity),
+                    is_singleton=False,
+                    is_blueprint=False,
+                    synced_at=now,
+                )
+                created_rows += 1
+            added_by_type[int(type_id)] = int(add_quantity)
+
+    return {
+        "added_by_type": added_by_type,
+        "created_rows": int(created_rows),
+        "updated_rows": int(updated_rows),
+    }
 
 
 def _cache_corp_structure_names(corporation_id: int) -> dict[int, str]:

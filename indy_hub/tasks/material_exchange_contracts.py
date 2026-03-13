@@ -71,7 +71,11 @@ from indy_hub.notifications import (
     send_discord_webhook,
     send_discord_webhook_with_message_id,
 )
-from indy_hub.services.asset_cache import resolve_structure_names
+from indy_hub.services.asset_cache import (
+    add_cached_corp_assets_for_sell_completion,
+    consume_cached_corp_assets_for_buy_completion,
+    resolve_structure_names,
+)
 from indy_hub.services.esi_client import (
     ESIClientError,
     ESIForbiddenError,
@@ -118,6 +122,7 @@ def _log_sell_order_transactions(order: MaterialExchangeSellOrder) -> None:
     if MaterialExchangeTransaction.objects.filter(sell_order=order).exists():
         return
 
+    added_quantities_by_type: dict[int, int] = {}
     for item in order.items.all():
         snapshot = MaterialExchangeTransaction.build_jita_snapshot(
             config=order.config,
@@ -136,6 +141,10 @@ def _log_sell_order_transactions(order: MaterialExchangeSellOrder) -> None:
             total_price=item.total_price,
             **snapshot,
         )
+        added_quantities_by_type[int(item.type_id)] = (
+            int(added_quantities_by_type.get(int(item.type_id), 0))
+            + int(item.quantity or 0)
+        )
 
         stock_item, _created = MaterialExchangeStock.objects.get_or_create(
             config=order.config,
@@ -145,11 +154,27 @@ def _log_sell_order_transactions(order: MaterialExchangeSellOrder) -> None:
         stock_item.quantity += item.quantity
         stock_item.save()
 
+    try:
+        add_cached_corp_assets_for_sell_completion(
+            corporation_id=int(order.config.corporation_id),
+            sell_structure_ids=order.config.get_sell_structure_ids(),
+            hangar_division=int(getattr(order.config, "hangar_division", 1) or 1),
+            added_quantities_by_type=added_quantities_by_type,
+            preferred_structure_id=int(getattr(order, "source_location_id", 0) or 0),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to add cached corp assets for completed sell order %s: %s",
+            order.id,
+            exc,
+        )
+
 
 def _log_buy_order_transactions(order: MaterialExchangeBuyOrder) -> None:
     if MaterialExchangeTransaction.objects.filter(buy_order=order).exists():
         return
 
+    consumed_quantities_by_type: dict[int, int] = {}
     for item in order.items.all():
         snapshot = MaterialExchangeTransaction.build_jita_snapshot(
             config=order.config,
@@ -168,6 +193,10 @@ def _log_buy_order_transactions(order: MaterialExchangeBuyOrder) -> None:
             total_price=item.total_price,
             **snapshot,
         )
+        consumed_quantities_by_type[int(item.type_id)] = (
+            int(consumed_quantities_by_type.get(int(item.type_id), 0))
+            + int(item.quantity or 0)
+        )
 
         try:
             stock_item = order.config.stock_items.get(type_id=item.type_id)
@@ -175,6 +204,20 @@ def _log_buy_order_transactions(order: MaterialExchangeBuyOrder) -> None:
             stock_item.save()
         except MaterialExchangeStock.DoesNotExist:
             continue
+
+    try:
+        consume_cached_corp_assets_for_buy_completion(
+            corporation_id=int(order.config.corporation_id),
+            buy_structure_ids=order.config.get_buy_structure_ids(),
+            hangar_division=int(getattr(order.config, "hangar_division", 1) or 1),
+            consumed_quantities_by_type=consumed_quantities_by_type,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to consume cached corp assets for completed buy order %s: %s",
+            order.id,
+            exc,
+        )
 
 
 def _get_location_name(

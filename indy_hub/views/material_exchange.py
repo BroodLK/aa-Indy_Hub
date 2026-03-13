@@ -42,8 +42,10 @@ from ..models import (
     MaterialExchangeTransaction,
 )
 from ..services.asset_cache import (
+    add_cached_corp_assets_for_sell_completion,
     asset_chain_has_context,
     build_asset_index_by_item_id,
+    consume_cached_corp_assets_for_buy_completion,
     get_corp_assets_cached,
     get_corp_divisions_cached,
     get_office_folder_item_id_from_assets,
@@ -5239,6 +5241,7 @@ def material_exchange_complete_sell(request, order_id):
         order.save()
 
         # Create transaction log for each item and update stock
+        added_quantities_by_type: dict[int, int] = {}
         for item in order.items.all():
             snapshot = MaterialExchangeTransaction.build_jita_snapshot(
                 config=order.config,
@@ -5258,6 +5261,10 @@ def material_exchange_complete_sell(request, order_id):
                 total_price=item.total_price,
                 **snapshot,
             )
+            added_quantities_by_type[int(item.type_id)] = (
+                int(added_quantities_by_type.get(int(item.type_id), 0))
+                + int(item.quantity or 0)
+            )
 
             # Update stock (add quantity)
             stock_item, _created = MaterialExchangeStock.objects.get_or_create(
@@ -5267,6 +5274,21 @@ def material_exchange_complete_sell(request, order_id):
             )
             stock_item.quantity += item.quantity
             stock_item.save()
+
+        try:
+            add_cached_corp_assets_for_sell_completion(
+                corporation_id=int(order.config.corporation_id),
+                sell_structure_ids=order.config.get_sell_structure_ids(),
+                hangar_division=int(getattr(order.config, "hangar_division", 1) or 1),
+                added_quantities_by_type=added_quantities_by_type,
+                preferred_structure_id=int(getattr(order, "source_location_id", 0) or 0),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to add cached corp assets for manually completed sell order %s",
+                order.id,
+                exc_info=True,
+            )
 
     messages.success(
         request, _(f"Sell order #{order.id} completed and transaction logged.")
@@ -5416,6 +5438,7 @@ def _complete_buy_order(order, *, delivered_by=None, delivery_method=None):
         order.save()
 
         # Create transaction log for each item and update stock
+        consumed_quantities_by_type: dict[int, int] = {}
         for item in order.items.all():
             snapshot = MaterialExchangeTransaction.build_jita_snapshot(
                 config=order.config,
@@ -5434,6 +5457,10 @@ def _complete_buy_order(order, *, delivered_by=None, delivery_method=None):
                 total_price=item.total_price,
                 **snapshot,
             )
+            consumed_quantities_by_type[int(item.type_id)] = (
+                int(consumed_quantities_by_type.get(int(item.type_id), 0))
+                + int(item.quantity or 0)
+            )
 
             try:
                 stock_item = order.config.stock_items.get(type_id=item.type_id)
@@ -5441,6 +5468,20 @@ def _complete_buy_order(order, *, delivered_by=None, delivery_method=None):
                 stock_item.save()
             except MaterialExchangeStock.DoesNotExist:
                 continue
+
+        try:
+            consume_cached_corp_assets_for_buy_completion(
+                corporation_id=int(order.config.corporation_id),
+                buy_structure_ids=order.config.get_buy_structure_ids(),
+                hangar_division=int(getattr(order.config, "hangar_division", 1) or 1),
+                consumed_quantities_by_type=consumed_quantities_by_type,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to consume cached corp assets for manually completed buy order %s",
+                order.id,
+                exc_info=True,
+            )
 
 
 @login_required

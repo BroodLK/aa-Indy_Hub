@@ -378,3 +378,93 @@ class CorporationAssetRefreshNameTests(TestCase):
         )
         self.assertEqual(container_row.set_name, "Backfilled Corp Container")
         mocked_fetch_names.assert_called_once()
+
+    def test_consume_cached_corp_assets_for_buy_completion_consumes_nested_items(self) -> None:
+        corporation_id = 98123459
+        structure_id = 1042090993674
+        container_item_id = 1044300603020
+        nested_item_id = 1044300603021
+        other_item_id = 1044300603022
+
+        CachedCorporationAsset.objects.create(
+            corporation_id=corporation_id,
+            item_id=container_item_id,
+            location_id=structure_id,
+            location_flag="CorpSAG1",
+            type_id=23,
+            quantity=1,
+            is_singleton=True,
+            is_blueprint=False,
+        )
+        nested_row = CachedCorporationAsset.objects.create(
+            corporation_id=corporation_id,
+            item_id=nested_item_id,
+            location_id=container_item_id,
+            location_flag="Unlocked",
+            type_id=34,
+            quantity=10,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+        other_row = CachedCorporationAsset.objects.create(
+            corporation_id=corporation_id,
+            item_id=other_item_id,
+            location_id=1042090993999,
+            location_flag="CorpSAG1",
+            type_id=34,
+            quantity=9,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+
+        summary = asset_cache.consume_cached_corp_assets_for_buy_completion(
+            corporation_id=corporation_id,
+            buy_structure_ids=[structure_id],
+            hangar_division=1,
+            consumed_quantities_by_type={34: 7},
+        )
+
+        nested_row.refresh_from_db()
+        other_row.refresh_from_db()
+        self.assertEqual(nested_row.quantity, 3)
+        self.assertEqual(other_row.quantity, 9)
+        self.assertEqual(summary.get("consumed_by_type", {}).get(34), 7)
+        self.assertEqual(summary.get("remaining_by_type", {}).get(34), None)
+
+    def test_add_cached_corp_assets_for_sell_completion_updates_and_creates_rows(self) -> None:
+        corporation_id = 98123460
+        structure_a = 1042090993674
+        structure_b = 1042090993999
+
+        existing = CachedCorporationAsset.objects.create(
+            corporation_id=corporation_id,
+            item_id=None,
+            location_id=structure_a,
+            location_flag="CorpSAG1",
+            type_id=34,
+            quantity=5,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+
+        summary = asset_cache.add_cached_corp_assets_for_sell_completion(
+            corporation_id=corporation_id,
+            sell_structure_ids=[structure_a, structure_b],
+            hangar_division=1,
+            added_quantities_by_type={34: 7, 35: 4},
+            preferred_structure_id=structure_b,
+        )
+
+        existing.refresh_from_db()
+        created = CachedCorporationAsset.objects.get(
+            corporation_id=corporation_id,
+            location_id=structure_b,
+            location_flag="CorpSAG1",
+            type_id=35,
+        )
+        self.assertEqual(existing.quantity, 12)
+        self.assertEqual(created.quantity, 4)
+        self.assertEqual(summary.get("updated_rows"), 1)
+        self.assertEqual(summary.get("created_rows"), 1)
+        self.assertEqual(summary.get("added_by_type", {}).get(34), 7)
+        self.assertEqual(summary.get("added_by_type", {}).get(35), 4)

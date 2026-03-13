@@ -15,6 +15,7 @@ from django.utils import timezone
 # AA Example App
 # Local
 from indy_hub.models import (
+    CachedCorporationAsset,
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
@@ -24,6 +25,8 @@ from indy_hub.models import (
 from indy_hub.tasks.material_exchange_contracts import (
     _extract_contract_id,
     _get_effective_contract_location_id,
+    _log_buy_order_transactions,
+    _log_sell_order_transactions,
     check_completed_material_exchange_contracts,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
@@ -122,6 +125,56 @@ class ContractValidationTestCase(TestCase):
         self.assertIn(MaterialExchangeBuyOrder.Status.VALIDATED, status_values)
         self.assertIn(MaterialExchangeBuyOrder.Status.COMPLETED, status_values)
         self.assertIn(MaterialExchangeBuyOrder.Status.REJECTED, status_values)
+
+    def test_log_buy_order_transactions_consumes_cached_buy_scope_assets(self):
+        in_scope_asset = CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            item_id=910001,
+            location_id=self.config.structure_id,
+            location_flag="CorpSAG1",
+            type_id=self.buy_item.type_id,
+            quantity=600,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+        out_of_scope_asset = CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            item_id=910002,
+            location_id=70009999,
+            location_flag="CorpSAG1",
+            type_id=self.buy_item.type_id,
+            quantity=600,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+
+        _log_buy_order_transactions(self.buy_order)
+
+        in_scope_asset.refresh_from_db()
+        out_of_scope_asset.refresh_from_db()
+        self.assertEqual(in_scope_asset.quantity, 100)
+        self.assertEqual(out_of_scope_asset.quantity, 600)
+
+    def test_log_sell_order_transactions_adds_cached_sell_scope_assets(self):
+        self.sell_order.source_location_id = int(self.config.structure_id)
+        self.sell_order.source_location_name = "Test Structure"
+        self.sell_order.save(update_fields=["source_location_id", "source_location_name"])
+
+        existing = CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            item_id=None,
+            location_id=int(self.config.structure_id),
+            location_flag="CorpSAG1",
+            type_id=self.sell_item.type_id,
+            quantity=25,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+
+        _log_sell_order_transactions(self.sell_order)
+
+        existing.refresh_from_db()
+        self.assertEqual(existing.quantity, 1025)
 
 
 class ContractValidationTaskTest(TestCase):

@@ -8,13 +8,16 @@ from datetime import timedelta
 
 # AA Example App
 from indy_hub.models import (
+    CachedCorporationAsset,
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
     MaterialExchangeSellOrder,
     MaterialExchangeSellOrderItem,
+    MaterialExchangeTransaction,
 )
 from indy_hub.views.material_exchange import (
+    _complete_buy_order,
     _get_reserved_buy_quantities,
     _get_reserved_sell_quantities,
 )
@@ -86,6 +89,56 @@ class MaterialExchangeReservationTests(TestCase):
         reserved_35 = _get_reserved_buy_quantities(config=self.config, type_ids={35})
         self.assertEqual(reserved_34.get(34), 2)
         self.assertEqual(reserved_35.get(35), 5)
+
+    def test_manual_buy_completion_consumes_cached_buy_scope_assets(self):
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.user_a,
+            status=MaterialExchangeBuyOrder.Status.VALIDATED,
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=4,
+            unit_price=10,
+            total_price=40,
+            stock_available_at_creation=999999,
+        )
+
+        in_scope_asset = CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            item_id=920001,
+            location_id=70000001,
+            location_flag="CorpSAG1",
+            type_id=34,
+            quantity=10,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+        out_of_scope_asset = CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            item_id=920002,
+            location_id=70000999,
+            location_flag="CorpSAG1",
+            type_id=34,
+            quantity=99,
+            is_singleton=False,
+            is_blueprint=False,
+        )
+
+        _complete_buy_order(order)
+
+        order.refresh_from_db()
+        in_scope_asset.refresh_from_db()
+        out_of_scope_asset.refresh_from_db()
+        self.assertEqual(order.status, MaterialExchangeBuyOrder.Status.COMPLETED)
+        self.assertEqual(in_scope_asset.quantity, 6)
+        self.assertEqual(out_of_scope_asset.quantity, 99)
+        self.assertEqual(
+            MaterialExchangeTransaction.objects.filter(buy_order=order).count(),
+            1,
+        )
 
     def test_reserved_sell_quantities_are_per_user_and_location(self):
         order_alpha = MaterialExchangeSellOrder.objects.create(
