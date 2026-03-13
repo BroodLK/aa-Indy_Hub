@@ -24,6 +24,7 @@ from indy_hub.models import (
 from indy_hub.tasks.material_exchange_contracts import (
     _extract_contract_id,
     _get_effective_contract_location_id,
+    check_completed_material_exchange_contracts,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
 )
@@ -912,7 +913,120 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Contract validated", self.buy_order.notes)
 
         mock_user.assert_called()
+        user_title = str(mock_user.call_args[0][1])
+        user_message = str(mock_user.call_args[0][2])
+        self.assertIn("Contract", user_title)
+        self.assertIn("created your in-game contract", user_message)
+        self.assertIn(f"Contract #{contract.contract_id}", user_message)
         mock_multi.assert_called()
+
+    @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    def test_check_completed_buy_order_notifies_buyer(
+        self,
+        mock_client,
+        mock_get_char,
+        mock_notify_admins,
+        mock_notify_user,
+        _mock_log_buy_tx,
+    ):
+        """When corp contract is finished, buyer should get a completion notification."""
+        now = timezone.now()
+        self.buy_order.status = MaterialExchangeBuyOrder.Status.VALIDATED
+        self.buy_order.esi_contract_id = 227079244
+        self.buy_order.save(update_fields=["status", "esi_contract_id", "updated_at"])
+
+        mock_get_char.return_value = 999999999
+        mock_client.fetch_corporation_contracts.return_value = [
+            {
+                "contract_id": 227079244,
+                "status": "finished",
+                "date_completed": now,
+            }
+        ]
+
+        check_completed_material_exchange_contracts()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED)
+        self.assertIsNotNone(self.buy_order.delivered_at)
+        mock_notify_user.assert_called()
+        user_title = str(mock_notify_user.call_args[0][1])
+        user_message = str(mock_notify_user.call_args[0][2])
+        self.assertIn("Completed", user_title)
+        self.assertIn("is complete", user_message)
+        self.assertIn("227079244", user_message)
+        mock_notify_admins.assert_called()
+        admin_title = str(mock_notify_admins.call_args[0][1])
+        admin_message = str(mock_notify_admins.call_args[0][2])
+        self.assertIn("Completed", admin_title)
+        self.assertIn("227079244", admin_message)
+
+    @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    def test_check_completed_sell_order_notifies_seller(
+        self,
+        mock_client,
+        mock_get_char,
+        mock_notify_admins,
+        mock_notify_user,
+        _mock_log_sell_tx,
+    ):
+        """When sell contract is finished, seller and admins should be notified."""
+        # AA Example App
+        from indy_hub.models import (
+            MaterialExchangeSellOrder,
+            MaterialExchangeSellOrderItem,
+        )
+
+        seller = User.objects.create_user(username="test_seller_completion")
+        sell_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=seller,
+            status=MaterialExchangeSellOrder.Status.VALIDATED,
+            order_reference="INDY-SELL-COMPLETE-1",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=sell_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1000,
+            unit_price=5.0,
+            total_price=5000,
+        )
+        sell_order.esi_contract_id = 227079299
+        sell_order.save(update_fields=["esi_contract_id", "updated_at"])
+
+        mock_get_char.return_value = 999999999
+        mock_client.fetch_corporation_contracts.return_value = [
+            {"contract_id": 227079299, "status": "finished"}
+        ]
+
+        check_completed_material_exchange_contracts()
+
+        sell_order.refresh_from_db()
+        self.assertEqual(
+            sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
+        )
+        self.assertIsNotNone(sell_order.payment_verified_at)
+        mock_notify_user.assert_called()
+        user_title = str(mock_notify_user.call_args[0][1])
+        user_message = str(mock_notify_user.call_args[0][2])
+        self.assertIn("Completed", user_title)
+        self.assertIn("accepted by the corporation", user_message)
+        self.assertIn("Tritanium", user_message)
+        mock_notify_admins.assert_called()
+        admin_title = str(mock_notify_admins.call_args[0][1])
+        admin_message = str(mock_notify_admins.call_args[0][2])
+        self.assertIn("Accepted", admin_title)
+        self.assertIn("227079299", admin_message)
+        self.assertIn("Tritanium", admin_message)
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
@@ -1515,6 +1629,7 @@ class BuyOrderSignalTest(TestCase):
             is_active=True,
         )
         self.buyer = User.objects.create_user(username="test_buyer")
+        self.seller = User.objects.create_user(username="test_seller")
 
     @patch(
         "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_buy_order_created"
@@ -1562,6 +1677,55 @@ class BuyOrderSignalTest(TestCase):
 
         mock_task.apply_async.assert_called_once_with(
             args=(buy_order.id,),
+            countdown=2,
+            expires=300,
+        )
+
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_sell_order_created"
+    )
+    def test_sell_order_signal_on_create(self, mock_task):
+        """Test that signal is triggered on sell order creation."""
+        sell_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=sell_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=500,
+            unit_price=5.0,
+            total_price=2500,
+        )
+
+        mock_task.apply_async.assert_called_once_with(
+            args=(sell_order.id,),
+            countdown=2,
+            expires=300,
+        )
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.DRAFT)
+
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_sell_order_created"
+    )
+    def test_sell_order_signal_queues_on_commit(self, mock_task):
+        """Sell-notification task should queue only after outer transaction commit."""
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            with transaction.atomic():
+                sell_order = MaterialExchangeSellOrder.objects.create(
+                    config=self.config,
+                    seller=self.seller,
+                )
+                self.assertFalse(mock_task.apply_async.called)
+
+            self.assertEqual(len(callbacks), 1)
+            self.assertFalse(mock_task.apply_async.called)
+
+            callbacks[0]()
+
+        mock_task.apply_async.assert_called_once_with(
+            args=(sell_order.id,),
             countdown=2,
             expires=300,
         )

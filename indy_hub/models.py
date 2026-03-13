@@ -1985,6 +1985,14 @@ class MaterialExchangeConfig(models.Model):
             "for sell and buy sides."
         ),
     )
+    container_price_overrides = models.JSONField(
+        blank=True,
+        default=dict,
+        help_text=_(
+            "Pricing overrides for items inside containers/cans. Supports fixed price and/or markup "
+            "overrides for sell and buy sides."
+        ),
+    )
 
     # Stock sync
     last_stock_sync = models.DateTimeField(blank=True, null=True)
@@ -2900,6 +2908,48 @@ class MaterialExchangeTransaction(models.Model):
     quantity = models.BigIntegerField()
     unit_price = models.DecimalField(max_digits=20, decimal_places=2)
     total_price = models.DecimalField(max_digits=20, decimal_places=2)
+    jita_buy_unit_price_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Jita buy unit price snapshot at completion time."),
+    )
+    jita_sell_unit_price_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Jita sell unit price snapshot at completion time."),
+    )
+    jita_split_unit_price_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Midpoint of Jita buy/sell at completion time."),
+    )
+    jita_buy_total_value_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("quantity * Jita buy snapshot."),
+    )
+    jita_sell_total_value_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("quantity * Jita sell snapshot."),
+    )
+    jita_split_total_value_snapshot = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("quantity * Jita split snapshot."),
+    )
 
     completed_at = models.DateTimeField(auto_now_add=True)
 
@@ -2916,6 +2966,75 @@ class MaterialExchangeTransaction(models.Model):
 
     def __str__(self):
         return f"{self.get_transaction_type_display()} #{self.id}: {self.user.username} - {self.type_name} x{self.quantity}"
+
+    @staticmethod
+    def _snapshot_price(raw_value) -> Decimal | None:
+        try:
+            value = Decimal(str(raw_value or 0)).quantize(Decimal("0.01"))
+        except Exception:
+            return None
+        return value if value > 0 else None
+
+    @classmethod
+    def build_jita_snapshot(
+        cls,
+        *,
+        config,
+        type_id: int,
+        quantity: int,
+    ) -> dict[str, Decimal | None]:
+        """Return Jita buy/sell/split snapshot fields for transaction creation."""
+        try:
+            qty = max(int(quantity or 0), 0)
+        except (TypeError, ValueError):
+            qty = 0
+
+        stock_row = (
+            MaterialExchangeStock.objects.filter(
+                config=config,
+                type_id=int(type_id),
+            )
+            .values("jita_buy_price", "jita_sell_price")
+            .first()
+        )
+        if not stock_row:
+            return {
+                "jita_buy_unit_price_snapshot": None,
+                "jita_sell_unit_price_snapshot": None,
+                "jita_split_unit_price_snapshot": None,
+                "jita_buy_total_value_snapshot": None,
+                "jita_sell_total_value_snapshot": None,
+                "jita_split_total_value_snapshot": None,
+            }
+
+        jita_buy = cls._snapshot_price(stock_row.get("jita_buy_price"))
+        jita_sell = cls._snapshot_price(stock_row.get("jita_sell_price"))
+        if jita_buy is not None and jita_sell is not None:
+            jita_split = ((jita_buy + jita_sell) / Decimal("2")).quantize(
+                Decimal("0.01")
+            )
+        elif jita_buy is not None:
+            jita_split = jita_buy
+        elif jita_sell is not None:
+            jita_split = jita_sell
+        else:
+            jita_split = None
+
+        quantity_decimal = Decimal(str(qty))
+
+        def _total(price: Decimal | None) -> Decimal | None:
+            if price is None:
+                return None
+            return (price * quantity_decimal).quantize(Decimal("0.01"))
+
+        return {
+            "jita_buy_unit_price_snapshot": jita_buy,
+            "jita_sell_unit_price_snapshot": jita_sell,
+            "jita_split_unit_price_snapshot": jita_split,
+            "jita_buy_total_value_snapshot": _total(jita_buy),
+            "jita_sell_total_value_snapshot": _total(jita_sell),
+            "jita_split_total_value_snapshot": _total(jita_split),
+        }
 
 
 class ESIContract(models.Model):

@@ -1,6 +1,7 @@
 """Material Exchange views for Indy Hub."""
 
 # Standard Library
+from datetime import datetime, time
 import hashlib
 from decimal import ROUND_CEILING, Decimal
 
@@ -29,6 +30,7 @@ from ..decorators import indy_hub_permission_required, tokens_required
 from ..models import (
     Blueprint,
     CachedCharacterAsset,
+    ESIContract,
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
@@ -1124,9 +1126,10 @@ def _parse_submitted_sell_item_quantities(post_data) -> list[dict[str, object]]:
     Supports both:
     - `qty_<type_id>_<row_index>` (legacy)
     - `qty_<type_id>_<variant>_<row_index>` where variant is `std|bpo|bpc`
+    - `qty_<type_id>_<variant>_<scope>_<row_index>` where scope is `root|incan`
     """
 
-    grouped: dict[tuple[int, str], int] = {}
+    grouped: dict[tuple[int, str, bool], int] = {}
     for key, values in post_data.lists():
         if not key.startswith("qty_"):
             continue
@@ -1141,7 +1144,16 @@ def _parse_submitted_sell_item_quantities(post_data) -> list[dict[str, object]]:
         type_id = int(type_id_part)
 
         variant = ""
-        if len(parts) >= 3:
+        is_in_container = False
+        if len(parts) >= 4 and str(parts[2] or "").strip().lower() in {
+            "incan",
+            "root",
+        }:
+            raw_variant = str(parts[1] or "").strip().lower()
+            if raw_variant in {"std", "bpo", "bpc"}:
+                variant = "" if raw_variant == "std" else raw_variant
+            is_in_container = str(parts[2] or "").strip().lower() == "incan"
+        elif len(parts) >= 3:
             raw_variant = str(parts[1] or "").strip().lower()
             if raw_variant in {"std", "bpo", "bpc"}:
                 variant = "" if raw_variant == "std" else raw_variant
@@ -1156,19 +1168,52 @@ def _parse_submitted_sell_item_quantities(post_data) -> list[dict[str, object]]:
                 continue
             if qty <= 0:
                 continue
-            key_tuple = (type_id, variant)
+            key_tuple = (type_id, variant, is_in_container)
             grouped[key_tuple] = grouped.get(key_tuple, 0) + qty
 
     entries: list[dict[str, object]] = []
-    for (type_id, variant), quantity in grouped.items():
+    for (type_id, variant, is_in_container), quantity in grouped.items():
         entries.append(
             {
                 "type_id": int(type_id),
                 "blueprint_variant": str(variant or ""),
+                "in_container": bool(is_in_container),
                 "quantity": int(quantity),
             }
         )
     return entries
+
+
+def _build_price_override_entry(
+    *,
+    fixed_price_raw,
+    markup_percent_raw,
+    markup_base_raw,
+) -> dict[str, object] | None:
+    """Return normalized override payload or None when unset/invalid."""
+
+    def _coerce_decimal(raw_value) -> Decimal | None:
+        if raw_value is None:
+            return None
+        normalized = str(raw_value).strip()
+        if not normalized:
+            return None
+        try:
+            return Decimal(normalized)
+        except Exception:
+            return None
+
+    fixed_price = _coerce_decimal(fixed_price_raw)
+    if fixed_price is not None:
+        return {"kind": "fixed", "price": fixed_price}
+
+    markup_percent = _coerce_decimal(markup_percent_raw)
+    if markup_percent is None:
+        return None
+    markup_base = str(markup_base_raw or "buy").strip().lower()
+    if markup_base not in {"buy", "sell"}:
+        markup_base = "buy"
+    return {"kind": "markup", "percent": markup_percent, "base": markup_base}
 
 
 def _build_sell_variant_quantities(
@@ -1205,36 +1250,94 @@ def _build_sell_variant_quantities(
     return quantities
 
 
+def _build_scoped_variant_quantities(
+    *,
+    assets: list[dict],
+    location_id: int | None = None,
+    explicit_variant_by_item_id: dict[int, str] | None = None,
+) -> dict[tuple[int, str, bool], int]:
+    """Return quantities keyed by (type_id, blueprint_variant, in_container)."""
+
+    if not assets:
+        return {}
+
+    asset_by_item_id: dict[int, dict] = {}
+    for asset in assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id > 0:
+            asset_by_item_id[item_id] = asset
+
+    def _resolve_parent_item_id(asset: dict) -> int:
+        for field_name in ("raw_location_id", "location_id"):
+            try:
+                candidate = int(asset.get(field_name) or 0)
+            except (TypeError, ValueError):
+                candidate = 0
+            if candidate > 0 and candidate in asset_by_item_id:
+                return candidate
+        return 0
+
+    parent_by_item_id: dict[int, int] = {}
+    for asset in assets:
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id <= 0:
+            continue
+        parent_item_id = _resolve_parent_item_id(asset)
+        if parent_item_id > 0:
+            parent_by_item_id[item_id] = parent_item_id
+
+    normalized_explicit_variants = {
+        int(item_id): str(variant or "").strip().lower()
+        for item_id, variant in (explicit_variant_by_item_id or {}).items()
+        if int(item_id) > 0 and str(variant or "").strip().lower() in {"bpc", "bpo"}
+    }
+
+    location_filter = int(location_id or 0)
+    quantities: dict[tuple[int, str, bool], int] = {}
+    for asset in assets:
+        if location_filter > 0:
+            try:
+                asset_location_id = int(asset.get("location_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if asset_location_id != location_filter:
+                continue
+
+        try:
+            type_id = int(asset.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+
+        quantity = _asset_quantity(asset)
+        if quantity <= 0:
+            continue
+
+        try:
+            item_id = int(asset.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        blueprint_variant = normalized_explicit_variants.get(item_id)
+        if blueprint_variant not in {"bpc", "bpo"}:
+            blueprint_variant = _asset_blueprint_variant(asset)
+        in_container = int(parent_by_item_id.get(item_id, 0) or 0) > 0
+        key = (int(type_id), str(blueprint_variant or ""), bool(in_container))
+        quantities[key] = quantities.get(key, 0) + int(quantity)
+
+    return quantities
+
+
 def _get_item_price_override_maps(
     config: MaterialExchangeConfig,
 ) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
     """Return per-item override maps for sell and buy sides."""
-
-    def _coerce_decimal(raw_value) -> Decimal | None:
-        if raw_value is None:
-            return None
-        try:
-            return Decimal(str(raw_value))
-        except Exception:
-            return None
-
-    def _build_override(
-        *,
-        fixed_price_raw,
-        markup_percent_raw,
-        markup_base_raw,
-    ) -> dict[str, object] | None:
-        fixed_price = _coerce_decimal(fixed_price_raw)
-        if fixed_price is not None:
-            return {"kind": "fixed", "price": fixed_price}
-
-        markup_percent = _coerce_decimal(markup_percent_raw)
-        if markup_percent is None:
-            return None
-        markup_base = str(markup_base_raw or "buy").strip().lower()
-        if markup_base not in {"buy", "sell"}:
-            markup_base = "buy"
-        return {"kind": "markup", "percent": markup_percent, "base": markup_base}
 
     sell_overrides: dict[int, dict[str, object]] = {}
     buy_overrides: dict[int, dict[str, object]] = {}
@@ -1261,7 +1364,7 @@ def _get_item_price_override_maps(
         buy_override,
     ) in rows:
         type_id_int = int(type_id)
-        sell_override_value = _build_override(
+        sell_override_value = _build_price_override_entry(
             fixed_price_raw=sell_override,
             markup_percent_raw=sell_markup_percent_override,
             markup_base_raw=sell_markup_base_override,
@@ -1269,7 +1372,7 @@ def _get_item_price_override_maps(
         if sell_override_value is not None:
             sell_overrides[type_id_int] = sell_override_value
 
-        buy_override_value = _build_override(
+        buy_override_value = _build_price_override_entry(
             fixed_price_raw=buy_override,
             markup_percent_raw=buy_markup_percent_override,
             markup_base_raw=buy_markup_base_override,
@@ -1284,35 +1387,6 @@ def _get_market_group_price_override_maps(
     config: MaterialExchangeConfig,
 ) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
     """Return per-market-group override maps for sell and buy sides."""
-
-    def _coerce_decimal(raw_value) -> Decimal | None:
-        if raw_value is None:
-            return None
-        normalized = str(raw_value).strip()
-        if not normalized:
-            return None
-        try:
-            return Decimal(normalized)
-        except Exception:
-            return None
-
-    def _build_override(
-        *,
-        fixed_price_raw,
-        markup_percent_raw,
-        markup_base_raw,
-    ) -> dict[str, object] | None:
-        fixed_price = _coerce_decimal(fixed_price_raw)
-        if fixed_price is not None:
-            return {"kind": "fixed", "price": fixed_price}
-
-        markup_percent = _coerce_decimal(markup_percent_raw)
-        if markup_percent is None:
-            return None
-        markup_base = str(markup_base_raw or "buy").strip().lower()
-        if markup_base not in {"buy", "sell"}:
-            markup_base = "buy"
-        return {"kind": "markup", "percent": markup_percent, "base": markup_base}
 
     raw_rows = list(getattr(config, "market_group_price_overrides", []) or [])
     sell_overrides: dict[int, dict[str, object]] = {}
@@ -1329,7 +1403,7 @@ def _get_market_group_price_override_maps(
         if market_group_id <= 0:
             continue
 
-        sell_override = _build_override(
+        sell_override = _build_price_override_entry(
             fixed_price_raw=raw_row.get("sell_price_override"),
             markup_percent_raw=raw_row.get("sell_markup_percent_override"),
             markup_base_raw=raw_row.get("sell_markup_base_override"),
@@ -1337,7 +1411,7 @@ def _get_market_group_price_override_maps(
         if sell_override is not None:
             sell_overrides[int(market_group_id)] = sell_override
 
-        buy_override = _build_override(
+        buy_override = _build_price_override_entry(
             fixed_price_raw=raw_row.get("buy_price_override"),
             markup_percent_raw=raw_row.get("buy_markup_percent_override"),
             markup_base_raw=raw_row.get("buy_markup_base_override"),
@@ -1346,6 +1420,28 @@ def _get_market_group_price_override_maps(
             buy_overrides[int(market_group_id)] = buy_override
 
     return sell_overrides, buy_overrides
+
+
+def _get_container_price_override_maps(
+    config: MaterialExchangeConfig,
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """Return container-only (in-can) override payloads for sell and buy sides."""
+
+    raw_payload = getattr(config, "container_price_overrides", {}) or {}
+    if not isinstance(raw_payload, dict):
+        return None, None
+
+    sell_override = _build_price_override_entry(
+        fixed_price_raw=raw_payload.get("sell_price_override"),
+        markup_percent_raw=raw_payload.get("sell_markup_percent_override"),
+        markup_base_raw=raw_payload.get("sell_markup_base_override"),
+    )
+    buy_override = _build_price_override_entry(
+        fixed_price_raw=raw_payload.get("buy_price_override"),
+        markup_percent_raw=raw_payload.get("buy_markup_percent_override"),
+        markup_base_raw=raw_payload.get("buy_markup_base_override"),
+    )
+    return sell_override, buy_override
 
 
 def _get_market_group_parent_map() -> dict[int, int | None]:
@@ -1462,12 +1558,16 @@ def _resolve_price_override_for_type(
     item_override_map: dict[int, dict[str, object]],
     market_group_override_map: dict[int, dict[str, object]] | None = None,
     type_market_group_path_map: dict[int, list[int]] | None = None,
+    container_override: dict[str, object] | None = None,
+    in_container: bool = False,
 ) -> dict[str, object] | None:
-    """Resolve effective override for a type with precedence item > market-group."""
+    """Resolve effective override for a type with precedence item > in-container > market-group."""
 
     direct_override = item_override_map.get(int(type_id))
     if direct_override is not None:
         return direct_override
+    if in_container and container_override is not None:
+        return container_override
     return _resolve_market_group_override_for_type(
         type_id=int(type_id),
         market_group_override_map=market_group_override_map,
@@ -1484,6 +1584,8 @@ def _compute_effective_sell_unit_price(
     sell_override_map: dict[int, dict[str, object]],
     sell_market_group_override_map: dict[int, dict[str, object]] | None = None,
     type_market_group_path_map: dict[int, list[int]] | None = None,
+    sell_container_override: dict[str, object] | None = None,
+    in_container: bool = False,
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for sell-page pricing."""
 
@@ -1497,6 +1599,8 @@ def _compute_effective_sell_unit_price(
         item_override_map=sell_override_map,
         market_group_override_map=sell_market_group_override_map,
         type_market_group_path_map=type_market_group_path_map,
+        container_override=sell_container_override,
+        in_container=bool(in_container),
     )
     if override_value is None:
         return default_unit_price, default_unit_price, False
@@ -1518,38 +1622,79 @@ def _compute_effective_sell_unit_price(
 
 def _compute_effective_buy_unit_price(
     *,
-    stock_item: MaterialExchangeStock,
+    stock_item: MaterialExchangeStock | None = None,
+    type_id: int | None = None,
+    jita_buy: Decimal | None = None,
+    jita_sell: Decimal | None = None,
+    default_unit_price: Decimal | None = None,
+    config: MaterialExchangeConfig | None = None,
     buy_override_map: dict[int, dict[str, object]],
     buy_market_group_override_map: dict[int, dict[str, object]] | None = None,
     type_market_group_path_map: dict[int, list[int]] | None = None,
+    buy_container_override: dict[str, object] | None = None,
+    in_container: bool = False,
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for buy-page pricing."""
 
-    default_unit_price = Decimal(stock_item.sell_price_to_member)
+    resolved_type_id = int(type_id or 0)
+    resolved_jita_buy = Decimal(jita_buy or 0)
+    resolved_jita_sell = Decimal(jita_sell or 0)
+    resolved_default_price = (
+        Decimal(default_unit_price) if default_unit_price is not None else Decimal("0")
+    )
+    resolved_config = config
+
+    if stock_item is not None:
+        resolved_type_id = int(getattr(stock_item, "type_id", 0) or 0)
+        resolved_jita_buy = Decimal(getattr(stock_item, "jita_buy_price", 0) or 0)
+        resolved_jita_sell = Decimal(getattr(stock_item, "jita_sell_price", 0) or 0)
+        if default_unit_price is None:
+            resolved_default_price = Decimal(stock_item.sell_price_to_member or 0)
+        resolved_config = resolved_config or getattr(stock_item, "config", None)
+
+    if resolved_default_price <= 0 and resolved_config is not None:
+        base_choice = str(getattr(resolved_config, "buy_markup_base", "buy") or "buy")
+        percent = Decimal(getattr(resolved_config, "buy_markup_percent", 0) or 0)
+        resolved_default_price = apply_markup_with_jita_bounds(
+            jita_buy=resolved_jita_buy,
+            jita_sell=resolved_jita_sell,
+            base_choice=base_choice,
+            percent=percent,
+            enforce_bounds=bool(
+                getattr(resolved_config, "enforce_jita_price_bounds", False)
+            ),
+        )
+
     override_value = _resolve_price_override_for_type(
-        type_id=int(stock_item.type_id),
+        type_id=resolved_type_id,
         item_override_map=buy_override_map,
         market_group_override_map=buy_market_group_override_map,
         type_market_group_path_map=type_market_group_path_map,
+        container_override=buy_container_override,
+        in_container=bool(in_container),
     )
     if override_value is None:
-        return default_unit_price, default_unit_price, False
+        return resolved_default_price, resolved_default_price, False
     if str(override_value.get("kind") or "") == "markup":
         override_base = str(override_value.get("base") or "buy").strip().lower()
         if override_base not in {"buy", "sell"}:
             override_base = "buy"
         effective_price = apply_markup_with_jita_bounds(
-            jita_buy=Decimal(stock_item.jita_buy_price or 0),
-            jita_sell=Decimal(stock_item.jita_sell_price or 0),
+            jita_buy=resolved_jita_buy,
+            jita_sell=resolved_jita_sell,
             base_choice=override_base,
             percent=Decimal(override_value.get("percent") or 0),
             enforce_bounds=bool(
-                getattr(stock_item.config, "enforce_jita_price_bounds", False)
+                getattr(resolved_config, "enforce_jita_price_bounds", False)
             ),
         )
     else:
         effective_price = Decimal(override_value.get("price") or 0)
-    return effective_price, default_unit_price, effective_price != default_unit_price
+    return (
+        effective_price,
+        resolved_default_price,
+        effective_price != resolved_default_price,
+    )
 
 
 def _asset_quantity(asset: dict) -> int:
@@ -1687,6 +1832,7 @@ def _build_sell_material_rows(
     allowed_type_ids: set[int] | None,
     sell_override_map: dict[int, dict[str, object]],
     sell_market_group_override_map: dict[int, dict[str, object]] | None = None,
+    sell_container_override: dict[str, object] | None = None,
     type_market_group_path_map: dict[int, list[int]] | None = None,
     character_name_by_id: dict[int, str] | None = None,
 ) -> list[dict]:
@@ -1745,11 +1891,16 @@ def _build_sell_material_rows(
         int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()
     }
     allowed_types = {int(type_id) for type_id in allowed_type_ids} if allowed_type_ids else None
-    price_meta_cache: dict[tuple[int, str], dict[str, object] | None] = {}
+    price_meta_cache: dict[tuple[int, str, bool], dict[str, object] | None] = {}
 
-    def get_price_meta(type_id: int, blueprint_variant: str = "") -> dict[str, object] | None:
+    def get_price_meta(
+        type_id: int,
+        blueprint_variant: str = "",
+        *,
+        in_container: bool = False,
+    ) -> dict[str, object] | None:
         type_id_int = int(type_id)
-        meta_key = (type_id_int, str(blueprint_variant or ""))
+        meta_key = (type_id_int, str(blueprint_variant or ""), bool(in_container))
         if meta_key in price_meta_cache:
             return price_meta_cache[meta_key]
 
@@ -1795,6 +1946,7 @@ def _build_sell_material_rows(
         if (
             not has_market_price
             and type_id_int not in sell_override_map
+            and not (in_container and sell_container_override is not None)
             and not has_group_override
         ):
             price_meta_cache[meta_key] = None
@@ -1808,6 +1960,8 @@ def _build_sell_material_rows(
             sell_override_map=sell_override_map,
             sell_market_group_override_map=sell_market_group_override_map,
             type_market_group_path_map=type_market_group_path_map,
+            sell_container_override=sell_container_override,
+            in_container=bool(in_container),
         )
         if unit_price <= 0:
             price_meta_cache[meta_key] = None
@@ -1846,7 +2000,15 @@ def _build_sell_material_rows(
         if quantity <= 0:
             continue
         blueprint_variant = _asset_blueprint_variant(asset)
-        if get_price_meta(type_id, blueprint_variant) is None:
+        is_in_container_asset = int(parent_by_item_id.get(item_id, 0) or 0) > 0
+        if (
+            get_price_meta(
+                type_id,
+                blueprint_variant,
+                in_container=is_in_container_asset,
+            )
+            is None
+        ):
             continue
         total_qty_by_type[type_id] = total_qty_by_type.get(type_id, 0) + quantity
 
@@ -1903,7 +2065,8 @@ def _build_sell_material_rows(
     ) -> dict[str, object] | None:
         if quantity <= 0:
             return None
-        meta = get_price_meta(type_id, blueprint_variant)
+        in_container = bool(ancestors)
+        meta = get_price_meta(type_id, blueprint_variant, in_container=in_container)
         if meta is None:
             return None
 
@@ -1913,6 +2076,7 @@ def _build_sell_material_rows(
         reserved_qty = max(int(quantity) - available_qty, 0)
         row_idx = next_row_index()
         variant_token = str(meta.get("blueprint_variant") or "") or "std"
+        container_scope_token = "incan" if in_container else "root"
 
         return {
             "row_kind": "item",
@@ -1927,7 +2091,9 @@ def _build_sell_material_rows(
             "blueprint_variant": str(meta.get("blueprint_variant") or ""),
             "icon_url": str(meta.get("icon_url") or ""),
             "icon_fallback_url": str(meta.get("icon_fallback_url") or ""),
-            "form_quantity_field_name": f"qty_{int(type_id)}_{variant_token}_{row_idx}",
+            "form_quantity_field_name": (
+                f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"
+            ),
             "user_quantity": int(quantity),
             "reserved_quantity": int(reserved_qty),
             "available_quantity": int(available_qty),
@@ -1990,7 +2156,10 @@ def _build_sell_material_rows(
             key=lambda pair: (
                 str(
                     (
-                        get_price_meta(pair[0][0], pair[0][1]) or {}
+                        get_price_meta(
+                            pair[0][0], pair[0][1], in_container=True
+                        )
+                        or {}
                     ).get("type_name")
                     or get_type_name(pair[0][0])
                 ).lower(),
@@ -2493,7 +2662,12 @@ def _get_buy_stock_blueprint_variant_map(
 def _build_buy_material_rows(
     *,
     scoped_assets: list[dict],
+    config: MaterialExchangeConfig,
     stock_meta_by_type: dict[int, dict[str, object]],
+    buy_override_map: dict[int, dict[str, object]],
+    buy_market_group_override_map: dict[int, dict[str, object]] | None = None,
+    buy_container_override: dict[str, object] | None = None,
+    type_market_group_path_map: dict[int, list[int]] | None = None,
     buy_name_map: dict[int, str],
     fallback_location_label: str,
     blueprint_variant_by_item_id: dict[int, str] | None = None,
@@ -2606,7 +2780,12 @@ def _build_buy_material_rows(
                 return f"Container {container_item_id}"
         return ""
 
-    def _resolve_item_meta(type_id: int, blueprint_variant: str = "") -> dict[str, object] | None:
+    def _resolve_item_meta(
+        type_id: int,
+        blueprint_variant: str = "",
+        *,
+        in_container: bool = False,
+    ) -> dict[str, object] | None:
         type_id_int = int(type_id)
         base_meta = stock_meta_by_type.get(type_id_int)
         if not base_meta:
@@ -2631,9 +2810,22 @@ def _build_buy_material_rows(
             default_unit_price = Decimal("0")
             has_override = False
         else:
-            unit_price = Decimal(base_meta.get("display_sell_price_to_member") or 0)
-            default_unit_price = Decimal(base_meta.get("default_sell_price_to_member") or 0)
-            has_override = bool(base_meta.get("has_buy_price_override", False))
+            unit_price, default_unit_price, has_override = (
+                _compute_effective_buy_unit_price(
+                    type_id=type_id_int,
+                    jita_buy=Decimal(base_meta.get("jita_buy_price") or 0),
+                    jita_sell=Decimal(base_meta.get("jita_sell_price") or 0),
+                    default_unit_price=Decimal(
+                        base_meta.get("default_sell_price_to_member") or 0
+                    ),
+                    config=config,
+                    buy_override_map=buy_override_map,
+                    buy_market_group_override_map=buy_market_group_override_map,
+                    type_market_group_path_map=type_market_group_path_map,
+                    buy_container_override=buy_container_override,
+                    in_container=bool(in_container),
+                )
+            )
 
         icon_variant = "bpc" if variant == "bpc" else ("bpo" if variant == "bpo" else "")
         icon_url, icon_fallback_url = _build_eve_type_icon_urls(
@@ -2683,7 +2875,12 @@ def _build_buy_material_rows(
         if int(quantity) <= 0:
             return None
 
-        item_meta = _resolve_item_meta(type_id, blueprint_variant)
+        in_container = bool(ancestors)
+        item_meta = _resolve_item_meta(
+            type_id,
+            blueprint_variant,
+            in_container=in_container,
+        )
         if item_meta is None:
             return None
 
@@ -2710,6 +2907,7 @@ def _build_buy_material_rows(
         )
         row_idx = next_row_index()
         variant_token = str(item_meta.get("blueprint_variant") or "") or "std"
+        container_scope_token = "incan" if in_container else "root"
         clean_bpc_runs: int | None = None
         if str(item_meta.get("blueprint_variant") or "").strip().lower() == "bpc":
             try:
@@ -2747,7 +2945,9 @@ def _build_buy_material_rows(
             "container_path": ",".join(ancestors),
             "container_name_path": str(container_name_path),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
-            "form_quantity_field_name": f"qty_{int(type_id)}_{variant_token}_{row_idx}",
+            "form_quantity_field_name": (
+                f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"
+            ),
         }
 
     def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
@@ -2813,7 +3013,12 @@ def _build_buy_material_rows(
             grouped_child_items.items(),
             key=lambda pair: (
                 str(
-                    (_resolve_item_meta(pair[0][0], pair[0][1]) or {}).get("display_type_name")
+                    (
+                        _resolve_item_meta(
+                            pair[0][0], pair[0][1], in_container=True
+                        )
+                        or {}
+                    ).get("display_type_name")
                     or get_type_name(pair[0][0])
                 ).lower(),
                 int(pair[0][0]),
@@ -3333,6 +3538,9 @@ def material_exchange_sell(request, tokens):
     sell_market_group_override_map, _buy_market_group_override_map = (
         _get_market_group_price_override_maps(config)
     )
+    sell_container_override, _buy_container_override = (
+        _get_container_price_override_maps(config)
+    )
 
     sell_last_update = (
         CachedCharacterAsset.objects.filter(user=request.user)
@@ -3507,6 +3715,7 @@ def material_exchange_sell(request, tokens):
 
         price_data = _fetch_fuzzwork_prices(list(submitted_quantities.keys()))
 
+        scoped_variant_quantities_available = True
         try:
             all_cached_assets_for_pricing, _scope_missing_for_pricing = get_user_assets_cached(
                 request.user,
@@ -3514,9 +3723,18 @@ def material_exchange_sell(request, tokens):
             )
         except Exception:
             all_cached_assets_for_pricing = []
+            scoped_variant_quantities_available = False
         variant_quantities = _build_sell_variant_quantities(
             assets=all_cached_assets_for_pricing,
             location_id=selected_location_id,
+        )
+        scoped_variant_quantities = (
+            _build_scoped_variant_quantities(
+                assets=all_cached_assets_for_pricing,
+                location_id=selected_location_id,
+            )
+            if scoped_variant_quantities_available
+            else {}
         )
 
         for type_id, qty in submitted_quantities.items():
@@ -3608,6 +3826,7 @@ def material_exchange_sell(request, tokens):
         for submitted_entry in submitted_item_quantities:
             type_id = int(submitted_entry.get("type_id") or 0)
             qty = int(submitted_entry.get("quantity") or 0)
+            in_container = bool(submitted_entry.get("in_container"))
             blueprint_variant = str(
                 submitted_entry.get("blueprint_variant") or ""
             ).strip().lower()
@@ -3632,6 +3851,33 @@ def material_exchange_sell(request, tokens):
                     )
                     continue
 
+            if scoped_variant_quantities_available:
+                scoped_available = int(
+                    scoped_variant_quantities.get(
+                        (type_id, blueprint_variant, in_container), 0
+                    )
+                    or 0
+                )
+                if qty > scoped_available:
+                    scope_label = (
+                        _("inside containers") if in_container else _("outside containers")
+                    )
+                    errors.append(
+                        _(
+                            f"Insufficient {type_name} {scope_label} in {active_location_name}. "
+                            f"You have: {scoped_available:,}, requested: {qty:,}."
+                        )
+                    )
+                    continue
+            elif in_container:
+                errors.append(
+                    _(
+                        "Unable to validate in-container quantities right now. "
+                        "Please refresh and try again."
+                    )
+                )
+                continue
+
             if blueprint_variant == "bpc":
                 unit_price = Decimal("0")
             else:
@@ -3647,6 +3893,8 @@ def material_exchange_sell(request, tokens):
                         sell_override_map=sell_override_map,
                         sell_market_group_override_map=sell_market_group_override_map,
                         type_market_group_path_map=submitted_type_market_group_path_map,
+                        sell_container_override=sell_container_override,
+                        in_container=in_container,
                     )
                 )
                 if unit_price <= 0:
@@ -3880,6 +4128,8 @@ def material_exchange_sell(request, tokens):
                     sell_override_map=sell_override_map,
                     sell_market_group_override_map=sell_market_group_override_map,
                     type_market_group_path_map=display_type_market_group_path_map,
+                    sell_container_override=sell_container_override,
+                    in_container=bool(sell_container_override is not None),
                 )
             )
             return buy_price > 0
@@ -4063,6 +4313,7 @@ def material_exchange_sell(request, tokens):
             allowed_type_ids=selected_location_allowed_type_ids,
             sell_override_map=sell_override_map,
             sell_market_group_override_map=sell_market_group_override_map,
+            sell_container_override=sell_container_override,
             type_market_group_path_map=display_type_market_group_path_map,
             character_name_by_id=character_names_map,
         )
@@ -4150,6 +4401,9 @@ def material_exchange_buy(request, tokens):
     _sell_market_group_override_map, buy_market_group_override_map = (
         _get_market_group_price_override_maps(config)
     )
+    _sell_container_override, buy_container_override = (
+        _get_container_price_override_maps(config)
+    )
 
     buy_structure_ids = config.get_buy_structure_ids()
     buy_name_map = config.get_buy_structure_name_map()
@@ -4212,6 +4466,35 @@ def material_exchange_buy(request, tokens):
             config=config,
             type_ids=submitted_type_ids,
         )
+        buy_scoped_variant_quantities_available = True
+        try:
+            scoped_buy_assets_for_validation = _get_buy_location_scoped_corp_assets(
+                config=config
+            )
+            scoped_item_ids: set[int] = set()
+            for scoped_asset in scoped_buy_assets_for_validation:
+                try:
+                    scoped_item_id = int(scoped_asset.get("item_id") or 0)
+                except (TypeError, ValueError):
+                    scoped_item_id = 0
+                if scoped_item_id > 0:
+                    scoped_item_ids.add(scoped_item_id)
+            scoped_blueprint_details = _get_corp_blueprint_details_by_item_id(
+                config=config,
+                item_ids=scoped_item_ids,
+            )
+            scoped_variant_by_item_id = {
+                int(item_id): str(details.get("variant") or "").strip().lower()
+                for item_id, details in scoped_blueprint_details.items()
+                if str(details.get("variant") or "").strip().lower() in {"bpc", "bpo"}
+            }
+            buy_scoped_variant_quantities = _build_scoped_variant_quantities(
+                assets=scoped_buy_assets_for_validation,
+                explicit_variant_by_item_id=scoped_variant_by_item_id,
+            )
+        except Exception:
+            buy_scoped_variant_quantities_available = False
+            buy_scoped_variant_quantities = {}
 
         with transaction.atomic():
             stock_items = list(
@@ -4286,6 +4569,7 @@ def material_exchange_buy(request, tokens):
                     continue
                 if type_id <= 0 or qty <= 0:
                     continue
+                in_container = bool(submitted_entry.get("in_container"))
 
                 stock_item = stock_by_type_id.get(type_id)
                 if stock_item is None:
@@ -4304,6 +4588,35 @@ def material_exchange_buy(request, tokens):
                     blueprint_variant,
                 )
 
+                if buy_scoped_variant_quantities_available:
+                    scoped_available = int(
+                        buy_scoped_variant_quantities.get(
+                            (type_id, blueprint_variant, in_container), 0
+                        )
+                        or 0
+                    )
+                    if qty > scoped_available:
+                        scope_label = (
+                            _("inside containers")
+                            if in_container
+                            else _("outside containers")
+                        )
+                        errors.append(
+                            _(
+                                f"Insufficient {display_type_name} {scope_label} in stock. "
+                                f"You have: {scoped_available:,}, requested: {qty:,}."
+                            )
+                        )
+                        continue
+                elif in_container:
+                    errors.append(
+                        _(
+                            "Unable to validate in-container stock quantities right now. "
+                            "Please refresh and try again."
+                        )
+                    )
+                    continue
+
                 if blueprint_variant == "bpc":
                     unit_price = Decimal("0")
                 else:
@@ -4313,6 +4626,8 @@ def material_exchange_buy(request, tokens):
                             buy_override_map=buy_override_map,
                             buy_market_group_override_map=buy_market_group_override_map,
                             type_market_group_path_map=submitted_type_market_group_path_map,
+                            buy_container_override=buy_container_override,
+                            in_container=in_container,
                         )
                     )
                     if unit_price <= 0:
@@ -4333,6 +4648,12 @@ def material_exchange_buy(request, tokens):
                         ),
                     }
                 )
+
+            if errors:
+                for err in errors:
+                    messages.error(request, err)
+                # Prevent creating a partial order with an unexpected (lower) total.
+                return redirect("indy_hub:material_exchange_buy")
 
             if not items_to_create and not errors:
                 messages.error(
@@ -4470,6 +4791,7 @@ def material_exchange_buy(request, tokens):
     except Exception as exc:
         logger.warning("Failed to apply market group filter: %s", exc)
     post_group_filter_count = len(stock_items)
+    stock_items_for_meta = list(stock_items)
 
     stock_blueprint_variants = _get_buy_stock_blueprint_variant_map(
         config=config,
@@ -4517,6 +4839,8 @@ def material_exchange_buy(request, tokens):
                 buy_override_map=buy_override_map,
                 buy_market_group_override_map=buy_market_group_override_map,
                 type_market_group_path_map=displayed_type_market_group_path_map,
+                buy_container_override=buy_container_override,
+                in_container=False,
             )
         if unit_price <= 0 and blueprint_variant != "bpc":
             continue
@@ -4535,9 +4859,9 @@ def material_exchange_buy(request, tokens):
     )
     reserved_quantities = _get_reserved_buy_quantities(
         config=config,
-        type_ids={int(item.type_id) for item in stock_items},
+        type_ids={int(item.type_id) for item in stock_items_for_meta},
     )
-    for stock_item in stock_items:
+    for stock_item in stock_items_for_meta:
         reserved_qty = int(reserved_quantities.get(int(stock_item.type_id), 0) or 0)
         stock_item.reserved_quantity = reserved_qty
         stock_item.available_quantity = max(int(stock_item.quantity) - reserved_qty, 0)
@@ -4549,15 +4873,37 @@ def material_exchange_buy(request, tokens):
 
     stock_rows: list[dict[str, object]] = []
     stock_meta_by_type: dict[int, dict[str, object]] = {}
-    for stock_item in stock_items:
+    for stock_item in stock_items_for_meta:
+        blueprint_variant = str(
+            stock_blueprint_variants.get(int(stock_item.type_id), "")
+        ).strip().lower()
+        if blueprint_variant == "bpc":
+            unit_price = Decimal("0")
+            default_unit_price = Decimal("0")
+            has_override = False
+        else:
+            (
+                unit_price,
+                default_unit_price,
+                has_override,
+            ) = _compute_effective_buy_unit_price(
+                stock_item=stock_item,
+                buy_override_map=buy_override_map,
+                buy_market_group_override_map=buy_market_group_override_map,
+                type_market_group_path_map=displayed_type_market_group_path_map,
+                buy_container_override=buy_container_override,
+                in_container=False,
+            )
         stock_meta_by_type[int(stock_item.type_id)] = {
             "type_id": int(stock_item.type_id),
             "base_type_name": str(stock_item.type_name or get_type_name(int(stock_item.type_id))),
             "display_type_name": str(stock_item.display_type_name or stock_item.type_name or ""),
-            "blueprint_variant": str(stock_item.blueprint_variant or ""),
-            "display_sell_price_to_member": stock_item.display_sell_price_to_member,
-            "default_sell_price_to_member": stock_item.default_sell_price_to_member,
-            "has_buy_price_override": bool(stock_item.has_buy_price_override),
+            "blueprint_variant": str(blueprint_variant or ""),
+            "display_sell_price_to_member": unit_price,
+            "default_sell_price_to_member": default_unit_price,
+            "has_buy_price_override": bool(has_override),
+            "jita_buy_price": Decimal(stock_item.jita_buy_price or 0),
+            "jita_sell_price": Decimal(stock_item.jita_sell_price or 0),
             "quantity": int(stock_item.quantity),
             "reserved_quantity": int(stock_item.reserved_quantity),
             "available_quantity": int(stock_item.available_quantity),
@@ -4599,7 +4945,12 @@ def material_exchange_buy(request, tokens):
         }
         stock_rows = _build_buy_material_rows(
             scoped_assets=scoped_buy_assets,
+            config=config,
             stock_meta_by_type=stock_meta_by_type,
+            buy_override_map=buy_override_map,
+            buy_market_group_override_map=buy_market_group_override_map,
+            buy_container_override=buy_container_override,
+            type_market_group_path_map=displayed_type_market_group_path_map,
             buy_name_map=buy_name_map,
             fallback_location_label=buy_locations_label,
             blueprint_variant_by_item_id=blueprint_variant_by_item_id,
@@ -4642,7 +4993,9 @@ def material_exchange_buy(request, tokens):
                     "depth": 0,
                     "container_path": "",
                     "indent_padding_rem": 0,
-                    "form_quantity_field_name": f"qty_{int(stock_item.type_id)}_{variant_token}_{int(index)}",
+                    "form_quantity_field_name": (
+                        f"qty_{int(stock_item.type_id)}_{variant_token}_root_{int(index)}"
+                    ),
                 }
             )
 
@@ -4887,6 +5240,11 @@ def material_exchange_complete_sell(request, order_id):
 
         # Create transaction log for each item and update stock
         for item in order.items.all():
+            snapshot = MaterialExchangeTransaction.build_jita_snapshot(
+                config=order.config,
+                type_id=item.type_id,
+                quantity=item.quantity,
+            )
             # Create transaction log
             MaterialExchangeTransaction.objects.create(
                 config=order.config,
@@ -4898,6 +5256,7 @@ def material_exchange_complete_sell(request, order_id):
                 quantity=item.quantity,
                 unit_price=item.unit_price,
                 total_price=item.total_price,
+                **snapshot,
             )
 
             # Update stock (add quantity)
@@ -5058,6 +5417,11 @@ def _complete_buy_order(order, *, delivered_by=None, delivery_method=None):
 
         # Create transaction log for each item and update stock
         for item in order.items.all():
+            snapshot = MaterialExchangeTransaction.build_jita_snapshot(
+                config=order.config,
+                type_id=item.type_id,
+                quantity=item.quantity,
+            )
             MaterialExchangeTransaction.objects.create(
                 config=order.config,
                 transaction_type="buy",
@@ -5068,6 +5432,7 @@ def _complete_buy_order(order, *, delivered_by=None, delivery_method=None):
                 quantity=item.quantity,
                 unit_price=item.unit_price,
                 total_price=item.total_price,
+                **snapshot,
             )
 
             try:
@@ -5207,20 +5572,42 @@ def material_exchange_stats_history(request):
         ("24m", _("Last 24 months")),
         ("all", _("All time")),
     ]
-    period_months_map = {
-        "1m": 1,
-        "3m": 3,
-        "6m": 6,
-        "12m": 12,
-        "24m": 24,
-    }
+    period_months_map = {"1m": 1, "3m": 3, "6m": 6, "12m": 12, "24m": 24}
     selected_period = request.GET.get("period", "all")
     if selected_period not in {key for key, _ in period_options}:
         selected_period = "all"
 
-    filtered_transactions = config.transactions.all()
+    start_date_raw = str(request.GET.get("start_date") or "").strip()
+    end_date_raw = str(request.GET.get("end_date") or "").strip()
+
+    def _parse_date(raw_value: str):
+        try:
+            return datetime.strptime(raw_value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    custom_start_date = _parse_date(start_date_raw) if start_date_raw else None
+    custom_end_date = _parse_date(end_date_raw) if end_date_raw else None
+    if start_date_raw and custom_start_date is None:
+        messages.warning(request, _("Invalid start date; expected YYYY-MM-DD."))
+    if end_date_raw and custom_end_date is None:
+        messages.warning(request, _("Invalid end date; expected YYYY-MM-DD."))
+    if custom_start_date and custom_end_date and custom_start_date > custom_end_date:
+        custom_start_date, custom_end_date = custom_end_date, custom_start_date
+
     period_start = None
-    if selected_period in period_months_map:
+    filter_start = None
+    filter_end = None
+    if custom_start_date or custom_end_date:
+        if custom_start_date:
+            filter_start = timezone.make_aware(
+                datetime.combine(custom_start_date, time.min)
+            )
+        if custom_end_date:
+            filter_end = timezone.make_aware(
+                datetime.combine(custom_end_date, time.max)
+            )
+    elif selected_period in period_months_map:
         months = period_months_map[selected_period]
         month_anchor = timezone.now().replace(
             day=1,
@@ -5233,9 +5620,13 @@ def material_exchange_stats_history(request):
         start_year = month_index // 12
         start_month = (month_index % 12) + 1
         period_start = month_anchor.replace(year=start_year, month=start_month)
-        filtered_transactions = filtered_transactions.filter(
-            completed_at__gte=period_start
-        )
+        filter_start = period_start
+
+    filtered_transactions = config.transactions.all()
+    if filter_start:
+        filtered_transactions = filtered_transactions.filter(completed_at__gte=filter_start)
+    if filter_end:
+        filtered_transactions = filtered_transactions.filter(completed_at__lte=filter_end)
 
     monthly_rows = (
         filtered_transactions.annotate(month=TruncMonth("completed_at"))
@@ -5253,10 +5644,10 @@ def material_exchange_stats_history(request):
         .order_by("month")
     )
 
-    chart_labels = []
-    buy_volumes = []
-    sell_volumes = []
-    transaction_counts = []
+    chart_labels: list[str] = []
+    buy_volumes: list[float] = []
+    sell_volumes: list[float] = []
+    transaction_counts: list[int] = []
 
     total_buy_volume = Decimal("0")
     total_sell_volume = Decimal("0")
@@ -5268,8 +5659,8 @@ def material_exchange_stats_history(request):
             continue
         buy_volume = row.get("total_buy_volume") or Decimal("0")
         sell_volume = row.get("total_sell_volume") or Decimal("0")
-        buy_count = row.get("buy_orders") or 0
-        sell_count = row.get("sell_orders") or 0
+        buy_count = int(row.get("buy_orders") or 0)
+        sell_count = int(row.get("sell_orders") or 0)
 
         chart_labels.append(month.strftime("%Y-%m"))
         buy_volumes.append(float(buy_volume))
@@ -5292,31 +5683,175 @@ def material_exchange_stats_history(request):
         )
         .order_by("user__username")
     )
-
-    user_rows = []
-    for row in user_stats:
-        buy_volume = row.get("buy_volume") or Decimal("0")
-        sell_volume = row.get("sell_volume") or Decimal("0")
-        buy_orders = row.get("buy_orders") or 0
-        sell_orders = row.get("sell_orders") or 0
-
-        user_rows.append(
+    top_user_stats = sorted(
+        [
             {
                 "username": row.get("user__username") or "-",
-                "buy_volume": buy_volume,
-                "sell_volume": sell_volume,
-                "buy_orders": buy_orders,
-                "sell_orders": sell_orders,
-                "total_orders": buy_orders + sell_orders,
-                "net_flow": buy_volume - sell_volume,
+                "buy_volume": row.get("buy_volume") or Decimal("0"),
+                "sell_volume": row.get("sell_volume") or Decimal("0"),
+                "buy_orders": row.get("buy_orders") or 0,
+                "sell_orders": row.get("sell_orders") or 0,
+                "total_orders": (row.get("buy_orders") or 0) + (row.get("sell_orders") or 0),
+                "net_flow": (row.get("buy_volume") or Decimal("0"))
+                - (row.get("sell_volume") or Decimal("0")),
             }
-        )
-
-    top_user_stats = sorted(
-        user_rows,
+            for row in user_stats
+        ],
         key=lambda item: item["buy_volume"] + item["sell_volume"],
         reverse=True,
     )[:10]
+
+    buy_tx = filtered_transactions.filter(transaction_type="buy")
+
+    buy_snapshot_rollup = buy_tx.aggregate(
+        member_sales_volume=Sum("total_price", default=0),
+        jita_buy_value=Sum("jita_buy_total_value_snapshot", default=0),
+        jita_sell_value=Sum("jita_sell_total_value_snapshot", default=0),
+        jita_split_value=Sum("jita_split_total_value_snapshot", default=0),
+        snapshot_count=Count("id", filter=Q(jita_split_total_value_snapshot__isnull=False)),
+        total_count=Count("id"),
+    )
+
+    member_sales_volume = buy_snapshot_rollup.get("member_sales_volume") or Decimal("0")
+    jita_buy_value = buy_snapshot_rollup.get("jita_buy_value") or Decimal("0")
+    jita_sell_value = buy_snapshot_rollup.get("jita_sell_value") or Decimal("0")
+    jita_split_value = buy_snapshot_rollup.get("jita_split_value") or Decimal("0")
+    snapshot_count = int(buy_snapshot_rollup.get("snapshot_count") or 0)
+    total_buy_tx_count = int(buy_snapshot_rollup.get("total_count") or 0)
+    snapshot_coverage_pct = (
+        round((snapshot_count / total_buy_tx_count) * 100, 1) if total_buy_tx_count else 0
+    )
+
+    # Realized exchange spread from raw volumes.
+    actual_exchange_profit = total_buy_volume - total_sell_volume
+
+    # Realized/potential member-sale profit based on average acquisition cost per type.
+    type_rollup: dict[int, dict[str, Decimal]] = {}
+    for row in filtered_transactions.values(
+        "transaction_type",
+        "type_id",
+        "quantity",
+        "total_price",
+        "jita_buy_total_value_snapshot",
+        "jita_sell_total_value_snapshot",
+        "jita_split_total_value_snapshot",
+    ):
+        try:
+            type_id = int(row.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+
+        data = type_rollup.setdefault(
+            type_id,
+            {
+                "acquired_qty": Decimal("0"),
+                "acquired_cost": Decimal("0"),
+                "sold_qty": Decimal("0"),
+                "sold_revenue": Decimal("0"),
+                "sold_jita_buy": Decimal("0"),
+                "sold_jita_sell": Decimal("0"),
+                "sold_jita_split": Decimal("0"),
+            },
+        )
+
+        qty = Decimal(str(max(int(row.get("quantity") or 0), 0)))
+        total_value = Decimal(str(row.get("total_price") or 0))
+        tx_type = str(row.get("transaction_type") or "")
+
+        if tx_type == MaterialExchangeTransaction.TransactionType.SELL:
+            data["acquired_qty"] += qty
+            data["acquired_cost"] += total_value
+        elif tx_type == MaterialExchangeTransaction.TransactionType.BUY:
+            data["sold_qty"] += qty
+            data["sold_revenue"] += total_value
+            data["sold_jita_buy"] += Decimal(str(row.get("jita_buy_total_value_snapshot") or 0))
+            data["sold_jita_sell"] += Decimal(str(row.get("jita_sell_total_value_snapshot") or 0))
+            data["sold_jita_split"] += Decimal(str(row.get("jita_split_total_value_snapshot") or 0))
+
+    realized_member_sale_profit = Decimal("0")
+    potential_profit_jita_buy = Decimal("0")
+    potential_profit_jita_sell = Decimal("0")
+    potential_profit_jita_split = Decimal("0")
+    potential_priced_type_count = 0
+    for rollup in type_rollup.values():
+        acquired_qty = rollup["acquired_qty"]
+        sold_qty = rollup["sold_qty"]
+        if acquired_qty <= 0 or sold_qty <= 0:
+            continue
+
+        avg_cost = (rollup["acquired_cost"] / acquired_qty).quantize(Decimal("0.0001"))
+        cogs_for_sold = (avg_cost * sold_qty).quantize(Decimal("0.01"))
+        realized_member_sale_profit += rollup["sold_revenue"] - cogs_for_sold
+        potential_profit_jita_buy += rollup["sold_jita_buy"] - cogs_for_sold
+        potential_profit_jita_sell += rollup["sold_jita_sell"] - cogs_for_sold
+        potential_profit_jita_split += rollup["sold_jita_split"] - cogs_for_sold
+        potential_priced_type_count += 1
+
+    member_sales_vs_jita_buy_delta = member_sales_volume - jita_buy_value
+    member_sales_vs_jita_sell_delta = member_sales_volume - jita_sell_value
+    member_sales_vs_jita_split_delta = member_sales_volume - jita_split_value
+
+    contracts_qs = ESIContract.objects.filter(
+        corporation_id=config.corporation_id,
+        contract_type="item_exchange",
+    )
+    if filter_start:
+        contracts_qs = contracts_qs.filter(date_issued__gte=filter_start)
+    if filter_end:
+        contracts_qs = contracts_qs.filter(date_issued__lte=filter_end)
+
+    contract_counts_raw = {
+        str(row["status"]): int(row["count"])
+        for row in contracts_qs.values("status")
+        .annotate(count=Count("contract_id"))
+        .order_by("status")
+    }
+    contract_stats = {
+        "total": int(sum(contract_counts_raw.values())),
+        "completed": int(
+            contract_counts_raw.get("finished", 0)
+            + contract_counts_raw.get("finished_issuer", 0)
+            + contract_counts_raw.get("finished_contractor", 0)
+        ),
+        "outstanding": int(contract_counts_raw.get("outstanding", 0)),
+        "in_progress": int(contract_counts_raw.get("in_progress", 0)),
+        "cancelled": int(contract_counts_raw.get("cancelled", 0)),
+        "rejected": int(contract_counts_raw.get("rejected", 0)),
+        "failed": int(contract_counts_raw.get("failed", 0)),
+        "expired": int(contract_counts_raw.get("expired", 0)),
+        "deleted": int(contract_counts_raw.get("deleted", 0)),
+        "reversed": int(contract_counts_raw.get("reversed", 0)),
+        "deleted_before_acceptance": int(
+            contracts_qs.filter(status="deleted", date_accepted__isnull=True).count()
+        ),
+        "deleted_after_acceptance": int(
+            contracts_qs.filter(status="deleted", date_accepted__isnull=False).count()
+        ),
+    }
+
+    buy_orders_qs = config.buy_orders.all()
+    sell_orders_qs = config.sell_orders.all()
+    if filter_start:
+        buy_orders_qs = buy_orders_qs.filter(created_at__gte=filter_start)
+        sell_orders_qs = sell_orders_qs.filter(created_at__gte=filter_start)
+    if filter_end:
+        buy_orders_qs = buy_orders_qs.filter(created_at__lte=filter_end)
+        sell_orders_qs = sell_orders_qs.filter(created_at__lte=filter_end)
+
+    buy_order_status_counts = {
+        str(row["status"]): int(row["count"])
+        for row in buy_orders_qs.values("status")
+        .annotate(count=Count("id"))
+        .order_by("status")
+    }
+    sell_order_status_counts = {
+        str(row["status"]): int(row["count"])
+        for row in sell_orders_qs.values("status")
+        .annotate(count=Count("id"))
+        .order_by("status")
+    }
 
     context = {
         "config": config,
@@ -5332,6 +5867,29 @@ def material_exchange_stats_history(request):
         "period_options": period_options,
         "selected_period": selected_period,
         "period_start": period_start,
+        "start_date": custom_start_date.isoformat() if custom_start_date else "",
+        "end_date": custom_end_date.isoformat() if custom_end_date else "",
+        "actual_exchange_profit": actual_exchange_profit,
+        "member_sales_volume": member_sales_volume,
+        "jita_buy_value": jita_buy_value,
+        "jita_sell_value": jita_sell_value,
+        "jita_split_value": jita_split_value,
+        "snapshot_coverage_pct": snapshot_coverage_pct,
+        "member_sales_vs_jita_buy_delta": member_sales_vs_jita_buy_delta,
+        "member_sales_vs_jita_sell_delta": member_sales_vs_jita_sell_delta,
+        "member_sales_vs_jita_split_delta": member_sales_vs_jita_split_delta,
+        "realized_member_sale_profit": realized_member_sale_profit,
+        "potential_profit_jita_buy": potential_profit_jita_buy,
+        "potential_profit_jita_sell": potential_profit_jita_sell,
+        "potential_profit_jita_split": potential_profit_jita_split,
+        "potential_priced_type_count": potential_priced_type_count,
+        "contract_stats": contract_stats,
+        "contract_counts_raw": contract_counts_raw,
+        "buy_order_status_counts": buy_order_status_counts,
+        "sell_order_status_counts": sell_order_status_counts,
+        "data_limitations": _(
+            "Deleted order counts only include records still present in Auth; hard-deleted orders are not historically recoverable."
+        ),
         "nav_context": _build_nav_context(request.user),
     }
 

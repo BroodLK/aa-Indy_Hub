@@ -390,8 +390,50 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             Decimal(str(row.get("sell_price_override") or 0)),
             Decimal("4.00"),
         )
+        self.assertIsInstance(row.get("sell_price_override"), str)
         self.assertEqual(
             Decimal(str(row.get("buy_markup_percent_override") or 0)),
             Decimal("5.25"),
         )
+        self.assertIsInstance(row.get("buy_markup_percent_override"), str)
         self.assertEqual(str(row.get("buy_markup_base_override") or ""), "sell")
+
+    def test_container_price_overrides_are_saved(self):
+        post_data = self._base_post_data()
+        post_data["container_sell_markup_percent_override"] = "-7.50"
+        post_data["container_sell_markup_base_override"] = "sell"
+        post_data["container_buy_price_override"] = "12.34"
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        payload = dict(self.config.container_price_overrides or {})
+        self.assertEqual(str(payload.get("sell_markup_percent_override") or ""), "-7.50")
+        self.assertEqual(str(payload.get("sell_markup_base_override") or ""), "sell")
+        self.assertEqual(str(payload.get("buy_price_override") or ""), "12.34")
+        self.assertIsNone(payload.get("buy_markup_percent_override"))
+        self.assertIsNone(payload.get("sell_price_override"))
+
+    def test_container_price_overrides_clear_when_inputs_are_blank(self):
+        self.config.container_price_overrides = {
+            "sell_markup_percent_override": "-7.50",
+            "sell_markup_base_override": "sell",
+            "buy_price_override": "12.34",
+        }
+        self.config.save(update_fields=["container_price_overrides", "updated_at"])
+
+        post_data = self._base_post_data()
+        post_data["container_sell_markup_percent_override"] = ""
+        post_data["container_sell_markup_base_override"] = "buy"
+        post_data["container_buy_price_override"] = ""
+        post_data["container_buy_markup_percent_override"] = ""
+        post_data["container_sell_price_override"] = ""
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.container_price_overrides, {})

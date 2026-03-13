@@ -717,6 +717,14 @@ def material_exchange_config(request, tokens):
     item_price_overrides: list[dict[str, object]] = []
     item_override_type_choices: list[dict[str, object]] = []
     market_group_price_overrides: list[dict[str, object]] = []
+    container_price_override: dict[str, object] = {
+        "sell_markup_percent_override": None,
+        "sell_markup_base_override": None,
+        "buy_markup_percent_override": None,
+        "buy_markup_base_override": None,
+        "sell_price_override": None,
+        "buy_price_override": None,
+    }
     if config:
         override_rows = list(
             config.item_price_overrides.values(
@@ -812,6 +820,25 @@ def material_exchange_config(request, tokens):
             key=lambda payload: str(payload.get("market_group_path") or "").lower(),
         )
 
+        raw_container_override = getattr(config, "container_price_overrides", {}) or {}
+        if isinstance(raw_container_override, dict):
+            container_price_override = {
+                "sell_markup_percent_override": raw_container_override.get(
+                    "sell_markup_percent_override"
+                ),
+                "sell_markup_base_override": raw_container_override.get(
+                    "sell_markup_base_override"
+                ),
+                "buy_markup_percent_override": raw_container_override.get(
+                    "buy_markup_percent_override"
+                ),
+                "buy_markup_base_override": raw_container_override.get(
+                    "buy_markup_base_override"
+                ),
+                "sell_price_override": raw_container_override.get("sell_price_override"),
+                "buy_price_override": raw_container_override.get("buy_price_override"),
+            }
+
     context = {
         "config": config,
         "available_corps": available_corps,
@@ -840,6 +867,7 @@ def material_exchange_config(request, tokens):
         "item_override_type_choices": item_override_type_choices,
         "market_group_override_choices": market_group_override_choices,
         "market_group_price_overrides": market_group_price_overrides,
+        "container_price_override": container_price_override,
     }
 
     from .navigation import build_nav_context
@@ -1974,6 +2002,24 @@ def _handle_config_save(request, existing_config):
     market_group_price_overrides_raw = (
         request.POST.get("market_group_price_overrides_json", "") or ""
     ).strip()
+    container_sell_markup_percent_override_raw = (
+        request.POST.get("container_sell_markup_percent_override", "") or ""
+    ).strip()
+    container_sell_markup_base_override_raw = (
+        request.POST.get("container_sell_markup_base_override", "") or ""
+    ).strip()
+    container_buy_markup_percent_override_raw = (
+        request.POST.get("container_buy_markup_percent_override", "") or ""
+    ).strip()
+    container_buy_markup_base_override_raw = (
+        request.POST.get("container_buy_markup_base_override", "") or ""
+    ).strip()
+    container_sell_price_override_raw = (
+        request.POST.get("container_sell_price_override", "") or ""
+    ).strip()
+    container_buy_price_override_raw = (
+        request.POST.get("container_buy_price_override", "") or ""
+    ).strip()
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
@@ -2044,6 +2090,65 @@ def _handle_config_save(request, existing_config):
         if base_value not in {"buy", "sell"}:
             return fallback
         return base_value
+
+    def _decimal_for_json(value: Decimal | None) -> str | None:
+        if value is None:
+            return None
+        # JSONField cannot serialize Decimal with the default encoder.
+        return format(value, "f")
+
+    def _parse_container_price_overrides() -> dict[str, object]:
+        sell_markup_percent_override = _parse_optional_markup_percent(
+            container_sell_markup_percent_override_raw,
+            minimum=Decimal("-100"),
+            maximum=Decimal("100"),
+            label="Sell container override %",
+        )
+        buy_markup_percent_override = _parse_optional_markup_percent(
+            container_buy_markup_percent_override_raw,
+            minimum=Decimal("-100"),
+            maximum=Decimal("1000"),
+            label="Buy container override %",
+        )
+        sell_markup_base_override = (
+            _parse_optional_markup_base(
+                container_sell_markup_base_override_raw,
+                fallback=str(sell_markup_base or "buy"),
+            )
+            if sell_markup_percent_override is not None
+            else None
+        )
+        buy_markup_base_override = (
+            _parse_optional_markup_base(
+                container_buy_markup_base_override_raw,
+                fallback=str(buy_markup_base or "buy"),
+            )
+            if buy_markup_percent_override is not None
+            else None
+        )
+        sell_price_override = _parse_optional_price(container_sell_price_override_raw)
+        buy_price_override = _parse_optional_price(container_buy_price_override_raw)
+
+        if (
+            sell_markup_percent_override is None
+            and buy_markup_percent_override is None
+            and sell_price_override is None
+            and buy_price_override is None
+        ):
+            return {}
+
+        return {
+            "sell_markup_percent_override": _decimal_for_json(
+                sell_markup_percent_override
+            ),
+            "sell_markup_base_override": sell_markup_base_override,
+            "buy_markup_percent_override": _decimal_for_json(
+                buy_markup_percent_override
+            ),
+            "buy_markup_base_override": buy_markup_base_override,
+            "sell_price_override": _decimal_for_json(sell_price_override),
+            "buy_price_override": _decimal_for_json(buy_price_override),
+        }
 
     def _parse_item_price_overrides(raw_value: str) -> list[dict[str, object]]:
         if not raw_value:
@@ -2225,12 +2330,16 @@ def _handle_config_save(request, existing_config):
                     or _build_market_group_path_label(int(market_group_id), all_groups)
                 ).strip()
                 or f"Group {int(market_group_id)}",
-                "sell_markup_percent_override": sell_markup_percent_override,
+                "sell_markup_percent_override": _decimal_for_json(
+                    sell_markup_percent_override
+                ),
                 "sell_markup_base_override": sell_markup_base_override,
-                "buy_markup_percent_override": buy_markup_percent_override,
+                "buy_markup_percent_override": _decimal_for_json(
+                    buy_markup_percent_override
+                ),
                 "buy_markup_base_override": buy_markup_base_override,
-                "sell_price_override": sell_price_override,
-                "buy_price_override": buy_price_override,
+                "sell_price_override": _decimal_for_json(sell_price_override),
+                "buy_price_override": _decimal_for_json(buy_price_override),
             }
 
         return sorted(
@@ -2272,6 +2381,7 @@ def _handle_config_save(request, existing_config):
             allowed_ids=allowed_ids,
             all_groups=all_groups,
         )
+        container_price_overrides = _parse_container_price_overrides()
 
         def _parse_group_ids(raw_list: list[str]) -> list[int]:
             parsed: set[int] = set()
@@ -2523,6 +2633,7 @@ def _handle_config_save(request, existing_config):
                 allowed_market_groups_sell_by_structure
             )
             existing_config.market_group_price_overrides = market_group_price_overrides
+            existing_config.container_price_overrides = container_price_overrides
             existing_config.is_active = is_active
             existing_config.save()
             target_config = existing_config
@@ -2552,6 +2663,7 @@ def _handle_config_save(request, existing_config):
                 allowed_market_groups_sell=allowed_market_groups_sell,
                 allowed_market_groups_sell_by_structure=allowed_market_groups_sell_by_structure,
                 market_group_price_overrides=market_group_price_overrides,
+                container_price_overrides=container_price_overrides,
                 is_active=is_active,
             )
             messages.success(

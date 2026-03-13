@@ -212,6 +212,49 @@ class MaterialExchangePricingTests(TestCase):
         self.assertEqual(effective_price, Decimal("5.50"))
         self.assertTrue(has_override)
 
+    def test_effective_sell_unit_price_uses_container_override_when_in_container(self):
+        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
+            config=self.config,
+            type_id=self.stock.type_id,
+            jita_buy=Decimal("5.00"),
+            jita_sell=Decimal("6.00"),
+            sell_override_map={},
+            sell_market_group_override_map={},
+            sell_container_override={
+                "kind": "fixed",
+                "price": Decimal("4.10"),
+            },
+            in_container=True,
+        )
+
+        self.assertEqual(default_price, Decimal("5.25"))
+        self.assertEqual(effective_price, Decimal("4.10"))
+        self.assertTrue(has_override)
+
+    def test_effective_sell_unit_price_item_rule_beats_container_rule(self):
+        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
+            config=self.config,
+            type_id=self.stock.type_id,
+            jita_buy=Decimal("5.00"),
+            jita_sell=Decimal("6.00"),
+            sell_override_map={
+                self.stock.type_id: {
+                    "kind": "fixed",
+                    "price": Decimal("3.90"),
+                }
+            },
+            sell_market_group_override_map={},
+            sell_container_override={
+                "kind": "fixed",
+                "price": Decimal("4.10"),
+            },
+            in_container=True,
+        )
+
+        self.assertEqual(default_price, Decimal("5.25"))
+        self.assertEqual(effective_price, Decimal("3.90"))
+        self.assertTrue(has_override)
+
     def test_effective_sell_unit_price_item_rule_beats_market_group_rule(self):
         effective_price, default_price, has_override = _compute_effective_sell_unit_price(
             config=self.config,
@@ -253,6 +296,23 @@ class MaterialExchangePricingTests(TestCase):
 
         self.assertEqual(default_price, Decimal("5.50"))
         self.assertEqual(effective_price, Decimal("14.00"))
+        self.assertTrue(has_override)
+
+    def test_effective_buy_unit_price_uses_container_override_when_in_container(self):
+        effective_price, default_price, has_override = _compute_effective_buy_unit_price(
+            stock_item=self.stock,
+            buy_override_map={},
+            buy_market_group_override_map={},
+            buy_container_override={
+                "kind": "markup",
+                "percent": Decimal("10.00"),
+                "base": "sell",
+            },
+            in_container=True,
+        )
+
+        self.assertEqual(default_price, Decimal("5.50"))
+        self.assertEqual(effective_price, Decimal("6.60"))
         self.assertTrue(has_override)
 
     def test_item_override_map_prefers_fixed_over_markup_when_both_are_set(self):
@@ -299,23 +359,30 @@ class MaterialExchangePricingTests(TestCase):
                 "qty_33003_bpc_4": "1",
                 "qty_33003_bpo_5": "1",
                 "qty_35_7": "4",  # legacy format
+                "qty_36_std_incan_9": "3",
+                "qty_36_std_incan_11": "2",
+                "qty_36_std_root_12": "1",
                 "qty_36_bpc_9": "0",
             }
         )
 
         parsed = _parse_submitted_sell_item_quantities(payload)
         by_key = {
-            (int(entry["type_id"]), str(entry["blueprint_variant"] or "")): int(
-                entry["quantity"]
-            )
+            (
+                int(entry["type_id"]),
+                str(entry["blueprint_variant"] or ""),
+                bool(entry.get("in_container")),
+            ): int(entry["quantity"])
             for entry in parsed
         }
 
-        self.assertEqual(by_key.get((34, "")), 5)
-        self.assertEqual(by_key.get((33003, "bpc")), 1)
-        self.assertEqual(by_key.get((33003, "bpo")), 1)
-        self.assertEqual(by_key.get((35, "")), 4)
-        self.assertNotIn((36, "bpc"), by_key)
+        self.assertEqual(by_key.get((34, "", False)), 5)
+        self.assertEqual(by_key.get((33003, "bpc", False)), 1)
+        self.assertEqual(by_key.get((33003, "bpo", False)), 1)
+        self.assertEqual(by_key.get((35, "", False)), 4)
+        self.assertEqual(by_key.get((36, "", True)), 5)
+        self.assertEqual(by_key.get((36, "", False)), 1)
+        self.assertNotIn((36, "bpc", False), by_key)
 
     def test_format_buy_stock_type_name_appends_blueprint_variant_suffix(self):
         self.assertEqual(

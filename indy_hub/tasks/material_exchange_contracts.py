@@ -119,6 +119,11 @@ def _log_sell_order_transactions(order: MaterialExchangeSellOrder) -> None:
         return
 
     for item in order.items.all():
+        snapshot = MaterialExchangeTransaction.build_jita_snapshot(
+            config=order.config,
+            type_id=item.type_id,
+            quantity=item.quantity,
+        )
         MaterialExchangeTransaction.objects.create(
             config=order.config,
             transaction_type="sell",
@@ -129,6 +134,7 @@ def _log_sell_order_transactions(order: MaterialExchangeSellOrder) -> None:
             quantity=item.quantity,
             unit_price=item.unit_price,
             total_price=item.total_price,
+            **snapshot,
         )
 
         stock_item, _created = MaterialExchangeStock.objects.get_or_create(
@@ -145,6 +151,11 @@ def _log_buy_order_transactions(order: MaterialExchangeBuyOrder) -> None:
         return
 
     for item in order.items.all():
+        snapshot = MaterialExchangeTransaction.build_jita_snapshot(
+            config=order.config,
+            type_id=item.type_id,
+            quantity=item.quantity,
+        )
         MaterialExchangeTransaction.objects.create(
             config=order.config,
             transaction_type="buy",
@@ -155,6 +166,7 @@ def _log_buy_order_transactions(order: MaterialExchangeBuyOrder) -> None:
             quantity=item.quantity,
             unit_price=item.unit_price,
             total_price=item.total_price,
+            **snapshot,
         )
 
         try:
@@ -1726,22 +1738,25 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
         notify_user(
             order.buyer,
-            _("Buy Order Ready"),
+            _("Buy Contract Created"),
             _(
-                f"Your buy order {order.order_reference} is ready.\n"
-                f"Contract #{contract.contract_id} for {order.total_price:,.0f} ISK has been validated.\n\n"
-                f"Please accept the in-game contract to receive your items."
+                f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
+                f"Contract #{contract.contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
+                f"Next step: accept the in-game contract to receive your items.\n"
+                f"You will receive another notification once delivery is completed."
             ),
             level="success",
         )
 
         _notify_material_exchange_admins(
             config,
-            _("Buy Order Validated"),
+            _("Buy Contract Created"),
             _(
-                f"{order.buyer.username} will receive:\n{items_list}\n\n"
-                f"Total: {order.total_price:,.0f} ISK\n"
-                f"Contract #{contract.contract_id} verified from database."
+                f"Buy contract created for {order.buyer.username}.\n"
+                f"Order: {order.order_reference}\n"
+                f"Contract: #{contract.contract_id}\n"
+                f"Total: {order.total_price:,.0f} ISK\n\n"
+                f"Items:\n{items_list}"
             ),
             level="success",
             link=(
@@ -2786,6 +2801,76 @@ def handle_material_exchange_buy_order_created(order_id):
 
 @shared_task(
     autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 5},
+    rate_limit="1000/m",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def handle_material_exchange_sell_order_created(order_id):
+    """
+    Send immediate notification to admins when a sell order is created.
+    Resilient task with auto-retry and rate limiting.
+    """
+    try:
+        order = (
+            MaterialExchangeSellOrder.objects.select_related("config", "seller")
+            .prefetch_related("items")
+            .get(id=order_id)
+        )
+    except MaterialExchangeSellOrder.DoesNotExist:
+        logger.warning("Sell order %s not found", order_id)
+        return
+
+    config = order.config
+
+    items = list(order.items.all())
+    total_qty = order.total_quantity
+    total_price = order.total_price
+
+    preview_lines = []
+    for item in items[:5]:
+        preview_lines.append(
+            f"- {item.type_name or item.type_id}: {item.quantity:,}x @ {item.unit_price:,.2f} ISK"
+        )
+    if len(items) > 5:
+        preview_lines.append("...")
+
+    preview = "\n".join(preview_lines) if preview_lines else _("(no items)")
+    source_location = str(getattr(order, "source_location_name", "") or "").strip()
+
+    title = _("New Sell Order")
+    message = _(
+        f"{order.seller.username} wants to sell with order {order.order_reference}.\n"
+        f"Items: {len(items)} (qty: {total_qty:,})\n"
+        f"Total: {total_price:,.2f} ISK"
+        + (f"\nLocation: {source_location}" if source_location else "")
+        + f"\n\nPreview:\n{preview}\n\n"
+        f"Review and approve to start contract validation."
+    )
+    link = (
+        f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+        f"?next=/indy_hub/material-exchange/%23admin-panel"
+    )
+
+    _notify_material_exchange_admins(
+        config,
+        title,
+        message,
+        level="info",
+        link=link,
+    )
+
+    logger.info("Sell order %s notification sent to admins/webhook", order_id)
+    emit_analytics_event(
+        task="material_exchange.sell_order_created",
+        label="admin_or_webhook",
+        result="success",
+        value=max(len(items), 1),
+    )
+
+
+@shared_task(
+    autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 10},
     rate_limit="500/m",
     time_limit=600,
@@ -2893,6 +2978,49 @@ def check_completed_material_exchange_contracts():
             )
 
             _log_sell_order_transactions(order)
+            sell_items = list(order.items.all())
+            sell_items_preview = "\n".join(
+                f"- {item.type_name}: {item.quantity:,}x"
+                for item in sell_items[:8]
+            )
+            if len(sell_items) > 8:
+                sell_items_preview += "\n- ..."
+
+            notify_user(
+                order.seller,
+                _("Sell Order Completed"),
+                _(
+                    f"Your sell order {order.order_reference} is complete.\n"
+                    f"Contract #{contract_id} has been accepted by the corporation."
+                    + (
+                        f"\n\nItems received:\n{sell_items_preview}"
+                        if sell_items_preview
+                        else ""
+                    )
+                ),
+                level="success",
+                link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
+            )
+            _notify_material_exchange_admins(
+                config,
+                _("Sell Contract Accepted"),
+                _(
+                    f"{order.seller.username}'s sell order {order.order_reference} is completed.\n"
+                    f"Contract #{contract_id} status: {contract_status}.\n"
+                    f"Total: {order.total_price:,.0f} ISK"
+                    + (
+                        f"\n\nItems received:\n{sell_items_preview}"
+                        if sell_items_preview
+                        else ""
+                    )
+                ),
+                level="success",
+                link=(
+                    f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                    f"?next=/indy_hub/material-exchange/%23admin-panel"
+                ),
+            )
+
             logger.info(
                 "Sell order %s completed: contract %s accepted (status: %s)",
                 order.id,
@@ -2995,6 +3123,45 @@ def check_completed_material_exchange_contracts():
             )
 
             _log_buy_order_transactions(order)
+            buy_items = list(order.items.all())
+            buy_items_preview = "\n".join(
+                f"- {item.type_name}: {item.quantity:,}x" for item in buy_items[:8]
+            )
+            if len(buy_items) > 8:
+                buy_items_preview += "\n- ..."
+            notify_user(
+                order.buyer,
+                _("Buy Order Completed"),
+                _(
+                    f"Your buy order {order.order_reference} is complete.\n"
+                    f"Contract #{contract_id} has been accepted in-game and your delivery is marked as received."
+                    + (
+                        f"\n\nItems delivered:\n{buy_items_preview}"
+                        if buy_items_preview
+                        else ""
+                    )
+                ),
+                level="success",
+                link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
+            )
+            _notify_material_exchange_admins(
+                config,
+                _("Buy Order Completed"),
+                _(
+                    f"{order.buyer.username}'s buy order {order.order_reference} is completed.\n"
+                    f"Contract #{contract_id} status: {contract_status}."
+                    + (
+                        f"\n\nItems delivered:\n{buy_items_preview}"
+                        if buy_items_preview
+                        else ""
+                    )
+                ),
+                level="success",
+                link=(
+                    f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                    f"?next=/indy_hub/material-exchange/%23admin-panel"
+                ),
+            )
 
             logger.info(
                 "Buy order %s completed: contract %s accepted (status: %s)",

@@ -12,6 +12,7 @@ from .models import (
     IndustryJob,
     MaterialExchangeBuyOrder,
     MaterialExchangeConfig,
+    MaterialExchangeSellOrder,
 )
 from .tasks.material_exchange import (
     sync_material_exchange_prices,
@@ -514,6 +515,39 @@ def notify_admins_on_buy_order_created(sender, instance, created, **kwargs):
         except Exception as exc:
             logger.error(
                 "Failed to queue buy order notification for order %s: %s",
+                instance.id,
+                exc,
+                exc_info=True,
+            )
+
+    # Queue only after transaction commit so workers do not fetch an uncommitted order.
+    transaction.on_commit(_enqueue_notification_task)
+
+
+@receiver(post_save, sender=MaterialExchangeSellOrder)
+def notify_admins_on_sell_order_created(sender, instance, created, **kwargs):
+    """
+    When a sell order is created, queue notification with batching.
+    Multiple orders created close together are consolidated into one task.
+    """
+    if not created:
+        return
+
+    def _enqueue_notification_task():
+        try:
+            # AA Example App
+            from indy_hub.tasks.material_exchange_contracts import (
+                handle_material_exchange_sell_order_created,
+            )
+
+            handle_material_exchange_sell_order_created.apply_async(
+                args=(instance.id,),
+                countdown=2,
+                expires=300,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to queue sell order notification for order %s: %s",
                 instance.id,
                 exc,
                 exc_info=True,
