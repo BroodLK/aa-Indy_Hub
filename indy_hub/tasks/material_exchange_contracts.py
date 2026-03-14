@@ -3138,6 +3138,91 @@ def handle_capital_ship_order_marked_in_production(order_id):
     )
 
 
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 5},
+    rate_limit="1000/m",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def handle_capital_ship_order_closed_by_manager(
+    order_id: int,
+    status: str,
+    manager_user_id: int | None = None,
+):
+    """Notify user/admins when manager rejects or cancels a capital order."""
+    normalized_status = str(status or "").strip().lower()
+    if normalized_status not in {
+        CapitalShipOrder.Status.REJECTED,
+        CapitalShipOrder.Status.CANCELLED,
+    }:
+        return
+
+    try:
+        order = CapitalShipOrder.objects.select_related("config", "requester").get(
+            id=order_id
+        )
+    except CapitalShipOrder.DoesNotExist:
+        logger.warning("Capital ship order %s not found", order_id)
+        return
+
+    if str(order.status or "").strip().lower() != normalized_status:
+        # Order moved again before task execution; skip stale notification.
+        return
+
+    manager_name = "Manager"
+    if manager_user_id:
+        try:
+            manager_name = (
+                User.objects.filter(id=int(manager_user_id))
+                .values_list("username", flat=True)
+                .first()
+                or manager_name
+            )
+        except Exception:
+            pass
+
+    if normalized_status == CapitalShipOrder.Status.REJECTED:
+        user_title = _("Capital Order Rejected")
+        user_message = _(
+            f"Order {order.order_reference} ({order.ship_type_name}) was rejected by {manager_name}."
+        )
+        admin_title = _("Capital Order Rejected")
+        admin_message = _(
+            f"{manager_name} rejected capital order {order.order_reference}.\n"
+            f"User: {order.requester.username}\n"
+            f"Hull: {order.ship_type_name}"
+        )
+        level = "warning"
+    else:
+        user_title = _("Capital Order Cancelled")
+        user_message = _(
+            f"Order {order.order_reference} ({order.ship_type_name}) was cancelled by {manager_name}."
+        )
+        admin_title = _("Capital Order Cancelled")
+        admin_message = _(
+            f"{manager_name} cancelled capital order {order.order_reference}.\n"
+            f"User: {order.requester.username}\n"
+            f"Hull: {order.ship_type_name}"
+        )
+        level = "info"
+
+    notify_user(
+        order.requester,
+        user_title,
+        user_message,
+        level=level,
+        link="/indy_hub/material-exchange/capital-orders/",
+    )
+    _notify_material_exchange_admins(
+        order.config,
+        admin_title,
+        admin_message,
+        level=level,
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+
+
 def _get_user_main_character_id(user: User) -> int | None:
     """Resolve user's main character ID when available."""
     try:
@@ -3248,6 +3333,7 @@ def process_capital_ship_orders():
     active_orders = CapitalShipOrder.objects.filter(
         config=config,
         status__in=[
+            CapitalShipOrder.Status.WAITING,
             CapitalShipOrder.Status.IN_PRODUCTION,
             CapitalShipOrder.Status.CONTRACT_CREATED,
         ],
@@ -3275,7 +3361,10 @@ def process_capital_ship_orders():
             if order_ref_lower and order_ref_lower in str(contract.title or "").lower()
         ]
 
-        if order.status == CapitalShipOrder.Status.IN_PRODUCTION:
+        if order.status in {
+            CapitalShipOrder.Status.WAITING,
+            CapitalShipOrder.Status.IN_PRODUCTION,
+        }:
             if not matching_by_title:
                 continue
 

@@ -7,6 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 # Alliance Auth
@@ -31,6 +32,11 @@ _ROOT_MARKET_GROUP_CLASSIFIERS = {
     "dread": ("dreadnought",),
     "carrier": ("carrier",),
     "fax": ("force auxili", "force auxiliary"),
+}
+_CAPITAL_TERMINAL_STATUSES = {
+    CapitalShipOrder.Status.COMPLETED,
+    CapitalShipOrder.Status.REJECTED,
+    CapitalShipOrder.Status.CANCELLED,
 }
 
 
@@ -292,7 +298,7 @@ def capital_ship_orders_admin(request):
         "requester", "in_production_by"
     ).order_by("-created_at")
     if not include_completed:
-        orders = orders.exclude(status=CapitalShipOrder.Status.COMPLETED)
+        orders = orders.exclude(status__in=list(_CAPITAL_TERMINAL_STATUSES))
 
     orders = list(orders)
     for order in orders:
@@ -328,8 +334,6 @@ def capital_ship_order_set_in_production(request, order_id: int):
         )
         return redirect("indy_hub:capital_ship_orders_admin")
 
-    from django.utils import timezone
-
     order.status = CapitalShipOrder.Status.IN_PRODUCTION
     order.in_production_by = request.user
     order.in_production_at = timezone.now()
@@ -362,3 +366,100 @@ def capital_ship_order_set_in_production(request, order_id: int):
         f"Order {order.order_reference} moved to In Production.",
     )
     return redirect("indy_hub:capital_ship_orders_admin")
+
+
+def _close_capital_order(
+    request,
+    *,
+    order_id: int,
+    target_status: str,
+    action_label: str,
+    task_name: str,
+):
+    order = get_object_or_404(CapitalShipOrder, id=order_id)
+    current_status = str(order.status or "")
+
+    if current_status == str(target_status):
+        messages.info(
+            request,
+            f"Order {order.order_reference} is already {action_label.lower()}.",
+        )
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    if current_status in _CAPITAL_TERMINAL_STATUSES:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is already closed ({order.get_status_display()}).",
+        )
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    manager_name = str(getattr(request.user, "username", "") or "Manager").strip()
+    previous_notes = str(order.notes or "").strip()
+    status_note = (
+        f"{action_label} by manager {manager_name} at "
+        f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+    )
+    order.status = target_status
+    order.anomaly_reason = ""
+    order.notes = f"{previous_notes}\n{status_note}".strip()
+    order.save(update_fields=["status", "anomaly_reason", "notes", "updated_at"])
+
+    try:
+        from indy_hub.tasks.material_exchange_contracts import (
+            handle_capital_ship_order_closed_by_manager,
+        )
+
+        handle_capital_ship_order_closed_by_manager.apply_async(
+            args=(int(order.id), str(target_status), int(request.user.id)),
+            countdown=1,
+            expires=300,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to queue %s notification for capital order %s: %s",
+            task_name,
+            order.id,
+            exc,
+        )
+
+    messages.success(
+        request,
+        f"Order {order.order_reference} marked as {action_label}.",
+    )
+    return redirect("indy_hub:capital_ship_orders_admin")
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_manage_material_hub")
+@require_POST
+def capital_ship_order_reject(request, order_id: int):
+    emit_view_analytics_event(
+        view_name="capital_ship_orders.reject",
+        request=request,
+    )
+    return _close_capital_order(
+        request,
+        order_id=order_id,
+        target_status=CapitalShipOrder.Status.REJECTED,
+        action_label="Rejected",
+        task_name="reject",
+    )
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_manage_material_hub")
+@require_POST
+def capital_ship_order_cancel(request, order_id: int):
+    emit_view_analytics_event(
+        view_name="capital_ship_orders.cancel",
+        request=request,
+    )
+    return _close_capital_order(
+        request,
+        order_id=order_id,
+        target_status=CapitalShipOrder.Status.CANCELLED,
+        action_label="Cancelled",
+        task_name="cancel",
+    )

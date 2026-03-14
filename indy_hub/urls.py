@@ -1,4 +1,5 @@
 # Django
+from django.http import HttpResponse
 from django.urls import path
 
 from .views.api import (
@@ -43,11 +44,27 @@ from .views.industry import (
     personnal_job_list,
     production_simulations_list,
 )
-from .views.capital_ship_orders import (
-    capital_ship_order_set_in_production,
-    capital_ship_orders,
-    capital_ship_orders_admin,
-)
+try:
+    from .views.capital_ship_orders import (
+        capital_ship_order_cancel,
+        capital_ship_order_reject,
+        capital_ship_order_set_in_production,
+        capital_ship_orders,
+        capital_ship_orders_admin,
+    )
+except ModuleNotFoundError:
+    def _capital_orders_module_missing(*_args, **_kwargs):
+        return HttpResponse(
+            "Capital Orders module is not deployed on this server node.",
+            status=503,
+            content_type="text/plain",
+        )
+
+    capital_ship_orders = _capital_orders_module_missing
+    capital_ship_orders_admin = _capital_orders_module_missing
+    capital_ship_order_set_in_production = _capital_orders_module_missing
+    capital_ship_order_reject = _capital_orders_module_missing
+    capital_ship_order_cancel = _capital_orders_module_missing
 from .views.material_exchange import (
     material_exchange_approve_buy,
     material_exchange_approve_sell,
@@ -411,6 +428,16 @@ urlpatterns = [
         "material-exchange/capital-orders/<int:order_id>/set-in-production/",
         capital_ship_order_set_in_production,
         name="capital_ship_order_set_in_production",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/reject/",
+        capital_ship_order_reject,
+        name="capital_ship_order_reject",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/cancel/",
+        capital_ship_order_cancel,
+        name="capital_ship_order_cancel",
     ),
     # Stock & Prices
     path(

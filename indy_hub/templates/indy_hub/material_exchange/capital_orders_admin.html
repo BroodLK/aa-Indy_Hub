@@ -7,7 +7,33 @@
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
 <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+<link rel="stylesheet" href="{% static 'indy_hub/css/capital_orders.css' %}">
 {% endblock extra_css %}
+
+{% block extra_javascript %}
+    {{ block.super }}
+    <script>
+        function copyCapitalOrderReference(btn, reference) {
+            if (!reference) {
+                return;
+            }
+            navigator.clipboard.writeText(reference).then(() => {
+                const icon = btn.querySelector('i');
+                if (!icon) {
+                    return;
+                }
+                icon.classList.remove('fa-copy');
+                icon.classList.add('fa-check', 'text-success');
+                setTimeout(() => {
+                    icon.classList.remove('fa-check', 'text-success');
+                    icon.classList.add('fa-copy');
+                }, 1400);
+            }).catch(() => {
+                alert('{% trans "Failed to copy to clipboard" %}');
+            });
+        }
+    </script>
+{% endblock extra_javascript %}
 
 {% block content %}
 <div class="container-fluid py-4">
@@ -23,11 +49,11 @@
             <div class="d-flex gap-2">
                 {% if include_completed %}
                 <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-outline-secondary">
-                    <i class="fas fa-filter me-1"></i>{% trans "Hide Completed" %}
+                    <i class="fas fa-filter me-1"></i>{% trans "Hide Closed" %}
                 </a>
                 {% else %}
                 <a href="{% url 'indy_hub:capital_ship_orders_admin' %}?include_completed=1" class="btn btn-outline-secondary">
-                    <i class="fas fa-filter me-1"></i>{% trans "Show Completed" %}
+                    <i class="fas fa-filter me-1"></i>{% trans "Show Closed" %}
                 </a>
                 {% endif %}
                 <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-warning">
@@ -42,14 +68,14 @@
     </div>
 
     <div class="card">
-        <div class="card-header bg-warning bg-opacity-10">
+        <div class="card-header cap-admin-rule">
             <strong>{% trans "Contract Rule:" %}</strong>
             {% trans "Use the order code in the title (INDY-CAP-###), assign to the listed user's main character, and include the exact selected hull." %}
         </div>
         <div class="card-body p-0">
             {% if orders %}
             <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
+                <table class="table table-hover mb-0 align-middle cap-queue-table">
                     <thead>
                         <tr>
                             <th>{% trans "Reference" %}</th>
@@ -59,17 +85,31 @@
                             <th>{% trans "Status" %}</th>
                             <th>{% trans "Contract" %}</th>
                             <th>{% trans "Production By" %}</th>
+                            <th>{% trans "Updated" %}</th>
                             <th class="text-end">{% trans "Actions" %}</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for order in orders %}
                         <tr>
-                            <td><strong>{{ order.order_reference }}</strong></td>
+                            <td>
+                                <div class="d-inline-flex align-items-center gap-1">
+                                    <span class="cap-ref">{{ order.order_reference }}</span>
+                                    <button
+                                        type="button"
+                                        class="btn btn-warning btn-sm copy-button"
+                                        title="{% trans 'Copy reference code' %}"
+                                        aria-label="{% trans 'Copy reference code' %}"
+                                        onclick="copyCapitalOrderReference(this, '{{ order.order_reference|escapejs }}')"
+                                    >
+                                        <i class="fas fa-copy" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </td>
                             <td>{{ order.requester_main_character|default:order.requester.username }}</td>
                             <td>{{ order.ship_type_name }} <small class="text-muted">({{ order.get_ship_class_display }})</small></td>
                             <td>{{ order.get_reason_display }}</td>
-                            <td>
+                            <td class="cap-status-cell">
                                 <span class="status-badge status-{{ order.status }}">
                                     {{ order.get_status_display }}
                                 </span>
@@ -88,14 +128,34 @@
                                     <span class="text-muted">-</span>
                                 {% endif %}
                             </td>
+                            <td>
+                                {{ order.updated_at|date:"Y-m-d H:i" }}
+                                <div class="cap-muted-mini">{{ order.updated_at|timesince }} {% trans "ago" %}</div>
+                            </td>
                             <td class="text-end">
-                                {% if order.status == 'waiting' %}
-                                <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
-                                    {% csrf_token %}
-                                    <button type="submit" class="btn btn-sm btn-warning">
-                                        <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
-                                    </button>
-                                </form>
+                                {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
+                                <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                                    {% if order.status == 'waiting' %}
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-warning">
+                                            <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_reject' order.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('{% trans "Reject this capital order?" %}');">
+                                            <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_cancel' order.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary" onclick="return confirm('{% trans "Cancel this capital order?" %}');">
+                                            <i class="fas fa-ban me-1"></i>{% trans "Cancel" %}
+                                        </button>
+                                    </form>
+                                </div>
                                 {% else %}
                                 <span class="text-muted">-</span>
                                 {% endif %}

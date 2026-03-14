@@ -2891,6 +2891,8 @@ class CapitalShipOrder(models.Model):
         CONTRACT_CREATED = "contract_created", _("Contract Created")
         COMPLETED = "completed", _("Contract Completed")
         ANOMALY = "anomaly", _("Anomaly")
+        REJECTED = "rejected", _("Rejected")
+        CANCELLED = "cancelled", _("Cancelled")
 
     class Reason(models.TextChoices):
         NO_CAP = "no_cap", _(
