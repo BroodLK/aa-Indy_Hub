@@ -32,6 +32,7 @@ from ..models import (
     CapitalShipOrder,
     CachedCharacterAsset,
     ESIContract,
+    ESIContractItem,
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
@@ -68,7 +69,7 @@ from ..tasks.material_exchange import (
     sync_material_exchange_stock,
 )
 from ..utils.analytics import emit_view_analytics_event
-from ..utils.eve import get_type_name
+from ..utils.eve import get_corporation_name, get_type_name
 from ..utils.material_exchange_pricing import (
     apply_markup_with_jita_bounds,
     compute_buy_price_from_member,
@@ -2048,6 +2049,13 @@ def _build_sell_material_rows(
             return int(character_id), str(character_name)
         return 0, ""
 
+    def resolve_asset_location_id(asset: dict) -> int:
+        try:
+            location_id = int(asset.get("location_id") or 0)
+        except (TypeError, ValueError):
+            location_id = 0
+        return location_id if location_id > 0 else 0
+
     row_index = 0
 
     def next_row_index() -> int:
@@ -2065,6 +2073,7 @@ def _build_sell_material_rows(
         depth: int,
         character_id: int,
         character_name: str,
+        source_location_ids: set[int] | None = None,
     ) -> dict[str, object] | None:
         if quantity <= 0:
             return None
@@ -2105,6 +2114,13 @@ def _build_sell_material_rows(
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
             "character_id": int(character_id) if int(character_id) > 0 else None,
             "character_name": str(character_name or ""),
+            "source_location_ids": sorted(
+                {
+                    int(location_id)
+                    for location_id in (source_location_ids or set())
+                    if int(location_id) > 0
+                }
+            ),
         }
 
     def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
@@ -2124,6 +2140,7 @@ def _build_sell_material_rows(
         container_character_id, container_character_name = resolve_character_meta(asset)
 
         grouped_child_items: dict[tuple[int, str, int, str], int] = {}
+        grouped_child_location_ids: dict[tuple[int, str, int, str], set[int]] = {}
         nested_container_assets: list[dict] = []
         for child in children:
             try:
@@ -2152,6 +2169,9 @@ def _build_sell_material_rows(
                 child_character_name,
             )
             grouped_child_items[child_key] = grouped_child_items.get(child_key, 0) + child_qty
+            child_location_id = resolve_asset_location_id(child)
+            if child_location_id > 0:
+                grouped_child_location_ids.setdefault(child_key, set()).add(child_location_id)
 
         child_rows: list[dict] = []
         grouped_items_sorted = sorted(
@@ -2184,6 +2204,7 @@ def _build_sell_material_rows(
                 depth=depth + 1,
                 character_id=child_character_id,
                 character_name=child_character_name,
+                source_location_ids=grouped_child_location_ids.get(child_key, set()),
             )
             if row is not None:
                 child_rows.append(row)
@@ -2235,6 +2256,7 @@ def _build_sell_material_rows(
 
     root_container_assets: list[dict] = []
     root_items_by_key: dict[tuple[int, str, int, str], int] = {}
+    root_item_location_ids: dict[tuple[int, str, int, str], set[int]] = {}
     for asset in assets:
         try:
             item_id = int(asset.get("item_id") or 0)
@@ -2264,6 +2286,9 @@ def _build_sell_material_rows(
         character_id, character_name = resolve_character_meta(asset)
         root_key = (type_id, blueprint_variant, character_id, character_name)
         root_items_by_key[root_key] = root_items_by_key.get(root_key, 0) + qty
+        root_location_id = resolve_asset_location_id(asset)
+        if root_location_id > 0:
+            root_item_location_ids.setdefault(root_key, set()).add(root_location_id)
 
     rows: list[dict] = []
     root_container_assets = sorted(
@@ -2296,6 +2321,7 @@ def _build_sell_material_rows(
             depth=0,
             character_id=character_id,
             character_name=character_name,
+            source_location_ids=root_item_location_ids.get(root_key, set()),
         )
         if row is not None:
             rows.append(row)
@@ -5632,7 +5658,7 @@ def material_exchange_stats_history(request):
     emit_view_analytics_event(
         view_name="material_exchange.stats_history", request=request
     )
-    """Monthly statistics history for Material Exchange transactions."""
+    """Material Exchange stats based on all non-capital orders."""
     if not _is_material_exchange_enabled():
         messages.warning(request, _("Material Exchange is disabled."))
         return redirect("indy_hub:material_exchange_index")
@@ -5641,6 +5667,8 @@ def material_exchange_stats_history(request):
     if not config:
         messages.warning(request, _("Material Exchange is not configured."))
         return redirect("indy_hub:material_exchange_index")
+
+    settings_obj = MaterialExchangeSettings.get_solo()
 
     period_options = [
         ("1m", _("This month")),
@@ -5673,6 +5701,100 @@ def material_exchange_stats_history(request):
     if custom_start_date and custom_end_date and custom_start_date > custom_end_date:
         custom_start_date, custom_end_date = custom_end_date, custom_start_date
 
+    def _to_decimal(raw_value) -> Decimal:
+        try:
+            return Decimal(str(raw_value or 0))
+        except Exception:
+            return Decimal("0")
+
+    available_corp_ids = sorted(
+        {
+            int(corp_id)
+            for corp_id in MaterialExchangeConfig.objects.values_list(
+                "corporation_id", flat=True
+            )
+            if int(corp_id or 0) > 0
+        }
+    )
+    if int(config.corporation_id or 0) > 0:
+        available_corp_ids.append(int(config.corporation_id))
+    if int(getattr(settings_obj, "stats_selected_corporation_id", 0) or 0) > 0:
+        available_corp_ids.append(int(settings_obj.stats_selected_corporation_id))
+    available_corp_ids = sorted(set(available_corp_ids))
+
+    chosen_corporation_id = int(
+        getattr(settings_obj, "stats_selected_corporation_id", 0)
+        or int(config.corporation_id)
+        or 0
+    )
+    if chosen_corporation_id <= 0 and available_corp_ids:
+        chosen_corporation_id = int(available_corp_ids[0])
+
+    chosen_wallet_division = int(
+        getattr(settings_obj, "stats_selected_wallet_division", 0) or 1
+    )
+    if chosen_wallet_division not in range(1, 8):
+        chosen_wallet_division = 1
+
+    if request.method == "POST" and request.POST.get("action") == "save_stats_preferences":
+        chosen_corporation_raw = str(
+            request.POST.get("chosen_corporation_id") or ""
+        ).strip()
+        chosen_wallet_raw = str(
+            request.POST.get("chosen_wallet_division") or ""
+        ).strip()
+
+        try:
+            post_corp_id = int(chosen_corporation_raw)
+        except (TypeError, ValueError):
+            post_corp_id = 0
+        try:
+            post_wallet_division = int(chosen_wallet_raw)
+        except (TypeError, ValueError):
+            post_wallet_division = 0
+
+        if post_corp_id <= 0:
+            messages.error(request, _("Choose a corporation for Buyback stats."))
+        elif post_wallet_division not in range(1, 8):
+            messages.error(request, _("Choose wallet division 1-7."))
+        else:
+            settings_obj.stats_selected_corporation_id = int(post_corp_id)
+            settings_obj.stats_selected_wallet_division = int(post_wallet_division)
+            settings_obj.save(
+                update_fields=[
+                    "stats_selected_corporation_id",
+                    "stats_selected_wallet_division",
+                    "updated_at",
+                ]
+            )
+            messages.success(request, _("Buyback stats preferences saved."))
+        return redirect("indy_hub:material_exchange_stats_history")
+
+    corp_options = [
+        {
+            "id": int(corp_id),
+            "name": get_corporation_name(int(corp_id)) or str(corp_id),
+        }
+        for corp_id in available_corp_ids
+    ]
+
+    division_scope_missing = False
+    try:
+        cached_divisions, division_scope_missing = get_corp_divisions_cached(
+            int(chosen_corporation_id),
+            allow_refresh=False,
+        )
+    except Exception:
+        cached_divisions = {}
+
+    wallet_division_options = [
+        {
+            "id": idx,
+            "name": str(cached_divisions.get(idx) or f"Hangar Division {idx}"),
+        }
+        for idx in range(1, 8)
+    ]
+
     period_start = None
     filter_start = None
     filter_end = None
@@ -5700,112 +5822,204 @@ def material_exchange_stats_history(request):
         period_start = month_anchor.replace(year=start_year, month=start_month)
         filter_start = period_start
 
-    filtered_transactions = config.transactions.all()
+    buy_orders_qs = config.buy_orders.all()
+    sell_orders_qs = config.sell_orders.all()
     if filter_start:
-        filtered_transactions = filtered_transactions.filter(completed_at__gte=filter_start)
+        buy_orders_qs = buy_orders_qs.filter(created_at__gte=filter_start)
+        sell_orders_qs = sell_orders_qs.filter(created_at__gte=filter_start)
     if filter_end:
-        filtered_transactions = filtered_transactions.filter(completed_at__lte=filter_end)
+        buy_orders_qs = buy_orders_qs.filter(created_at__lte=filter_end)
+        sell_orders_qs = sell_orders_qs.filter(created_at__lte=filter_end)
 
-    monthly_rows = (
-        filtered_transactions.annotate(month=TruncMonth("completed_at"))
-        .values("month")
-        .annotate(
-            total_sell_volume=Sum(
-                "total_price", filter=Q(transaction_type="sell"), default=0
-            ),
-            total_buy_volume=Sum(
-                "total_price", filter=Q(transaction_type="buy"), default=0
-            ),
-            sell_orders=Count("id", filter=Q(transaction_type="sell")),
-            buy_orders=Count("id", filter=Q(transaction_type="buy")),
+    sell_rows = list(
+        sell_orders_qs.annotate(
+            expected_total=Sum("items__total_price", default=0),
+            expected_qty=Sum("items__quantity", default=0),
+        ).values(
+            "id",
+            "seller_id",
+            "status",
+            "esi_contract_id",
+            "expected_total",
+            "expected_qty",
         )
-        .order_by("month")
+    )
+    buy_rows = list(
+        buy_orders_qs.annotate(
+            expected_total=Sum("items__total_price", default=0),
+            expected_qty=Sum("items__quantity", default=0),
+        ).values(
+            "id",
+            "buyer_id",
+            "status",
+            "esi_contract_id",
+            "expected_total",
+            "expected_qty",
+        )
     )
 
-    chart_labels: list[str] = []
-    buy_volumes: list[float] = []
-    sell_volumes: list[float] = []
-    transaction_counts: list[int] = []
+    for row in sell_rows:
+        row["expected_total"] = _to_decimal(row.get("expected_total"))
+        row["expected_qty"] = int(row.get("expected_qty") or 0)
+    for row in buy_rows:
+        row["expected_total"] = _to_decimal(row.get("expected_total"))
+        row["expected_qty"] = int(row.get("expected_qty") or 0)
 
-    total_buy_volume = Decimal("0")
-    total_sell_volume = Decimal("0")
-    total_transactions = 0
+    sell_order_ids = [int(row["id"]) for row in sell_rows]
+    buy_order_ids = [int(row["id"]) for row in buy_rows]
 
-    for row in monthly_rows:
-        month = row.get("month")
-        if not month:
+    all_contract_ids = {
+        int(row["esi_contract_id"])
+        for row in (sell_rows + buy_rows)
+        if int(row.get("esi_contract_id") or 0) > 0
+    }
+    contract_price_map = {
+        int(contract_id): _to_decimal(price)
+        for contract_id, price in ESIContract.objects.filter(
+            corporation_id=config.corporation_id,
+            contract_id__in=list(all_contract_ids),
+        ).values_list("contract_id", "price")
+    }
+
+    sell_expected_cost_total = sum(
+        (row["expected_total"] for row in sell_rows),
+        Decimal("0"),
+    )
+    buy_expected_total = sum(
+        (row["expected_total"] for row in buy_rows),
+        Decimal("0"),
+    )
+
+    sell_actual_cost_total = Decimal("0")
+    sell_actual_count = 0
+    for row in sell_rows:
+        cid = int(row.get("esi_contract_id") or 0)
+        if cid <= 0 or cid not in contract_price_map:
             continue
-        buy_volume = row.get("total_buy_volume") or Decimal("0")
-        sell_volume = row.get("total_sell_volume") or Decimal("0")
-        buy_count = int(row.get("buy_orders") or 0)
-        sell_count = int(row.get("sell_orders") or 0)
+        sell_actual_cost_total += contract_price_map[cid]
+        sell_actual_count += 1
 
-        chart_labels.append(month.strftime("%Y-%m"))
-        buy_volumes.append(float(buy_volume))
-        sell_volumes.append(float(sell_volume))
-        transaction_counts.append(buy_count + sell_count)
+    buy_actual_revenue_total = Decimal("0")
+    buy_actual_count = 0
+    for row in buy_rows:
+        cid = int(row.get("esi_contract_id") or 0)
+        if cid <= 0 or cid not in contract_price_map:
+            continue
+        buy_actual_revenue_total += contract_price_map[cid]
+        buy_actual_count += 1
 
-        total_buy_volume += buy_volume
-        total_sell_volume += sell_volume
-        total_transactions += buy_count + sell_count
+    sell_contract_coverage_pct = round(
+        (sell_actual_count / len(sell_rows)) * 100,
+        1,
+    ) if sell_rows else 0
+    buy_contract_coverage_pct = round(
+        (buy_actual_count / len(buy_rows)) * 100,
+        1,
+    ) if buy_rows else 0
 
-    user_stats = (
-        filtered_transactions.values("user__username")
-        .annotate(
-            buy_volume=Sum("total_price", filter=Q(transaction_type="buy"), default=0),
-            sell_volume=Sum(
-                "total_price", filter=Q(transaction_type="sell"), default=0
-            ),
-            buy_orders=Count("id", filter=Q(transaction_type="buy")),
-            sell_orders=Count("id", filter=Q(transaction_type="sell")),
-        )
-        .order_by("user__username")
+    sell_tx_qs = MaterialExchangeTransaction.objects.filter(
+        config=config,
+        sell_order_id__in=sell_order_ids,
     )
-    top_user_stats = sorted(
-        [
-            {
-                "username": row.get("user__username") or "-",
-                "buy_volume": row.get("buy_volume") or Decimal("0"),
-                "sell_volume": row.get("sell_volume") or Decimal("0"),
-                "buy_orders": row.get("buy_orders") or 0,
-                "sell_orders": row.get("sell_orders") or 0,
-                "total_orders": (row.get("buy_orders") or 0) + (row.get("sell_orders") or 0),
-                "net_flow": (row.get("buy_volume") or Decimal("0"))
-                - (row.get("sell_volume") or Decimal("0")),
-            }
-            for row in user_stats
-        ],
-        key=lambda item: item["buy_volume"] + item["sell_volume"],
-        reverse=True,
-    )[:10]
+    buy_tx_qs = MaterialExchangeTransaction.objects.filter(
+        config=config,
+        buy_order_id__in=buy_order_ids,
+    )
 
-    buy_tx = filtered_transactions.filter(transaction_type="buy")
-
-    buy_snapshot_rollup = buy_tx.aggregate(
-        member_sales_volume=Sum("total_price", default=0),
-        jita_buy_value=Sum("jita_buy_total_value_snapshot", default=0),
-        jita_sell_value=Sum("jita_sell_total_value_snapshot", default=0),
-        jita_split_value=Sum("jita_split_total_value_snapshot", default=0),
-        snapshot_count=Count("id", filter=Q(jita_split_total_value_snapshot__isnull=False)),
+    sell_snapshot_rollup = sell_tx_qs.aggregate(
+        expected_jita_buy=Sum("jita_buy_total_value_snapshot", default=0),
+        expected_jita_sell=Sum("jita_sell_total_value_snapshot", default=0),
+        expected_jita_split=Sum("jita_split_total_value_snapshot", default=0),
+        snapshot_count=Count("id", filter=Q(jita_sell_total_value_snapshot__isnull=False)),
+        total_count=Count("id"),
+    )
+    buy_snapshot_rollup = buy_tx_qs.aggregate(
+        expected_jita_buy=Sum("jita_buy_total_value_snapshot", default=0),
+        expected_jita_sell=Sum("jita_sell_total_value_snapshot", default=0),
+        expected_jita_split=Sum("jita_split_total_value_snapshot", default=0),
+        snapshot_count=Count("id", filter=Q(jita_sell_total_value_snapshot__isnull=False)),
         total_count=Count("id"),
     )
 
-    member_sales_volume = buy_snapshot_rollup.get("member_sales_volume") or Decimal("0")
-    jita_buy_value = buy_snapshot_rollup.get("jita_buy_value") or Decimal("0")
-    jita_sell_value = buy_snapshot_rollup.get("jita_sell_value") or Decimal("0")
-    jita_split_value = buy_snapshot_rollup.get("jita_split_value") or Decimal("0")
-    snapshot_count = int(buy_snapshot_rollup.get("snapshot_count") or 0)
-    total_buy_tx_count = int(buy_snapshot_rollup.get("total_count") or 0)
-    snapshot_coverage_pct = (
-        round((snapshot_count / total_buy_tx_count) * 100, 1) if total_buy_tx_count else 0
+    sell_expected_jita_buy_total = _to_decimal(sell_snapshot_rollup["expected_jita_buy"])
+    sell_expected_jita_sell_total = _to_decimal(
+        sell_snapshot_rollup["expected_jita_sell"]
+    )
+    sell_expected_jita_split_total = _to_decimal(
+        sell_snapshot_rollup["expected_jita_split"]
+    )
+    buy_expected_jita_buy_total = _to_decimal(buy_snapshot_rollup["expected_jita_buy"])
+    buy_expected_jita_sell_total = _to_decimal(
+        buy_snapshot_rollup["expected_jita_sell"]
+    )
+    buy_expected_jita_split_total = _to_decimal(
+        buy_snapshot_rollup["expected_jita_split"]
     )
 
-    # Realized exchange spread from raw volumes.
-    actual_exchange_profit = total_buy_volume - total_sell_volume
+    buy_snapshot_count = int(buy_snapshot_rollup["snapshot_count"] or 0)
+    buy_snapshot_total_count = int(buy_snapshot_rollup["total_count"] or 0)
+    snapshot_coverage_pct = (
+        round((buy_snapshot_count / buy_snapshot_total_count) * 100, 1)
+        if buy_snapshot_total_count
+        else 0
+    )
 
-    # Realized/potential member-sale profit based on average acquisition cost per type.
+    sell_cost_delta = sell_actual_cost_total - sell_expected_cost_total
+    buy_revenue_delta_jita_sell = buy_actual_revenue_total - buy_expected_jita_sell_total
+    buy_revenue_delta_jita_buy = buy_actual_revenue_total - buy_expected_jita_buy_total
+
+    total_buy_volume = buy_expected_total
+    total_sell_volume = sell_expected_cost_total
+    total_transactions = len(buy_rows) + len(sell_rows)
+    actual_exchange_profit = buy_actual_revenue_total - sell_actual_cost_total
+
+    member_sales_volume = buy_actual_revenue_total
+    jita_buy_value = buy_expected_jita_buy_total
+    jita_sell_value = buy_expected_jita_sell_total
+    jita_split_value = buy_expected_jita_split_total
+    unrealized_inventory_value = Decimal("0")
+    unrealized_inventory_cost_basis = Decimal("0")
+    unrealized_earnings_potential = Decimal("0")
+    if type_rollup:
+        stock_prices = {
+            int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
+            for row in MaterialExchangeStock.objects.filter(
+                config=config,
+                type_id__in=list(type_rollup.keys()),
+            ).values("type_id", "jita_sell_price")
+        }
+        for type_id, rollup in type_rollup.items():
+            acquired_qty = rollup["acquired_qty"]
+            sold_qty = rollup["sold_qty"]
+            if acquired_qty <= 0:
+                continue
+
+            remaining_qty = acquired_qty - sold_qty
+            if remaining_qty <= 0:
+                continue
+
+            avg_cost = (rollup["acquired_cost"] / acquired_qty).quantize(Decimal("0.0001"))
+            remaining_cost = (avg_cost * remaining_qty).quantize(Decimal("0.01"))
+            unrealized_inventory_cost_basis += remaining_cost
+
+            jita_sell_price = _to_decimal(stock_prices.get(int(type_id)))
+            if jita_sell_price <= 0:
+                continue
+
+            remaining_value = (jita_sell_price * remaining_qty).quantize(Decimal("0.01"))
+            unrealized_inventory_value += remaining_value
+            unrealized_earnings_potential += remaining_value - remaining_cost
+
+    member_sales_vs_jita_buy_delta = member_sales_volume - jita_buy_value
+    member_sales_vs_jita_sell_delta = member_sales_volume - jita_sell_value
+    member_sales_vs_jita_split_delta = member_sales_volume - jita_split_value
+
+    tx_rows = MaterialExchangeTransaction.objects.filter(config=config).filter(
+        Q(sell_order_id__in=sell_order_ids) | Q(buy_order_id__in=buy_order_ids)
+    )
+
     type_rollup: dict[int, dict[str, Decimal]] = {}
-    for row in filtered_transactions.values(
+    for row in tx_rows.values(
         "transaction_type",
         "type_id",
         "quantity",
@@ -5909,15 +6123,6 @@ def material_exchange_stats_history(request):
         ),
     }
 
-    buy_orders_qs = config.buy_orders.all()
-    sell_orders_qs = config.sell_orders.all()
-    if filter_start:
-        buy_orders_qs = buy_orders_qs.filter(created_at__gte=filter_start)
-        sell_orders_qs = sell_orders_qs.filter(created_at__gte=filter_start)
-    if filter_end:
-        buy_orders_qs = buy_orders_qs.filter(created_at__lte=filter_end)
-        sell_orders_qs = sell_orders_qs.filter(created_at__lte=filter_end)
-
     buy_order_status_counts = {
         str(row["status"]): int(row["count"])
         for row in buy_orders_qs.values("status")
@@ -5931,8 +6136,314 @@ def material_exchange_stats_history(request):
         .order_by("status")
     }
 
+    buy_order_status_display_counts = {
+        (
+            _("Current Validated")
+            if status == "validated"
+            else _("Completed")
+            if status == "completed"
+            else _("Cancelled")
+            if status == "cancelled"
+            else _("Rejected")
+            if status == "rejected"
+            else _("Awaiting Auth Validation")
+            if status == "awaiting_validation"
+            else _("Order Created - Awaiting Contract")
+            if status == "draft"
+            else status
+        ): count
+        for status, count in buy_order_status_counts.items()
+    }
+    sell_order_status_display_counts = {
+        (
+            _("Current Validated")
+            if status == "validated"
+            else _("Current Anomaly")
+            if status == "anomaly"
+            else _("Current Anomaly Rejected")
+            if status == "anomaly_rejected"
+            else _("Completed")
+            if status == "completed"
+            else _("Cancelled")
+            if status == "cancelled"
+            else _("Rejected")
+            if status == "rejected"
+            else _("Awaiting Auth Validation")
+            if status == "awaiting_validation"
+            else _("Order Created - Awaiting Contract")
+            if status == "draft"
+            else status
+        ): count
+        for status, count in sell_order_status_counts.items()
+    }
+
+    contract_progress_stats = {
+        "made": len(sell_rows) + len(buy_rows),
+        "completed": int(
+            buy_order_status_counts.get("completed", 0)
+            + sell_order_status_counts.get("completed", 0)
+        ),
+        "cancelled": int(
+            buy_order_status_counts.get("cancelled", 0)
+            + sell_order_status_counts.get("cancelled", 0)
+        ),
+        "rejected": int(
+            buy_order_status_counts.get("rejected", 0)
+            + sell_order_status_counts.get("rejected", 0)
+        ),
+        "current_validated": int(
+            buy_order_status_counts.get("validated", 0)
+            + sell_order_status_counts.get("validated", 0)
+        ),
+        "current_awaiting_validation": int(
+            buy_order_status_counts.get("awaiting_validation", 0)
+            + sell_order_status_counts.get("awaiting_validation", 0)
+        ),
+        "current_anomaly": int(
+            sell_order_status_counts.get("anomaly", 0)
+            + sell_order_status_counts.get("anomaly_rejected", 0)
+        ),
+    }
+
+    buy_orders_monthly_rows = (
+        buy_orders_qs.annotate(month=TruncMonth("created_at"))
+        .values("month")
+        .annotate(
+            order_count=Count("id"),
+            total_value=Sum("items__total_price", default=0),
+        )
+        .order_by("month")
+    )
+    sell_orders_monthly_rows = (
+        sell_orders_qs.annotate(month=TruncMonth("created_at"))
+        .values("month")
+        .annotate(
+            order_count=Count("id"),
+            total_value=Sum("items__total_price", default=0),
+        )
+        .order_by("month")
+    )
+
+    buyback_contracts_qs = ESIContract.objects.filter(contract_type="item_exchange")
+    if int(chosen_corporation_id or 0) > 0:
+        buyback_contracts_qs = buyback_contracts_qs.filter(
+            corporation_id=int(chosen_corporation_id)
+        )
+    if filter_start:
+        buyback_contracts_qs = buyback_contracts_qs.filter(date_issued__gte=filter_start)
+    if filter_end:
+        buyback_contracts_qs = buyback_contracts_qs.filter(date_issued__lte=filter_end)
+
+    market_orders_monthly_rows = (
+        buyback_contracts_qs.annotate(month=TruncMonth("date_issued"))
+        .values("month")
+        .annotate(order_count=Count("contract_id"))
+        .order_by("month")
+    )
+
+    buy_monthly_map: dict[str, dict[str, Decimal | int]] = {}
+    sell_monthly_map: dict[str, dict[str, Decimal | int]] = {}
+    market_monthly_map: dict[str, int] = {}
+    month_keys: set[str] = set()
+
+    for row in buy_orders_monthly_rows:
+        month = row.get("month")
+        if not month:
+            continue
+        key = month.strftime("%Y-%m")
+        buy_monthly_map[key] = {
+            "count": int(row.get("order_count") or 0),
+            "value": _to_decimal(row.get("total_value")),
+        }
+        month_keys.add(key)
+
+    for row in sell_orders_monthly_rows:
+        month = row.get("month")
+        if not month:
+            continue
+        key = month.strftime("%Y-%m")
+        sell_monthly_map[key] = {
+            "count": int(row.get("order_count") or 0),
+            "value": _to_decimal(row.get("total_value")),
+        }
+        month_keys.add(key)
+
+    for row in market_orders_monthly_rows:
+        month = row.get("month")
+        if not month:
+            continue
+        key = month.strftime("%Y-%m")
+        market_monthly_map[key] = int(row.get("order_count") or 0)
+        month_keys.add(key)
+
+    sorted_month_keys = sorted(month_keys)
+    trend_rows = []
+    chart_labels: list[str] = []
+    buy_volumes: list[float] = []
+    sell_volumes: list[float] = []
+    transaction_counts: list[int] = []
+    for month_key in sorted_month_keys:
+        buy_row = buy_monthly_map.get(month_key, {})
+        sell_row = sell_monthly_map.get(month_key, {})
+        market_count = int(market_monthly_map.get(month_key, 0))
+        buy_count = int(buy_row.get("count") or 0)
+        sell_count = int(sell_row.get("count") or 0)
+        buy_value = _to_decimal(buy_row.get("value"))
+        sell_value = _to_decimal(sell_row.get("value"))
+
+        trend_rows.append(
+            {
+                "month": month_key,
+                "buy_order_count": buy_count,
+                "sell_order_count": sell_count,
+                "market_order_count": market_count,
+                "buy_order_value": buy_value,
+                "sell_order_value": sell_value,
+            }
+        )
+        chart_labels.append(month_key)
+        buy_volumes.append(float(buy_value))
+        sell_volumes.append(float(sell_value))
+        transaction_counts.append(buy_count + sell_count + market_count)
+
+    donation_contracts_qs = buyback_contracts_qs.filter(
+        status__in=["finished", "finished_issuer", "finished_contractor"],
+        price=0,
+        reward=0,
+    )
+    donation_contract_ids = [
+        int(contract_id)
+        for contract_id in donation_contracts_qs.values_list("contract_id", flat=True)
+    ]
+    donation_item_rows = []
+    if donation_contract_ids:
+        donation_item_rows = list(
+            ESIContractItem.objects.filter(
+                contract_id__in=donation_contract_ids,
+                is_included=True,
+            )
+            .values("type_id")
+            .annotate(total_qty=Sum("quantity", default=0))
+        )
+
+    donation_estimated_jita_sell = Decimal("0")
+    if donation_item_rows:
+        donation_type_ids = [int(row["type_id"]) for row in donation_item_rows]
+        donation_price_map = {
+            int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
+            for row in MaterialExchangeStock.objects.filter(
+                config=config,
+                type_id__in=donation_type_ids,
+            ).values("type_id", "jita_sell_price")
+        }
+        for row in donation_item_rows:
+            type_id = int(row.get("type_id") or 0)
+            qty = _to_decimal(row.get("total_qty"))
+            price = donation_price_map.get(type_id, Decimal("0"))
+            if qty > 0 and price > 0:
+                donation_estimated_jita_sell += (qty * price).quantize(Decimal("0.01"))
+
+    donation_stats = {
+        "contracts": int(len(donation_contract_ids)),
+        "estimated_jita_sell": donation_estimated_jita_sell,
+        "market_orders_total": int(buyback_contracts_qs.count()),
+    }
+
+    user_ids = {
+        int(row["seller_id"])
+        for row in sell_rows
+        if int(row.get("seller_id") or 0) > 0
+    } | {
+        int(row["buyer_id"])
+        for row in buy_rows
+        if int(row.get("buyer_id") or 0) > 0
+    }
+    user_map = {int(user.id): user for user in User.objects.filter(id__in=list(user_ids))}
+
+    sold_rollup: dict[int, dict[str, Decimal | int]] = {}
+    bought_rollup: dict[int, dict[str, Decimal | int]] = {}
+
+    for row in sell_rows:
+        user_id = int(row.get("seller_id") or 0)
+        if user_id <= 0:
+            continue
+        bucket = sold_rollup.setdefault(
+            user_id,
+            {"orders": 0, "value": Decimal("0"), "quantity": 0},
+        )
+        bucket["orders"] = int(bucket["orders"]) + 1
+        bucket["value"] = _to_decimal(bucket["value"]) + _to_decimal(
+            row.get("expected_total")
+        )
+        bucket["quantity"] = int(bucket["quantity"]) + int(row.get("expected_qty") or 0)
+
+    for row in buy_rows:
+        user_id = int(row.get("buyer_id") or 0)
+        if user_id <= 0:
+            continue
+        bucket = bought_rollup.setdefault(
+            user_id,
+            {"orders": 0, "value": Decimal("0"), "quantity": 0},
+        )
+        bucket["orders"] = int(bucket["orders"]) + 1
+        bucket["value"] = _to_decimal(bucket["value"]) + _to_decimal(
+            row.get("expected_total")
+        )
+        bucket["quantity"] = int(bucket["quantity"]) + int(row.get("expected_qty") or 0)
+
+    def _ranked_users(rollup: dict[int, dict[str, Decimal | int]], *, top_n: int = 10):
+        ranked = []
+        for user_id, bucket in rollup.items():
+            user = user_map.get(int(user_id))
+            username = str(getattr(user, "username", "") or f"User {user_id}")
+            ranked.append(
+                {
+                    "user_id": int(user_id),
+                    "username": username,
+                    "main_character": _resolve_main_character_name(user) if user else username,
+                    "orders": int(bucket.get("orders") or 0),
+                    "total_value": _to_decimal(bucket.get("value")),
+                    "quantity": int(bucket.get("quantity") or 0),
+                }
+            )
+        ranked.sort(key=lambda item: item["total_value"], reverse=True)
+        return ranked[:top_n]
+
+    most_sold_users = _ranked_users(sold_rollup)
+    most_bought_users = _ranked_users(bought_rollup)
+
+    top_user_stats = []
+    merged_user_ids = sorted(set(sold_rollup.keys()) | set(bought_rollup.keys()))
+    for user_id in merged_user_ids:
+        user = user_map.get(int(user_id))
+        sold = sold_rollup.get(int(user_id), {})
+        bought = bought_rollup.get(int(user_id), {})
+        top_user_stats.append(
+            {
+                "username": str(getattr(user, "username", "") or f"User {user_id}"),
+                "buy_volume": _to_decimal(bought.get("value")),
+                "sell_volume": _to_decimal(sold.get("value")),
+                "buy_orders": int(bought.get("orders") or 0),
+                "sell_orders": int(sold.get("orders") or 0),
+                "total_orders": int(bought.get("orders") or 0)
+                + int(sold.get("orders") or 0),
+                "net_flow": _to_decimal(bought.get("value"))
+                - _to_decimal(sold.get("value")),
+            }
+        )
+    top_user_stats.sort(
+        key=lambda item: _to_decimal(item["buy_volume"]) + _to_decimal(item["sell_volume"]),
+        reverse=True,
+    )
+    top_user_stats = top_user_stats[:10]
+
     context = {
         "config": config,
+        "chosen_corporation_id": chosen_corporation_id,
+        "chosen_wallet_division": chosen_wallet_division,
+        "corp_options": corp_options,
+        "wallet_division_options": wallet_division_options,
+        "division_scope_missing": bool(division_scope_missing),
         "chart_labels": chart_labels,
         "buy_volumes": buy_volumes,
         "sell_volumes": sell_volumes,
@@ -5947,6 +6458,20 @@ def material_exchange_stats_history(request):
         "period_start": period_start,
         "start_date": custom_start_date.isoformat() if custom_start_date else "",
         "end_date": custom_end_date.isoformat() if custom_end_date else "",
+        "sell_expected_cost_total": sell_expected_cost_total,
+        "sell_actual_cost_total": sell_actual_cost_total,
+        "sell_cost_delta": sell_cost_delta,
+        "sell_expected_jita_sell_total": sell_expected_jita_sell_total,
+        "sell_expected_jita_buy_total": sell_expected_jita_buy_total,
+        "sell_expected_jita_split_total": sell_expected_jita_split_total,
+        "sell_contract_coverage_pct": sell_contract_coverage_pct,
+        "buy_expected_jita_sell_total": buy_expected_jita_sell_total,
+        "buy_expected_jita_buy_total": buy_expected_jita_buy_total,
+        "buy_expected_jita_split_total": buy_expected_jita_split_total,
+        "buy_actual_revenue_total": buy_actual_revenue_total,
+        "buy_revenue_delta_jita_sell": buy_revenue_delta_jita_sell,
+        "buy_revenue_delta_jita_buy": buy_revenue_delta_jita_buy,
+        "buy_contract_coverage_pct": buy_contract_coverage_pct,
         "actual_exchange_profit": actual_exchange_profit,
         "member_sales_volume": member_sales_volume,
         "jita_buy_value": jita_buy_value,
@@ -5961,12 +6486,22 @@ def material_exchange_stats_history(request):
         "potential_profit_jita_sell": potential_profit_jita_sell,
         "potential_profit_jita_split": potential_profit_jita_split,
         "potential_priced_type_count": potential_priced_type_count,
+        "unrealized_inventory_value": unrealized_inventory_value,
+        "unrealized_inventory_cost_basis": unrealized_inventory_cost_basis,
+        "unrealized_earnings_potential": unrealized_earnings_potential,
+        "contract_progress_stats": contract_progress_stats,
         "contract_stats": contract_stats,
         "contract_counts_raw": contract_counts_raw,
         "buy_order_status_counts": buy_order_status_counts,
         "sell_order_status_counts": sell_order_status_counts,
+        "buy_order_status_display_counts": buy_order_status_display_counts,
+        "sell_order_status_display_counts": sell_order_status_display_counts,
+        "trend_rows": trend_rows,
+        "most_sold_users": most_sold_users,
+        "most_bought_users": most_bought_users,
+        "donation_stats": donation_stats,
         "data_limitations": _(
-            "Deleted order counts only include records still present in Auth; hard-deleted orders are not historically recoverable."
+            "Market-order columns currently use the Buyback contract feed proxy. Wallet-division filtering is saved and ready, but wallet journal/order ingestion is not wired yet."
         ),
         "nav_context": _build_nav_context(request.user),
     }

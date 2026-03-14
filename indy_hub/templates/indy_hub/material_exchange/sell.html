@@ -271,6 +271,7 @@
                                         data-row-kind="item"
                                         data-row-index="{{ item.row_index }}"
                                         data-container-path="{{ item.container_path }}"
+                                        data-source-location-ids="{% if item.source_location_ids %}{{ item.source_location_ids|join:',' }}{% else %}{{ active_location_id }}{% endif %}"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
                                         data-character-name="{{ item.character_name|default:'' }}"
@@ -323,24 +324,6 @@
                                         </td>
                                         <td class="text-center">
                                             <div class="qty-cell">
-                                                {% if item.container_path %}
-                                                <input
-                                                    type="hidden"
-                                                    name="{{ item.form_quantity_field_name }}"
-                                                    id="qty-{{ item.row_index }}"
-                                                    class="qty-input container-child-qty"
-                                                    min="0"
-                                                    max="{{ item.available_quantity }}"
-                                                    value="0"
-                                                    data-type-id="{{ item.type_id }}"
-                                                    data-container-path="{{ item.container_path }}"
-                                                    data-max="{{ item.available_quantity }}"
-                                                    data-error-id=""
-                                                    {% if item.available_quantity <= 0 %}disabled{% endif %}>
-                                                <div class="small text-muted">
-                                                    <i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>{% trans "Selected via container" %}
-                                                </div>
-                                                {% else %}
                                                 <div class="qty-input-row">
                                                     <input
                                                         type="number"
@@ -365,7 +348,6 @@
                                                 <div class="qty-error" id="error-{{ item.row_index }}">
                                                     {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
                                                 </div>
-                                                {% endif %}
                                             </div>
                                         </td>
                                     </tr>
@@ -431,7 +413,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const sellAllBtn = document.getElementById('sellAllBtn');
     const sellStockSearch = document.getElementById('sellStockSearch');
+    const sellLocationInput = document.querySelector('#sellForm input[name="sell_location_id"]');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
+    const rowLocationIdsCache = new WeakMap();
     const containerRows = stockRows.filter(row => row.dataset.rowKind === 'container');
     const itemRows = stockRows.filter(row => row.dataset.rowKind === 'item');
     const containerRowsByKey = new Map(
@@ -447,6 +431,59 @@ document.addEventListener('DOMContentLoaded', function() {
             .split(',')
             .map(chunk => chunk.trim())
             .filter(Boolean);
+    }
+
+    function parseLocationIds(rawValue) {
+        const ids = new Set();
+        String(rawValue || '').split(',').forEach(part => {
+            const parsed = Number.parseInt(part.trim(), 10);
+            if (Number.isInteger(parsed) && parsed > 0) {
+                ids.add(parsed);
+            }
+        });
+        return ids;
+    }
+
+    function hasIntersection(left, right) {
+        for (const value of left) {
+            if (right.has(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const activeSellLocationIds = parseLocationIds(
+        sellLocationInput ? sellLocationInput.value : ''
+    );
+
+    function getRowLocationIds(row) {
+        if (!row) {
+            return new Set();
+        }
+        if (!rowLocationIdsCache.has(row)) {
+            rowLocationIdsCache.set(
+                row,
+                parseLocationIds(row.dataset.sourceLocationIds)
+            );
+        }
+        return rowLocationIdsCache.get(row);
+    }
+
+    function isBulkSelectableInput(input) {
+        if (!input || input.disabled) {
+            return false;
+        }
+        const maxQty = parseInt(input.dataset.max, 10) || 0;
+        if (maxQty <= 0) {
+            return false;
+        }
+        if (!activeSellLocationIds.size) {
+            return true;
+        }
+        const row = input.closest('tr');
+        const rowLocationIds = getRowLocationIds(row);
+        return rowLocationIds.size > 0 && hasIntersection(rowLocationIds, activeSellLocationIds);
     }
 
     function rowMatchesSearch(row, query) {
@@ -497,6 +534,30 @@ document.addEventListener('DOMContentLoaded', function() {
         containerRowsByKey.forEach((_row, containerKey) => {
             updateContainerSelectionState(containerKey);
         });
+    }
+
+    function applyContainerSelection(containerKey, mode = 'toggle') {
+        const childInputs = getContainerChildInputs(containerKey);
+        if (!childInputs.length) {
+            return;
+        }
+        const selectableChildInputs = childInputs.filter(isBulkSelectableInput);
+        const shouldSelectMax = mode === 'select_all'
+            ? true
+            : selectableChildInputs.some(input => {
+                const currentQty = parseInt(input.value, 10) || 0;
+                const maxQty = parseInt(input.dataset.max, 10) || 0;
+                return currentQty < maxQty;
+            });
+        if (shouldSelectMax && !selectableChildInputs.length) {
+            return;
+        }
+        const targetInputs = shouldSelectMax ? selectableChildInputs : childInputs;
+        targetInputs.forEach(input => {
+            input.value = shouldSelectMax ? (input.dataset.max || 0) : 0;
+        });
+        updateInvoice();
+        updateAllContainerSelectionStates();
     }
 
     function updateContainerCollapseState(containerKey) {
@@ -631,20 +692,18 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!containerKey) {
                 return;
             }
-            const childInputs = getContainerChildInputs(containerKey);
-            if (!childInputs.length) {
+            applyContainerSelection(containerKey);
+            return;
+        }
+
+        const clickedContainerRow = event.target.closest('.stock-row-container');
+        const clickedInteractive = event.target.closest('button, input, select, textarea, a, label');
+        if (clickedContainerRow && !clickedInteractive) {
+            const containerKey = clickedContainerRow.dataset.containerKey || '';
+            if (!containerKey) {
                 return;
             }
-            const shouldSelectMax = childInputs.some(input => {
-                const currentQty = parseInt(input.value, 10) || 0;
-                const maxQty = parseInt(input.dataset.max, 10) || 0;
-                return currentQty < maxQty;
-            });
-            childInputs.forEach(input => {
-                input.value = shouldSelectMax ? (input.dataset.max || 0) : 0;
-            });
-            updateInvoice();
-            updateAllContainerSelectionStates();
+            applyContainerSelection(containerKey, 'select_all');
             return;
         }
 
@@ -667,6 +726,7 @@ document.addEventListener('DOMContentLoaded', function() {
             input.value = input.dataset.max || 0;
         }
         updateInvoice();
+        updateAllContainerSelectionStates();
     });
 
     function formatNumber(num) {
@@ -841,7 +901,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (sellAllBtn) {
         sellAllBtn.addEventListener('click', function() {
             qtyInputs.forEach(input => {
-                input.value = input.dataset.max || 0;
+                input.value = isBulkSelectableInput(input) ? (input.dataset.max || 0) : 0;
             });
             updateInvoice();
             updateAllContainerSelectionStates();

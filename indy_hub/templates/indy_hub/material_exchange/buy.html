@@ -510,6 +510,19 @@ document.addEventListener('DOMContentLoaded', function() {
         return rowLocationIdsCache.get(row);
     }
 
+    function isBulkSelectableInput(input) {
+        if (!input || input.disabled) {
+            return false;
+        }
+        const maxQty = parseInt(input.dataset.max, 10) || 0;
+        if (maxQty <= 0) {
+            return false;
+        }
+        const row = input.closest('tr');
+        const rowLocationIds = getRowLocationIds(row);
+        return rowLocationIds.size > 0;
+    }
+
     function intersectSets(left, right) {
         const intersection = new Set();
         left.forEach(value => {
@@ -695,16 +708,21 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!containerKey) {
                 return;
             }
-            const childInputs = getContainerChildInputs(containerKey).filter(input => !input.disabled);
+            const childInputs = getContainerChildInputs(containerKey);
             if (!childInputs.length) {
                 return;
             }
-            const shouldSelectMax = childInputs.some(input => {
+            const selectableChildInputs = childInputs.filter(isBulkSelectableInput);
+            const shouldSelectMax = selectableChildInputs.some(input => {
                 const currentQty = parseInt(input.value, 10) || 0;
                 const maxQty = parseInt(input.dataset.max, 10) || 0;
                 return currentQty < maxQty;
             });
-            childInputs.forEach(input => {
+            if (shouldSelectMax && !selectableChildInputs.length) {
+                return;
+            }
+            const targetInputs = shouldSelectMax ? selectableChildInputs : childInputs;
+            targetInputs.forEach(input => {
                 input.value = shouldSelectMax ? (input.dataset.max || 0) : 0;
             });
             updateInvoice();

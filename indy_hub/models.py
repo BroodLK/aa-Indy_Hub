@@ -1820,6 +1820,17 @@ class MaterialExchangeSettings(models.Model):
         default=True,
         help_text=_("Enable/disable the Material Exchange module"),
     )
+    stats_selected_corporation_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=_("Saved corporation selection for Material Exchange stats."),
+    )
+    stats_selected_wallet_division = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(7)],
+        help_text=_("Saved wallet division selection for Material Exchange stats."),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
