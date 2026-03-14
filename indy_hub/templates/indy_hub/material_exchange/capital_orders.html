@@ -1,0 +1,167 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+{% load humanize %}
+
+{% block page_title %}{% trans "Capital Orders" %}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1">
+                    <i class="fas fa-ship me-2"></i>
+                    {% trans "Capital Orders" %}
+                </h2>
+                <p class="description mb-0">{% trans "Order one dread, carrier, or fax per request." %}</p>
+            </div>
+            <div class="d-flex gap-2">
+                {% if can_manage_material_hub %}
+                <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-warning">
+                    <i class="fas fa-list-check me-1"></i>{% trans "Manager Queue" %}
+                </a>
+                {% endif %}
+                <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Material Hub" %}
+                </a>
+            </div>
+        </div>
+        <i class="fas fa-ship header-bg"></i>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <ul class="mb-3">
+                <li>{% trans "One cap per order. If you need multiple, submit multiple orders." %}</li>
+                <li>{% trans "Required: choose exactly one hull and one reason." %}</li>
+                <li>{% trans "Reference format for contracts: INDY-CAP-###" %}</li>
+            </ul>
+
+            {% if ship_options_by_class.dread or ship_options_by_class.carrier or ship_options_by_class.fax %}
+            <form method="post">
+                {% csrf_token %}
+                <div class="row g-4">
+                    <div class="col-lg-6">
+                        <h5 class="mb-3">{% trans "Choose Hull (one only)" %}</h5>
+
+                        {% if ship_options_by_class.dread %}
+                        <h6 class="text-muted">{% trans "Dreadnought" %}</h6>
+                        {% for option in ship_options_by_class.dread %}
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="ship_type_id" id="ship_{{ option.type_id }}" value="{{ option.type_id }}" required>
+                            <label class="form-check-label" for="ship_{{ option.type_id }}">
+                                {{ option.type_name }}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
+
+                        {% if ship_options_by_class.carrier %}
+                        <h6 class="text-muted mt-3">{% trans "Carrier" %}</h6>
+                        {% for option in ship_options_by_class.carrier %}
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="ship_type_id" id="ship_{{ option.type_id }}" value="{{ option.type_id }}" required>
+                            <label class="form-check-label" for="ship_{{ option.type_id }}">
+                                {{ option.type_name }}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
+
+                        {% if ship_options_by_class.fax %}
+                        <h6 class="text-muted mt-3">{% trans "FAX" %}</h6>
+                        {% for option in ship_options_by_class.fax %}
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="ship_type_id" id="ship_{{ option.type_id }}" value="{{ option.type_id }}" required>
+                            <label class="form-check-label" for="ship_{{ option.type_id }}">
+                                {{ option.type_name }}
+                            </label>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
+                    </div>
+
+                    <div class="col-lg-6">
+                        <h5 class="mb-3">{% trans "Required Reason" %}</h5>
+                        {% for value, label in reason_choices %}
+                        <div class="form-check mb-3">
+                            <input class="form-check-input" type="radio" name="reason" id="reason_{{ forloop.counter }}" value="{{ value }}" required>
+                            <label class="form-check-label" for="reason_{{ forloop.counter }}">
+                                {{ label }}
+                            </label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <button type="submit" class="btn btn-warning">
+                        <i class="fas fa-paper-plane me-1"></i>{% trans "Submit Capital Order" %}
+                    </button>
+                </div>
+            </form>
+            {% else %}
+            <div class="alert alert-warning mb-0">
+                <i class="fas fa-exclamation-triangle me-2"></i>{% trans "No eligible capital hulls found in SDE market groups." %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-body-tertiary">
+            <h5 class="mb-0">
+                <i class="fas fa-list me-2"></i>{% trans "My Capital Orders" %}
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            {% if my_orders %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Reference" %}</th>
+                            <th>{% trans "Hull" %}</th>
+                            <th>{% trans "Reason" %}</th>
+                            <th>{% trans "Status" %}</th>
+                            <th>{% trans "Contract" %}</th>
+                            <th class="text-end">{% trans "Updated" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in my_orders %}
+                        <tr>
+                            <td><strong>{{ order.order_reference }}</strong></td>
+                            <td>{{ order.ship_type_name }} <small class="text-muted">({{ order.get_ship_class_display }})</small></td>
+                            <td>{{ order.get_reason_display }}</td>
+                            <td>
+                                <span class="status-badge status-{{ order.status }}">
+                                    {{ order.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if order.esi_contract_id %}
+                                    #{{ order.esi_contract_id }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ order.updated_at|date:"Y-m-d H:i" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted p-3 mb-0">{% trans "No capital orders submitted yet." %}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock content %}

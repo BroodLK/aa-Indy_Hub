@@ -2713,6 +2713,16 @@ class MaterialExchangeBuyOrder(models.Model):
         db_index=True,
         help_text=_("Unique order reference (INDY-{id}) for contract matching"),
     )
+    source_location_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=_("Resolved buy location ID selected for this order."),
+    )
+    source_location_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text=_("Resolved buy location name selected for this order."),
+    )
 
     rounded_total_price = models.DecimalField(
         max_digits=20,
@@ -2865,6 +2875,107 @@ class MaterialExchangeBuyOrderItem(models.Model):
 
     def __str__(self):
         return f"BuyItem #{self.id}: {self.type_name} x{self.quantity}"
+
+
+class CapitalShipOrder(models.Model):
+    """One-off capital hull order placed by a member."""
+
+    class ShipClass(models.TextChoices):
+        DREAD = "dread", _("Dreadnought")
+        CARRIER = "carrier", _("Carrier")
+        FAX = "fax", _("Force Auxiliary")
+
+    class Status(models.TextChoices):
+        WAITING = "waiting", _("Waiting")
+        IN_PRODUCTION = "in_production", _("In Production")
+        CONTRACT_CREATED = "contract_created", _("Contract Created")
+        COMPLETED = "completed", _("Contract Completed")
+        ANOMALY = "anomaly", _("Anomaly")
+
+    class Reason(models.TextChoices):
+        NO_CAP = "no_cap", _(
+            "I currently have no cap of this type and need one to be minimally combat effective."
+        )
+        ALT_NEEDS_CAP = "alt_needs_cap", _(
+            "I currently have at least one cap of this type, but another pilot needs one to be minimally combat effective."
+        )
+        BACKUP = "backup", _(
+            "I currently have at least one cap for all pilots. This order is for backup/reship/aux."
+        )
+
+    config = models.ForeignKey(
+        MaterialExchangeConfig,
+        on_delete=models.CASCADE,
+        related_name="capital_ship_orders",
+    )
+    requester = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="capital_ship_orders",
+    )
+
+    ship_type_id = models.IntegerField(help_text=_("Requested hull type ID"))
+    ship_type_name = models.CharField(max_length=255, blank=True)
+    ship_class = models.CharField(max_length=16, choices=ShipClass.choices)
+    reason = models.CharField(max_length=32, choices=Reason.choices)
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.WAITING,
+    )
+
+    order_reference = models.CharField(
+        max_length=32,
+        unique=True,
+        blank=True,
+        db_index=True,
+        help_text=_("Unique capital order reference (INDY-CAP-###)."),
+    )
+    esi_contract_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=_("Matched ESI contract ID."),
+    )
+    in_production_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_orders_set_in_production",
+    )
+    in_production_at = models.DateTimeField(null=True, blank=True)
+    contract_created_at = models.DateTimeField(null=True, blank=True)
+    contract_completed_at = models.DateTimeField(null=True, blank=True)
+    anomaly_reason = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Capital Ship Order")
+        verbose_name_plural = _("Capital Ship Orders")
+        default_permissions = ()
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["requester", "-created_at"]),
+            models.Index(fields=["esi_contract_id"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Capital #{self.id}: {self.requester.username} - "
+            f"{self.ship_type_name or self.ship_type_id}"
+        )
+
+    def save(self, *args, **kwargs):
+        creating_without_reference = not self.pk and not self.order_reference
+        super().save(*args, **kwargs)
+        if creating_without_reference:
+            self.order_reference = f"INDY-CAP-{int(self.id):03d}"
+            super().save(update_fields=["order_reference", "updated_at"])
 
 
 class MaterialExchangeTransaction(models.Model):

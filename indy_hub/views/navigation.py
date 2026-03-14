@@ -9,6 +9,7 @@ def build_nav_context(
     *,
     active_tab: str | None = None,
     can_manage_corp: bool | None = None,
+    can_manage_material_hub: bool | None = None,
     can_access_indy_hub: bool | None = None,
     material_hub_enabled: bool | None = None,
 ) -> dict[str, str | None]:
@@ -19,6 +20,9 @@ def build_nav_context(
 
     if can_access_indy_hub is None:
         can_access_indy_hub = user.has_perm("indy_hub.can_access_indy_hub")
+
+    if can_manage_material_hub is None:
+        can_manage_material_hub = user.has_perm("indy_hub.can_manage_material_hub")
 
     if material_hub_enabled is None:
         try:
@@ -33,8 +37,10 @@ def build_nav_context(
     blueprints_url = reverse("indy_hub:all_bp_list")
     blueprint_sharing_url = reverse("indy_hub:bp_copy_request_page")
     material_hub_url = reverse("indy_hub:material_exchange_index")
+    capital_orders_url = reverse("indy_hub:capital_ship_orders")
     industry_url = reverse("indy_hub:personnal_job_list")
     esi_url = reverse("indy_hub:esi_hub")
+    stats_url = reverse("indy_hub:material_exchange_stats_history")
     settings_url = reverse("indy_hub:settings_hub")
 
     # Legacy dashboard URLs (still used by some templates for "Back" buttons)
@@ -46,8 +52,10 @@ def build_nav_context(
     blueprints_class = ""
     blueprint_sharing_class = ""
     material_hub_class = ""
+    capital_orders_class = ""
     industry_class = ""
     esi_class = ""
+    stats_class = ""
     settings_class = ""
 
     if active_tab in {
@@ -55,8 +63,10 @@ def build_nav_context(
         "blueprints",
         "blueprint_sharing",
         "material_hub",
+        "capital_orders",
         "industry",
         "esi",
+        "stats",
         "settings",
     }:
         if active_tab == "overview":
@@ -67,14 +77,19 @@ def build_nav_context(
             blueprint_sharing_class = "active fw-semibold"
         elif active_tab == "material_hub":
             material_hub_class = "active fw-semibold"
+        elif active_tab == "capital_orders":
+            capital_orders_class = "active fw-semibold"
         elif active_tab == "industry":
             industry_class = "active fw-semibold"
         elif active_tab == "esi":
             esi_class = "active fw-semibold"
+        elif active_tab == "stats":
+            stats_class = "active fw-semibold"
         elif active_tab == "settings":
             settings_class = "active fw-semibold"
 
     material_hub_nav_url = material_hub_url if material_hub_enabled else None
+    stats_nav_url = stats_url if can_manage_material_hub else None
 
     context: dict[str, str | None] = {
         # New top-level sections
@@ -86,10 +101,14 @@ def build_nav_context(
         "blueprint_sharing_nav_class": blueprint_sharing_class,
         "material_hub_nav_url": material_hub_nav_url,
         "material_hub_nav_class": material_hub_class,
+        "capital_orders_nav_url": capital_orders_url,
+        "capital_orders_nav_class": capital_orders_class,
         "industry_nav_url": industry_url,
         "industry_nav_class": industry_class,
         "esi_nav_url": esi_url,
         "esi_nav_class": esi_class,
+        "stats_nav_url": stats_nav_url,
+        "stats_nav_class": stats_class,
         "settings_nav_url": settings_url,
         "settings_nav_class": settings_class,
         # Permission flags for dropdowns

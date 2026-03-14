@@ -9,6 +9,7 @@ from allianceauth.services.hooks import get_extension_logger
 
 from .models import (
     Blueprint,
+    CapitalShipOrder,
     IndustryJob,
     MaterialExchangeBuyOrder,
     MaterialExchangeConfig,
@@ -554,4 +555,32 @@ def notify_admins_on_sell_order_created(sender, instance, created, **kwargs):
             )
 
     # Queue only after transaction commit so workers do not fetch an uncommitted order.
+    transaction.on_commit(_enqueue_notification_task)
+
+
+@receiver(post_save, sender=CapitalShipOrder)
+def notify_admins_on_capital_order_created(sender, instance, created, **kwargs):
+    """Queue webhook/admin notification when a capital order is created."""
+    if not created:
+        return
+
+    def _enqueue_notification_task():
+        try:
+            from indy_hub.tasks.material_exchange_contracts import (
+                handle_capital_ship_order_created,
+            )
+
+            handle_capital_ship_order_created.apply_async(
+                args=(instance.id,),
+                countdown=2,
+                expires=300,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to queue capital order notification for order %s: %s",
+                instance.id,
+                exc,
+                exc_info=True,
+            )
+
     transaction.on_commit(_enqueue_notification_task)

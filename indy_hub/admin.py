@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group, User
 
 from .models import (
     Blueprint,
+    CapitalShipOrder,
     CharacterSettings,
     CorporationSharingSetting,
     IndustryJob,
@@ -632,6 +633,65 @@ class MaterialExchangeBuyOrderAdmin(admin.ModelAdmin):
     @admin.display(description="Total Price")
     def total_price_display(self, obj):
         return f"{obj.total_price:,.0f} ISK"
+
+
+@admin.register(CapitalShipOrder)
+class CapitalShipOrderAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "order_reference",
+        "requester",
+        "ship_type_name",
+        "ship_class",
+        "status",
+        "in_production_by",
+        "created_at",
+    ]
+    list_filter = ["status", "ship_class", "created_at"]
+    search_fields = [
+        "order_reference",
+        "requester__username",
+        "ship_type_name",
+        "esi_contract_id",
+    ]
+    readonly_fields = ["order_reference", "created_at", "updated_at"]
+    fieldsets = (
+        (
+            "Order",
+            {
+                "fields": (
+                    "order_reference",
+                    "config",
+                    "requester",
+                    "ship_type_id",
+                    "ship_type_name",
+                    "ship_class",
+                    "reason",
+                    "status",
+                )
+            },
+        ),
+        (
+            "Contract",
+            {
+                "fields": (
+                    "esi_contract_id",
+                    "in_production_by",
+                    "in_production_at",
+                    "contract_created_at",
+                    "contract_completed_at",
+                )
+            },
+        ),
+        ("Notes", {"fields": ("anomaly_reason", "notes")}),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
 
 
 @admin.register(MaterialExchangeTransaction)

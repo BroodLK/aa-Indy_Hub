@@ -114,6 +114,10 @@
             {% translate "Material Hub" as material_hub_tab_title %}
             {% include "framework/header/nav-collapse-button.html" with btn_class=material_hub_nav_class url=material_hub_nav_url title=material_hub_tab_title fa_icon="fa-solid fa-boxes-stacked" icon_on_mobile=True icon_on_desktop=True %}
         {% endif %}
+        {% if capital_orders_nav_url %}
+            {% translate "Capital Orders" as capital_orders_tab_title %}
+            {% include "framework/header/nav-collapse-button.html" with btn_class=capital_orders_nav_class url=capital_orders_nav_url title=capital_orders_tab_title fa_icon="fa-solid fa-ship" icon_on_mobile=True icon_on_desktop=True %}
+        {% endif %}
         {% if industry_nav_url %}
             {% translate "Industry" as industry_tab_title %}
             <div class="nav-item dropdown">
@@ -140,6 +144,10 @@
         {% if esi_nav_url %}
             {% translate "ESI" as esi_tab_title %}
             {% include "framework/header/nav-collapse-button.html" with btn_class=esi_nav_class url=esi_nav_url title=esi_tab_title fa_icon="fa-solid fa-key" icon_on_mobile=True icon_on_desktop=True %}
+        {% endif %}
+        {% if stats_nav_url %}
+            {% translate "Stats" as stats_tab_title %}
+            {% include "framework/header/nav-collapse-button.html" with btn_class=stats_nav_class url=stats_nav_url title=stats_tab_title fa_icon="fa-solid fa-chart-column" icon_on_mobile=True icon_on_desktop=True %}
         {% endif %}
         {% if settings_nav_url %}
             {% translate "Settings" as settings_tab_title %}

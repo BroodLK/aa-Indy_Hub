@@ -53,6 +53,7 @@ from allianceauth.services.hooks import get_extension_logger
 # AA Example App
 # Local
 from indy_hub.models import (
+    CapitalShipOrder,
     CachedStructureName,
     ESIContract,
     ESIContractItem,
@@ -406,7 +407,10 @@ def run_material_exchange_cycle():
     # Step 3: validate pending buy orders using cached contracts
     validate_material_exchange_buy_orders()
 
-    # Step 4: check completion/payment for approved orders
+    # Step 4: process capital ship order workflow
+    process_capital_ship_orders()
+
+    # Step 5: check completion/payment for approved orders
     check_completed_material_exchange_contracts()
 
 
@@ -1665,7 +1669,11 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
     order_ref = order.order_reference or f"INDY-{order.id}"
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
-    expected_buy_locations_label = _get_expected_locations_label(config, side="buy")
+    (
+        expected_buy_location_ids,
+        expected_buy_location_names,
+        expected_buy_location_label,
+    ) = _get_buy_order_expected_locations(order, config)
 
     buyer_character_ids = _get_user_character_ids(order.buyer)
     if not buyer_character_ids:
@@ -1826,7 +1834,13 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
         if not has_correct_ref:
             criteria_match_without_ref = _matches_buy_order_criteria_db(
-                contract, order, config, buyer_character_ids, esi_client
+                contract,
+                order,
+                config,
+                buyer_character_ids,
+                esi_client,
+                expected_location_ids=expected_buy_location_ids,
+                expected_location_names=expected_buy_location_names,
             )
             if criteria_match_without_ref and _contract_items_match_order_db(
                 contract, order
@@ -1848,7 +1862,13 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             continue
 
         criteria_match = _matches_buy_order_criteria_db(
-            contract, order, config, buyer_character_ids, esi_client
+            contract,
+            order,
+            config,
+            buyer_character_ids,
+            esi_client,
+            expected_location_ids=expected_buy_location_ids,
+            expected_location_names=expected_buy_location_names,
         )
         if not criteria_match:
             contract_status = str(contract.status or "").lower()
@@ -1940,8 +1960,8 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     new_notes = "\n".join(
         [
             f"Pending contract for {order_ref}.",
-            "Ensure corp issues item exchange contract to buyer.",
-            f"Expected location(s): {expected_buy_locations_label}",
+            f"Required contract location: {expected_buy_location_label}",
+            "Ensure corp issues item exchange contract to buyer at this location.",
             f"Expected price: {order.total_price:,.0f} ISK",
             f"{issue_line}{mismatch_block}".strip(),
         ]
@@ -1973,7 +1993,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"Buy order {order.order_reference} has a contract mismatch.\n"
                 f"Buyer: {order.buyer.username}\n"
-                f"Expected location(s): {expected_buy_locations_label}\n"
+                f"Required location: {expected_buy_location_label}\n"
                 f"Expected price: {order.total_price:,.0f} ISK"
                 + (f"\nIssue(s): {'; '.join(issues)}" if issues else "")
                 + (
@@ -2014,7 +2034,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"Buy order {order.order_reference} has no matching contract yet.\n"
                 f"Buyer: {order.buyer.username}\n"
-                f"Expected location(s): {expected_buy_locations_label}\n"
+                f"Required location: {expected_buy_location_label}\n"
                 f"Expected price: {order.total_price:,.0f} ISK"
                 + (f"\nIssue(s): {'; '.join(issues)}" if issues else "")
                 + (
@@ -2356,6 +2376,110 @@ def _get_sell_order_expected_locations(
     return expected_ids, expected_name_set, expected_label
 
 
+def _infer_buy_order_source_location_from_stock(
+    order: MaterialExchangeBuyOrder, config: MaterialExchangeConfig
+) -> tuple[int | None, str]:
+    try:
+        order_type_ids = {
+            int(type_id)
+            for type_id in order.items.values_list("type_id", flat=True)
+            if int(type_id) > 0
+        }
+    except Exception:
+        order_type_ids = set()
+    if not order_type_ids:
+        return None, ""
+
+    source_ids_by_type: dict[int, set[int]] = {}
+    try:
+        stock_rows = config.stock_items.filter(type_id__in=list(order_type_ids)).values_list(
+            "type_id", "source_structure_ids"
+        )
+    except Exception:
+        stock_rows = []
+
+    for type_id, source_structure_ids in stock_rows:
+        try:
+            type_id_int = int(type_id)
+        except (TypeError, ValueError):
+            continue
+        ids_for_type: set[int] = set()
+        for raw_id in source_structure_ids or []:
+            try:
+                structure_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if structure_id > 0:
+                ids_for_type.add(structure_id)
+        if ids_for_type:
+            source_ids_by_type[type_id_int] = ids_for_type
+
+    common_location_ids: set[int] | None = None
+    for type_id in sorted(order_type_ids):
+        ids_for_type = source_ids_by_type.get(int(type_id), set())
+        if not ids_for_type:
+            continue
+        if common_location_ids is None:
+            common_location_ids = set(ids_for_type)
+        else:
+            common_location_ids &= ids_for_type
+        if not common_location_ids:
+            return None, ""
+
+    if not common_location_ids:
+        return None, ""
+
+    selected_location_id = sorted(common_location_ids)[0]
+    name_map = config.get_buy_structure_name_map() or {}
+    selected_location_name = str(
+        name_map.get(int(selected_location_id), "") or ""
+    ).strip()
+    if not selected_location_name:
+        selected_location_name = f"Structure {int(selected_location_id)}"
+    return int(selected_location_id), selected_location_name
+
+
+def _get_buy_order_expected_locations(
+    order: MaterialExchangeBuyOrder, config: MaterialExchangeConfig
+) -> tuple[list[int], set[str], str]:
+    source_name = str(getattr(order, "source_location_name", "") or "").strip()
+    source_location_id = None
+    try:
+        source_location_id = int(getattr(order, "source_location_id", 0) or 0)
+    except (TypeError, ValueError):
+        source_location_id = 0
+
+    if source_location_id > 0:
+        name_map = config.get_buy_structure_name_map() or {}
+        mapped_name = str(name_map.get(source_location_id, "") or "").strip()
+        label_name = source_name or mapped_name or f"Structure {source_location_id}"
+        name_set = {
+            normalized
+            for normalized in [
+                _normalize_location_name(source_name),
+                _normalize_location_name(mapped_name),
+            ]
+            if normalized
+        }
+        return [source_location_id], name_set, label_name
+
+    inferred_location_id, inferred_location_name = _infer_buy_order_source_location_from_stock(
+        order,
+        config,
+    )
+    if inferred_location_id and inferred_location_id > 0:
+        inferred_label = str(inferred_location_name or "").strip() or (
+            f"Structure {int(inferred_location_id)}"
+        )
+        inferred_name_set = {_normalize_location_name(inferred_label)}
+        return [int(inferred_location_id)], inferred_name_set, inferred_label
+
+    expected_ids = _get_expected_location_ids(config, side="buy")
+    expected_name_set = _get_expected_location_name_set(config, side="buy")
+    expected_label = _get_expected_locations_label(config, side="buy")
+    return expected_ids, expected_name_set, expected_label
+
+
 def _contract_matches_expected_locations(
     *,
     start_location_id: int | None,
@@ -2457,7 +2581,14 @@ def _matches_sell_order_criteria_db(
 
 
 def _matches_buy_order_criteria_db(
-    contract, order, config, buyer_character_ids, esi_client=None
+    contract,
+    order,
+    config,
+    buyer_character_ids,
+    esi_client=None,
+    *,
+    expected_location_ids: list[int] | None = None,
+    expected_location_names: set[str] | None = None,
 ):
     """Check if a database contract matches buy order basic criteria."""
 
@@ -2472,8 +2603,16 @@ def _matches_buy_order_criteria_db(
         return False
 
     location_match_mode = _get_location_match_mode(config)
-    expected_ids = _get_expected_location_ids(config, side="buy")
-    expected_name_set = _get_expected_location_name_set(config, side="buy")
+    expected_ids = (
+        list(expected_location_ids)
+        if expected_location_ids is not None
+        else _get_expected_location_ids(config, side="buy")
+    )
+    expected_name_set = (
+        set(expected_location_names)
+        if expected_location_names is not None
+        else _get_expected_location_name_set(config, side="buy")
+    )
 
     contract_start_name = None
     contract_end_name = None
@@ -2910,6 +3049,468 @@ def handle_material_exchange_sell_order_created(order_id):
         result="success",
         value=max(len(items), 1),
     )
+
+
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 5},
+    rate_limit="1000/m",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def handle_capital_ship_order_created(order_id):
+    """Notify admins/webhook when a capital order is created."""
+    try:
+        order = CapitalShipOrder.objects.select_related("config", "requester").get(
+            id=order_id
+        )
+    except CapitalShipOrder.DoesNotExist:
+        logger.warning("Capital ship order %s not found", order_id)
+        return
+
+    title = _("Capital Order Created")
+    message = _(
+        f"{order.requester.username} created capital order {order.order_reference}.\n"
+        f"Hull: {order.ship_type_name} ({order.get_ship_class_display()})\n"
+        f"Reason: {order.get_reason_display()}\n"
+        f"Status: {order.get_status_display()}"
+    )
+    _notify_material_exchange_admins(
+        order.config,
+        title,
+        message,
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+    notify_user(
+        order.requester,
+        _("Capital Order Submitted"),
+        _(
+            f"Order {order.order_reference} for {order.ship_type_name} was submitted.\n"
+            "A manager will move it to in production when work starts."
+        ),
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/",
+    )
+
+
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 5},
+    rate_limit="1000/m",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def handle_capital_ship_order_marked_in_production(order_id):
+    """Notify user/admins when manager marks a capital order in production."""
+    try:
+        order = CapitalShipOrder.objects.select_related(
+            "config", "requester", "in_production_by"
+        ).get(id=order_id)
+    except CapitalShipOrder.DoesNotExist:
+        logger.warning("Capital ship order %s not found", order_id)
+        return
+
+    manager_name = (
+        str(getattr(order.in_production_by, "username", "") or "").strip()
+        or "Manager"
+    )
+    notify_user(
+        order.requester,
+        _("Capital Order In Production"),
+        _(
+            f"Order {order.order_reference} ({order.ship_type_name}) is now in production.\n"
+            f"Set by: {manager_name}"
+        ),
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/",
+    )
+    _notify_material_exchange_admins(
+        order.config,
+        _("Capital Order In Production"),
+        _(
+            f"{manager_name} moved capital order {order.order_reference} to in production.\n"
+            f"User: {order.requester.username}\n"
+            f"Hull: {order.ship_type_name}"
+        ),
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+
+
+def _get_user_main_character_id(user: User) -> int | None:
+    """Resolve user's main character ID when available."""
+    try:
+        # Alliance Auth
+        from allianceauth.authentication.models import UserProfile
+
+        profile = UserProfile.objects.select_related("main_character").get(user=user)
+        main_character = getattr(profile, "main_character", None)
+        main_character_id = int(getattr(main_character, "character_id", 0) or 0)
+        return main_character_id if main_character_id > 0 else None
+    except Exception:
+        return None
+
+
+def _capital_contract_has_requested_hull(contract: ESIContract, ship_type_id: int) -> bool:
+    included_items = contract.items.filter(is_included=True)
+    if not included_items.exists():
+        return False
+
+    requested_type_id = int(ship_type_id)
+    for contract_item in included_items:
+        contract_type_id = int(getattr(contract_item, "type_id", 0) or 0)
+        if contract_type_id <= 0:
+            continue
+        if _is_container_type(contract_type_id) or _is_item_inside_container(contract_item):
+            continue
+        quantity = int(getattr(contract_item, "quantity", 0) or 0)
+        if contract_type_id == requested_type_id and quantity > 0:
+            return True
+    return False
+
+
+def _set_capital_order_anomaly(
+    order: CapitalShipOrder,
+    *,
+    reason: str,
+    contract_id: int | None = None,
+    contract_status: str | None = None,
+) -> None:
+    previous_status = str(order.status or "")
+    previous_reason = str(order.anomaly_reason or "")
+    if previous_status == CapitalShipOrder.Status.ANOMALY and previous_reason == reason:
+        return
+
+    order.status = CapitalShipOrder.Status.ANOMALY
+    order.anomaly_reason = reason
+    if contract_id and not order.esi_contract_id:
+        order.esi_contract_id = int(contract_id)
+    status_note = f" ({contract_status})" if contract_status else ""
+    order.notes = (
+        f"Anomaly detected for order {order.order_reference}: {reason}{status_note}"
+    )
+    order.save(
+        update_fields=[
+            "status",
+            "anomaly_reason",
+            "esi_contract_id",
+            "notes",
+            "updated_at",
+        ]
+    )
+
+    notify_user(
+        order.requester,
+        _("Capital Order Anomaly"),
+        _(
+            f"Order {order.order_reference} is now in anomaly status.\n"
+            f"Reason: {reason}"
+        ),
+        level="warning",
+        link="/indy_hub/material-exchange/capital-orders/",
+    )
+    _notify_material_exchange_admins(
+        order.config,
+        _("Capital Order Anomaly"),
+        _(
+            f"Order {order.order_reference} requires intervention.\n"
+            f"User: {order.requester.username}\n"
+            f"Hull: {order.ship_type_name}\n"
+            f"Reason: {reason}"
+        ),
+        level="warning",
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+
+
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 10},
+    rate_limit="500/m",
+    time_limit=600,
+    soft_time_limit=580,
+)
+@rate_limit_retry_task
+def process_capital_ship_orders():
+    """Auto-advance capital ship orders from contracts and contract status."""
+    try:
+        if not MaterialExchangeSettings.get_solo().is_enabled:
+            logger.info("Material Exchange disabled; skipping capital order processing.")
+            return
+    except Exception:
+        pass
+
+    config = MaterialExchangeConfig.objects.first()
+    if not config:
+        return
+
+    active_orders = CapitalShipOrder.objects.filter(
+        config=config,
+        status__in=[
+            CapitalShipOrder.Status.IN_PRODUCTION,
+            CapitalShipOrder.Status.CONTRACT_CREATED,
+        ],
+    ).select_related("requester")
+    if not active_orders.exists():
+        return
+
+    contracts = list(
+        ESIContract.objects.filter(
+            corporation_id=config.corporation_id,
+            contract_type="item_exchange",
+            title__icontains="INDY-CAP",
+        ).prefetch_related("items")
+    )
+    contracts_by_id = {int(contract.contract_id): contract for contract in contracts}
+
+    finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
+    failed_statuses = {"cancelled", "rejected", "failed", "expired", "deleted", "reversed"}
+
+    for order in active_orders:
+        order_ref_lower = str(order.order_reference or "").strip().lower()
+        matching_by_title = [
+            contract
+            for contract in contracts
+            if order_ref_lower and order_ref_lower in str(contract.title or "").lower()
+        ]
+
+        if order.status == CapitalShipOrder.Status.IN_PRODUCTION:
+            if not matching_by_title:
+                continue
+
+            expected_assignee_id = _get_user_main_character_id(order.requester)
+            if not expected_assignee_id:
+                character_ids = _get_user_character_ids(order.requester)
+                expected_assignee_id = character_ids[0] if character_ids else None
+            if not expected_assignee_id:
+                _set_capital_order_anomaly(
+                    order,
+                    reason="User has no linked/main character for contract assignment.",
+                )
+                continue
+
+            candidate_contract = None
+            mismatch_reason = None
+            sorted_matches = sorted(
+                matching_by_title,
+                key=lambda c: (str(getattr(c, "date_issued", "") or ""), int(c.contract_id)),
+                reverse=True,
+            )
+            for contract in sorted_matches:
+                assignee_id = int(getattr(contract, "assignee_id", 0) or 0)
+                if assignee_id != int(expected_assignee_id):
+                    mismatch_reason = (
+                        f"Contract #{contract.contract_id} assignee mismatch "
+                        f"(expected main character ID {int(expected_assignee_id)}, got {assignee_id})."
+                    )
+                    continue
+
+                if not _capital_contract_has_requested_hull(
+                    contract,
+                    int(order.ship_type_id),
+                ):
+                    mismatch_reason = (
+                        f"Contract #{contract.contract_id} does not contain the requested hull "
+                        f"{order.ship_type_name}."
+                    )
+                    continue
+
+                candidate_contract = contract
+                break
+
+            if not candidate_contract:
+                if mismatch_reason:
+                    _set_capital_order_anomaly(order, reason=mismatch_reason)
+                continue
+
+            contract_status = str(candidate_contract.status or "").lower()
+            if contract_status in failed_statuses:
+                _set_capital_order_anomaly(
+                    order,
+                    reason=f"Matched contract #{candidate_contract.contract_id} is {contract_status}.",
+                    contract_id=int(candidate_contract.contract_id),
+                    contract_status=contract_status,
+                )
+                continue
+
+            if contract_status in finished_statuses:
+                order.status = CapitalShipOrder.Status.COMPLETED
+                order.esi_contract_id = int(candidate_contract.contract_id)
+                if not order.contract_created_at:
+                    order.contract_created_at = (
+                        getattr(candidate_contract, "date_accepted", None)
+                        or getattr(candidate_contract, "date_issued", None)
+                        or timezone.now()
+                    )
+                order.contract_completed_at = (
+                    getattr(candidate_contract, "date_completed", None) or timezone.now()
+                )
+                order.anomaly_reason = ""
+                order.notes = (
+                    f"Contract #{candidate_contract.contract_id} completed for "
+                    f"{order.ship_type_name}."
+                )
+                order.save(
+                    update_fields=[
+                        "status",
+                        "esi_contract_id",
+                        "contract_created_at",
+                        "contract_completed_at",
+                        "anomaly_reason",
+                        "notes",
+                        "updated_at",
+                    ]
+                )
+                notify_user(
+                    order.requester,
+                    _("Capital Contract Completed"),
+                    _(
+                        f"Your capital order {order.order_reference} is complete.\n"
+                        f"Contract #{candidate_contract.contract_id} was accepted."
+                    ),
+                    level="success",
+                    link="/indy_hub/material-exchange/capital-orders/",
+                )
+                _notify_material_exchange_admins(
+                    order.config,
+                    _("Capital Contract Completed"),
+                    _(
+                        f"Capital order {order.order_reference} completed.\n"
+                        f"User: {order.requester.username}\n"
+                        f"Hull: {order.ship_type_name}\n"
+                        f"Contract: #{candidate_contract.contract_id}"
+                    ),
+                    level="success",
+                    link="/indy_hub/material-exchange/capital-orders/admin/",
+                )
+                continue
+
+            status_changed = (
+                order.status != CapitalShipOrder.Status.CONTRACT_CREATED
+                or int(order.esi_contract_id or 0) != int(candidate_contract.contract_id)
+            )
+            order.status = CapitalShipOrder.Status.CONTRACT_CREATED
+            order.esi_contract_id = int(candidate_contract.contract_id)
+            if not order.contract_created_at:
+                order.contract_created_at = (
+                    getattr(candidate_contract, "date_accepted", None)
+                    or getattr(candidate_contract, "date_issued", None)
+                    or timezone.now()
+                )
+            order.anomaly_reason = ""
+            order.notes = (
+                f"Contract #{candidate_contract.contract_id} detected for "
+                f"{order.ship_type_name}. Awaiting acceptance."
+            )
+            order.save(
+                update_fields=[
+                    "status",
+                    "esi_contract_id",
+                    "contract_created_at",
+                    "anomaly_reason",
+                    "notes",
+                    "updated_at",
+                ]
+            )
+            if status_changed:
+                notify_user(
+                    order.requester,
+                    _("Capital Contract Created"),
+                    _(
+                        f"The corporation created your contract for {order.order_reference}.\n"
+                        f"Contract #{candidate_contract.contract_id} is now available."
+                    ),
+                    level="success",
+                    link="/indy_hub/material-exchange/capital-orders/",
+                )
+                _notify_material_exchange_admins(
+                    order.config,
+                    _("Capital Contract Created"),
+                    _(
+                        f"Capital contract created for order {order.order_reference}.\n"
+                        f"User: {order.requester.username}\n"
+                        f"Hull: {order.ship_type_name}\n"
+                        f"Contract: #{candidate_contract.contract_id}"
+                    ),
+                    level="success",
+                    link="/indy_hub/material-exchange/capital-orders/admin/",
+                )
+            continue
+
+        # CONTRACT_CREATED status monitoring
+        contract_id = int(order.esi_contract_id or 0)
+        if contract_id <= 0:
+            continue
+
+        contract = contracts_by_id.get(contract_id)
+        if not contract:
+            continue
+
+        contract_status = str(contract.status or "").lower()
+        if contract_status in finished_statuses:
+            if order.status == CapitalShipOrder.Status.COMPLETED:
+                continue
+            order.status = CapitalShipOrder.Status.COMPLETED
+            order.contract_completed_at = (
+                getattr(contract, "date_completed", None) or timezone.now()
+            )
+            order.anomaly_reason = ""
+            order.notes = f"Contract #{contract_id} completed for {order.ship_type_name}."
+            order.save(
+                update_fields=[
+                    "status",
+                    "contract_completed_at",
+                    "anomaly_reason",
+                    "notes",
+                    "updated_at",
+                ]
+            )
+            notify_user(
+                order.requester,
+                _("Capital Contract Completed"),
+                _(
+                    f"Your capital order {order.order_reference} is complete.\n"
+                    f"Contract #{contract_id} was accepted."
+                ),
+                level="success",
+                link="/indy_hub/material-exchange/capital-orders/",
+            )
+            _notify_material_exchange_admins(
+                order.config,
+                _("Capital Contract Completed"),
+                _(
+                    f"Capital order {order.order_reference} completed.\n"
+                    f"User: {order.requester.username}\n"
+                    f"Hull: {order.ship_type_name}\n"
+                    f"Contract: #{contract_id}"
+                ),
+                level="success",
+                link="/indy_hub/material-exchange/capital-orders/admin/",
+            )
+            continue
+
+        if contract_status in failed_statuses:
+            _set_capital_order_anomaly(
+                order,
+                reason=f"Contract #{contract_id} moved to {contract_status}.",
+                contract_id=contract_id,
+                contract_status=contract_status,
+            )
+            continue
+
+        if contract_status in {"outstanding", "in_progress"} and not _capital_contract_has_requested_hull(
+            contract, int(order.ship_type_id)
+        ):
+            _set_capital_order_anomaly(
+                order,
+                reason=(
+                    f"Contract #{contract_id} no longer contains requested hull "
+                    f"{order.ship_type_name}."
+                ),
+                contract_id=contract_id,
+                contract_status=contract_status,
+            )
 
 
 @shared_task(

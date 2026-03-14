@@ -1,0 +1,114 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+
+{% block page_title %}{% trans "Capital Orders Admin" %}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1">
+                    <i class="fas fa-user-shield me-2"></i>
+                    {% trans "Capital Orders Admin" %}
+                </h2>
+                <p class="description mb-0">{% trans "Current queue for dread/carrier/fax fulfillment." %}</p>
+            </div>
+            <div class="d-flex gap-2">
+                {% if include_completed %}
+                <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-outline-secondary">
+                    <i class="fas fa-filter me-1"></i>{% trans "Hide Completed" %}
+                </a>
+                {% else %}
+                <a href="{% url 'indy_hub:capital_ship_orders_admin' %}?include_completed=1" class="btn btn-outline-secondary">
+                    <i class="fas fa-filter me-1"></i>{% trans "Show Completed" %}
+                </a>
+                {% endif %}
+                <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-warning">
+                    <i class="fas fa-ship me-1"></i>{% trans "User Order Page" %}
+                </a>
+                <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Material Hub" %}
+                </a>
+            </div>
+        </div>
+        <i class="fas fa-user-shield header-bg"></i>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-warning bg-opacity-10">
+            <strong>{% trans "Contract Rule:" %}</strong>
+            {% trans "Use the order code in the title (INDY-CAP-###), assign to the listed user's main character, and include the exact selected hull." %}
+        </div>
+        <div class="card-body p-0">
+            {% if orders %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Reference" %}</th>
+                            <th>{% trans "User" %}</th>
+                            <th>{% trans "Hull" %}</th>
+                            <th>{% trans "Reason" %}</th>
+                            <th>{% trans "Status" %}</th>
+                            <th>{% trans "Contract" %}</th>
+                            <th>{% trans "Production By" %}</th>
+                            <th class="text-end">{% trans "Actions" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for order in orders %}
+                        <tr>
+                            <td><strong>{{ order.order_reference }}</strong></td>
+                            <td>{{ order.requester_main_character|default:order.requester.username }}</td>
+                            <td>{{ order.ship_type_name }} <small class="text-muted">({{ order.get_ship_class_display }})</small></td>
+                            <td>{{ order.get_reason_display }}</td>
+                            <td>
+                                <span class="status-badge status-{{ order.status }}">
+                                    {{ order.get_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                {% if order.esi_contract_id %}
+                                    #{{ order.esi_contract_id }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if order.in_production_by %}
+                                    {{ order.in_production_by.username }}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                {% if order.status == 'waiting' %}
+                                <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-warning">
+                                        <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted p-3 mb-0">{% trans "No capital orders in this view." %}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock content %}

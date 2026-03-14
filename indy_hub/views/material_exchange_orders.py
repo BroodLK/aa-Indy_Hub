@@ -240,6 +240,7 @@ def buy_order_detail(request, order_id):
     timeline_breadcrumb = _build_timeline_breadcrumb(order, "buy")
 
     buyer_main_character = _resolve_main_character_name(order.buyer)
+    order_location_label = _resolve_buy_order_location_label(order)
 
     context = {
         "order": order,
@@ -248,6 +249,7 @@ def buy_order_detail(request, order_id):
         "timeline": timeline,
         "timeline_breadcrumb": timeline_breadcrumb,
         "buyer_main_character": buyer_main_character,
+        "order_location_label": order_location_label,
         "can_cancel": order.status not in ["completed", "rejected", "cancelled"],
     }
 
@@ -305,6 +307,118 @@ def _resolve_sell_order_location_label(order: MaterialExchangeSellOrder) -> str:
             return fallback_name
         return f"Structure {first_id}"
 
+    return f"Structure {config.structure_id}"
+
+
+def _infer_buy_order_location_from_stock(order: MaterialExchangeBuyOrder) -> tuple[int | None, str]:
+    config = getattr(order, "config", None)
+    if not config:
+        return None, ""
+
+    try:
+        type_ids = {
+            int(type_id)
+            for type_id in order.items.values_list("type_id", flat=True)
+            if int(type_id) > 0
+        }
+    except Exception:
+        type_ids = set()
+    if not type_ids:
+        return None, ""
+
+    source_ids_by_type: dict[int, set[int]] = {}
+    try:
+        stock_rows = config.stock_items.filter(type_id__in=list(type_ids)).values_list(
+            "type_id", "source_structure_ids"
+        )
+    except Exception:
+        stock_rows = []
+
+    for type_id, source_structure_ids in stock_rows:
+        try:
+            type_id_int = int(type_id)
+        except (TypeError, ValueError):
+            continue
+        ids_for_type: set[int] = set()
+        for raw_id in source_structure_ids or []:
+            try:
+                structure_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if structure_id > 0:
+                ids_for_type.add(structure_id)
+        if ids_for_type:
+            source_ids_by_type[type_id_int] = ids_for_type
+
+    common_location_ids: set[int] | None = None
+    for type_id in sorted(type_ids):
+        ids_for_type = source_ids_by_type.get(type_id, set())
+        if not ids_for_type:
+            continue
+        if common_location_ids is None:
+            common_location_ids = set(ids_for_type)
+        else:
+            common_location_ids &= ids_for_type
+        if not common_location_ids:
+            return None, ""
+
+    if not common_location_ids:
+        return None, ""
+
+    selected_location_id = sorted(common_location_ids)[0]
+    name_map = config.get_buy_structure_name_map() or {}
+    selected_location_name = str(
+        name_map.get(selected_location_id, "") or ""
+    ).strip() or f"Structure {selected_location_id}"
+    return selected_location_id, selected_location_name
+
+
+def _resolve_buy_order_location_label(order: MaterialExchangeBuyOrder) -> str:
+    source_name = str(getattr(order, "source_location_name", "") or "").strip()
+    if source_name:
+        return source_name
+
+    source_id = getattr(order, "source_location_id", None)
+    try:
+        source_id_int = int(source_id or 0)
+    except (TypeError, ValueError):
+        source_id_int = 0
+
+    config = getattr(order, "config", None)
+    if source_id_int > 0:
+        if config:
+            name_map = config.get_buy_structure_name_map() or {}
+            mapped_name = str(name_map.get(source_id_int, "") or "").strip()
+            if mapped_name:
+                return mapped_name
+        return f"Structure {source_id_int}"
+
+    if not config:
+        return ""
+
+    inferred_location_id, inferred_location_name = _infer_buy_order_location_from_stock(
+        order
+    )
+    if inferred_location_id and inferred_location_id > 0:
+        return str(inferred_location_name or "").strip() or (
+            f"Structure {inferred_location_id}"
+        )
+
+    name_map = config.get_buy_structure_name_map() or {}
+    location_ids = config.get_buy_structure_ids()
+    if location_ids:
+        try:
+            first_id = int(location_ids[0])
+        except (TypeError, ValueError):
+            first_id = 0
+        if first_id > 0:
+            fallback_name = str(name_map.get(first_id, "") or "").strip()
+            if fallback_name:
+                return fallback_name
+            return f"Structure {first_id}"
+
+    if str(config.structure_name or "").strip():
+        return str(config.structure_name).strip()
     return f"Structure {config.structure_id}"
 
 

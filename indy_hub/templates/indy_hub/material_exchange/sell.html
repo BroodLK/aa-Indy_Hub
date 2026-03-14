@@ -244,15 +244,26 @@
                                         <td class="text-end text-muted">-</td>
                                         <td class="text-end text-muted">-</td>
                                         <td class="text-center">
-                                            <button
-                                                type="button"
-                                                class="btn btn-outline-secondary btn-sm container-toggle-btn"
-                                                data-container-key="{{ item.container_key }}"
-                                                data-label-select="{% trans 'Select all' %}"
-                                                data-label-clear="{% trans 'Clear selection' %}"
-                                                aria-pressed="false">
-                                                <i class="fas fa-layer-group me-1"></i>{% trans "Select all" %}
-                                            </button>
+                                            <div class="container-action-group">
+                                                <button
+                                                    type="button"
+                                                    class="btn btn-outline-secondary btn-sm container-collapse-btn"
+                                                    data-container-key="{{ item.container_key }}"
+                                                    data-label-hide="{% trans 'Hide contents' %}"
+                                                    data-label-show="{% trans 'Show contents' %}"
+                                                    aria-expanded="true">
+                                                    <i class="fas fa-eye-slash me-1"></i>{% trans "Hide contents" %}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="btn btn-outline-secondary btn-sm container-toggle-btn"
+                                                    data-container-key="{{ item.container_key }}"
+                                                    data-label-select="{% trans 'Select all' %}"
+                                                    data-label-clear="{% trans 'Clear selection' %}"
+                                                    aria-pressed="false">
+                                                    <i class="fas fa-layer-group me-1"></i>{% trans "Select all" %}
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                     {% else %}
@@ -428,6 +439,8 @@ document.addEventListener('DOMContentLoaded', function() {
             .map(row => [row.dataset.containerKey, row])
             .filter(entry => entry[0])
     );
+    const collapsedContainers = new Set();
+    let filteredVisibleRows = new Set(stockRows);
 
     function splitContainerPath(pathValue) {
         return (pathValue || '')
@@ -486,13 +499,48 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function updateContainerCollapseState(containerKey) {
+        const containerRow = containerRowsByKey.get(containerKey);
+        if (!containerRow) {
+            return;
+        }
+        const collapseBtn = containerRow.querySelector('.container-collapse-btn');
+        if (!collapseBtn) {
+            return;
+        }
+        const isCollapsed = collapsedContainers.has(containerKey);
+        containerRow.classList.toggle('collapsed', isCollapsed);
+        collapseBtn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+        const label = isCollapsed
+            ? (collapseBtn.dataset.labelShow || 'Show contents')
+            : (collapseBtn.dataset.labelHide || 'Hide contents');
+        const iconClass = isCollapsed ? 'fa-eye' : 'fa-eye-slash';
+        collapseBtn.innerHTML = `<i class="fas ${iconClass} me-1"></i>${label}`;
+    }
+
+    function applyContainerVisibility() {
+        stockRows.forEach(row => {
+            if (!filteredVisibleRows.has(row)) {
+                row.classList.add('d-none');
+                return;
+            }
+            const hiddenByCollapsedAncestor = splitContainerPath(row.dataset.containerPath)
+                .some(containerKey => collapsedContainers.has(containerKey));
+            row.classList.toggle('d-none', hiddenByCollapsedAncestor);
+        });
+        containerRowsByKey.forEach((_row, containerKey) => {
+            updateContainerCollapseState(containerKey);
+        });
+    }
+
     function applyStockFilter() {
         if (!stockRows.length) {
             return;
         }
         const query = (sellStockSearch?.value || '').trim().toLowerCase();
         if (!query) {
-            stockRows.forEach(row => row.classList.remove('d-none'));
+            filteredVisibleRows = new Set(stockRows);
+            applyContainerVisibility();
             return;
         }
 
@@ -553,7 +601,8 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
 
-        stockRows.forEach(row => row.classList.toggle('d-none', !visibleRows.has(row)));
+        filteredVisibleRows = visibleRows;
+        applyContainerVisibility();
     }
 
     if (sellStockSearch) {
@@ -561,6 +610,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     document.addEventListener('click', function(event) {
+        const containerCollapseBtn = event.target.closest('.container-collapse-btn');
+        if (containerCollapseBtn) {
+            const containerKey = containerCollapseBtn.dataset.containerKey || '';
+            if (!containerKey) {
+                return;
+            }
+            if (collapsedContainers.has(containerKey)) {
+                collapsedContainers.delete(containerKey);
+            } else {
+                collapsedContainers.add(containerKey);
+            }
+            applyContainerVisibility();
+            return;
+        }
+
         const containerToggleBtn = event.target.closest('.container-toggle-btn');
         if (containerToggleBtn) {
             const containerKey = containerToggleBtn.dataset.containerKey || '';

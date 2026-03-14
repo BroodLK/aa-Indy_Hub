@@ -29,6 +29,7 @@ from allianceauth.services.hooks import get_extension_logger
 from ..decorators import indy_hub_permission_required, tokens_required
 from ..models import (
     Blueprint,
+    CapitalShipOrder,
     CachedCharacterAsset,
     ESIContract,
     MaterialExchangeBuyOrder,
@@ -3173,10 +3174,12 @@ def _build_buy_material_rows(
     return rows
 
 
-def _selected_buy_stock_items_share_source_location(
+def _resolve_selected_buy_stock_source_location(
     stock_items: list[MaterialExchangeStock],
-) -> bool:
-    """Return True when selected stock rows can be sourced from one common location."""
+    *,
+    buy_name_map: dict[int, str] | None = None,
+) -> tuple[int | None, str]:
+    """Return a deterministic common source location for selected buy stock rows."""
 
     common_location_ids: set[int] | None = None
     for stock_item in stock_items:
@@ -3198,9 +3201,28 @@ def _selected_buy_stock_items_share_source_location(
             common_location_ids &= source_location_ids
 
         if not common_location_ids:
-            return False
+            return None, ""
 
-    return True
+    if not common_location_ids:
+        return None, ""
+
+    selected_location_id = sorted(common_location_ids)[0]
+    selected_location_name = str(
+        (buy_name_map or {}).get(int(selected_location_id), "") or ""
+    ).strip()
+    if not selected_location_name:
+        selected_location_name = f"Structure {int(selected_location_id)}"
+    return int(selected_location_id), selected_location_name
+
+
+def _selected_buy_stock_items_share_source_location(
+    stock_items: list[MaterialExchangeStock],
+) -> bool:
+    """Return True when selected stock rows can be sourced from one common location."""
+    selected_location_id, _selected_location_name = (
+        _resolve_selected_buy_stock_source_location(stock_items)
+    )
+    return selected_location_id is not None
 
 
 @login_required
@@ -3332,6 +3354,15 @@ def material_exchange_index(request):
         status=MaterialExchangeSellOrder.Status.DRAFT
     ).count()
     pending_buy_orders = config.buy_orders.filter(status="draft").count()
+    user_capital_orders_active_count = CapitalShipOrder.objects.filter(
+        config=config,
+        requester=request.user,
+    ).exclude(status=CapitalShipOrder.Status.COMPLETED).count()
+    capital_orders_active_count = CapitalShipOrder.objects.filter(
+        config=config,
+    ).exclude(
+        status=CapitalShipOrder.Status.COMPLETED
+    ).count()
 
     # User's active orders
     closed_statuses = ["completed", "rejected", "cancelled"]
@@ -3422,6 +3453,8 @@ def material_exchange_index(request):
         "total_stock_value": total_stock_value,
         "pending_sell_orders": pending_sell_orders,
         "pending_buy_orders": pending_buy_orders,
+        "user_capital_orders_active_count": user_capital_orders_active_count,
+        "capital_orders_active_count": capital_orders_active_count,
         "recent_orders": recent_orders,
         "can_admin": can_admin,
         "superuser_without_material_hub_manage": superuser_without_material_hub_manage,
@@ -4683,6 +4716,13 @@ def material_exchange_buy(request, tokens):
                 )
                 return redirect("indy_hub:material_exchange_buy")
 
+            selected_buy_location_id, selected_buy_location_name = (
+                _resolve_selected_buy_stock_source_location(
+                    selected_stock_rows,
+                    buy_name_map=buy_name_map,
+                )
+            )
+
             # Get order reference from client (generated in JavaScript)
             client_order_ref = request.POST.get("order_reference", "").strip()
 
@@ -4692,6 +4732,8 @@ def material_exchange_buy(request, tokens):
                 buyer=request.user,
                 status=MaterialExchangeBuyOrder.Status.DRAFT,
                 order_reference=client_order_ref if client_order_ref else None,
+                source_location_id=selected_buy_location_id,
+                source_location_name=selected_buy_location_name,
             )
 
             # Create items for this order
@@ -5937,7 +5979,7 @@ def material_exchange_stats_history(request):
     context.update(
         build_nav_context(
             request.user,
-            active_tab="material_hub",
+            active_tab="stats",
             can_manage_corp=request.user.has_perm(
                 "indy_hub.can_manage_corp_bp_requests"
             ),
