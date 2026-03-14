@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Django
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 
 
 def build_nav_context(
@@ -37,7 +37,10 @@ def build_nav_context(
     blueprints_url = reverse("indy_hub:all_bp_list")
     blueprint_sharing_url = reverse("indy_hub:bp_copy_request_page")
     material_hub_url = reverse("indy_hub:material_exchange_index")
-    capital_orders_url = reverse("indy_hub:capital_ship_orders")
+    try:
+        capital_orders_url = reverse("indy_hub:capital_ship_orders")
+    except NoReverseMatch:
+        capital_orders_url = None
     industry_url = reverse("indy_hub:personnal_job_list")
     esi_url = reverse("indy_hub:esi_hub")
     stats_url = reverse("indy_hub:material_exchange_stats_history")
