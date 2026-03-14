@@ -413,6 +413,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const sellAllBtn = document.getElementById('sellAllBtn');
     const sellStockSearch = document.getElementById('sellStockSearch');
+    const invoiceItemsList = document.getElementById('itemsList');
     const sellLocationInput = document.querySelector('#sellForm input[name="sell_location_id"]');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
     const rowLocationIdsCache = new WeakMap();
@@ -776,6 +777,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedItems = [];
         let totalCents = 0;
         const characterLabel = '{% trans "Character" %}';
+        const clearItemLabel = '{% trans "Clear item selection" %}';
 
         qtyInputs.forEach(input => {
             const qty = parseInt(input.value) || 0;
@@ -800,6 +802,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const subtotal = subtotalCents / 100;
 
                 selectedItems.push({
+                    rowIndex: row.dataset.rowIndex || '',
                     name: displayName,
                     qty: effectiveQty,
                     unitPrice: unitPrice,
@@ -833,8 +836,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 itemsHTML += `
                     <div class="invoice-item">
                         <div class="d-flex justify-content-between mb-1">
-                            <strong>${item.name}</strong>
-                            <span class="text-success fw-semibold">${formatNumber(item.subtotal)} ISK</span>
+                            <strong class="me-2">${item.name}</strong>
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="text-success fw-semibold">${formatNumber(item.subtotal)} ISK</span>
+                                <button
+                                    type="button"
+                                    class="btn btn-link btn-sm p-0 text-muted invoice-remove-btn"
+                                    data-row-index="${item.rowIndex}"
+                                    title="${clearItemLabel}"
+                                    aria-label="${clearItemLabel}">
+                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="d-flex justify-content-between small text-muted">
                             <span>${item.qty.toLocaleString()} × ${formatNumber(item.unitPrice)} ISK</span>
@@ -846,6 +859,26 @@ document.addEventListener('DOMContentLoaded', function() {
             itemsList.innerHTML = itemsHTML;
             totalAmount.textContent = formatWholeISK(total) + ' ISK';
         }
+    }
+
+    if (invoiceItemsList) {
+        invoiceItemsList.addEventListener('click', function(event) {
+            const clearBtn = event.target.closest('.invoice-remove-btn');
+            if (!clearBtn) {
+                return;
+            }
+            const rowIndex = (clearBtn.dataset.rowIndex || '').trim();
+            if (!rowIndex) {
+                return;
+            }
+            const input = document.getElementById(`qty-${rowIndex}`);
+            if (!input || input.disabled) {
+                return;
+            }
+            input.value = 0;
+            updateInvoice();
+            updateAllContainerSelectionStates();
+        });
     }
 
     qtyInputs.forEach(input => {
