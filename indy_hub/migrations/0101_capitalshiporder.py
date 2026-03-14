@@ -136,15 +136,15 @@ class Migration(migrations.Migration):
                 "indexes": [
                     models.Index(
                         fields=["status", "-created_at"],
-                        name="ih_cap_order_status_created_idx",
+                        name="ih_capord_stat_cr_idx",
                     ),
                     models.Index(
                         fields=["requester", "-created_at"],
-                        name="ih_cap_order_req_created_idx",
+                        name="ih_capord_req_cr_idx",
                     ),
                     models.Index(
                         fields=["esi_contract_id"],
-                        name="ih_cap_order_contract_idx",
+                        name="ih_capord_contract_idx",
                     ),
                 ],
             },
