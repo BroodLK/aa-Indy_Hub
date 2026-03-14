@@ -134,9 +134,18 @@ class Migration(migrations.Migration):
                 "ordering": ["-created_at"],
                 "default_permissions": (),
                 "indexes": [
-                    models.Index(fields=["status", "-created_at"]),
-                    models.Index(fields=["requester", "-created_at"]),
-                    models.Index(fields=["esi_contract_id"]),
+                    models.Index(
+                        fields=["status", "-created_at"],
+                        name="ih_cap_order_status_created_idx",
+                    ),
+                    models.Index(
+                        fields=["requester", "-created_at"],
+                        name="ih_cap_order_req_created_idx",
+                    ),
+                    models.Index(
+                        fields=["esi_contract_id"],
+                        name="ih_cap_order_contract_idx",
+                    ),
                 ],
             },
         ),
