@@ -93,7 +93,9 @@ def build_nav_context(
 
     material_hub_nav_url = material_hub_url if material_hub_enabled else None
     stats_nav_url = stats_url if can_manage_material_hub else None
-    capital_orders_nav_url = capital_orders_url if can_access_indy_hub else None
+    # Keep Capital Orders visible in the top bar for all Indy Hub users when the
+    # route is available; view-level permissions still control actual access.
+    capital_orders_nav_url = capital_orders_url
 
     context: dict[str, str | None] = {
         # New top-level sections
