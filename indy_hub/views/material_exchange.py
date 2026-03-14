@@ -3354,10 +3354,6 @@ def material_exchange_index(request):
         status=MaterialExchangeSellOrder.Status.DRAFT
     ).count()
     pending_buy_orders = config.buy_orders.filter(status="draft").count()
-    user_capital_orders_active_count = CapitalShipOrder.objects.filter(
-        config=config,
-        requester=request.user,
-    ).exclude(status=CapitalShipOrder.Status.COMPLETED).count()
     capital_orders_active_count = CapitalShipOrder.objects.filter(
         config=config,
     ).exclude(
@@ -3453,7 +3449,6 @@ def material_exchange_index(request):
         "total_stock_value": total_stock_value,
         "pending_sell_orders": pending_sell_orders,
         "pending_buy_orders": pending_buy_orders,
-        "user_capital_orders_active_count": user_capital_orders_active_count,
         "capital_orders_active_count": capital_orders_active_count,
         "recent_orders": recent_orders,
         "can_admin": can_admin,

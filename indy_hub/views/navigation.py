@@ -93,6 +93,7 @@ def build_nav_context(
 
     material_hub_nav_url = material_hub_url if material_hub_enabled else None
     stats_nav_url = stats_url if can_manage_material_hub else None
+    capital_orders_nav_url = capital_orders_url if can_access_indy_hub else None
 
     context: dict[str, str | None] = {
         # New top-level sections
@@ -104,7 +105,7 @@ def build_nav_context(
         "blueprint_sharing_nav_class": blueprint_sharing_class,
         "material_hub_nav_url": material_hub_nav_url,
         "material_hub_nav_class": material_hub_class,
-        "capital_orders_nav_url": capital_orders_url,
+        "capital_orders_nav_url": capital_orders_nav_url,
         "capital_orders_nav_class": capital_orders_class,
         "industry_nav_url": industry_url,
         "industry_nav_class": industry_class,

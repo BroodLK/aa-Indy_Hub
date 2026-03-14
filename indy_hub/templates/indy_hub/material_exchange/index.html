@@ -12,6 +12,7 @@
 {% endblock extra_css %}
 
 {% block content %}
+{% url 'indy_hub:capital_ship_orders_admin' as capital_ship_orders_admin_url %}
 <div class="container-fluid py-4">
     <div class="page-header mb-4">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
@@ -103,17 +104,6 @@
             {% endif %}
         </article>
 
-        <article class="me-hub-action-card" data-accent="warning">
-            <div class="me-hub-action-icon" aria-hidden="true">
-                <i class="fas fa-ship"></i>
-            </div>
-            <h5 class="me-hub-action-title">{% trans "Order Capital Ships" %}</h5>
-            <span class="me-hub-action-badge">{{ user_capital_orders_active_count|default:0|intcomma }} {% trans "active" %}</span>
-            <p class="me-hub-action-desc">{% trans "Submit one dread/carrier/fax per order with INDY-CAP reference tracking." %}</p>
-            <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-warning me-hub-action-btn">
-                <i class="fas fa-file-signature me-1"></i>{% trans "Order Capital" %}
-            </a>
-        </article>
     </div>
 
     <!-- Your Recent Orders -->
@@ -214,10 +204,12 @@
         <a href="{% url 'indy_hub:material_exchange_transactions' %}" class="btn btn-sm me-panel-action-btn ms-3">
             <i class="fas fa-history me-1"></i>{% trans "View History" %}
         </a>
-        <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-sm btn-warning ms-2">
-            <i class="fas fa-ship me-1"></i>{% trans "Capital Orders" %}
-            <span class="ms-1">({{ capital_orders_active_count|default:0 }})</span>
-        </a>
+        {% if capital_ship_orders_admin_url %}
+            <a href="{{ capital_ship_orders_admin_url }}" class="btn btn-sm btn-warning ms-2">
+                <i class="fas fa-ship me-1"></i>{% trans "Capital Orders" %}
+                <span class="ms-1">({{ capital_orders_active_count|default:0 }})</span>
+            </a>
+        {% endif %}
     </div>
 
     <div id="admin-panel-content" class="collapse {% if admin_sell_orders or admin_buy_orders %}show{% endif %}">
