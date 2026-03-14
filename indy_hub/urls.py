@@ -43,16 +43,11 @@ from .views.industry import (
     personnal_job_list,
     production_simulations_list,
 )
-try:
-    from .views.capital_ship_orders import (
-        capital_ship_order_set_in_production,
-        capital_ship_orders,
-        capital_ship_orders_admin,
-    )
-except ModuleNotFoundError:
-    capital_ship_order_set_in_production = None
-    capital_ship_orders = None
-    capital_ship_orders_admin = None
+from .views.capital_ship_orders import (
+    capital_ship_order_set_in_production,
+    capital_ship_orders,
+    capital_ship_orders_admin,
+)
 from .views.material_exchange import (
     material_exchange_approve_buy,
     material_exchange_approve_sell,
@@ -402,28 +397,20 @@ urlpatterns = [
         buy_order_delete,
         name="buy_order_delete",
     ),
-    *(
-        [
-            path(
-                "material-exchange/capital-orders/",
-                capital_ship_orders,
-                name="capital_ship_orders",
-            ),
-            path(
-                "material-exchange/capital-orders/admin/",
-                capital_ship_orders_admin,
-                name="capital_ship_orders_admin",
-            ),
-            path(
-                "material-exchange/capital-orders/<int:order_id>/set-in-production/",
-                capital_ship_order_set_in_production,
-                name="capital_ship_order_set_in_production",
-            ),
-        ]
-        if capital_ship_orders
-        and capital_ship_orders_admin
-        and capital_ship_order_set_in_production
-        else []
+    path(
+        "material-exchange/capital-orders/",
+        capital_ship_orders,
+        name="capital_ship_orders",
+    ),
+    path(
+        "material-exchange/capital-orders/admin/",
+        capital_ship_orders_admin,
+        name="capital_ship_orders_admin",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/set-in-production/",
+        capital_ship_order_set_in_production,
+        name="capital_ship_order_set_in_production",
     ),
     # Stock & Prices
     path(
