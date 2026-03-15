@@ -6094,42 +6094,6 @@ def material_exchange_stats_history(request):
     jita_buy_value = buy_expected_jita_buy_total
     jita_sell_value = buy_expected_jita_sell_total
     jita_split_value = buy_expected_jita_split_total
-    unrealized_inventory_value = Decimal("0")
-    unrealized_inventory_cost_basis = Decimal("0")
-    unrealized_earnings_potential = Decimal("0")
-    if type_rollup:
-        stock_prices = {
-            int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
-            for row in MaterialExchangeStock.objects.filter(
-                config=config,
-                type_id__in=list(type_rollup.keys()),
-            ).values("type_id", "jita_sell_price")
-        }
-        for type_id, rollup in type_rollup.items():
-            acquired_qty = rollup["acquired_qty"]
-            sold_qty = rollup["sold_qty"]
-            if acquired_qty <= 0:
-                continue
-
-            remaining_qty = acquired_qty - sold_qty
-            if remaining_qty <= 0:
-                continue
-
-            avg_cost = (rollup["acquired_cost"] / acquired_qty).quantize(Decimal("0.0001"))
-            remaining_cost = (avg_cost * remaining_qty).quantize(Decimal("0.01"))
-            unrealized_inventory_cost_basis += remaining_cost
-
-            jita_sell_price = _to_decimal(stock_prices.get(int(type_id)))
-            if jita_sell_price <= 0:
-                continue
-
-            remaining_value = (jita_sell_price * remaining_qty).quantize(Decimal("0.01"))
-            unrealized_inventory_value += remaining_value
-            unrealized_earnings_potential += remaining_value - remaining_cost
-
-    member_sales_vs_jita_buy_delta = member_sales_volume - jita_buy_value
-    member_sales_vs_jita_sell_delta = member_sales_volume - jita_sell_value
-    member_sales_vs_jita_split_delta = member_sales_volume - jita_split_value
 
     tx_rows = MaterialExchangeTransaction.objects.filter(config=config).filter(
         Q(sell_order_id__in=sell_order_ids) | Q(buy_order_id__in=buy_order_ids)
@@ -6179,6 +6143,43 @@ def material_exchange_stats_history(request):
             data["sold_jita_sell"] += Decimal(str(row.get("jita_sell_total_value_snapshot") or 0))
             data["sold_jita_split"] += Decimal(str(row.get("jita_split_total_value_snapshot") or 0))
 
+    unrealized_inventory_value = Decimal("0")
+    unrealized_inventory_cost_basis = Decimal("0")
+    unrealized_earnings_potential = Decimal("0")
+    if type_rollup:
+        stock_prices = {
+            int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
+            for row in MaterialExchangeStock.objects.filter(
+                config=config,
+                type_id__in=list(type_rollup.keys()),
+            ).values("type_id", "jita_sell_price")
+        }
+        for type_id, rollup in type_rollup.items():
+            acquired_qty = rollup["acquired_qty"]
+            sold_qty = rollup["sold_qty"]
+            if acquired_qty <= 0:
+                continue
+
+            remaining_qty = acquired_qty - sold_qty
+            if remaining_qty <= 0:
+                continue
+
+            avg_cost = (rollup["acquired_cost"] / acquired_qty).quantize(Decimal("0.0001"))
+            remaining_cost = (avg_cost * remaining_qty).quantize(Decimal("0.01"))
+            unrealized_inventory_cost_basis += remaining_cost
+
+            jita_sell_price = _to_decimal(stock_prices.get(int(type_id)))
+            if jita_sell_price <= 0:
+                continue
+
+            remaining_value = (jita_sell_price * remaining_qty).quantize(Decimal("0.01"))
+            unrealized_inventory_value += remaining_value
+            unrealized_earnings_potential += remaining_value - remaining_cost
+
+    member_sales_vs_jita_buy_delta = member_sales_volume - jita_buy_value
+    member_sales_vs_jita_sell_delta = member_sales_volume - jita_sell_value
+    member_sales_vs_jita_split_delta = member_sales_volume - jita_split_value
+
     realized_member_sale_profit = Decimal("0")
     potential_profit_jita_buy = Decimal("0")
     potential_profit_jita_sell = Decimal("0")
@@ -6197,10 +6198,6 @@ def material_exchange_stats_history(request):
         potential_profit_jita_sell += rollup["sold_jita_sell"] - cogs_for_sold
         potential_profit_jita_split += rollup["sold_jita_split"] - cogs_for_sold
         potential_priced_type_count += 1
-
-    member_sales_vs_jita_buy_delta = member_sales_volume - jita_buy_value
-    member_sales_vs_jita_sell_delta = member_sales_volume - jita_sell_value
-    member_sales_vs_jita_split_delta = member_sales_volume - jita_split_value
 
     contracts_qs = ESIContract.objects.filter(
         corporation_id=config.corporation_id,
