@@ -520,6 +520,30 @@ html[data-theme="darkly"] .status-pending {
     background: rgba(var(--bs-info-rgb), 0.12);
 }
 
+.stock-row-market-group td {
+    background: rgba(var(--bs-secondary-rgb), 0.14);
+    border-top: 1px solid rgba(var(--bs-border-color-rgb), 0.45);
+    border-bottom: 1px solid rgba(var(--bs-border-color-rgb), 0.35);
+}
+
+.stock-row-market-group:hover {
+    border-left: 0 !important;
+}
+
+.stock-row-market-group .market-group-collapse-btn {
+    color: var(--bs-body-color);
+    font-weight: 600;
+}
+
+.stock-row-market-group .market-group-collapse-btn:hover {
+    color: var(--bs-info);
+}
+
+.stock-row-market-group .market-group-count {
+    background: rgba(var(--bs-secondary-rgb), 0.45);
+    color: var(--bs-body-color);
+}
+
 .qty-input {
     max-width: 120px;
     width: 100%;
@@ -702,6 +726,26 @@ html[data-theme="darkly"] .stock-row-container.selected {
 
 html[data-theme="darkly"] .stock-row-container.collapsed {
     background: rgba(148, 163, 184, 0.2);
+}
+
+html[data-theme="darkly"] .stock-row-market-group td {
+    background: rgba(51, 65, 85, 0.35);
+    border-top-color: rgba(148, 163, 184, 0.26);
+    border-bottom-color: rgba(148, 163, 184, 0.2);
+}
+
+html[data-theme="darkly"] .stock-row-market-group .market-group-collapse-btn {
+    color: #cbd5e1;
+}
+
+html[data-theme="darkly"] .stock-row-market-group .market-group-collapse-btn:hover {
+    color: #e2e8f0;
+}
+
+html[data-theme="darkly"] .stock-row-market-group .market-group-count {
+    background: rgba(148, 163, 184, 0.3);
+    color: #e2e8f0;
+    border-color: rgba(148, 163, 184, 0.45);
 }
 
 html[data-theme="darkly"] .stock-table tbody tr.selected {

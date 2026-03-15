@@ -172,7 +172,7 @@
                             </button>
                         </div>
                     </div>
-                    <div class="row g-2 mb-3">
+                    <div class="row g-2 mb-3 align-items-end">
                         <div class="col-lg-5">
                             <label class="form-label fw-semibold" for="sellStockSearch">{% trans "Search items" %}</label>
                             <input
@@ -196,12 +196,10 @@
                             </select>
                         </div>
                         <div class="col-lg-3">
-                            <label class="form-label fw-semibold mb-1" for="sellMarketGroupFilter">{% trans "Market group filter" %}</label>
-                            <div class="input-group input-group-sm">
-                                <select id="sellMarketGroupFilter" class="form-select form-select-sm">
-                                    <option value="">{% trans "All market groups" %}</option>
-                                </select>
-                            </div>
+                            <label class="form-label fw-semibold" for="sellMarketGroupFilter">{% trans "Market group filter" %}</label>
+                            <select id="sellMarketGroupFilter" class="form-select form-select-sm">
+                                <option value="">{% trans "All market groups" %}</option>
+                            </select>
                         </div>
                     </div>
                     {% if character_tabs %}
@@ -502,7 +500,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function createMarketGroupHeaderRow(groupKey, groupLabel, itemCount) {
         const row = document.createElement('tr');
-        row.className = 'stock-row stock-row-market-group table-light';
+        row.className = 'stock-row stock-row-market-group';
         row.dataset.rowKind = 'market-group-header';
         row.dataset.marketGroupKey = groupKey;
 
