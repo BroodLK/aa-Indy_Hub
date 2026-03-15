@@ -140,13 +140,29 @@
                     <h5 class="mb-4">
                         {% trans "Available Stock in" %} {{ buy_locations_label }}
                     </h5>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold" for="buyStockSearch">{% trans "Search items" %}</label>
-                        <input
-                            type="text"
-                            class="form-control form-control-sm"
-                            id="buyStockSearch"
-                            placeholder="{% trans 'Type an item name or type ID...' %}">
+                    <div class="row g-2 mb-3">
+                        <div class="col-lg-6">
+                            <label class="form-label fw-semibold" for="buyStockSearch">{% trans "Search items" %}</label>
+                            <input
+                                type="text"
+                                class="form-control form-control-sm"
+                                id="buyStockSearch"
+                                placeholder="{% trans 'Type an item, type ID, or market group...' %}">
+                        </div>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label fw-semibold" for="buySortMode">{% trans "Sort by" %}</label>
+                            <select id="buySortMode" class="form-select form-select-sm">
+                                <option value="az">{% trans "Sort by A-Z" %}</option>
+                                <option value="market_group">{% trans "Sort by Market Group" %}</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label fw-semibold" for="buySortDirection">{% trans "Direction" %}</label>
+                            <select id="buySortDirection" class="form-select form-select-sm">
+                                <option value="asc">{% trans "Ascending" %}</option>
+                                <option value="desc">{% trans "Descending" %}</option>
+                            </select>
+                        </div>
                     </div>
                     <form method="post" id="purchaseForm">
                         {% csrf_token %}
@@ -223,6 +239,8 @@
                                         data-container-path="{{ item.container_path }}"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.display_type_name }}"
+                                        data-market-group-name="{{ item.market_group_name|default:'' }}"
+                                        data-market-group-path="{{ item.market_group_path|default:'' }}"
                                         data-blueprint-variant="{{ item.blueprint_variant }}"
                                         data-unit-price="{{ item.display_sell_price_to_member|floatformat:2 }}"
                                         data-max-qty="{{ item.available_quantity }}"
@@ -384,6 +402,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const buyStockSearch = document.getElementById('buyStockSearch');
+    const buySortMode = document.getElementById('buySortMode');
+    const buySortDirection = document.getElementById('buySortDirection');
     const invoiceItemsList = document.getElementById('itemsList');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
     const rowLocationIdsCache = new WeakMap();
@@ -395,12 +415,97 @@ document.addEventListener('DOMContentLoaded', function() {
     );
     const collapsedContainers = new Set();
     let filteredVisibleRows = new Set(stockRows);
+    const stockTableBody = document.querySelector('.stock-table tbody');
+    const originalStockRowOrder = Array.from(stockRows);
+    const itemRows = stockRows.filter(row => row.dataset.rowKind === 'item');
+    let flattenedSortView = false;
 
     function splitContainerPath(pathValue) {
         return String(pathValue || '')
             .split(',')
             .map(segment => segment.trim())
             .filter(Boolean);
+    }
+
+    function rowMatchesSearch(row, query) {
+        const typeName = (row.dataset.typeName || '').toLowerCase();
+        const typeId = String(row.dataset.typeId || '').toLowerCase();
+        const marketGroupName = (row.dataset.marketGroupName || '').toLowerCase();
+        const marketGroupPath = (row.dataset.marketGroupPath || '').toLowerCase();
+        return (
+            !query
+            || typeName.includes(query)
+            || typeId.includes(query)
+            || marketGroupName.includes(query)
+            || marketGroupPath.includes(query)
+        );
+    }
+
+    function getSortMode() {
+        return (buySortMode?.value || 'az').trim().toLowerCase();
+    }
+
+    function getSortDirection() {
+        return (buySortDirection?.value || 'asc').trim().toLowerCase() === 'desc'
+            ? 'desc'
+            : 'asc';
+    }
+
+    function compareRowsByMode(leftRow, rightRow, mode) {
+        const leftTypeName = (leftRow.dataset.typeName || '').toLowerCase();
+        const rightTypeName = (rightRow.dataset.typeName || '').toLowerCase();
+        if (mode === 'market_group') {
+            const leftGroup = (
+                leftRow.dataset.marketGroupName
+                || leftRow.dataset.marketGroupPath
+                || '{% trans "Other" %}'
+            ).toLowerCase();
+            const rightGroup = (
+                rightRow.dataset.marketGroupName
+                || rightRow.dataset.marketGroupPath
+                || '{% trans "Other" %}'
+            ).toLowerCase();
+            const groupCmp = leftGroup.localeCompare(rightGroup);
+            if (groupCmp !== 0) {
+                return groupCmp;
+            }
+        }
+        const typeCmp = leftTypeName.localeCompare(rightTypeName);
+        if (typeCmp !== 0) {
+            return typeCmp;
+        }
+        const leftTypeId = Number.parseInt(leftRow.dataset.typeId || '0', 10) || 0;
+        const rightTypeId = Number.parseInt(rightRow.dataset.typeId || '0', 10) || 0;
+        return leftTypeId - rightTypeId;
+    }
+
+    function applySortMode() {
+        if (!stockTableBody) {
+            return;
+        }
+        const mode = getSortMode();
+        const direction = getSortDirection();
+        flattenedSortView = mode === 'market_group' || direction === 'desc';
+
+        if (!flattenedSortView) {
+            originalStockRowOrder.forEach(row => {
+                stockTableBody.appendChild(row);
+            });
+            applyStockFilter();
+            return;
+        }
+
+        const sortedItems = Array.from(itemRows).sort((leftRow, rightRow) => {
+            const cmp = compareRowsByMode(leftRow, rightRow, mode);
+            return direction === 'desc' ? -cmp : cmp;
+        });
+        sortedItems.forEach(row => {
+            stockTableBody.appendChild(row);
+        });
+        containerRows.forEach(row => {
+            stockTableBody.appendChild(row);
+        });
+        applyStockFilter();
     }
 
     function getContainerChildInputs(containerKey) {
@@ -473,6 +578,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function applyContainerVisibility() {
+        if (flattenedSortView) {
+            stockRows.forEach(row => {
+                if (row.dataset.rowKind === 'container') {
+                    row.classList.add('d-none');
+                    return;
+                }
+                row.classList.toggle('d-none', !filteredVisibleRows.has(row));
+            });
+            return;
+        }
         stockRows.forEach(row => {
             if (!filteredVisibleRows.has(row)) {
                 row.classList.add('d-none');
@@ -626,7 +741,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const query = (buyStockSearch?.value || '').trim().toLowerCase();
         if (!query) {
-            filteredVisibleRows = new Set(stockRows);
+            filteredVisibleRows = flattenedSortView ? new Set(itemRows) : new Set(stockRows);
+            applyContainerVisibility();
+            return;
+        }
+
+        if (flattenedSortView) {
+            const visibleRows = new Set();
+            itemRows.forEach(row => {
+                if (rowMatchesSearch(row, query)) {
+                    visibleRows.add(row);
+                }
+            });
+            filteredVisibleRows = visibleRows;
             applyContainerVisibility();
             return;
         }
@@ -635,10 +762,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const matchedContainerKeys = new Set();
 
         stockRows.forEach(row => {
-            const typeName = (row.dataset.typeName || '').toLowerCase();
-            const typeId = String(row.dataset.typeId || '').toLowerCase();
-            const matches = typeName.includes(query) || typeId.includes(query);
-            if (!matches) {
+            if (!rowMatchesSearch(row, query)) {
                 return;
             }
 
@@ -685,6 +809,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (buyStockSearch) {
         buyStockSearch.addEventListener('input', applyStockFilter);
+    }
+    if (buySortMode) {
+        buySortMode.addEventListener('change', applySortMode);
+    }
+    if (buySortDirection) {
+        buySortDirection.addEventListener('change', applySortMode);
     }
 
     document.addEventListener('click', function(event) {
@@ -981,7 +1111,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initial update
     updateInvoice();
-    applyStockFilter();
+    applySortMode();
 
     // Live stock refresh progress
     {% if stock_refreshing %}

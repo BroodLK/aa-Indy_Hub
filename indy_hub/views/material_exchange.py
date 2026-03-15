@@ -1536,6 +1536,71 @@ def _get_type_market_group_path_map(type_ids: set[int] | list[int]) -> dict[int,
     return path_map
 
 
+def _build_type_market_group_label_map(
+    type_market_group_path_map: dict[int, list[int]] | None,
+) -> dict[int, dict[str, str]]:
+    """Return type_id -> market-group labels (leaf name and full path string)."""
+
+    if not type_market_group_path_map:
+        return {}
+
+    group_ids: set[int] = set()
+    for path_ids in type_market_group_path_map.values():
+        for raw_group_id in path_ids or []:
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            if group_id > 0:
+                group_ids.add(group_id)
+    if not group_ids:
+        return {}
+
+    group_name_map: dict[int, str] = {}
+    try:
+        from ..models import SdeMarketGroup
+
+        for raw_group_id, raw_name in SdeMarketGroup.objects.filter(
+            id__in=group_ids
+        ).values_list("id", "name"):
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            clean_name = str(raw_name or "").strip()
+            if group_id > 0 and clean_name:
+                group_name_map[group_id] = clean_name
+    except Exception:
+        group_name_map = {}
+
+    labels_by_type: dict[int, dict[str, str]] = {}
+    for raw_type_id, path_ids in (type_market_group_path_map or {}).items():
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+        path_names: list[str] = []
+        for raw_group_id in path_ids or []:
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            if group_id <= 0:
+                continue
+            group_name = str(group_name_map.get(group_id) or "").strip()
+            if group_name:
+                path_names.append(group_name)
+        if not path_names:
+            continue
+        labels_by_type[type_id] = {
+            "name": str(path_names[-1]),
+            "path": " > ".join(path_names),
+        }
+    return labels_by_type
+
+
 def _resolve_market_group_override_for_type(
     *,
     type_id: int,
@@ -1838,6 +1903,7 @@ def _build_sell_material_rows(
     sell_market_group_override_map: dict[int, dict[str, object]] | None = None,
     sell_container_override: dict[str, object] | None = None,
     type_market_group_path_map: dict[int, list[int]] | None = None,
+    type_market_group_label_map: dict[int, dict[str, str]] | None = None,
     character_name_by_id: dict[int, str] | None = None,
 ) -> list[dict]:
     """Build sell rows, grouping assets by containers and character owner."""
@@ -2090,6 +2156,11 @@ def _build_sell_material_rows(
         variant_token = str(meta.get("blueprint_variant") or "") or "std"
         container_scope_token = "incan" if in_container else "root"
 
+        market_group_meta = (
+            (type_market_group_label_map or {}).get(int(type_id), {})
+            if type_market_group_label_map
+            else {}
+        )
         return {
             "row_kind": "item",
             "row_index": row_idx,
@@ -2114,6 +2185,10 @@ def _build_sell_material_rows(
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
             "character_id": int(character_id) if int(character_id) > 0 else None,
             "character_name": str(character_name or ""),
+            "market_group_name": str(market_group_meta.get("name") or ""),
+            "market_group_path": str(
+                market_group_meta.get("path") or market_group_meta.get("name") or ""
+            ),
             "source_location_ids": sorted(
                 {
                     int(location_id)
@@ -2697,6 +2772,7 @@ def _build_buy_material_rows(
     buy_market_group_override_map: dict[int, dict[str, object]] | None = None,
     buy_container_override: dict[str, object] | None = None,
     type_market_group_path_map: dict[int, list[int]] | None = None,
+    type_market_group_label_map: dict[int, dict[str, str]] | None = None,
     buy_name_map: dict[int, str],
     fallback_location_label: str,
     blueprint_variant_by_item_id: dict[int, str] | None = None,
@@ -2953,6 +3029,11 @@ def _build_buy_material_rows(
             container_name for container_name in container_names if container_name
         )
 
+        market_group_meta = (
+            (type_market_group_label_map or {}).get(int(type_id), {})
+            if type_market_group_label_map
+            else {}
+        )
         return {
             "row_kind": "item",
             "row_index": row_idx,
@@ -2970,6 +3051,10 @@ def _build_buy_material_rows(
             "icon_fallback_url": str(item_meta.get("icon_fallback_url") or ""),
             "source_structure_ids": clean_source_ids,
             "buy_location_label": location_label,
+            "market_group_name": str(market_group_meta.get("name") or ""),
+            "market_group_path": str(
+                market_group_meta.get("path") or market_group_meta.get("name") or ""
+            ),
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "container_name_path": str(container_name_path),
@@ -4170,6 +4255,9 @@ def material_exchange_sell(request, tokens):
         display_type_market_group_path_map = _get_type_market_group_path_map(
             set(user_assets.keys())
         )
+        display_type_market_group_label_map = _build_type_market_group_label_map(
+            display_type_market_group_path_map
+        )
 
         def _is_sellable_type(type_id: int) -> bool:
             fuzz_prices = price_data.get(type_id, {})
@@ -4371,6 +4459,7 @@ def material_exchange_sell(request, tokens):
             sell_market_group_override_map=sell_market_group_override_map,
             sell_container_override=sell_container_override,
             type_market_group_path_map=display_type_market_group_path_map,
+            type_market_group_label_map=display_type_market_group_label_map,
             character_name_by_id=character_names_map,
         )
 
@@ -4865,6 +4954,9 @@ def material_exchange_buy(request, tokens):
     displayed_type_market_group_path_map = _get_type_market_group_path_map(
         {int(item.type_id) for item in stock_items}
     )
+    displayed_type_market_group_label_map = _build_type_market_group_label_map(
+        displayed_type_market_group_path_map
+    )
 
     priced_stock_items: list[MaterialExchangeStock] = []
     for stock_item in stock_items:
@@ -5016,6 +5108,7 @@ def material_exchange_buy(request, tokens):
             buy_market_group_override_map=buy_market_group_override_map,
             buy_container_override=buy_container_override,
             type_market_group_path_map=displayed_type_market_group_path_map,
+            type_market_group_label_map=displayed_type_market_group_label_map,
             buy_name_map=buy_name_map,
             fallback_location_label=buy_locations_label,
             blueprint_variant_by_item_id=blueprint_variant_by_item_id,
@@ -5054,6 +5147,30 @@ def material_exchange_buy(request, tokens):
                     ],
                     "buy_location_label": str(
                         getattr(stock_item, "buy_location_label", "") or buy_locations_label
+                    ),
+                    "market_group_name": str(
+                        (
+                            displayed_type_market_group_label_map.get(
+                                int(stock_item.type_id),
+                                {},
+                            )
+                        ).get("name")
+                        or ""
+                    ),
+                    "market_group_path": str(
+                        (
+                            displayed_type_market_group_label_map.get(
+                                int(stock_item.type_id),
+                                {},
+                            )
+                        ).get("path")
+                        or (
+                            displayed_type_market_group_label_map.get(
+                                int(stock_item.type_id),
+                                {},
+                            )
+                        ).get("name")
+                        or ""
                     ),
                     "depth": 0,
                     "container_path": "",

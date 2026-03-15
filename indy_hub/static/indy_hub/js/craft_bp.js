@@ -4184,7 +4184,7 @@ function computeNeededPurchases() {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${escapeHtml(item.name || String(item.typeId))}</td>
-                <td class="text-end">${formatNumber(item.qty)}</td>
+                <td class="text-end" data-qty="${item.qty}">${formatInteger(item.qty)}</td>
                 <td class="text-end">${formatPrice(unit)}</td>
                 <td class="text-end">${formatPrice(line)}</td>
             `;

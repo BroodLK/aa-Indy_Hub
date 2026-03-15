@@ -172,13 +172,29 @@
                             </button>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold" for="sellStockSearch">{% trans "Search items" %}</label>
-                        <input
-                            type="text"
-                            class="form-control form-control-sm"
-                            id="sellStockSearch"
-                            placeholder="{% trans 'Type an item name or type ID...' %}">
+                    <div class="row g-2 mb-3">
+                        <div class="col-lg-6">
+                            <label class="form-label fw-semibold" for="sellStockSearch">{% trans "Search items" %}</label>
+                            <input
+                                type="text"
+                                class="form-control form-control-sm"
+                                id="sellStockSearch"
+                                placeholder="{% trans 'Type an item, type ID, or market group...' %}">
+                        </div>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label fw-semibold" for="sellSortMode">{% trans "Sort by" %}</label>
+                            <select id="sellSortMode" class="form-select form-select-sm">
+                                <option value="az">{% trans "Sort by A-Z" %}</option>
+                                <option value="market_group">{% trans "Sort by Market Group" %}</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-3">
+                            <label class="form-label fw-semibold" for="sellSortDirection">{% trans "Direction" %}</label>
+                            <select id="sellSortDirection" class="form-select form-select-sm">
+                                <option value="asc">{% trans "Ascending" %}</option>
+                                <option value="desc">{% trans "Descending" %}</option>
+                            </select>
+                        </div>
                     </div>
                     {% if character_tabs %}
                     <div class="me-character-tabs mb-3">
@@ -274,6 +290,8 @@
                                         data-source-location-ids="{% if item.source_location_ids %}{{ item.source_location_ids|join:',' }}{% else %}{{ active_location_id }}{% endif %}"
                                         data-type-id="{{ item.type_id }}"
                                         data-type-name="{{ item.type_name }}"
+                                        data-market-group-name="{{ item.market_group_name|default:'' }}"
+                                        data-market-group-path="{{ item.market_group_path|default:'' }}"
                                         data-character-name="{{ item.character_name|default:'' }}"
                                         data-blueprint-variant="{{ item.blueprint_variant }}"
                                         data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
@@ -413,6 +431,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const qtyInputs = Array.from(document.querySelectorAll('.qty-input'));
     const sellAllBtn = document.getElementById('sellAllBtn');
     const sellStockSearch = document.getElementById('sellStockSearch');
+    const sellSortMode = document.getElementById('sellSortMode');
+    const sellSortDirection = document.getElementById('sellSortDirection');
     const invoiceItemsList = document.getElementById('itemsList');
     const sellLocationInput = document.querySelector('#sellForm input[name="sell_location_id"]');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
@@ -426,6 +446,9 @@ document.addEventListener('DOMContentLoaded', function() {
     );
     const collapsedContainers = new Set();
     let filteredVisibleRows = new Set(stockRows);
+    const stockTableBody = document.querySelector('.stock-table tbody');
+    const originalStockRowOrder = Array.from(stockRows);
+    let flattenedSortView = false;
 
     function splitContainerPath(pathValue) {
         return (pathValue || '')
@@ -491,7 +514,83 @@ document.addEventListener('DOMContentLoaded', function() {
         const typeName = (row.dataset.typeName || '').toLowerCase();
         const typeId = String(row.dataset.typeId || '').toLowerCase();
         const characterName = (row.dataset.characterName || '').toLowerCase();
-        return !query || typeName.includes(query) || typeId.includes(query) || characterName.includes(query);
+        const marketGroupName = (row.dataset.marketGroupName || '').toLowerCase();
+        const marketGroupPath = (row.dataset.marketGroupPath || '').toLowerCase();
+        return (
+            !query
+            || typeName.includes(query)
+            || typeId.includes(query)
+            || characterName.includes(query)
+            || marketGroupName.includes(query)
+            || marketGroupPath.includes(query)
+        );
+    }
+
+    function getSortMode() {
+        return (sellSortMode?.value || 'az').trim().toLowerCase();
+    }
+
+    function getSortDirection() {
+        return (sellSortDirection?.value || 'asc').trim().toLowerCase() === 'desc'
+            ? 'desc'
+            : 'asc';
+    }
+
+    function compareRowsByMode(leftRow, rightRow, mode) {
+        const leftTypeName = (leftRow.dataset.typeName || '').toLowerCase();
+        const rightTypeName = (rightRow.dataset.typeName || '').toLowerCase();
+        if (mode === 'market_group') {
+            const leftGroup = (
+                leftRow.dataset.marketGroupName
+                || leftRow.dataset.marketGroupPath
+                || '{% trans "Other" %}'
+            ).toLowerCase();
+            const rightGroup = (
+                rightRow.dataset.marketGroupName
+                || rightRow.dataset.marketGroupPath
+                || '{% trans "Other" %}'
+            ).toLowerCase();
+            const groupCmp = leftGroup.localeCompare(rightGroup);
+            if (groupCmp !== 0) {
+                return groupCmp;
+            }
+        }
+        const typeCmp = leftTypeName.localeCompare(rightTypeName);
+        if (typeCmp !== 0) {
+            return typeCmp;
+        }
+        const leftTypeId = Number.parseInt(leftRow.dataset.typeId || '0', 10) || 0;
+        const rightTypeId = Number.parseInt(rightRow.dataset.typeId || '0', 10) || 0;
+        return leftTypeId - rightTypeId;
+    }
+
+    function applySortMode() {
+        if (!stockTableBody) {
+            return;
+        }
+        const mode = getSortMode();
+        const direction = getSortDirection();
+        flattenedSortView = mode === 'market_group' || direction === 'desc';
+
+        if (!flattenedSortView) {
+            originalStockRowOrder.forEach(row => {
+                stockTableBody.appendChild(row);
+            });
+            applyStockFilter();
+            return;
+        }
+
+        const sortedItems = Array.from(itemRows).sort((leftRow, rightRow) => {
+            const cmp = compareRowsByMode(leftRow, rightRow, mode);
+            return direction === 'desc' ? -cmp : cmp;
+        });
+        sortedItems.forEach(row => {
+            stockTableBody.appendChild(row);
+        });
+        containerRows.forEach(row => {
+            stockTableBody.appendChild(row);
+        });
+        applyStockFilter();
     }
 
     function getContainerChildInputs(containerKey) {
@@ -581,6 +680,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function applyContainerVisibility() {
+        if (flattenedSortView) {
+            stockRows.forEach(row => {
+                if (row.dataset.rowKind === 'container') {
+                    row.classList.add('d-none');
+                    return;
+                }
+                row.classList.toggle('d-none', !filteredVisibleRows.has(row));
+            });
+            return;
+        }
         stockRows.forEach(row => {
             if (!filteredVisibleRows.has(row)) {
                 row.classList.add('d-none');
@@ -601,7 +710,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const query = (sellStockSearch?.value || '').trim().toLowerCase();
         if (!query) {
-            filteredVisibleRows = new Set(stockRows);
+            filteredVisibleRows = flattenedSortView ? new Set(itemRows) : new Set(stockRows);
+            applyContainerVisibility();
+            return;
+        }
+
+        if (flattenedSortView) {
+            const visibleRows = new Set();
+            itemRows.forEach(row => {
+                if (rowMatchesSearch(row, query)) {
+                    visibleRows.add(row);
+                }
+            });
+            filteredVisibleRows = visibleRows;
             applyContainerVisibility();
             return;
         }
@@ -669,6 +790,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (sellStockSearch) {
         sellStockSearch.addEventListener('input', applyStockFilter);
+    }
+    if (sellSortMode) {
+        sellSortMode.addEventListener('change', applySortMode);
+    }
+    if (sellSortDirection) {
+        sellSortDirection.addEventListener('change', applySortMode);
     }
 
     document.addEventListener('click', function(event) {
@@ -929,7 +1056,7 @@ document.addEventListener('DOMContentLoaded', function() {
         updateInvoice();
         updateAllContainerSelectionStates();
     }
-    applyStockFilter();
+    applySortMode();
 
     if (sellAllBtn) {
         sellAllBtn.addEventListener('click', function() {

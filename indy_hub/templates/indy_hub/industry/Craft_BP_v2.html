@@ -1139,6 +1139,60 @@ document.addEventListener('DOMContentLoaded', function() {
         link.click();
     }
 
+    function parseClipboardQuantity(rawValue) {
+        if (rawValue === null || rawValue === undefined) {
+            return null;
+        }
+        if (typeof rawValue === 'number') {
+            return Number.isFinite(rawValue) ? rawValue : null;
+        }
+
+        const compact = String(rawValue).trim().replace(/\s+/g, '');
+        if (!compact) {
+            return null;
+        }
+
+        const sanitized = compact.replace(/[^0-9,.-]/g, '');
+        if (!sanitized || sanitized === '-' || sanitized === ',' || sanitized === '.') {
+            return null;
+        }
+
+        const commaIndex = sanitized.lastIndexOf(',');
+        const dotIndex = sanitized.lastIndexOf('.');
+        let normalized = sanitized;
+
+        if (commaIndex !== -1 && dotIndex !== -1) {
+            if (commaIndex > dotIndex) {
+                normalized = sanitized.replace(/\./g, '').replace(',', '.');
+            } else {
+                normalized = sanitized.replace(/,/g, '');
+            }
+        } else if (commaIndex !== -1) {
+            const commaCount = (sanitized.match(/,/g) || []).length;
+            const digitsAfterComma = sanitized.length - commaIndex - 1;
+            const looksLikeThousands = commaCount > 1 || digitsAfterComma === 3;
+            normalized = looksLikeThousands ? sanitized.replace(/,/g, '') : sanitized.replace(',', '.');
+        } else if (dotIndex !== -1) {
+            const dotCount = (sanitized.match(/\./g) || []).length;
+            const digitsAfterDot = sanitized.length - dotIndex - 1;
+            const looksLikeThousands = dotCount > 1 || digitsAfterDot === 3;
+            normalized = looksLikeThousands ? sanitized.replace(/\./g, '') : sanitized;
+        }
+
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function formatClipboardQuantity(value) {
+        if (!Number.isFinite(value)) {
+            return '';
+        }
+        if (Number.isInteger(value)) {
+            return String(value);
+        }
+        return value.toFixed(8).replace(/\.?0+$/, '');
+    }
+
     async function copyShoppingListToClipboard() {
         const rows = Array.from(document.querySelectorAll('#needed-table tbody tr'));
         if (rows.length === 0) {
@@ -1152,8 +1206,12 @@ document.addEventListener('DOMContentLoaded', function() {
         rows.forEach(row => {
             const cells = row.querySelectorAll('td');
             if (cells.length < 2) return;
+
             const name = cells[0].textContent.trim();
-            const qty = cells[1].textContent.trim().replace(/,/g, '');
+            const rawQty = cells[1].getAttribute('data-qty') || cells[1].textContent.trim();
+            const parsedQty = parseClipboardQuantity(rawQty);
+            const qty = parsedQty === null ? '' : formatClipboardQuantity(parsedQty);
+
             if (!name || !qty) return;
             lines.push(`${name}\t${qty}`);
         });
