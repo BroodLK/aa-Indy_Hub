@@ -141,7 +141,7 @@
                         {% trans "Available Stock in" %} {{ buy_locations_label }}
                     </h5>
                     <div class="row g-2 mb-3">
-                        <div class="col-lg-6">
+                        <div class="col-lg-5">
                             <label class="form-label fw-semibold" for="buyStockSearch">{% trans "Search items" %}</label>
                             <input
                                 type="text"
@@ -149,19 +149,27 @@
                                 id="buyStockSearch"
                                 placeholder="{% trans 'Type an item, type ID, or market group...' %}">
                         </div>
-                        <div class="col-sm-6 col-lg-3">
+                        <div class="col-sm-6 col-lg-2">
                             <label class="form-label fw-semibold" for="buySortMode">{% trans "Sort by" %}</label>
                             <select id="buySortMode" class="form-select form-select-sm">
                                 <option value="az">{% trans "Sort by A-Z" %}</option>
                                 <option value="market_group">{% trans "Sort by Market Group" %}</option>
                             </select>
                         </div>
-                        <div class="col-sm-6 col-lg-3">
+                        <div class="col-sm-6 col-lg-2">
                             <label class="form-label fw-semibold" for="buySortDirection">{% trans "Direction" %}</label>
                             <select id="buySortDirection" class="form-select form-select-sm">
                                 <option value="asc">{% trans "Ascending" %}</option>
                                 <option value="desc">{% trans "Descending" %}</option>
                             </select>
+                        </div>
+                        <div class="col-lg-3">
+                            <label class="form-label fw-semibold mb-1" for="buyMarketGroupFilter">{% trans "Market group filter" %}</label>
+                            <div class="input-group input-group-sm">
+                                <select id="buyMarketGroupFilter" class="form-select form-select-sm">
+                                    <option value="">{% trans "All market groups" %}</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                     <form method="post" id="purchaseForm">
@@ -404,6 +412,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const buyStockSearch = document.getElementById('buyStockSearch');
     const buySortMode = document.getElementById('buySortMode');
     const buySortDirection = document.getElementById('buySortDirection');
+    const buyMarketGroupFilter = document.getElementById('buyMarketGroupFilter');
     const invoiceItemsList = document.getElementById('itemsList');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
     const rowLocationIdsCache = new WeakMap();
@@ -419,12 +428,122 @@ document.addEventListener('DOMContentLoaded', function() {
     const originalStockRowOrder = Array.from(stockRows);
     const itemRows = stockRows.filter(row => row.dataset.rowKind === 'item');
     let flattenedSortView = false;
+    let marketGroupViewActive = false;
+    const collapsedMarketGroups = new Set();
+    const marketGroupHeaderRowsByKey = new Map();
 
     function splitContainerPath(pathValue) {
         return String(pathValue || '')
             .split(',')
             .map(segment => segment.trim())
             .filter(Boolean);
+    }
+
+    function getRowMarketGroupLabel(row) {
+        return (
+            (row.dataset.marketGroupPath || '').trim()
+            || (row.dataset.marketGroupName || '').trim()
+            || '{% trans "Other" %}'
+        );
+    }
+
+    function getRowMarketGroupKey(row) {
+        const existingKey = (row.dataset.marketGroupKey || '').trim();
+        if (existingKey) {
+            return existingKey;
+        }
+        const groupKey = getRowMarketGroupLabel(row);
+        row.dataset.marketGroupKey = groupKey;
+        return groupKey;
+    }
+
+    function rowMatchesMarketGroupFilter(row) {
+        const selectedKey = (buyMarketGroupFilter?.value || '').trim();
+        if (!selectedKey) {
+            return true;
+        }
+        return getRowMarketGroupKey(row) === selectedKey;
+    }
+
+    function clearMarketGroupHeaderRows() {
+        marketGroupHeaderRowsByKey.forEach(headerRow => headerRow.remove());
+        marketGroupHeaderRowsByKey.clear();
+    }
+
+    function createMarketGroupHeaderRow(groupKey, groupLabel, itemCount) {
+        const row = document.createElement('tr');
+        row.className = 'stock-row stock-row-market-group table-light';
+        row.dataset.rowKind = 'market-group-header';
+        row.dataset.marketGroupKey = groupKey;
+
+        const cell = document.createElement('td');
+        cell.colSpan = 5;
+        cell.className = 'py-2';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-link btn-sm text-decoration-none p-0 market-group-collapse-btn';
+        button.dataset.marketGroupKey = groupKey;
+        button.setAttribute('aria-expanded', 'true');
+
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-chevron-down me-2 market-group-collapse-icon';
+        icon.setAttribute('aria-hidden', 'true');
+
+        const label = document.createElement('span');
+        label.className = 'fw-semibold';
+        label.textContent = groupLabel;
+
+        const badge = document.createElement('span');
+        badge.className = 'badge bg-secondary-subtle text-secondary-emphasis border ms-2 market-group-count';
+        badge.textContent = String(itemCount);
+
+        button.appendChild(icon);
+        button.appendChild(label);
+        button.appendChild(badge);
+        cell.appendChild(button);
+        row.appendChild(cell);
+        return row;
+    }
+
+    function populateMarketGroupFilterOptions() {
+        if (!buyMarketGroupFilter) {
+            return;
+        }
+
+        const previousValue = buyMarketGroupFilter.value || '';
+        const seen = new Set();
+        const groups = [];
+
+        itemRows.forEach(row => {
+            const key = getRowMarketGroupKey(row);
+            if (!key || seen.has(key)) {
+                return;
+            }
+            seen.add(key);
+            groups.push(key);
+        });
+
+        groups.sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+
+        buyMarketGroupFilter.innerHTML = '';
+        const allOption = document.createElement('option');
+        allOption.value = '';
+        allOption.textContent = '{% trans "All market groups" %}';
+        buyMarketGroupFilter.appendChild(allOption);
+
+        groups.forEach(groupPath => {
+            const option = document.createElement('option');
+            option.value = groupPath;
+            option.textContent = groupPath;
+            buyMarketGroupFilter.appendChild(option);
+        });
+
+        if (previousValue && seen.has(previousValue)) {
+            buyMarketGroupFilter.value = previousValue;
+        } else {
+            buyMarketGroupFilter.value = '';
+        }
     }
 
     function rowMatchesSearch(row, query) {
@@ -455,16 +574,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const leftTypeName = (leftRow.dataset.typeName || '').toLowerCase();
         const rightTypeName = (rightRow.dataset.typeName || '').toLowerCase();
         if (mode === 'market_group') {
-            const leftGroup = (
-                leftRow.dataset.marketGroupName
-                || leftRow.dataset.marketGroupPath
-                || '{% trans "Other" %}'
-            ).toLowerCase();
-            const rightGroup = (
-                rightRow.dataset.marketGroupName
-                || rightRow.dataset.marketGroupPath
-                || '{% trans "Other" %}'
-            ).toLowerCase();
+            const leftGroup = getRowMarketGroupKey(leftRow).toLowerCase();
+            const rightGroup = getRowMarketGroupKey(rightRow).toLowerCase();
             const groupCmp = leftGroup.localeCompare(rightGroup);
             if (groupCmp !== 0) {
                 return groupCmp;
@@ -485,7 +596,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const mode = getSortMode();
         const direction = getSortDirection();
-        flattenedSortView = mode === 'market_group' || direction === 'desc';
+        marketGroupViewActive = mode === 'market_group';
+        flattenedSortView = marketGroupViewActive || direction === 'desc';
+        clearMarketGroupHeaderRows();
 
         if (!flattenedSortView) {
             originalStockRowOrder.forEach(row => {
@@ -499,9 +612,35 @@ document.addEventListener('DOMContentLoaded', function() {
             const cmp = compareRowsByMode(leftRow, rightRow, mode);
             return direction === 'desc' ? -cmp : cmp;
         });
-        sortedItems.forEach(row => {
-            stockTableBody.appendChild(row);
-        });
+
+        if (marketGroupViewActive) {
+            const groupedItems = new Map();
+            sortedItems.forEach(row => {
+                const groupKey = getRowMarketGroupKey(row);
+                if (!groupedItems.has(groupKey)) {
+                    groupedItems.set(groupKey, []);
+                }
+                groupedItems.get(groupKey).push(row);
+            });
+
+            groupedItems.forEach((rowsInGroup, groupKey) => {
+                const headerRow = createMarketGroupHeaderRow(
+                    groupKey,
+                    groupKey,
+                    rowsInGroup.length
+                );
+                marketGroupHeaderRowsByKey.set(groupKey, headerRow);
+                stockTableBody.appendChild(headerRow);
+                rowsInGroup.forEach(row => {
+                    stockTableBody.appendChild(row);
+                });
+            });
+        } else {
+            sortedItems.forEach(row => {
+                stockTableBody.appendChild(row);
+            });
+        }
+
         containerRows.forEach(row => {
             stockTableBody.appendChild(row);
         });
@@ -579,6 +718,47 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyContainerVisibility() {
         if (flattenedSortView) {
+            if (marketGroupViewActive) {
+                const visibleCountByGroup = new Map();
+
+                itemRows.forEach(row => {
+                    const groupKey = getRowMarketGroupKey(row);
+                    const isVisibleByFilter = filteredVisibleRows.has(row);
+                    if (isVisibleByFilter) {
+                        visibleCountByGroup.set(
+                            groupKey,
+                            (visibleCountByGroup.get(groupKey) || 0) + 1
+                        );
+                    }
+                    const isCollapsed = collapsedMarketGroups.has(groupKey);
+                    row.classList.toggle('d-none', !isVisibleByFilter || isCollapsed);
+                });
+
+                containerRows.forEach(row => {
+                    row.classList.add('d-none');
+                });
+
+                marketGroupHeaderRowsByKey.forEach((headerRow, groupKey) => {
+                    const visibleCount = visibleCountByGroup.get(groupKey) || 0;
+                    const isCollapsed = collapsedMarketGroups.has(groupKey);
+                    headerRow.classList.toggle('d-none', visibleCount <= 0);
+                    const collapseBtn = headerRow.querySelector('.market-group-collapse-btn');
+                    const collapseIcon = headerRow.querySelector('.market-group-collapse-icon');
+                    if (collapseBtn) {
+                        collapseBtn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+                    }
+                    if (collapseIcon) {
+                        collapseIcon.classList.toggle('fa-chevron-right', isCollapsed);
+                        collapseIcon.classList.toggle('fa-chevron-down', !isCollapsed);
+                    }
+                    const countBadge = headerRow.querySelector('.market-group-count');
+                    if (countBadge) {
+                        countBadge.textContent = String(visibleCount);
+                    }
+                });
+                return;
+            }
+
             stockRows.forEach(row => {
                 if (row.dataset.rowKind === 'container') {
                     row.classList.add('d-none');
@@ -740,7 +920,8 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         const query = (buyStockSearch?.value || '').trim().toLowerCase();
-        if (!query) {
+        const hasMarketGroupFilter = Boolean((buyMarketGroupFilter?.value || '').trim());
+        if (!query && !hasMarketGroupFilter) {
             filteredVisibleRows = flattenedSortView ? new Set(itemRows) : new Set(stockRows);
             applyContainerVisibility();
             return;
@@ -749,9 +930,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (flattenedSortView) {
             const visibleRows = new Set();
             itemRows.forEach(row => {
-                if (rowMatchesSearch(row, query)) {
-                    visibleRows.add(row);
+                if (!rowMatchesSearch(row, query)) {
+                    return;
                 }
+                if (!rowMatchesMarketGroupFilter(row)) {
+                    return;
+                }
+                visibleRows.add(row);
             });
             filteredVisibleRows = visibleRows;
             applyContainerVisibility();
@@ -763,6 +948,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
         stockRows.forEach(row => {
             if (!rowMatchesSearch(row, query)) {
+                return;
+            }
+            if (row.dataset.rowKind === 'container' && hasMarketGroupFilter) {
+                return;
+            }
+            if (row.dataset.rowKind === 'item' && !rowMatchesMarketGroupFilter(row)) {
                 return;
             }
 
@@ -816,8 +1007,26 @@ document.addEventListener('DOMContentLoaded', function() {
     if (buySortDirection) {
         buySortDirection.addEventListener('change', applySortMode);
     }
+    if (buyMarketGroupFilter) {
+        buyMarketGroupFilter.addEventListener('change', applyStockFilter);
+    }
 
     document.addEventListener('click', function(event) {
+        const marketGroupCollapseBtn = event.target.closest('.market-group-collapse-btn');
+        if (marketGroupCollapseBtn) {
+            const groupKey = (marketGroupCollapseBtn.dataset.marketGroupKey || '').trim();
+            if (!groupKey) {
+                return;
+            }
+            if (collapsedMarketGroups.has(groupKey)) {
+                collapsedMarketGroups.delete(groupKey);
+            } else {
+                collapsedMarketGroups.add(groupKey);
+            }
+            applyContainerVisibility();
+            return;
+        }
+
         const containerCollapseBtn = event.target.closest('.container-collapse-btn');
         if (containerCollapseBtn) {
             const containerKey = containerCollapseBtn.dataset.containerKey || '';
@@ -1111,6 +1320,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initial update
     updateInvoice();
+    populateMarketGroupFilterOptions();
     applySortMode();
 
     // Live stock refresh progress
