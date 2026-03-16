@@ -209,6 +209,12 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeCollapseHandlers();
     initializeBuyCraftSwitches();
     restoreBuyCraftStateFromURL();
+    if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
+        window.SimulationAPI.refreshFromDom();
+    }
+    if (typeof updateMaterialsTabFromState === 'function') {
+        updateMaterialsTabFromState();
+    }
     initializeRunOptimizedTab();
     // Financial calculations will be initialized via CraftBP.init()
 });
@@ -273,6 +279,37 @@ function initializeBuyCraftSwitches() {
     treeTab.addEventListener('change', handleTreeSwitchChange, true);
 }
 
+function shouldApplySwitchSelectionToAllInstances() {
+    const checkbox = document.getElementById('applySwitchToAllInstances');
+    return Boolean(checkbox && checkbox.checked);
+}
+
+function applySwitchStateToTypeInstances(typeId, state) {
+    const treeTab = document.getElementById('tab-tree');
+    if (!treeTab) {
+        return;
+    }
+
+    const numericTypeId = Number(typeId) || 0;
+    if (!numericTypeId) {
+        return;
+    }
+
+    const desiredState = state === 'buy' ? 'buy' : 'prod';
+    const matches = Array.from(
+        treeTab.querySelectorAll(`input.mat-switch[data-type-id="${numericTypeId}"]`)
+    );
+
+    matches.forEach((switchEl) => {
+        if (!switchEl || switchEl.dataset.fixedMode === 'useless') {
+            return;
+        }
+        switchEl.dataset.userState = desiredState;
+        switchEl.checked = desiredState !== 'buy';
+        updateSwitchLabel(switchEl);
+    });
+}
+
 function handleTreeSwitchChange(event) {
     const switchEl = event.target;
     if (!switchEl || !switchEl.classList || !switchEl.classList.contains('mat-switch')) {
@@ -285,8 +322,14 @@ function handleTreeSwitchChange(event) {
     }
 
     const newState = switchEl.checked ? 'prod' : 'buy';
-    switchEl.dataset.userState = newState;
-    updateSwitchLabel(switchEl);
+    const typeId = Number(switchEl.getAttribute('data-type-id') || 0);
+
+    if (shouldApplySwitchSelectionToAllInstances() && typeId > 0) {
+        applySwitchStateToTypeInstances(typeId, newState);
+    } else {
+        switchEl.dataset.userState = newState;
+        updateSwitchLabel(switchEl);
+    }
 
     refreshTreeSwitchHierarchy();
 
@@ -3971,6 +4014,139 @@ function updateFinancialTabFromState() {
     }
 }
 
+function getCraftFinalProductLabel() {
+    const payload = window.BLUEPRINT_DATA || {};
+    const payloadLabel = String(
+        payload.bp_name
+        || payload.product_name
+        || payload.productName
+        || payload.type_name
+        || payload.typeName
+        || ''
+    ).trim();
+    if (payloadLabel) {
+        return payloadLabel;
+    }
+
+    const buildTabLabel = document.querySelector('#build-pane .table-primary .small.fw-bold');
+    if (buildTabLabel && buildTabLabel.textContent) {
+        const text = String(buildTabLabel.textContent).trim();
+        if (text) {
+            return text;
+        }
+    }
+
+    return __('Final product');
+}
+
+function getTreeSwitchModeForType(typeId) {
+    const numericTypeId = Number(typeId) || 0;
+    if (!numericTypeId) {
+        return 'prod';
+    }
+
+    if (window.SimulationAPI && typeof window.SimulationAPI.getSwitchState === 'function') {
+        const stateFromApi = window.SimulationAPI.getSwitchState(numericTypeId);
+        if (stateFromApi === 'buy' || stateFromApi === 'prod' || stateFromApi === 'useless') {
+            return stateFromApi;
+        }
+    }
+
+    const switchEl = document.querySelector(`#tab-tree input.mat-switch[data-type-id="${numericTypeId}"]`);
+    if (switchEl) {
+        if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
+            return 'useless';
+        }
+        return switchEl.checked ? 'prod' : 'buy';
+    }
+    return 'prod';
+}
+
+function buildMaterialUsageTargetsByType() {
+    const usageByType = new Map();
+    const tree = window.BLUEPRINT_DATA && Array.isArray(window.BLUEPRINT_DATA.materials_tree)
+        ? window.BLUEPRINT_DATA.materials_tree
+        : [];
+    if (tree.length === 0) {
+        return usageByType;
+    }
+
+    const finalProductLabel = getCraftFinalProductLabel();
+
+    const addUsage = (typeId, targetName) => {
+        const numericTypeId = Number(typeId) || 0;
+        if (!numericTypeId) {
+            return;
+        }
+        const normalizedTarget = String(targetName || '').trim() || finalProductLabel;
+        if (!usageByType.has(numericTypeId)) {
+            usageByType.set(numericTypeId, new Set());
+        }
+        usageByType.get(numericTypeId).add(normalizedTarget);
+    };
+
+    const walk = (nodes, currentTargetName) => {
+        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+            const typeId = Number(node?.type_id || node?.typeId) || 0;
+            if (!typeId) {
+                return;
+            }
+
+            const qty = Math.max(0, Math.ceil(Number(node?.quantity ?? node?.qty ?? 0))) || 0;
+            if (!qty) {
+                return;
+            }
+
+            const typeName = String(node?.type_name || node?.typeName || '').trim();
+            const children = Array.isArray(node?.sub_materials)
+                ? node.sub_materials
+                : (Array.isArray(node?.subMaterials) ? node.subMaterials : []);
+            const craftable = children.length > 0;
+            const currentTarget = currentTargetName || finalProductLabel;
+
+            if (!craftable) {
+                addUsage(typeId, currentTarget);
+                return;
+            }
+
+            const mode = getTreeSwitchModeForType(typeId);
+            if (mode === 'useless') {
+                return;
+            }
+            if (mode === 'buy') {
+                addUsage(typeId, currentTarget);
+                return;
+            }
+
+            const nextTarget = typeName || currentTarget;
+            walk(children, nextTarget);
+        });
+    };
+
+    walk(tree, finalProductLabel);
+    return usageByType;
+}
+
+function formatUsageSummaryText(targetNamesSet) {
+    const targetNames = Array.from(targetNamesSet || [])
+        .map((name) => String(name || '').trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }));
+
+    if (targetNames.length === 0) {
+        return __('Used in current production chain');
+    }
+
+    const visibleTargets = targetNames.slice(0, 3);
+    const baseText = `${__('Used to make')}: ${visibleTargets.join(', ')}`;
+    if (targetNames.length <= visibleTargets.length) {
+        return baseText;
+    }
+
+    const remainder = targetNames.length - visibleTargets.length;
+    return `${baseText} (+${remainder} ${__('more')})`;
+}
+
 function updateMaterialsTabFromState() {
     const container = document.getElementById('materialsGroupsContainer');
     if (!container || !window.SimulationAPI || typeof window.SimulationAPI.getFinancialItems !== 'function') {
@@ -3981,6 +4157,7 @@ function updateMaterialsTabFromState() {
     const productTypeId = getProductTypeIdValue();
     const fallbackGroupName = __('Other');
     const aggregated = new Map();
+    const usageByType = buildMaterialUsageTargetsByType();
     const items = window.SimulationAPI.getFinancialItems() || [];
 
     items.forEach(item => {
@@ -4024,6 +4201,16 @@ function updateMaterialsTabFromState() {
 
     sortedGroups.forEach(([groupName, groupItems]) => {
         groupItems.sort((a, b) => a.typeName.localeCompare(b.typeName, undefined, { sensitivity: 'base' }));
+        const usageTargets = new Set();
+        groupItems.forEach((item) => {
+            const targets = usageByType.get(Number(item.typeId) || 0);
+            if (!targets) {
+                return;
+            }
+            targets.forEach((name) => usageTargets.add(name));
+        });
+        const usageSummary = formatUsageSummaryText(usageTargets);
+
         const rowsHtml = groupItems.map(item => `
             <tr data-type-id="${item.typeId}">
                 <td class="fw-semibold">
@@ -4042,9 +4229,14 @@ function updateMaterialsTabFromState() {
         card.className = 'card shadow-sm mb-4';
         card.innerHTML = `
             <div class="card-header d-flex align-items-center justify-content-between bg-body-secondary">
-                <span class="fw-semibold">
-                    <i class="fas fa-layer-group text-primary me-2"></i>${escapeHtml(groupName)}
-                </span>
+                <div class="me-2">
+                    <div class="fw-semibold">
+                        <i class="fas fa-layer-group text-primary me-2"></i>${escapeHtml(groupName)}
+                    </div>
+                    <div class="small text-muted mt-1">
+                        <i class="fas fa-gears me-1"></i>${escapeHtml(usageSummary)}
+                    </div>
+                </div>
                 <span class="badge bg-primary-subtle text-primary fw-semibold">${groupItems.length}</span>
             </div>
             <div class="card-body p-0">

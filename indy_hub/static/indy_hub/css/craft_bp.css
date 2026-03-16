@@ -1105,6 +1105,17 @@ div[id="bpTabs"] {
     gap: 0.25rem;
 }
 
+.craft-tree-apply-all-toggle {
+    max-width: 100%;
+    justify-content: flex-end;
+}
+
+.craft-tree-apply-all-toggle .form-check-label {
+    font-size: 0.8rem;
+    line-height: 1.2;
+    text-align: right;
+}
+
 /* KPI Row */
 .craft-kpi-row {
     display: grid;

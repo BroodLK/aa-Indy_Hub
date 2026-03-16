@@ -146,22 +146,30 @@
                                 <h3 class="craft-section-title">
                                     <i class="fas fa-sitemap text-success"></i> {% trans "Production Tree" %}
                                 </h3>
-                                <div class="craft-section-controls">
-                                    <button class="btn btn-outline-secondary btn-sm" type="button" id="expand-tree" title="{% trans 'Expand all' %}">
-                                        <i class="fas fa-plus-square"></i>
-                                    </button>
-                                    <button class="btn btn-outline-secondary btn-sm" type="button" id="collapse-tree" title="{% trans 'Collapse all' %}">
-                                        <i class="fas fa-minus-square"></i>
-                                    </button>
-                                    <button class="btn btn-outline-success btn-sm" type="button" id="set-tree-prod" title="{% trans 'All prod' %}">
-                                        <i class="fas fa-industry"></i>
-                                    </button>
-                                    <button class="btn btn-outline-danger btn-sm" type="button" id="set-tree-buy" title="{% trans 'All buy' %}">
-                                        <i class="fas fa-shopping-cart"></i>
-                                    </button>
-                                    <button class="btn btn-outline-primary btn-sm" type="button" id="optimize-profit" title="{% trans 'Optimize profitability (buy vs prod)' %}">
-                                        <i class="fas fa-magic me-1"></i>{% trans "Optimize" %}
-                                    </button>
+                                <div class="d-flex flex-column align-items-end gap-2">
+                                    <div class="craft-section-controls">
+                                        <button class="btn btn-outline-secondary btn-sm" type="button" id="expand-tree" title="{% trans 'Expand all' %}">
+                                            <i class="fas fa-plus-square"></i>
+                                        </button>
+                                        <button class="btn btn-outline-secondary btn-sm" type="button" id="collapse-tree" title="{% trans 'Collapse all' %}">
+                                            <i class="fas fa-minus-square"></i>
+                                        </button>
+                                        <button class="btn btn-outline-success btn-sm" type="button" id="set-tree-prod" title="{% trans 'All prod' %}">
+                                            <i class="fas fa-industry"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" type="button" id="set-tree-buy" title="{% trans 'All buy' %}">
+                                            <i class="fas fa-shopping-cart"></i>
+                                        </button>
+                                        <button class="btn btn-outline-primary btn-sm" type="button" id="optimize-profit" title="{% trans 'Optimize profitability (buy vs prod)' %}">
+                                            <i class="fas fa-magic me-1"></i>{% trans "Optimize" %}
+                                        </button>
+                                    </div>
+                                    <div class="form-check form-switch m-0 craft-tree-apply-all-toggle">
+                                        <input class="form-check-input" type="checkbox" id="applySwitchToAllInstances">
+                                        <label class="form-check-label small" for="applySwitchToAllInstances">
+                                            {% trans "Apply selection to all instances of that item" %}
+                                        </label>
+                                    </div>
                                 </div>
                             </div>
 
