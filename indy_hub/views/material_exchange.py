@@ -404,9 +404,9 @@ def _get_industry_market_group_ids() -> set[int]:
 
         ids = set(
             SdeIndustryActivityMaterial.objects.exclude(
-                material_eve_type__market_group_id_raw__isnull=True
+                material_eve_type__market_group_id__isnull=True
             )
-            .values_list("material_eve_type__market_group_id_raw", flat=True)
+            .values_list("material_eve_type__market_group_id", flat=True)
             .distinct()
         )
     except Exception as exc:
@@ -519,7 +519,7 @@ def _get_allowed_type_ids_for_config(
 
         allowed_type_ids = set(
             ItemType.objects.filter(
-                market_group_id_raw__in=expanded_group_ids
+                market_group_id__in=expanded_group_ids
             ).values_list("id", flat=True)
         )
         cache.set(cache_key, list(allowed_type_ids), 3600)
@@ -1509,7 +1509,7 @@ def _get_type_market_group_path_map(type_ids: set[int] | list[int]) -> dict[int,
     parent_map = _get_market_group_parent_map()
     path_map: dict[int, list[int]] = {}
     rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list(
-        "id", "market_group_id_raw"
+        "id", "market_group_id"
     )
     for raw_type_id, raw_market_group_id in rows:
         try:
