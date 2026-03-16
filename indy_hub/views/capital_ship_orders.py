@@ -136,7 +136,7 @@ def _load_capital_ship_options() -> list[dict[str, object]]:
         if not expanded_ids:
             continue
         type_rows = ItemType.objects.filter(
-            market_group_id_raw__in=list(expanded_ids),
+            market_group_id__in=list(expanded_ids),
             group__category_id=6,  # ships
             group__name__in=["Dreadnought", "Carrier", "Force Auxiliary"],
         ).values_list("id", "name")
