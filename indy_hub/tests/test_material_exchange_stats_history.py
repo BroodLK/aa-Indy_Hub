@@ -347,6 +347,63 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(follow.context["chosen_corporation_id"], 789456)
         self.assertEqual(follow.context["chosen_wallet_division"], 4)
 
+    def test_stats_history_scopes_metrics_to_saved_corp_and_wallet_division(self) -> None:
+        other_config = MaterialExchangeConfig.objects.create(
+            corporation_id=789456,
+            structure_id=60008494,
+            structure_name="Another Hub",
+            hangar_division=4,
+            is_active=True,
+        )
+
+        base_buy_order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.member,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=base_buy_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            unit_price=Decimal("100.00"),
+            total_price=Decimal("100.00"),
+            stock_available_at_creation=999,
+        )
+
+        selected_buy_order = MaterialExchangeBuyOrder.objects.create(
+            config=other_config,
+            buyer=self.member,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=selected_buy_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            unit_price=Decimal("500.00"),
+            total_price=Decimal("500.00"),
+            stock_available_at_creation=999,
+        )
+
+        self.client.force_login(self.manager)
+        save_response = self.client.post(
+            reverse("indy_hub:material_exchange_stats_history"),
+            {
+                "action": "save_stats_preferences",
+                "chosen_corporation_id": "789456",
+                "chosen_wallet_division": "4",
+            },
+        )
+        self.assertEqual(save_response.status_code, 302)
+
+        response = self.client.get(reverse("indy_hub:material_exchange_stats_history"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["chosen_corporation_id"], 789456)
+        self.assertEqual(response.context["chosen_wallet_division"], 4)
+        self.assertEqual(response.context["total_transactions"], 1)
+        self.assertEqual(response.context["total_buy_volume"], Decimal("500"))
+
     def test_stats_rankings_are_account_scoped_and_show_main_character(self) -> None:
         alt_character, _ = EveCharacter.objects.get_or_create(
             character_id=8010999,

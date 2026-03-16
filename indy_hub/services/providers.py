@@ -35,6 +35,9 @@ DEFAULT_ESI_OPERATIONS = [
     "GetCharactersCharacterIdContracts",
     "GetCharactersCharacterIdContractsContractIdItems",
     "GetCorporationsCorporationIdAssets",
+    "GetCorporationsCorporationIdWalletsDivisionJournal",
+    "GetCorporationsCorporationIdWalletsDivisionTransactions",
+    "GetCorporationsCorporationIdOrders",
     "GetCharactersCharacterIdAssets",
     "GetCorporationsCorporationIdStructures",
     "GetCorporationsCorporationIdDivisions",
@@ -47,6 +50,8 @@ DEFAULT_ESI_TAGS = [
     "Contracts",
     "Corporation",
     "Industry",
+    "Wallet",
+    "Market",
     "Skills",
     "Universe",
 ]

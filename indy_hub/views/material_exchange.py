@@ -13,7 +13,7 @@ from django.contrib.auth.models import Permission
 from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -44,17 +44,20 @@ from ..models import (
     MaterialExchangeTransaction,
 )
 from ..services.asset_cache import (
+    _get_character_for_scope,
     add_cached_corp_assets_for_sell_completion,
     asset_chain_has_context,
     build_asset_index_by_item_id,
     consume_cached_corp_assets_for_buy_completion,
     get_corp_assets_cached,
     get_corp_divisions_cached,
+    get_corp_wallet_divisions_cached,
     get_office_folder_item_id_from_assets,
     get_user_assets_cached,
     make_managed_hangar_location_id,
     resolve_structure_names,
 )
+from ..services.esi_client import ESIClientError, ESITokenError, shared_client
 from ..tasks.material_exchange import (
     ESI_DOWN_COOLDOWN_SECONDS,
     ME_STOCK_SYNC_CACHE_VERSION,
@@ -5824,6 +5827,29 @@ def material_exchange_stats_history(request):
         except Exception:
             return Decimal("0")
 
+    def _to_datetime(raw_value):
+        if isinstance(raw_value, datetime):
+            parsed = raw_value
+        elif isinstance(raw_value, str):
+            candidate = raw_value.strip()
+            if not candidate:
+                return None
+            if candidate.endswith("Z"):
+                candidate = f"{candidate[:-1]}+00:00"
+            try:
+                parsed = datetime.fromisoformat(candidate)
+            except ValueError:
+                return None
+        else:
+            return None
+
+        if timezone.is_naive(parsed):
+            try:
+                parsed = timezone.make_aware(parsed)
+            except Exception:
+                return None
+        return parsed
+
     available_corp_ids = sorted(
         {
             int(corp_id)
@@ -5847,10 +5873,23 @@ def material_exchange_stats_history(request):
     if chosen_corporation_id <= 0 and available_corp_ids:
         chosen_corporation_id = int(available_corp_ids[0])
 
-    chosen_wallet_division = int(
-        getattr(settings_obj, "stats_selected_wallet_division", 0) or 1
+    corp_config_divisions = sorted(
+        {
+            int(div)
+            for div in MaterialExchangeConfig.objects.filter(
+                corporation_id=int(chosen_corporation_id or 0)
+            ).values_list("hangar_division", flat=True)
+            if int(div or 0) in range(1, 8)
+        }
     )
-    if chosen_wallet_division not in range(1, 8):
+    saved_wallet_division = int(
+        getattr(settings_obj, "stats_selected_wallet_division", 0) or 0
+    )
+    if saved_wallet_division in range(1, 8):
+        chosen_wallet_division = int(saved_wallet_division)
+    elif corp_config_divisions:
+        chosen_wallet_division = int(corp_config_divisions[0])
+    else:
         chosen_wallet_division = 1
 
     if request.method == "POST" and request.POST.get("action") == "save_stats_preferences":
@@ -5897,17 +5936,17 @@ def material_exchange_stats_history(request):
 
     division_scope_missing = False
     try:
-        cached_divisions, division_scope_missing = get_corp_divisions_cached(
+        wallet_division_names, division_scope_missing = get_corp_wallet_divisions_cached(
             int(chosen_corporation_id),
             allow_refresh=False,
         )
     except Exception:
-        cached_divisions = {}
+        wallet_division_names = {}
 
     wallet_division_options = [
         {
             "id": idx,
-            "name": str(cached_divisions.get(idx) or f"Hangar Division {idx}"),
+            "name": str(wallet_division_names.get(idx) or f"Wallet Division {idx}"),
         }
         for idx in range(1, 8)
     ]
@@ -5939,8 +5978,18 @@ def material_exchange_stats_history(request):
         period_start = month_anchor.replace(year=start_year, month=start_month)
         filter_start = period_start
 
-    buy_orders_qs = config.buy_orders.all()
-    sell_orders_qs = config.sell_orders.all()
+    selected_config_ids = list(
+        MaterialExchangeConfig.objects.filter(
+            corporation_id=int(chosen_corporation_id or 0),
+            hangar_division=int(chosen_wallet_division or 0),
+        ).values_list("id", flat=True)
+    )
+    buy_orders_qs = MaterialExchangeBuyOrder.objects.filter(
+        config_id__in=selected_config_ids
+    )
+    sell_orders_qs = MaterialExchangeSellOrder.objects.filter(
+        config_id__in=selected_config_ids
+    )
     if filter_start:
         buy_orders_qs = buy_orders_qs.filter(created_at__gte=filter_start)
         sell_orders_qs = sell_orders_qs.filter(created_at__gte=filter_start)
@@ -5990,10 +6039,185 @@ def material_exchange_stats_history(request):
         for row in (sell_rows + buy_rows)
         if int(row.get("esi_contract_id") or 0) > 0
     }
+
+    wallet_scope_missing = False
+    market_scope_missing = False
+    wallet_activity_error = ""
+    wallet_journal_rows: list[dict] = []
+    wallet_market_orders_rows: list[dict] = []
+    wallet_market_monthly_map: dict[str, int] = {}
+
+    wallet_market_ref_types = {
+        "market_transaction",
+        "market_escrow",
+        "broker_fee",
+        "brokers_fee",
+        "transaction_tax",
+        "market_provider_tax",
+        "market_fine_paid",
+    }
+    wallet_donation_ref_types = {
+        "player_donation",
+        "corporation_donation",
+    }
+    wallet_withdrawal_ref_types = {
+        "corporation_account_withdrawal",
+    }
+
+    if int(chosen_corporation_id or 0) > 0:
+        try:
+            wallet_character_id = _get_character_for_scope(
+                int(chosen_corporation_id),
+                "esi-wallet.read_corporation_wallets.v1",
+            )
+            wallet_journal_rows = shared_client.fetch_corporation_wallet_journal(
+                int(chosen_corporation_id),
+                division=int(chosen_wallet_division),
+                character_id=int(wallet_character_id),
+            )
+        except ESITokenError:
+            wallet_scope_missing = True
+        except (ESIClientError, Exception) as exc:
+            wallet_activity_error = str(exc)
+            logger.warning(
+                "Failed to fetch wallet journal for corp %s division %s: %s",
+                chosen_corporation_id,
+                chosen_wallet_division,
+                exc,
+            )
+
+        try:
+            market_character_id = _get_character_for_scope(
+                int(chosen_corporation_id),
+                "esi-markets.read_corporation_orders.v1",
+            )
+            wallet_market_orders_rows = shared_client.fetch_corporation_orders(
+                int(chosen_corporation_id),
+                character_id=int(market_character_id),
+            )
+        except ESITokenError:
+            market_scope_missing = True
+        except (ESIClientError, Exception) as exc:
+            wallet_activity_error = wallet_activity_error or str(exc)
+            logger.warning(
+                "Failed to fetch market orders for corp %s: %s",
+                chosen_corporation_id,
+                exc,
+            )
+
+    wallet_activity_count = 0
+    wallet_inflow_total = Decimal("0")
+    wallet_outflow_total = Decimal("0")
+    wallet_market_activity_count = 0
+    wallet_market_activity_total = Decimal("0")
+    wallet_donation_count = 0
+    wallet_donation_total = Decimal("0")
+    wallet_withdrawal_count = 0
+    wallet_withdrawal_total = Decimal("0")
+    me_contract_wallet_entry_count = 0
+    me_contract_wallet_amount_total = Decimal("0")
+    wallet_ref_type_rollup: dict[str, dict[str, Decimal | int]] = {}
+
+    for row in wallet_journal_rows:
+        posted_at = _to_datetime(row.get("date"))
+        if filter_start and (not posted_at or posted_at < filter_start):
+            continue
+        if filter_end and (not posted_at or posted_at > filter_end):
+            continue
+
+        ref_type = str(row.get("ref_type") or "").strip().lower() or "unknown"
+        amount = _to_decimal(row.get("amount"))
+        wallet_activity_count += 1
+        if amount >= 0:
+            wallet_inflow_total += amount
+        else:
+            wallet_outflow_total += abs(amount)
+
+        rollup = wallet_ref_type_rollup.setdefault(
+            ref_type,
+            {"count": 0, "amount": Decimal("0")},
+        )
+        rollup["count"] = int(rollup["count"]) + 1
+        rollup["amount"] = _to_decimal(rollup["amount"]) + amount
+
+        if ref_type in wallet_market_ref_types:
+            wallet_market_activity_count += 1
+            wallet_market_activity_total += amount
+            if posted_at:
+                month_key = posted_at.strftime("%Y-%m")
+                wallet_market_monthly_map[month_key] = (
+                    int(wallet_market_monthly_map.get(month_key, 0)) + 1
+                )
+
+        if ref_type in wallet_donation_ref_types:
+            wallet_donation_count += 1
+            wallet_donation_total += amount
+
+        if ref_type in wallet_withdrawal_ref_types:
+            wallet_withdrawal_count += 1
+            wallet_withdrawal_total += amount
+
+        try:
+            context_id = int(row.get("context_id") or 0)
+        except (TypeError, ValueError):
+            context_id = 0
+        if context_id > 0 and context_id in all_contract_ids:
+            me_contract_wallet_entry_count += 1
+            me_contract_wallet_amount_total += amount
+
+    wallet_ref_type_rows = [
+        {
+            "ref_type": str(ref_type),
+            "count": int(data.get("count") or 0),
+            "amount": _to_decimal(data.get("amount")),
+        }
+        for ref_type, data in wallet_ref_type_rollup.items()
+    ]
+    wallet_ref_type_rows.sort(
+        key=lambda item: (
+            int(item["count"]),
+            abs(_to_decimal(item["amount"])),
+        ),
+        reverse=True,
+    )
+    wallet_ref_type_rows = wallet_ref_type_rows[:10]
+
+    wallet_open_buy_orders = 0
+    wallet_open_sell_orders = 0
+    wallet_open_order_value = Decimal("0")
+    for row in wallet_market_orders_rows:
+        try:
+            order_division = int(row.get("wallet_division") or 0)
+        except (TypeError, ValueError):
+            order_division = 0
+        if order_division != int(chosen_wallet_division):
+            continue
+
+        is_buy_raw = row.get("is_buy_order")
+        is_buy = bool(is_buy_raw) if isinstance(is_buy_raw, bool) else str(
+            is_buy_raw
+        ).strip().lower() in {"1", "true", "yes"}
+        try:
+            remaining_qty = int(row.get("volume_remain") or row.get("volume_total") or 0)
+        except (TypeError, ValueError):
+            remaining_qty = 0
+        remaining_qty = max(remaining_qty, 0)
+        open_value = (_to_decimal(row.get("price")) * Decimal(str(remaining_qty))).quantize(
+            Decimal("0.01")
+        )
+        wallet_open_order_value += open_value
+        if is_buy:
+            wallet_open_buy_orders += 1
+        else:
+            wallet_open_sell_orders += 1
+
+    market_trend_source_label = _("Wallet Market Activity")
+    if not wallet_market_monthly_map:
+        market_trend_source_label = _("Market Orders (Buyback Proxy)")
+
     contract_price_map = {
         int(contract_id): _to_decimal(price)
         for contract_id, price in ESIContract.objects.filter(
-            corporation_id=config.corporation_id,
             contract_id__in=list(all_contract_ids),
         ).values_list("contract_id", "price")
     }
@@ -6035,11 +6259,11 @@ def material_exchange_stats_history(request):
     ) if buy_rows else 0
 
     sell_tx_qs = MaterialExchangeTransaction.objects.filter(
-        config=config,
+        config_id__in=selected_config_ids,
         sell_order_id__in=sell_order_ids,
     )
     buy_tx_qs = MaterialExchangeTransaction.objects.filter(
-        config=config,
+        config_id__in=selected_config_ids,
         buy_order_id__in=buy_order_ids,
     )
 
@@ -6095,7 +6319,9 @@ def material_exchange_stats_history(request):
     jita_sell_value = buy_expected_jita_sell_total
     jita_split_value = buy_expected_jita_split_total
 
-    tx_rows = MaterialExchangeTransaction.objects.filter(config=config).filter(
+    tx_rows = MaterialExchangeTransaction.objects.filter(
+        config_id__in=selected_config_ids
+    ).filter(
         Q(sell_order_id__in=sell_order_ids) | Q(buy_order_id__in=buy_order_ids)
     )
 
@@ -6147,12 +6373,17 @@ def material_exchange_stats_history(request):
     unrealized_inventory_cost_basis = Decimal("0")
     unrealized_earnings_potential = Decimal("0")
     if type_rollup:
+        stock_price_rows = (
+            MaterialExchangeStock.objects.filter(
+                config_id__in=selected_config_ids,
+                type_id__in=list(type_rollup.keys()),
+            )
+            .values("type_id")
+            .annotate(jita_sell_price=Max("jita_sell_price"))
+        )
         stock_prices = {
             int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
-            for row in MaterialExchangeStock.objects.filter(
-                config=config,
-                type_id__in=list(type_rollup.keys()),
-            ).values("type_id", "jita_sell_price")
+            for row in stock_price_rows
         }
         for type_id, rollup in type_rollup.items():
             acquired_qty = rollup["acquired_qty"]
@@ -6199,10 +6430,9 @@ def material_exchange_stats_history(request):
         potential_profit_jita_split += rollup["sold_jita_split"] - cogs_for_sold
         potential_priced_type_count += 1
 
-    contracts_qs = ESIContract.objects.filter(
-        corporation_id=config.corporation_id,
-        contract_type="item_exchange",
-    )
+    contracts_qs = ESIContract.objects.filter(contract_type="item_exchange")
+    if int(chosen_corporation_id or 0) > 0:
+        contracts_qs = contracts_qs.filter(corporation_id=int(chosen_corporation_id))
     if filter_start:
         contracts_qs = contracts_qs.filter(date_issued__gte=filter_start)
     if filter_end:
@@ -6338,26 +6568,14 @@ def material_exchange_stats_history(request):
         .order_by("month")
     )
 
-    buyback_contracts_qs = ESIContract.objects.filter(contract_type="item_exchange")
-    if int(chosen_corporation_id or 0) > 0:
-        buyback_contracts_qs = buyback_contracts_qs.filter(
-            corporation_id=int(chosen_corporation_id)
-        )
-    if filter_start:
-        buyback_contracts_qs = buyback_contracts_qs.filter(date_issued__gte=filter_start)
-    if filter_end:
-        buyback_contracts_qs = buyback_contracts_qs.filter(date_issued__lte=filter_end)
-
-    market_orders_monthly_rows = (
-        buyback_contracts_qs.annotate(month=TruncMonth("date_issued"))
-        .values("month")
-        .annotate(order_count=Count("contract_id"))
-        .order_by("month")
-    )
+    if all_contract_ids:
+        buyback_contracts_qs = contracts_qs.filter(contract_id__in=list(all_contract_ids))
+    else:
+        buyback_contracts_qs = contracts_qs.none()
 
     buy_monthly_map: dict[str, dict[str, Decimal | int]] = {}
     sell_monthly_map: dict[str, dict[str, Decimal | int]] = {}
-    market_monthly_map: dict[str, int] = {}
+    market_monthly_map: dict[str, int] = dict(wallet_market_monthly_map)
     month_keys: set[str] = set()
 
     for row in buy_orders_monthly_rows:
@@ -6382,13 +6600,22 @@ def material_exchange_stats_history(request):
         }
         month_keys.add(key)
 
-    for row in market_orders_monthly_rows:
-        month = row.get("month")
-        if not month:
-            continue
-        key = month.strftime("%Y-%m")
-        market_monthly_map[key] = int(row.get("order_count") or 0)
-        month_keys.add(key)
+    if not market_monthly_map:
+        market_orders_monthly_rows = (
+            buyback_contracts_qs.annotate(month=TruncMonth("date_issued"))
+            .values("month")
+            .annotate(order_count=Count("contract_id"))
+            .order_by("month")
+        )
+        for row in market_orders_monthly_rows:
+            month = row.get("month")
+            if not month:
+                continue
+            key = month.strftime("%Y-%m")
+            market_monthly_map[key] = int(row.get("order_count") or 0)
+            month_keys.add(key)
+    else:
+        month_keys.update(market_monthly_map.keys())
 
     sorted_month_keys = sorted(month_keys)
     trend_rows = []
@@ -6443,12 +6670,17 @@ def material_exchange_stats_history(request):
     donation_estimated_jita_sell = Decimal("0")
     if donation_item_rows:
         donation_type_ids = [int(row["type_id"]) for row in donation_item_rows]
+        donation_stock_rows = (
+            MaterialExchangeStock.objects.filter(
+                config_id__in=selected_config_ids,
+                type_id__in=donation_type_ids,
+            )
+            .values("type_id")
+            .annotate(jita_sell_price=Max("jita_sell_price"))
+        )
         donation_price_map = {
             int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
-            for row in MaterialExchangeStock.objects.filter(
-                config=config,
-                type_id__in=donation_type_ids,
-            ).values("type_id", "jita_sell_price")
+            for row in donation_stock_rows
         }
         for row in donation_item_rows:
             type_id = int(row.get("type_id") or 0)
@@ -6460,7 +6692,25 @@ def material_exchange_stats_history(request):
     donation_stats = {
         "contracts": int(len(donation_contract_ids)),
         "estimated_jita_sell": donation_estimated_jita_sell,
-        "market_orders_total": int(buyback_contracts_qs.count()),
+        "market_orders_total": int(
+            wallet_open_buy_orders + wallet_open_sell_orders
+        )
+        if wallet_market_orders_rows
+        else int(buyback_contracts_qs.count()),
+        "wallet_activity_count": int(wallet_activity_count),
+        "wallet_inflow_total": wallet_inflow_total,
+        "wallet_outflow_total": wallet_outflow_total,
+        "wallet_market_activity_count": int(wallet_market_activity_count),
+        "wallet_market_activity_total": wallet_market_activity_total,
+        "wallet_donation_count": int(wallet_donation_count),
+        "wallet_donation_total": wallet_donation_total,
+        "wallet_withdrawal_count": int(wallet_withdrawal_count),
+        "wallet_withdrawal_total": wallet_withdrawal_total,
+        "me_contract_wallet_entry_count": int(me_contract_wallet_entry_count),
+        "me_contract_wallet_amount_total": me_contract_wallet_amount_total,
+        "open_buy_orders": int(wallet_open_buy_orders),
+        "open_sell_orders": int(wallet_open_sell_orders),
+        "open_order_value": wallet_open_order_value,
     }
 
     user_ids = {
@@ -6558,6 +6808,9 @@ def material_exchange_stats_history(request):
         "corp_options": corp_options,
         "wallet_division_options": wallet_division_options,
         "division_scope_missing": bool(division_scope_missing),
+        "wallet_scope_missing": bool(wallet_scope_missing),
+        "market_scope_missing": bool(market_scope_missing),
+        "wallet_activity_error": wallet_activity_error,
         "chart_labels": chart_labels,
         "buy_volumes": buy_volumes,
         "sell_volumes": sell_volumes,
@@ -6611,11 +6864,13 @@ def material_exchange_stats_history(request):
         "buy_order_status_display_counts": buy_order_status_display_counts,
         "sell_order_status_display_counts": sell_order_status_display_counts,
         "trend_rows": trend_rows,
+        "market_trend_source_label": market_trend_source_label,
+        "wallet_ref_type_rows": wallet_ref_type_rows,
         "most_sold_users": most_sold_users,
         "most_bought_users": most_bought_users,
         "donation_stats": donation_stats,
         "data_limitations": _(
-            "Market-order columns currently use the Buyback contract feed proxy. Wallet-division filtering is saved and ready, but wallet journal/order ingestion is not wired yet."
+            "Wallet-division statistics are sourced from corporation wallet journal and market orders when scopes are available. Material Exchange contract wallet totals include only contracts linked to Exchange orders."
         ),
         "nav_context": _build_nav_context(request.user),
     }

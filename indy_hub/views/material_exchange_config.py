@@ -433,6 +433,8 @@ def material_exchange_request_all_scopes(request):
     - esi-assets.read_corporation_assets.v1 (for structures)
     - esi-corporations.read_divisions.v1 (for hangar divisions)
     - esi-contracts.read_corporation_contracts.v1 (for contract validation)
+    - esi-wallet.read_corporation_wallets.v1 (for wallet-division activity stats)
+    - esi-markets.read_corporation_orders.v1 (for corporation market orders)
     - esi-universe.read_structures.v1 (for structure names)
     """
     scopes = " ".join(
@@ -440,6 +442,8 @@ def material_exchange_request_all_scopes(request):
             "esi-assets.read_corporation_assets.v1",
             "esi-corporations.read_divisions.v1",
             "esi-contracts.read_corporation_contracts.v1",
+            "esi-wallet.read_corporation_wallets.v1",
+            "esi-markets.read_corporation_orders.v1",
             "esi-universe.read_structures.v1",
         ]
     )

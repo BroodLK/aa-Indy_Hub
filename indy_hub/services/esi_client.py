@@ -623,6 +623,62 @@ class ESIClient:
             params={"corporation_id": corporation_id},
         )
 
+    def fetch_corporation_wallet_journal(
+        self,
+        corporation_id: int,
+        *,
+        division: int,
+        character_id: int,
+        force_refresh: bool = False,
+    ) -> list[dict]:
+        """Fetch corporation wallet journal entries for one division."""
+        return self._fetch_paginated(
+            character_id=character_id,
+            scope="esi-wallet.read_corporation_wallets.v1",
+            endpoint=f"/corporations/{corporation_id}/wallets/{division}/journal/",
+            resource="Wallet",
+            operation="get_corporations_corporation_id_wallets_division_journal",
+            params={"corporation_id": corporation_id, "division": int(division)},
+            force_refresh=force_refresh,
+        )
+
+    def fetch_corporation_wallet_transactions(
+        self,
+        corporation_id: int,
+        *,
+        division: int,
+        character_id: int,
+        force_refresh: bool = False,
+    ) -> list[dict]:
+        """Fetch corporation wallet market transactions for one division."""
+        return self._fetch_paginated(
+            character_id=character_id,
+            scope="esi-wallet.read_corporation_wallets.v1",
+            endpoint=f"/corporations/{corporation_id}/wallets/{division}/transactions/",
+            resource="Wallet",
+            operation="get_corporations_corporation_id_wallets_division_transactions",
+            params={"corporation_id": corporation_id, "division": int(division)},
+            force_refresh=force_refresh,
+        )
+
+    def fetch_corporation_orders(
+        self,
+        corporation_id: int,
+        *,
+        character_id: int,
+        force_refresh: bool = False,
+    ) -> list[dict]:
+        """Fetch active corporation market orders."""
+        return self._fetch_paginated(
+            character_id=character_id,
+            scope="esi-markets.read_corporation_orders.v1",
+            endpoint=f"/corporations/{corporation_id}/orders/",
+            resource="Market",
+            operation="get_corporations_corporation_id_orders",
+            params={"corporation_id": corporation_id},
+            force_refresh=force_refresh,
+        )
+
     def fetch_character_assets(
         self,
         *,

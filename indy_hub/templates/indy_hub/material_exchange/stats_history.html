@@ -131,6 +131,15 @@
                 {% if division_scope_missing %}
                 <div class="col-12 small text-warning">{% trans "Division names are stale/missing from ESI cache for this corp." %}</div>
                 {% endif %}
+                {% if wallet_scope_missing %}
+                <div class="col-12 small text-warning">{% trans "Wallet journal scope is missing for this corporation. Wallet activity stats are unavailable until a member grants esi-wallet.read_corporation_wallets.v1." %}</div>
+                {% endif %}
+                {% if market_scope_missing %}
+                <div class="col-12 small text-warning">{% trans "Corporation market orders scope is missing for this corporation. Open market-order stats are unavailable until a member grants esi-markets.read_corporation_orders.v1." %}</div>
+                {% endif %}
+                {% if wallet_activity_error %}
+                <div class="col-12 small text-warning">{% trans "Wallet activity sync encountered an error:" %} {{ wallet_activity_error }}</div>
+                {% endif %}
             </div>
         </div>
     </form>
@@ -205,9 +214,20 @@
                         <tbody>
                             <tr><th>{% trans "Chosen Corp" %}</th><td class="text-end">{{ chosen_corporation_id|intcomma }}</td></tr>
                             <tr><th>{% trans "Chosen Wallet Division" %}</th><td class="text-end">{{ chosen_wallet_division }}</td></tr>
-                            <tr><th>{% trans "Buyback Market Orders (Proxy Count)" %}</th><td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td></tr>
+                            <tr><th>{% trans "Wallet Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_activity_count|intcomma }}</td></tr>
+                            <tr><th>{% trans "Wallet Inflow" %}</th><td class="text-end">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Outflow" %}</th><td class="text-end">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Market Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_count|intcomma }}</td></tr>
+                            <tr><th>{% trans "Wallet Market Activity Total" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Donations" %}</th><td class="text-end">{{ donation_stats.wallet_donation_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_donation_count|intcomma }})</td></tr>
+                            <tr><th>{% trans "Wallet Withdrawals" %}</th><td class="text-end">{{ donation_stats.wallet_withdrawal_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_withdrawal_count|intcomma }})</td></tr>
+                            <tr><th>{% trans "Material Exchange Contract Wallet Entries" %}</th><td class="text-end">{{ donation_stats.me_contract_wallet_entry_count|intcomma }}</td></tr>
+                            <tr><th>{% trans "Material Exchange Contract Wallet Total" %}</th><td class="text-end">{{ donation_stats.me_contract_wallet_amount_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Open Market Orders (Wallet Division)" %}</th><td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td></tr>
+                            <tr><th>{% trans "Open Buy / Sell Orders" %}</th><td class="text-end">{{ donation_stats.open_buy_orders|intcomma }} / {{ donation_stats.open_sell_orders|intcomma }}</td></tr>
+                            <tr><th>{% trans "Open Market Order Value" %}</th><td class="text-end">{{ donation_stats.open_order_value|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Donation Contracts (Price 0 / Reward 0)" %}</th><td class="text-end">{{ donation_stats.contracts|intcomma }}</td></tr>
-                            <tr><th>{% trans "Donation Estimated At Jita Sell" %}</th><td class="text-end">{{ donation_stats.estimated_jita_sell|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Donation Contract Items At Jita Sell" %}</th><td class="text-end">{{ donation_stats.estimated_jita_sell|floatformat:0|intcomma }} ISK</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -225,7 +245,7 @@
                             <th>{% trans "Month" %}</th>
                             <th class="text-end">{% trans "Buy Orders" %}</th>
                             <th class="text-end">{% trans "Sell Orders" %}</th>
-                            <th class="text-end">{% trans "Market Orders (Buyback Proxy)" %}</th>
+                            <th class="text-end">{{ market_trend_source_label }}</th>
                             <th class="text-end">{% trans "Buy Value" %}</th>
                             <th class="text-end">{% trans "Sell Value" %}</th>
                         </tr>
@@ -242,6 +262,34 @@
                         </tr>
                         {% empty %}
                         <tr><td colspan="6" class="text-muted">{% trans "No order history in this range." %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm me-chart-card mb-3">
+        <div class="card-body">
+            <h5 class="mb-3">{% trans "Wallet Activity Breakdown (Ref Type)" %}</h5>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle me-transactions-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Ref Type" %}</th>
+                            <th class="text-end">{% trans "Entries" %}</th>
+                            <th class="text-end">{% trans "Amount" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in wallet_ref_type_rows %}
+                        <tr>
+                            <td>{{ row.ref_type }}</td>
+                            <td class="text-end">{{ row.count|intcomma }}</td>
+                            <td class="text-end">{{ row.amount|floatformat:0|intcomma }} ISK</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-muted">{% trans "No wallet activity in this range." %}</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

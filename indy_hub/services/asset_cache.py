@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # Standard Library
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 # Django
@@ -1503,26 +1503,67 @@ def resolve_structure_names(
 
 def _refresh_corp_divisions(corporation_id: int) -> tuple[dict[int, str], bool]:
     """Fetch corp hangar divisions from ESI and refresh the cache."""
+    divisions_data, scope_missing = _fetch_corporation_divisions_payload(corporation_id)
+    hangar_divisions = divisions_data.get("hangar", []) if divisions_data else []
 
+    now = timezone.now()
+    divisions: dict[int, str] = {}
+    for info in hangar_divisions or []:
+        if isinstance(info, dict):
+            division_num = info.get("division")
+            division_name = info.get("name")
+        else:
+            division_num = getattr(info, "division", None)
+            division_name = getattr(info, "name", None)
+        if division_num:
+            divisions[int(division_num)] = (
+                division_name or f"Hangar Division {division_num}"
+            )
+
+    with transaction.atomic():
+        CachedCorporationDivision.objects.filter(
+            corporation_id=corporation_id
+        ).delete()
+        if divisions:
+            CachedCorporationDivision.objects.bulk_create(
+                [
+                    CachedCorporationDivision(
+                        corporation_id=corporation_id,
+                        division=div_num,
+                        name=div_name,
+                        synced_at=now,
+                    )
+                    for div_num, div_name in divisions.items()
+                ],
+                batch_size=20,
+            )
+    return divisions, scope_missing
+
+
+def _corp_wallet_divisions_cache_key(corporation_id: int) -> str:
+    return f"indy_hub:corp_wallet_divisions:{int(corporation_id)}:v1"
+
+
+def _coerce_divisions_payload(payload) -> dict:
+    if isinstance(payload, list):
+        payload = payload[0] if payload else {}
+    if isinstance(payload, dict):
+        return payload
+    for attr in ("model_dump", "dict", "to_dict"):
+        converter = getattr(payload, attr, None)
+        if callable(converter):
+            try:
+                result = converter()
+            except Exception:
+                result = None
+            if isinstance(result, dict):
+                return result
+    return {}
+
+
+def _fetch_corporation_divisions_payload(corporation_id: int) -> tuple[dict, bool]:
     scope_missing = False
     try:
-
-        def _coerce_payload(payload):
-            if isinstance(payload, list):
-                payload = payload[0] if payload else {}
-            if isinstance(payload, dict):
-                return payload
-            for attr in ("model_dump", "dict", "to_dict"):
-                converter = getattr(payload, attr, None)
-                if callable(converter):
-                    try:
-                        result = converter()
-                    except Exception:
-                        result = None
-                    if isinstance(result, dict):
-                        return result
-            return {}
-
         character_id = _get_character_for_scope(
             corporation_id, "esi-corporations.read_divisions.v1"
         )
@@ -1544,51 +1585,43 @@ def _refresh_corp_divisions(corporation_id: int) -> tuple[dict[int, str], bool]:
             corporation_id=corporation_id,
             token=token_obj,
         )
-        divisions_data = result_obj.results()
-        divisions_data = _coerce_payload(divisions_data)
-        hangar_divisions = divisions_data.get("hangar", []) if divisions_data else []
-
-        now = timezone.now()
-        divisions: dict[int, str] = {}
-        for info in hangar_divisions or []:
-            if isinstance(info, dict):
-                division_num = info.get("division")
-                division_name = info.get("name")
-            else:
-                division_num = getattr(info, "division", None)
-                division_name = getattr(info, "name", None)
-            if division_num:
-                divisions[int(division_num)] = (
-                    division_name or f"Hangar Division {division_num}"
-                )
-
-        with transaction.atomic():
-            CachedCorporationDivision.objects.filter(
-                corporation_id=corporation_id
-            ).delete()
-            if divisions:
-                CachedCorporationDivision.objects.bulk_create(
-                    [
-                        CachedCorporationDivision(
-                            corporation_id=corporation_id,
-                            division=div_num,
-                            name=div_name,
-                            synced_at=now,
-                        )
-                        for div_num, div_name in divisions.items()
-                    ],
-                    batch_size=20,
-                )
-        return divisions, scope_missing
-
+        divisions_data = _coerce_divisions_payload(result_obj.results())
+        return divisions_data, scope_missing
     except ESITokenError:
         scope_missing = True
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(
             "Error refreshing corp divisions for %s: %s", corporation_id, exc
         )
-
     return {}, scope_missing
+
+
+def _refresh_corp_wallet_divisions(corporation_id: int) -> tuple[dict[int, str], bool]:
+    divisions_data, scope_missing = _fetch_corporation_divisions_payload(corporation_id)
+    wallet_divisions = divisions_data.get("wallet", []) if divisions_data else []
+
+    divisions: dict[int, str] = {}
+    for info in wallet_divisions or []:
+        if isinstance(info, dict):
+            division_num = info.get("division")
+            division_name = info.get("name")
+        else:
+            division_num = getattr(info, "division", None)
+            division_name = getattr(info, "name", None)
+        if division_num:
+            divisions[int(division_num)] = (
+                str(division_name or "").strip() or f"Wallet Division {division_num}"
+            )
+
+    cache.set(
+        _corp_wallet_divisions_cache_key(corporation_id),
+        {
+            "synced_at": timezone.now().isoformat(),
+            "divisions": divisions,
+        },
+        timeout=DIVISION_CACHE_MAX_AGE_MINUTES * 60 * 2,
+    )
+    return divisions, scope_missing
 
 
 def get_corp_divisions_cached(
@@ -1615,6 +1648,59 @@ def get_corp_divisions_cached(
     return {obj.division: obj.name for obj in qs}, scope_missing
 
 
+def get_corp_wallet_divisions_cached(
+    corporation_id: int,
+    *,
+    allow_refresh: bool = True,
+    max_age_minutes: int | None = None,
+) -> tuple[dict[int, str], bool]:
+    """Return cached wallet division names; refresh from ESI when stale if allowed."""
+
+    max_age = max_age_minutes or DIVISION_CACHE_MAX_AGE_MINUTES
+    cache_key = _corp_wallet_divisions_cache_key(corporation_id)
+    cached_payload = cache.get(cache_key)
+    cached_divisions: dict[int, str] = {}
+    cached_synced_at = None
+    scope_missing = False
+
+    if isinstance(cached_payload, dict):
+        raw_divisions = cached_payload.get("divisions")
+        if isinstance(raw_divisions, dict):
+            for raw_key, raw_name in raw_divisions.items():
+                try:
+                    division = int(raw_key)
+                except (TypeError, ValueError):
+                    continue
+                if division not in range(1, 8):
+                    continue
+                cached_divisions[division] = str(raw_name or "").strip() or (
+                    f"Wallet Division {division}"
+                )
+
+        raw_synced_at = cached_payload.get("synced_at")
+        if isinstance(raw_synced_at, str):
+            try:
+                cached_synced_at = datetime.fromisoformat(raw_synced_at)
+                if timezone.is_naive(cached_synced_at):
+                    cached_synced_at = timezone.make_aware(cached_synced_at)
+            except Exception:
+                cached_synced_at = None
+
+    if (
+        cached_synced_at
+        and timezone.now() - cached_synced_at <= timedelta(minutes=max_age)
+        and cached_divisions
+    ):
+        return cached_divisions, scope_missing
+
+    if allow_refresh:
+        divisions, scope_missing = _refresh_corp_wallet_divisions(corporation_id)
+        if divisions:
+            return divisions, scope_missing
+
+    return cached_divisions, scope_missing
+
+
 def force_refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
     """Force refresh of corp assets cache regardless of staleness."""
 
@@ -1625,6 +1711,12 @@ def force_refresh_corp_divisions(corporation_id: int) -> tuple[dict[int, str], b
     """Force refresh of corp division cache regardless of staleness."""
 
     return _refresh_corp_divisions(corporation_id)
+
+
+def force_refresh_corp_wallet_divisions(corporation_id: int) -> tuple[dict[int, str], bool]:
+    """Force refresh of corp wallet division cache regardless of staleness."""
+
+    return _refresh_corp_wallet_divisions(corporation_id)
 
 
 def _refresh_character_assets(user) -> tuple[list[dict], bool]:

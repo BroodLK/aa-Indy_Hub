@@ -140,6 +140,8 @@ MATERIAL_EXCHANGE_SCOPE_SET = [
     CORP_ROLES_SCOPE,
     CORP_STRUCTURES_SCOPE,
     CORP_ASSETS_SCOPE,
+    CORP_WALLET_SCOPE,
+    "esi-markets.read_corporation_orders.v1",
     "esi-corporations.read_divisions.v1",
     "esi-contracts.read_corporation_contracts.v1",
 ]
