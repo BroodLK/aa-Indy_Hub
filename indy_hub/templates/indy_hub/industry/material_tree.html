@@ -16,15 +16,15 @@
                     <span class="fallback" style="display:none;"><i class="fas fa-cube"></i></span>
                 </span>
                 <span class="fw-bold">{{ mat.type_name }}</span>
-                {% if mat.sub_materials and mat.sub_materials|length > 0 %}
-                <span class="small text-muted tree-bp-context d-none"></span>
-                {% endif %}
                 <span class="text-muted tree-qty-wrap">
                     <span class="tree-qty-current">x{{ mat.quantity|intcomma }}</span>
                     {% if mat.quantity_default and mat.quantity_default != mat.quantity %}
                     <span class="ms-1 tree-qty-default-wrap">(<span class="text-decoration-line-through tree-qty-default">x{{ mat.quantity_default|intcomma }}</span>)</span>
                     {% endif %}
                 </span>
+                {% if mat.sub_materials and mat.sub_materials|length > 0 %}
+                <span class="small text-body-secondary opacity-75 tree-bp-context d-none"></span>
+                {% endif %}
                 {# Right-side switch only for items with sub-materials #}
                 {% if mat.sub_materials and mat.sub_materials|length > 0 %}
                 <span class="ms-auto"></span>

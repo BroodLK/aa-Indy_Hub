@@ -353,6 +353,7 @@ function refreshTreeSwitchHierarchy() {
     const switches = Array.from(treeTab.querySelectorAll('input.mat-switch'));
     switches.forEach(applyParentLockState);
     refreshTreeBlueprintContextLabels();
+    refreshTreeQuantityLabels();
 }
 
 if (typeof window !== 'undefined' && !window.refreshTreeSwitchHierarchy) {
@@ -4180,7 +4181,7 @@ function formatBlueprintContextForTreeItem(typeId, contextsByProductType = null)
         return '';
     }
     const kind = context.isCopy ? __('BPC') : __('BPO');
-    return `${kind} ${__('ME')}: ${Number(context.me) || 0} ${__('TE')}: ${Number(context.te) || 0}`;
+    return `(${kind} ${__('ME')}: ${Number(context.me) || 0} ${__('TE')}: ${Number(context.te) || 0})`;
 }
 
 function refreshTreeBlueprintContextLabels() {
@@ -4198,6 +4199,90 @@ function refreshTreeBlueprintContextLabels() {
         const text = formatBlueprintContextForTreeItem(typeId, contextsByProductType);
         contextEl.textContent = text;
         contextEl.classList.toggle('d-none', !text);
+    });
+}
+
+function getAppliedMeForTreeSummary(summaryEl, contextsByProductType = null) {
+    if (!summaryEl) {
+        return 0;
+    }
+
+    const currentDetails = summaryEl.closest('details');
+    const parentDetails = currentDetails && currentDetails.parentElement
+        ? currentDetails.parentElement.closest('details')
+        : null;
+
+    // Top-level tree rows are governed by the main blueprint ME.
+    if (!parentDetails) {
+        return Math.max(0, Number(window.BLUEPRINT_DATA?.me || 0) || 0);
+    }
+
+    const parentSummary = parentDetails.querySelector('summary[data-type-id]');
+    if (!parentSummary) {
+        return 0;
+    }
+    const parentTypeId = Number(parentSummary.getAttribute('data-type-id') || 0) || 0;
+    if (!parentTypeId) {
+        return 0;
+    }
+    const parentMode = getTreeSwitchModeForType(parentTypeId);
+    if (parentMode !== 'prod') {
+        return 0;
+    }
+    const parentContext = getBlueprintUsageContextForProductType(parentTypeId, contextsByProductType);
+    if (!parentContext || !parentContext.active) {
+        return 0;
+    }
+    return Math.max(0, Number(parentContext.me) || 0);
+}
+
+function refreshTreeQuantityLabels() {
+    const treeTab = document.getElementById('tab-tree');
+    if (!treeTab) {
+        return;
+    }
+
+    const contextsByProductType = buildBlueprintUsageContextByProductType();
+    treeTab.querySelectorAll('summary[data-type-id]').forEach((summaryEl) => {
+        const qtyWrap = summaryEl.querySelector('.tree-qty-wrap');
+        const currentQtyEl = qtyWrap ? qtyWrap.querySelector('.tree-qty-current') : null;
+        if (!qtyWrap || !currentQtyEl) {
+            return;
+        }
+
+        const defaultQtyRaw = Number(
+            summaryEl.getAttribute('data-qty-default')
+            || summaryEl.getAttribute('data-qty')
+            || 0
+        );
+        const defaultQty = Number.isFinite(defaultQtyRaw) ? Math.max(0, Math.ceil(defaultQtyRaw)) : 0;
+        if (defaultQty <= 0) {
+            return;
+        }
+
+        const appliedMe = getAppliedMeForTreeSummary(summaryEl, contextsByProductType);
+        const currentQty = Math.max(0, Math.ceil(defaultQty * (100 - appliedMe) / 100));
+
+        currentQtyEl.textContent = `x${formatInteger(currentQty)}`;
+
+        let defaultWrap = qtyWrap.querySelector('.tree-qty-default-wrap');
+        let defaultQtyEl = qtyWrap.querySelector('.tree-qty-default');
+
+        if (currentQty !== defaultQty) {
+            if (!defaultWrap) {
+                defaultWrap = document.createElement('span');
+                defaultWrap.className = 'ms-1 tree-qty-default-wrap';
+                defaultWrap.innerHTML = `(<span class="text-decoration-line-through tree-qty-default"></span>)`;
+                qtyWrap.appendChild(defaultWrap);
+                defaultQtyEl = defaultWrap.querySelector('.tree-qty-default');
+            }
+            if (defaultQtyEl) {
+                defaultQtyEl.textContent = `x${formatInteger(defaultQty)}`;
+            }
+            defaultWrap.classList.remove('d-none');
+        } else if (defaultWrap) {
+            defaultWrap.classList.add('d-none');
+        }
     });
 }
 
