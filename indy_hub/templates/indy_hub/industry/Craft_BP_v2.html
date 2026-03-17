@@ -84,6 +84,12 @@
                     <span>{% trans "Run optimized" %}</span>
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="how-to-tab-btn" data-bs-toggle="tab" data-bs-target="#how-to-pane" type="button" role="tab" aria-controls="how-to-pane" data-tab-name="how_to">
+                    <i class="fas fa-question-circle"></i>
+                    <span>{% trans "How To" %}</span>
+                </button>
+            </li>
         </ul>
 
         <div class="tab-content craft-tab-content" id="craftMainTabsContent">
@@ -668,6 +674,35 @@
                                                         </div>
                                                     </div>
 
+                                                    <div class="form-check form-switch mt-2 mb-2">
+                                                        <input
+                                                            class="form-check-input bp-use-input"
+                                                            type="checkbox"
+                                                            role="switch"
+                                                            id="bpUse{{ bc.type_id }}"
+                                                            name="usebp_{{ bc.type_id }}"
+                                                            data-blueprint-type-id="{{ bc.type_id }}"
+                                                            data-product-type-id="{{ bc.product_type_id|default:bc.type_id }}"
+                                                            {% if not bc.user_owns and not bc.shared_copies_available %}disabled{% endif %}
+                                                        >
+                                                        <label class="form-check-label small fw-semibold" for="bpUse{{ bc.type_id }}">
+                                                            {% trans "Use this BP" %}
+                                                        </label>
+                                                    </div>
+                                                    <div class="small text-muted mb-2">
+                                                        {% if bc.user_owns %}
+                                                            {% if bc.is_copy %}
+                                                                {% trans "Uses your owned BPC runs for this component." %}
+                                                            {% else %}
+                                                                {% trans "Uses your owned BPO for this component." %}
+                                                            {% endif %}
+                                                        {% elif bc.shared_copies_available %}
+                                                            {% trans "Enable to plan as if a shared BPC is available." %}
+                                                        {% else %}
+                                                            {% trans "No owned/shared BPC available." %}
+                                                        {% endif %}
+                                                    </div>
+
                                                     {% if not bc.user_owns or bc.is_copy %}
                                                     <div class="blueprint-sharing-section{% if bc.user_owns and bc.is_copy %} d-none{% endif %}" data-bp-type-id="{{ bc.type_id }}" data-bp-owned-copy="{% if bc.user_owns and bc.is_copy %}1{% else %}0{% endif %}">
                                                         {% if bc.shared_copies_available %}
@@ -732,6 +767,87 @@
                     {% endif %}
                 </section>
             </div>
+
+            <!-- ========== HOW TO TAB (V2) ========== -->
+            <div class="tab-pane fade" id="how-to-pane" role="tabpanel" aria-labelledby="how-to-tab-btn">
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title">
+                        <i class="fas fa-compass text-secondary"></i> {% trans "Quick Links" %}
+                    </h3>
+                    <div class="d-flex flex-wrap gap-2">
+                        <a class="btn btn-outline-primary btn-sm" href="#howto-workflow">{% trans "Workflow" %}</a>
+                        <a class="btn btn-outline-danger btn-sm" href="#howto-configure">{% trans "Configure" %}</a>
+                        <a class="btn btn-outline-warning btn-sm" href="#howto-buy">{% trans "Buy & Shopping" %}</a>
+                        <a class="btn btn-outline-info btn-sm" href="#howto-plan">{% trans "Plan Notes" %}</a>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title" id="howto-workflow">
+                        <i class="fas fa-route text-primary"></i> {% trans "Craft Planner Workflow" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ol class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "Set Runs (top control bar), then update if needed." %}</li>
+                                <li class="mb-2">{% trans "Plan tab: choose Buy/Prod in the tree, expand/collapse, or bulk set all to Buy/Prod." %}</li>
+                                <li class="mb-2">{% trans "Configure tab: adjust ME/TE and choose Use this BP for the components you want to craft with a blueprint you already own." %}</li>
+                                <li class="mb-2">{% trans "Leave Configure tab to apply changes (the planner recalculates from your settings)." %}</li>
+                                <li class="mb-2">{% trans "Buy tab: review Purchase Planner, then Compute Shopping List." %}</li>
+                                <li>{% trans "Optional: Run optimized tab to compare profitability across run counts." %}</li>
+                            </ol>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title" id="howto-configure">
+                        <i class="fas fa-sliders-h text-danger"></i> {% trans "Configure Behavior" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ul class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "Use this BP defaults to OFF." %}</li>
+                                <li class="mb-2">{% trans "If a component BP is not selected, that component is treated as BUY in shopping/plan calculations." %}</li>
+                                <li class="mb-2">{% trans "ME/TE presets: Max, From Owned BP, Reset." %}</li>
+                                <li>{% trans "Missing run validation highlights copy shortfalls and can prefill copy requests." %}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title" id="howto-buy">
+                        <i class="fas fa-shopping-cart text-warning"></i> {% trans "Buy & Shopping Features" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ul class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "Purchase Planner supports Fuzzwork prices plus manual Real Price overrides." %}</li>
+                                <li class="mb-2">{% trans "BPC requirements are shown at the top of Purchase Planner and support manual price override." %}</li>
+                                <li class="mb-2">{% trans "BPC entries are excluded from the Shopping List table." %}</li>
+                                <li class="mb-2">{% trans "Owned Materials input subtracts what you already have, including completed components when applicable." %}</li>
+                                <li>{% trans "Copy/Export is available for both Purchase Planner and Shopping List." %}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section">
+                    <h3 class="craft-section-title" id="howto-plan">
+                        <i class="fas fa-info-circle text-info"></i> {% trans "Plan Tab Notes" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ul class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "After Compute, Plan Materials mirrors the computed shopping scope." %}</li>
+                                <li class="mb-2">{% trans "Each material now shows BPC context when relevant (selected BP, BP ME, default ME, delta)." %}</li>
+                                <li>{% trans "Runs update preserves Buy/Prod decisions when submitted from the header form." %}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+            </div>
         </div>
     </div>
 
@@ -790,6 +906,9 @@
 <script>
 (function() {
     const payloadEl = document.getElementById('blueprint-payload');
+    const blueprintConfigs = {{ blueprint_configs_json|safe }};
+    const craftCyclesSummary = {{ craft_cycles_summary_json|safe }} || {};
+    const mainBpInfo = {{ main_bp_info|safe }};
     if (payloadEl) {
         try {
             const data = JSON.parse(payloadEl.textContent);
@@ -797,7 +916,12 @@
                 save_url: data.urls ? data.urls.save : undefined,
                 load_url: data.urls ? data.urls.load_list : undefined,
                 load_config_url: data.urls ? data.urls.load_config : undefined,
-                fuzzwork_price_url: data.urls ? data.urls.fuzzwork_price : undefined
+                fuzzwork_price_url: data.urls ? data.urls.fuzzwork_price : undefined,
+                blueprint_configs: Array.isArray(blueprintConfigs) ? blueprintConfigs : [],
+                main_bp_info: mainBpInfo && typeof mainBpInfo === 'object' ? mainBpInfo : {},
+                craft_cycles_summary: (data.craft_cycles_summary && typeof data.craft_cycles_summary === 'object')
+                    ? data.craft_cycles_summary
+                    : (craftCyclesSummary && typeof craftCyclesSummary === 'object' ? craftCyclesSummary : {})
             });
         } catch (error) {
             console.error('Failed to parse blueprint payload:', error);
@@ -1350,7 +1474,7 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.blueprint-sharing-section[data-bp-owned-copy="1"]').forEach(el => el.classList.add('d-none'));
 
         blueprintConfigs.forEach(bp => {
-            const userOwns = Boolean(bp.user_owns);
+            const userOwns = Boolean(bp.user_owns ?? bp.is_owned);
             const isCopyOwned = userOwns && Boolean(bp.is_copy) && bp.runs_available != null;
             const isNotOwned = !userOwns;
 

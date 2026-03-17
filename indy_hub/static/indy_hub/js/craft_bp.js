@@ -8,6 +8,7 @@ const CRAFT_BP = {
     fuzzworkUrl: null, // Will be set from Django template
     productTypeId: null, // Will be set from Django template
 };
+let CRAFT_COMPUTED_NEEDED_ROWS = null;
 
 const __ = (typeof window !== 'undefined' && typeof window.gettext === 'function') ? window.gettext.bind(window) : (msg => msg);
 
@@ -141,6 +142,9 @@ function attachPriceInputListener(input) {
 }
 
 function refreshTabsAfterStateChange(options = {}) {
+    if (!options.keepComputedNeeded) {
+        CRAFT_COMPUTED_NEEDED_ROWS = null;
+    }
     if (typeof updateMaterialsTabFromState === 'function') {
         updateMaterialsTabFromState();
     }
@@ -3049,11 +3053,13 @@ function initializeMETEHandlers() {
         }
     }
 
-    // Listen to ME/TE input changes in Config tab - mark and schedule auto-reload
-    const meTeInputs = document.querySelectorAll('#configure-pane input[name^="me_"], #configure-pane input[name^="te_"]');
-    craftBPDebugLog(`Found ${meTeInputs.length} ME/TE inputs to monitor for changes`);
+    // Listen to Configure inputs (ME/TE + Use BP toggle) and schedule apply on tab change.
+    const configureInputs = document.querySelectorAll(
+        '#configure-pane input[name^="me_"], #configure-pane input[name^="te_"], #configure-pane input.bp-use-input[data-blueprint-type-id]'
+    );
+    craftBPDebugLog(`Found ${configureInputs.length} Configure inputs to monitor for changes`);
 
-    meTeInputs.forEach(input => {
+    configureInputs.forEach(input => {
         input.addEventListener('input', markMETEChanges);
         input.addEventListener('change', markMETEChanges);
         craftBPDebugLog(`Added listeners to ${input.name} input`);
@@ -3088,11 +3094,42 @@ function initializeMETEHandlers() {
 /**
  * Restore ME/TE configuration from localStorage
  */
+function parseUseBlueprintIdsFromUrl() {
+    const ids = new Set();
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const packed = String(params.get('use_bp') || '').trim();
+        if (packed) {
+            packed.split(',').forEach((raw) => {
+                const id = Number(String(raw || '').trim()) || 0;
+                if (id > 0) {
+                    ids.add(id);
+                }
+            });
+        }
+    } catch (e) {
+        // ignore
+    }
+    return ids;
+}
+
 function restoreMETEFromLocalStorage(storageKey) {
+    const urlUseIds = parseUseBlueprintIdsFromUrl();
+
     try {
         const savedConfig = localStorage.getItem(storageKey);
         if (!savedConfig) {
             craftBPDebugLog('No saved ME/TE config in localStorage');
+            // Even without localStorage, URL can still carry BP selection.
+            if (urlUseIds.size > 0) {
+                document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]').forEach((input) => {
+                    const typeId = Number(input.getAttribute('data-blueprint-type-id')) || 0;
+                    if (!typeId || input.disabled) {
+                        return;
+                    }
+                    input.checked = urlUseIds.has(typeId);
+                });
+            }
             return;
         }
 
@@ -3113,6 +3150,23 @@ function restoreMETEFromLocalStorage(storageKey) {
                     teInput.value = bpConfig.te;
                 }
             }
+            if (bpConfig.use !== undefined) {
+                const useInput = document.querySelector(`#configure-pane input.bp-use-input[data-blueprint-type-id="${typeId}"]`);
+                if (useInput && !useInput.disabled) {
+                    useInput.checked = Boolean(bpConfig.use);
+                }
+            }
+        }
+
+        // URL override for easy sharing/bookmarking when present.
+        if (urlUseIds.size > 0) {
+            document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]').forEach((input) => {
+                const typeId = Number(input.getAttribute('data-blueprint-type-id')) || 0;
+                if (!typeId || input.disabled) {
+                    return;
+                }
+                input.checked = urlUseIds.has(typeId);
+            });
         }
 
         craftBPDebugLog('ME/TE config restored from localStorage');
@@ -3167,6 +3221,7 @@ function applyPendingMETEChanges() {
 
         // Set ME/TE for all blueprints
         craftBPDebugLog(`Applying ME/TE for ${Object.keys(config.blueprintConfigs).length} blueprints`);
+        const useBlueprintTypeIds = [];
         for (const [typeId, bpConfig] of Object.entries(config.blueprintConfigs)) {
             if (bpConfig.me !== undefined) {
                 cleanUrl.searchParams.set(`me_${typeId}`, bpConfig.me);
@@ -3176,6 +3231,16 @@ function applyPendingMETEChanges() {
                 cleanUrl.searchParams.set(`te_${typeId}`, bpConfig.te);
                 craftBPDebugLog(`Setting te_${typeId}=${bpConfig.te}`);
             }
+            if (bpConfig.use === true || bpConfig.use === 1 || bpConfig.use === '1') {
+                const numericTypeId = Number(typeId) || 0;
+                if (numericTypeId > 0) {
+                    useBlueprintTypeIds.push(numericTypeId);
+                }
+            }
+        }
+
+        if (useBlueprintTypeIds.length > 0) {
+            cleanUrl.searchParams.set('use_bp', useBlueprintTypeIds.join(','));
         }
 
         craftBPDebugLog(`Reloading with URL: ${cleanUrl.toString()}`);
@@ -3209,8 +3274,9 @@ function getCurrentMETEConfig() {
 
     // Get ME/TE inputs from config tab
     const meTeInputs = document.querySelectorAll('#configure-pane input[name^="me_"], #configure-pane input[name^="te_"]');
+    const useBpInputs = document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]');
 
-    craftBPDebugLog(`getCurrentMETEConfig: Found ${meTeInputs.length} inputs`);
+    craftBPDebugLog(`getCurrentMETEConfig: Found ${meTeInputs.length} ME/TE inputs and ${useBpInputs.length} Use-BP toggles`);
 
     meTeInputs.forEach(input => {
         const name = input.name;
@@ -3245,6 +3311,17 @@ function getCurrentMETEConfig() {
                 craftBPDebugLog(`Detected main blueprint TE: ${config.mainTE}`);
             }
         }
+    });
+
+    useBpInputs.forEach((input) => {
+        const blueprintTypeId = String(Number(input.getAttribute('data-blueprint-type-id')) || '');
+        if (!blueprintTypeId) {
+            return;
+        }
+        if (!config.blueprintConfigs[blueprintTypeId]) {
+            config.blueprintConfigs[blueprintTypeId] = {};
+        }
+        config.blueprintConfigs[blueprintTypeId].use = (!input.disabled && input.checked) ? 1 : 0;
     });
 
     return config;
@@ -3742,20 +3819,33 @@ function populatePrices(allInputs, prices) {
 }
 
 function buildFinancialRow(item, pricesMap) {
+    const rowKind = String(item.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
+    const rowKey = String(item.rowKey || `${rowKind}:${item.typeId}`);
+    const isBpc = rowKind === 'bpc';
+    const imagePath = isBpc ? 'bp' : 'icon';
+    const itemTypeName = String(item.typeName || item.name || item.type_id || item.typeId || '');
+    const rowTagHtml = isBpc
+        ? `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-2 craft-row-kind-marker">${escapeHtml(__('BPC'))}</span>`
+        : '<span class="craft-row-kind-marker d-none"></span>';
+    const qtyBadgeClass = isBpc ? 'bg-warning text-dark' : 'bg-primary text-white';
+
     const row = document.createElement('tr');
     row.setAttribute('data-type-id', String(item.typeId));
+    row.setAttribute('data-row-kind', rowKind);
+    row.setAttribute('data-row-key', rowKey);
+    row.classList.toggle('table-warning', isBpc);
 
     row.innerHTML = `
         <td class="fw-semibold">
             <div class="d-flex align-items-center gap-3 craft-planner-item-flex">
-                <img src="https://images.evetech.net/types/${item.typeId}/icon?size=32" alt="${escapeHtml(item.typeName)}" class="rounded" style="width:28px;height:28px;background:#f3f4f6;" onerror="this.style.display='none';">
+                <img src="https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32" alt="${escapeHtml(itemTypeName)}" class="rounded" style="width:28px;height:28px;background:#f3f4f6;" onerror="this.style.display='none';">
                 <span class="craft-planner-item-name-wrap">
-                    <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 craft-planner-item-name">${escapeHtml(item.typeName)}</span>
+                    <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 craft-planner-item-name">${escapeHtml(itemTypeName)}</span>${rowTagHtml}
                 </span>
             </div>
         </td>
         <td class="text-end">
-            <span class="badge bg-primary text-white" data-qty="${item.quantity}">${formatInteger(item.quantity)}</span>
+            <span class="badge ${qtyBadgeClass}" data-qty="${item.quantity}">${formatInteger(item.quantity)}</span>
         </td>
         <td class="text-end">
             <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light" data-type-id="${item.typeId}" value="0" readonly>
@@ -3796,23 +3886,49 @@ function buildFinancialRow(item, pricesMap) {
 }
 
 function updateFinancialRow(row, item) {
-    row.setAttribute('data-type-id', String(item.typeId));
+    const rowKind = String(item.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
+    const rowKey = String(item.rowKey || `${rowKind}:${item.typeId}`);
+    const isBpc = rowKind === 'bpc';
+    const imagePath = isBpc ? 'bp' : 'icon';
+    const itemTypeName = String(item.typeName || item.name || item.type_id || item.typeId || '');
 
-    const nameBadge = row.querySelector('.badge.bg-info-subtle');
+    row.setAttribute('data-type-id', String(item.typeId));
+    row.setAttribute('data-row-kind', rowKind);
+    row.setAttribute('data-row-key', rowKey);
+    row.classList.toggle('table-warning', isBpc);
+
+    const nameBadge = row.querySelector('.craft-planner-item-name');
     if (nameBadge) {
-        nameBadge.textContent = item.typeName;
+        nameBadge.textContent = itemTypeName;
+    }
+
+    const rowKindMarker = row.querySelector('.craft-row-kind-marker');
+    if (rowKindMarker) {
+        if (isBpc) {
+            rowKindMarker.className = 'badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-2 craft-row-kind-marker';
+            rowKindMarker.textContent = __('BPC');
+        } else {
+            rowKindMarker.className = 'craft-row-kind-marker d-none';
+            rowKindMarker.textContent = '';
+        }
     }
 
     const img = row.querySelector('img');
     if (img) {
-        img.alt = item.typeName;
-        img.src = `https://images.evetech.net/types/${item.typeId}/icon?size=32`;
+        img.alt = itemTypeName;
+        img.src = `https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32`;
     }
 
-    const qtyBadge = row.querySelector('[data-qty]');
+    const qtyBadge = row.querySelector('span.badge[data-qty]');
     if (qtyBadge) {
         qtyBadge.dataset.qty = String(item.quantity);
         qtyBadge.textContent = formatInteger(item.quantity);
+        qtyBadge.classList.remove('bg-primary', 'text-white', 'bg-warning', 'text-dark');
+        if (isBpc) {
+            qtyBadge.classList.add('bg-warning', 'text-dark');
+        } else {
+            qtyBadge.classList.add('bg-primary', 'text-white');
+        }
     }
 }
 
@@ -3887,6 +4003,299 @@ function getDashboardMaterialsOrdering() {
     return result;
 }
 
+function getFinancialRowKey(item) {
+    const rowKind = String(item?.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
+    const typeId = Number(item?.typeId ?? item?.type_id) || 0;
+    if (!typeId) {
+        return null;
+    }
+    return `${rowKind}:${typeId}`;
+}
+
+function getBlueprintNameMapFromConfigPane() {
+    const map = new Map();
+    document.querySelectorAll('#configure-pane .craft-bp-card[data-blueprint-type-id]').forEach((card) => {
+        const typeId = Number(card.getAttribute('data-blueprint-type-id')) || 0;
+        if (!typeId || map.has(typeId)) {
+            return;
+        }
+        const titleEl = card.querySelector('.card-title');
+        const title = String(titleEl && titleEl.textContent ? titleEl.textContent : '').trim();
+        if (title) {
+            map.set(typeId, title);
+        }
+    });
+    return map;
+}
+
+function getBlueprintUseSelectionFromDom() {
+    const selections = new Map();
+    document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]').forEach((input) => {
+        const blueprintTypeId = Number(input.getAttribute('data-blueprint-type-id')) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+        const selected = !input.disabled && Boolean(input.checked);
+        selections.set(blueprintTypeId, selected);
+    });
+    return selections;
+}
+
+function buildBlueprintUsageContextByProductType() {
+    const payload = window.BLUEPRINT_DATA || {};
+    const blueprintConfigs = getBlueprintConfigsForFinancialPlanner();
+    const blueprintNames = getBlueprintNameMapFromConfigPane();
+    const selectedByBlueprintType = getBlueprintUseSelectionFromDom();
+    const byProductType = new Map();
+
+    blueprintConfigs.forEach((bp) => {
+        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || 0) || 0;
+        if (!blueprintTypeId || !productTypeId) {
+            return;
+        }
+
+        const userOwns = Boolean(
+            bp?.user_owns
+            ?? bp?.userOwns
+            ?? bp?.is_owned
+            ?? bp?.isOwned
+        );
+        const hasShared = Boolean(bp?.shared_copies_available ?? bp?.sharedCopiesAvailable);
+        const available = userOwns || hasShared;
+        const defaultSelected = false;
+        const selected = selectedByBlueprintType.has(blueprintTypeId)
+            ? selectedByBlueprintType.get(blueprintTypeId)
+            : defaultSelected;
+
+        const meInput = document.querySelector(`#configure-pane input[name="me_${blueprintTypeId}"]`);
+        const teInput = document.querySelector(`#configure-pane input[name="te_${blueprintTypeId}"]`);
+        const meValue = meInput ? (Number(meInput.value) || 0) : (Number(bp?.material_efficiency || 0) || 0);
+        const teValue = teInput ? (Number(teInput.value) || 0) : (Number(bp?.time_efficiency || 0) || 0);
+        const blueprintName = String(
+            blueprintNames.get(blueprintTypeId)
+            || bp?.type_name
+            || bp?.typeName
+            || `Blueprint ${blueprintTypeId}`
+        ).trim();
+
+        const entry = {
+            blueprintTypeId,
+            productTypeId,
+            blueprintName,
+            active: available && selected,
+            selected: Boolean(selected),
+            available: Boolean(available),
+            owned: Boolean(userOwns),
+            isCopy: Boolean(bp?.is_copy ?? bp?.isCopy),
+            me: meValue,
+            te: teValue,
+            defaultMe: 0,
+            defaultTe: 0,
+        };
+
+        const existing = byProductType.get(productTypeId);
+        if (!existing || (!existing.active && entry.active)) {
+            byProductType.set(productTypeId, entry);
+        }
+    });
+
+    // Fallback: include main blueprint if not present in configs
+    const mainProductTypeId = Number(payload.product_type_id || payload.productTypeId || 0) || 0;
+    const mainBlueprintTypeId = Number(payload.bp_type_id || payload.type_id || 0) || 0;
+    if (mainProductTypeId && mainBlueprintTypeId && !byProductType.has(mainProductTypeId)) {
+        const fallbackName = blueprintNames.get(mainBlueprintTypeId) || payload.name || `Blueprint ${mainBlueprintTypeId}`;
+        byProductType.set(mainProductTypeId, {
+            blueprintTypeId: mainBlueprintTypeId,
+            productTypeId: mainProductTypeId,
+            blueprintName: String(fallbackName).trim(),
+            active: true,
+            selected: true,
+            available: true,
+            owned: true,
+            isCopy: Boolean(payload?.main_bp_info?.is_copy),
+            me: Number(payload.me || 0) || 0,
+            te: Number(payload.te || 0) || 0,
+            defaultMe: 0,
+            defaultTe: 0,
+        });
+    }
+
+    return byProductType;
+}
+
+function getBlueprintUsageContextForProductType(typeId, contextsByProductType = null) {
+    const productTypeId = Number(typeId) || 0;
+    if (!productTypeId) {
+        return null;
+    }
+    const contexts = contextsByProductType instanceof Map
+        ? contextsByProductType
+        : buildBlueprintUsageContextByProductType();
+    return contexts.get(productTypeId) || null;
+}
+
+function isBlueprintActiveForProductType(typeId, contextsByProductType = null) {
+    const context = getBlueprintUsageContextForProductType(typeId, contextsByProductType);
+    if (!context) {
+        return true;
+    }
+    return Boolean(context.active);
+}
+
+function formatBlueprintContextForPlanItem(typeId, contextsByProductType = null) {
+    const context = getBlueprintUsageContextForProductType(typeId, contextsByProductType);
+    if (!context) {
+        return __('BPC: none');
+    }
+    if (!context.available) {
+        return __('BPC: unavailable (BP ME 0 / Default ME 0)');
+    }
+    if (!context.active) {
+        return __('BPC: not selected (BP ME 0 / Default ME 0)');
+    }
+
+    const sourceLabel = context.owned
+        ? (context.isCopy ? __('owned copy') : __('owned original'))
+        : __('shared copy');
+    const bpMe = Number(context.me) || 0;
+    const defaultMe = Number(context.defaultMe) || 0;
+    const meDelta = bpMe - defaultMe;
+    const deltaPrefix = meDelta >= 0 ? '+' : '';
+    return `${__('BPC')}: ${context.blueprintName} (${sourceLabel}) | ${__('BP ME')}: ${bpMe} | ${__('Default ME')}: ${defaultMe} | ${__('Delta')}: ${deltaPrefix}${meDelta}`;
+}
+
+function getBlueprintConfigsForFinancialPlanner() {
+    const payload = window.BLUEPRINT_DATA || {};
+    if (Array.isArray(payload.blueprint_configs)) {
+        return payload.blueprint_configs;
+    }
+    if (Array.isArray(payload.blueprintConfigs)) {
+        return payload.blueprintConfigs;
+    }
+    return [];
+}
+
+function getCraftCyclesSummaryForFinancialPlanner() {
+    const payload = window.BLUEPRINT_DATA || {};
+    if (payload.craft_cycles_summary && typeof payload.craft_cycles_summary === 'object') {
+        return payload.craft_cycles_summary;
+    }
+    if (payload.craftCyclesSummary && typeof payload.craftCyclesSummary === 'object') {
+        return payload.craftCyclesSummary;
+    }
+    return {};
+}
+
+function getMainBlueprintInfoForFinancialPlanner() {
+    const payload = window.BLUEPRINT_DATA || {};
+    const mainBp = payload.main_bp_info || payload.mainBpInfo;
+    if (mainBp && typeof mainBp === 'object') {
+        return mainBp;
+    }
+    return {};
+}
+
+function collectMissingBlueprintCopyRows() {
+    const blueprintConfigs = getBlueprintConfigsForFinancialPlanner();
+    if (!Array.isArray(blueprintConfigs) || blueprintConfigs.length === 0) {
+        return [];
+    }
+
+    const cyclesSummary = getCraftCyclesSummaryForFinancialPlanner();
+    const mainBpInfo = getMainBlueprintInfoForFinancialPlanner();
+    const blueprintNames = getBlueprintNameMapFromConfigPane();
+    const blueprintContextsByProductType = buildBlueprintUsageContextByProductType();
+    const runsInputEl = document.getElementById('runsInput');
+
+    const mainBpTypeId = Number(
+        mainBpInfo.type_id
+        || mainBpInfo.typeId
+        || (window.BLUEPRINT_DATA && (window.BLUEPRINT_DATA.bp_type_id || window.BLUEPRINT_DATA.type_id))
+        || 0
+    ) || 0;
+    const mainNumRuns = runsInputEl
+        ? (Number(runsInputEl.value) || 0)
+        : (Number(window.BLUEPRINT_DATA?.num_runs) || 0);
+    const mainAvailableRuns = (mainBpInfo && Boolean(mainBpInfo.is_copy) && mainBpInfo.runs_available != null)
+        ? (Number(mainBpInfo.runs_available) || 0)
+        : null;
+
+    const bpcRows = [];
+    blueprintConfigs.forEach((bp) => {
+        const bpTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        if (!bpTypeId) {
+            return;
+        }
+
+        const userOwns = Boolean(
+            bp?.user_owns
+            ?? bp?.userOwns
+            ?? bp?.is_owned
+            ?? bp?.isOwned
+        );
+        const isCopy = Boolean(bp?.is_copy ?? bp?.isCopy);
+        const runsAvailableRaw = bp?.runs_available ?? bp?.runsAvailable;
+        const hasRunsAvailable = runsAvailableRaw !== null && runsAvailableRaw !== undefined && runsAvailableRaw !== '';
+        const isCopyOwned = userOwns && isCopy && hasRunsAvailable;
+        const isNotOwned = !userOwns;
+
+        if (!isCopyOwned && !isNotOwned) {
+            return;
+        }
+
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || bpTypeId) || 0;
+        const usageContext = getBlueprintUsageContextForProductType(productTypeId, blueprintContextsByProductType);
+        if (usageContext && !usageContext.active) {
+            return;
+        }
+        const cyclesData = cyclesSummary[productTypeId]
+            || cyclesSummary[String(productTypeId)]
+            || cyclesSummary[bpTypeId]
+            || cyclesSummary[String(bpTypeId)];
+
+        let requiredRuns = cyclesData ? (Number(cyclesData.cycles) || 0) : null;
+        if (requiredRuns === null && mainBpTypeId && bpTypeId === mainBpTypeId) {
+            requiredRuns = mainNumRuns;
+        }
+        if (requiredRuns === null) {
+            return;
+        }
+        requiredRuns = Math.max(0, Number(requiredRuns) || 0);
+
+        let availableRuns = isCopyOwned ? (Number(runsAvailableRaw) || 0) : 0;
+        if (mainBpTypeId && bpTypeId === mainBpTypeId && mainAvailableRuns !== null) {
+            availableRuns = mainAvailableRuns;
+        }
+
+        const shortfallRuns = Math.max(0, Math.ceil(requiredRuns - availableRuns));
+        if (!shortfallRuns) {
+            return;
+        }
+
+        const fallbackName = String(cyclesData?.type_name || cyclesData?.typeName || '').trim();
+        const blueprintName = String(
+            blueprintNames.get(bpTypeId)
+            || bp?.type_name
+            || bp?.typeName
+            || fallbackName
+            || `Blueprint ${bpTypeId}`
+        ).trim();
+
+        bpcRows.push({
+            typeId: bpTypeId,
+            typeName: blueprintName,
+            quantity: shortfallRuns,
+            marketGroup: __('Blueprint Copies'),
+            rowKind: 'bpc',
+            rowKey: `bpc:${bpTypeId}`,
+        });
+    });
+
+    bpcRows.sort((a, b) => String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' }));
+    return bpcRows;
+}
+
 function updateFinancialTabFromState() {
     const tableBody = document.getElementById('financialItemsBody');
     if (!tableBody || !window.SimulationAPI || typeof window.SimulationAPI.getFinancialItems !== 'function') {
@@ -3913,7 +4322,9 @@ function updateFinancialTabFromState() {
             typeId,
             typeName: item.typeName || item.type_name || '',
             quantity: 0,
-            marketGroup: item.marketGroup || item.market_group || ''
+            marketGroup: item.marketGroup || item.market_group || '',
+            rowKind: 'material',
+            rowKey: `material:${typeId}`,
         };
         existing.quantity += quantity;
         if (!existing.marketGroup && (item.marketGroup || item.market_group)) {
@@ -3923,7 +4334,7 @@ function updateFinancialTabFromState() {
     });
 
     const ordering = getDashboardMaterialsOrdering();
-    const sortedItems = Array.from(aggregated.values()).sort((a, b) => {
+    const sortedMaterials = Array.from(aggregated.values()).sort((a, b) => {
         const typeA = Number(a.typeId) || 0;
         const typeB = Number(b.typeId) || 0;
 
@@ -3952,27 +4363,36 @@ function updateFinancialTabFromState() {
         }
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
+    const bpcRows = collectMissingBlueprintCopyRows();
+    const sortedItems = [...bpcRows, ...sortedMaterials];
 
     const existingRows = new Map();
     tableBody.querySelectorAll('tr[data-type-id]').forEach(row => {
         if (finalRow && row === finalRow) {
             return;
         }
-        const typeId = Number(row.getAttribute('data-type-id'));
+        const typeId = Number(row.getAttribute('data-type-id')) || 0;
         if (!typeId) {
             return;
         }
-        existingRows.set(typeId, row);
+        const explicitKey = String(row.getAttribute('data-row-key') || '').trim();
+        const rowKind = String(row.getAttribute('data-row-kind') || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
+        const rowKey = explicitKey || `${rowKind}:${typeId}`;
+        existingRows.set(rowKey, row);
     });
 
     const newRows = [];
 
     sortedItems.forEach(item => {
-        let row = existingRows.get(item.typeId);
+        const rowKey = getFinancialRowKey(item);
+        if (!rowKey) {
+            return;
+        }
+        let row = existingRows.get(rowKey);
         if (row) {
             updateFinancialRow(row, item);
             tableBody.insertBefore(row, finalRow || null);
-            existingRows.delete(item.typeId);
+            existingRows.delete(rowKey);
         } else {
             const buildResult = buildFinancialRow(item, pricesMap);
             row = buildResult.row;
@@ -3988,7 +4408,12 @@ function updateFinancialTabFromState() {
     }
 
     if (newRows.length > 0) {
-        const typeIds = newRows.map(entry => entry.typeId);
+        const typeIds = Array.from(new Set(
+            newRows
+                .map(entry => Number(entry.typeId) || 0)
+                .filter((typeId) => typeId > 0)
+                .map((typeId) => String(typeId))
+        ));
         fetchAllPrices(typeIds).then(prices => {
             newRows.forEach(({ typeId, fuzzInput, realInput }) => {
                 const priceValue = parseFloat(prices[typeId] ?? prices[String(typeId)]) || 0;
@@ -4043,6 +4468,10 @@ function getTreeSwitchModeForType(typeId) {
     const numericTypeId = Number(typeId) || 0;
     if (!numericTypeId) {
         return 'prod';
+    }
+
+    if (!isBlueprintActiveForProductType(numericTypeId)) {
+        return 'buy';
     }
 
     if (window.SimulationAPI && typeof window.SimulationAPI.getSwitchState === 'function') {
@@ -4158,7 +4587,13 @@ function updateMaterialsTabFromState() {
     const fallbackGroupName = __('Other');
     const aggregated = new Map();
     const usageByType = buildMaterialUsageTargetsByType();
-    const items = window.SimulationAPI.getFinancialItems() || [];
+    const blueprintContextsByProductType = buildBlueprintUsageContextByProductType();
+    const treeScopedItems = computeNeededItemsFromTreeWithOwned(window.SimulationAPI, new Map());
+    const items = Array.isArray(CRAFT_COMPUTED_NEEDED_ROWS)
+        ? CRAFT_COMPUTED_NEEDED_ROWS
+        : (Array.isArray(treeScopedItems) && treeScopedItems.length > 0
+            ? treeScopedItems
+            : (window.SimulationAPI.getFinancialItems() || []));
 
     items.forEach(item => {
         const typeId = Number(item.typeId ?? item.type_id);
@@ -4171,11 +4606,14 @@ function updateMaterialsTabFromState() {
         }
         const existing = aggregated.get(typeId) || {
             typeId,
-            typeName: item.typeName || item.type_name || '',
+            typeName: item.typeName || item.type_name || item.name || '',
             quantity: 0,
             marketGroup: item.marketGroup || item.market_group || ''
         };
         existing.quantity += quantity;
+        if (!existing.marketGroup && (item.marketGroup || item.market_group)) {
+            existing.marketGroup = item.marketGroup || item.market_group || '';
+        }
         aggregated.set(typeId, existing);
     });
 
@@ -4216,12 +4654,16 @@ function updateMaterialsTabFromState() {
                 <td class="fw-semibold">
                     <div class="d-flex align-items-center gap-3">
                         <img src="https://images.evetech.net/types/${item.typeId}/icon?size=32" alt="${escapeHtml(item.typeName)}" class="rounded" style="width:30px;height:30px;background:#f3f4f6;" onerror="this.style.display='none';">
-                        <span class="badge bg-info-subtle text-info-emphasis px-2 py-1">${escapeHtml(item.typeName)}</span>
+                        <div class="d-flex flex-column">
+                            <span class="badge bg-info-subtle text-info-emphasis px-2 py-1">${escapeHtml(item.typeName)}</span>
+                            <span class="small text-muted mt-1">${escapeHtml(formatBlueprintContextForPlanItem(Number(item.typeId) || 0, blueprintContextsByProductType))}</span>
+                        </div>
                     </div>
                 </td>
                 <td class="text-end">
                     <span class="badge bg-primary text-white" data-qty="${item.quantity}">${formatInteger(item.quantity)}</span>
                 </td>
+                <td class="small text-muted">${escapeHtml(formatUsageSummaryText(usageByType.get(Number(item.typeId) || 0) || new Set()))}</td>
             </tr>
         `).join('');
 
@@ -4246,6 +4688,7 @@ function updateMaterialsTabFromState() {
                             <tr>
                                 <th>${__('Material')}</th>
                                 <th class="text-end">${__('Quantity')}</th>
+                                <th>${__('Needed for')}</th>
                             </tr>
                         </thead>
                         <tbody>${rowsHtml}</tbody>
@@ -4417,6 +4860,7 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
     const marketGroupMap = payload.market_group_map || {};
     const results = new Map(); // typeId -> { typeId, typeName, quantity, marketGroup }
     const remainingOwned = new Map(ownedByType || []);
+    const blueprintContextsByProductType = buildBlueprintUsageContextByProductType();
 
     const addResult = (typeId, typeName, marketGroup, qty) => {
         const numericTypeId = Number(typeId) || 0;
@@ -4447,6 +4891,9 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
         if (api && typeof api.getSwitchState === 'function') {
             const state = api.getSwitchState(typeId);
             if (state === 'buy' || state === 'prod' || state === 'useless') {
+                if (state !== 'useless' && !isBlueprintActiveForProductType(typeId, blueprintContextsByProductType)) {
+                    return 'buy';
+                }
                 return state;
             }
         }
@@ -4455,7 +4902,14 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
             if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
                 return 'useless';
             }
-            return switchEl.checked ? 'prod' : 'buy';
+            const mode = switchEl.checked ? 'prod' : 'buy';
+            if (mode !== 'useless' && !isBlueprintActiveForProductType(typeId, blueprintContextsByProductType)) {
+                return 'buy';
+            }
+            return mode;
+        }
+        if (!isBlueprintActiveForProductType(typeId, blueprintContextsByProductType)) {
+            return 'buy';
         }
         return 'prod';
     };
@@ -4613,6 +5067,13 @@ function computeNeededPurchases() {
                 };
             })
             .filter((item) => item.qty > 0);
+
+    CRAFT_COMPUTED_NEEDED_ROWS = rowsToDisplay.map((item) => ({
+        typeId: Number(item.typeId) || 0,
+        typeName: item.name || item.typeName || item.type_name || '',
+        quantity: Number(item.qty) || 0,
+        marketGroup: item.marketGroup || item.market_group || '',
+    }));
     const matchedOwnedNames = ownedLookup.matchedNames;
     const unmatchedOwnedNames = ownedLookup.unresolvedNames.slice();
 
@@ -4679,6 +5140,9 @@ function computeNeededPurchases() {
 
         if (totalEl) {
             totalEl.textContent = formatPrice(totalCost);
+        }
+        if (typeof updateMaterialsTabFromState === 'function') {
+            updateMaterialsTabFromState();
         }
     });
 }
