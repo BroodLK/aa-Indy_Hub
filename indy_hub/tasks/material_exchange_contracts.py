@@ -985,7 +985,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             config,
             _("Sell Order Validated"),
             _(
-                f"{order.seller.username} wants to sell:\n{items_list}\n\n"
+                f"{order.seller.username} has created a contract and it has been validated as correct.\n"
                 f"Total: {order.total_price:,.0f} ISK\n"
                 f"Contract #{contract_id} verified from database.\n"
                 + (f"Location: {contract_location}\n" if contract_location else "")
@@ -1807,7 +1807,6 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 f"Order: {order.order_reference}\n"
                 f"Contract: #{contract.contract_id}\n"
                 f"Total: {order.total_price:,.0f} ISK\n\n"
-                f"Items:\n{items_list}"
             ),
             level="success",
             link=(
@@ -3736,16 +3735,9 @@ def check_completed_material_exchange_contracts():
             )
             _notify_material_exchange_admins(
                 config,
-                _("Sell Contract Accepted"),
+                _("Sell Order Completed"),
                 _(
                     f"{order.seller.username}'s sell order {order.order_reference} is completed.\n"
-                    f"Contract #{contract_id} status: {contract_status}.\n"
-                    f"Total: {order.total_price:,.0f} ISK"
-                    + (
-                        f"\n\nItems received:\n{sell_items_preview}"
-                        if sell_items_preview
-                        else ""
-                    )
                 ),
                 level="success",
                 link=(
@@ -3882,12 +3874,6 @@ def check_completed_material_exchange_contracts():
                 _("Buy Order Completed"),
                 _(
                     f"{order.buyer.username}'s buy order {order.order_reference} is completed.\n"
-                    f"Contract #{contract_id} status: {contract_status}."
-                    + (
-                        f"\n\nItems delivered:\n{buy_items_preview}"
-                        if buy_items_preview
-                        else ""
-                    )
                 ),
                 level="success",
                 link=(

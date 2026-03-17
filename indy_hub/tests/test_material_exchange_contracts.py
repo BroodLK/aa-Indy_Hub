@@ -1016,7 +1016,7 @@ class BuyOrderValidationTaskTest(TestCase):
         admin_title = str(mock_notify_admins.call_args[0][1])
         admin_message = str(mock_notify_admins.call_args[0][2])
         self.assertIn("Completed", admin_title)
-        self.assertIn("227079244", admin_message)
+        self.assertIn(self.buy_order.order_reference, admin_message)
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -1077,9 +1077,8 @@ class BuyOrderValidationTaskTest(TestCase):
         mock_notify_admins.assert_called()
         admin_title = str(mock_notify_admins.call_args[0][1])
         admin_message = str(mock_notify_admins.call_args[0][2])
-        self.assertIn("Accepted", admin_title)
-        self.assertIn("227079299", admin_message)
-        self.assertIn("Tritanium", admin_message)
+        self.assertIn("Completed", admin_title)
+        self.assertIn(sell_order.order_reference, admin_message)
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
@@ -1706,7 +1705,7 @@ class BuyOrderSignalTest(TestCase):
         mock_task.apply_async.assert_called_once_with(
             args=(buy_order.id,),
             countdown=2,
-            expires=300,
+            expires=1800,
         )
         self.assertEqual(buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
 
@@ -1731,7 +1730,7 @@ class BuyOrderSignalTest(TestCase):
         mock_task.apply_async.assert_called_once_with(
             args=(buy_order.id,),
             countdown=2,
-            expires=300,
+            expires=1800,
         )
 
     @patch(

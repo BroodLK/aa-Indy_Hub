@@ -429,8 +429,10 @@ def send_discord_webhook_with_message_id(
             try:
                 data = response.json()
             except ValueError:
-                logger.warning("Discord webhook response JSON parse failed.")
-                return False, None
+                logger.warning(
+                    "Discord webhook response JSON parse failed; assuming delivery without message ID."
+                )
+                return True, None
             message_id = data.get("id") if isinstance(data, dict) else None
             return True, str(message_id) if message_id else None
         except Exception as exc:  # pragma: no cover - defensive logging
