@@ -4274,12 +4274,75 @@ function updateNeededTabFromState(force = false) {
     }
 }
 
+function normalizeOwnedMaterialName(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[\u2010-\u2015]/g, '-')
+        .replace(/\s*-\s*/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function parseOwnedMaterialsInput(rawText) {
+    const byName = new Map();
+    const labelsByName = new Map();
+    const malformedLines = [];
+    const lines = String(rawText || '').split(/\r?\n/);
+
+    lines.forEach((rawLine, index) => {
+        const line = String(rawLine || '').trim();
+        if (!line) {
+            return;
+        }
+
+        let namePart = '';
+        let qtyPart = '';
+
+        const tabParts = line
+            .split('\t')
+            .map((part) => part.trim())
+            .filter((part) => part !== '');
+        if (tabParts.length >= 2) {
+            qtyPart = tabParts[tabParts.length - 1];
+            namePart = tabParts.slice(0, -1).join(' ');
+        } else {
+            const match = line.match(/^(.*\S)\s+([+-]?\d[\d,._]*)$/);
+            if (match) {
+                namePart = String(match[1] || '').trim();
+                qtyPart = String(match[2] || '').trim();
+            }
+        }
+
+        const normalizedName = normalizeOwnedMaterialName(namePart);
+        const numericQty = Number(String(qtyPart || '').replace(/[,_\s]/g, ''));
+        const qty = Number.isFinite(numericQty) ? Math.floor(numericQty) : 0;
+
+        if (!normalizedName || qty <= 0) {
+            malformedLines.push(index + 1);
+            return;
+        }
+
+        byName.set(normalizedName, (byName.get(normalizedName) || 0) + qty);
+        if (!labelsByName.has(normalizedName)) {
+            labelsByName.set(normalizedName, namePart);
+        }
+    });
+
+    return {
+        byName,
+        labelsByName,
+        malformedLines,
+    };
+}
+
 /**
  * Compute needed purchase list based on user selections
  */
 function computeNeededPurchases() {
     const tbody = document.querySelector('#needed-table tbody');
     const totalEl = document.querySelector('.purchase-total');
+    const ownedInputEl = document.getElementById('ownedMaterialsInput');
+    const ownedSummaryEl = document.getElementById('ownedMaterialsSummary');
     if (!tbody) {
         return;
     }
@@ -4339,7 +4402,50 @@ function computeNeededPurchases() {
         }
         return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
     });
-    const typeIds = rows.map(r => String(r.typeId));
+
+    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
+    const matchedOwnedNames = new Set();
+    const unmatchedOwnedNames = [];
+    const rowsToDisplay = rows
+        .map((item) => {
+            const normalizedName = normalizeOwnedMaterialName(item.name || String(item.typeId));
+            const ownedQty = ownedData.byName.get(normalizedName) || 0;
+            if (ownedQty > 0) {
+                matchedOwnedNames.add(normalizedName);
+            }
+            const adjustedQty = Math.max(0, Number(item.qty) - ownedQty);
+            return {
+                ...item,
+                qty: adjustedQty,
+            };
+        })
+        .filter((item) => item.qty > 0);
+
+    ownedData.byName.forEach((_, normalizedName) => {
+        if (!matchedOwnedNames.has(normalizedName)) {
+            const rawLabel = ownedData.labelsByName.get(normalizedName) || normalizedName;
+            unmatchedOwnedNames.push(rawLabel);
+        }
+    });
+
+    if (ownedSummaryEl) {
+        if (ownedData.byName.size === 0 && ownedData.malformedLines.length === 0) {
+            ownedSummaryEl.textContent = '';
+        } else {
+            const matchedCount = matchedOwnedNames.size;
+            const unmatchedCount = unmatchedOwnedNames.length;
+            const malformedCount = ownedData.malformedLines.length;
+            const malformedSuffix = malformedCount > 0
+                ? ` ${__('Ignored malformed lines')}: ${ownedData.malformedLines.join(', ')}.`
+                : '';
+            const unmatchedSuffix = unmatchedCount > 0
+                ? ` ${__('Unmatched items')}: ${unmatchedOwnedNames.join(', ')}.`
+                : '';
+            ownedSummaryEl.textContent = `${__('Owned materials applied')}: ${matchedCount} ${__('matched')}, ${unmatchedCount} ${__('unmatched')}.${malformedSuffix}${unmatchedSuffix}`;
+        }
+    }
+
+    const typeIds = rowsToDisplay.map(r => String(r.typeId));
 
     // Ensure we have fuzzwork prices where possible, but keep real prices as user overrides.
     const ensurePrices = (typeIdsToFetch) => {
@@ -4367,7 +4473,7 @@ function computeNeededPurchases() {
 
     ensurePrices(typeIds).finally(() => {
         let totalCost = 0;
-        rows.forEach((item) => {
+        rowsToDisplay.forEach((item) => {
             const unitInfo = (api && typeof api.getPrice === 'function') ? api.getPrice(item.typeId, 'buy') : { value: 0 };
             const unit = unitInfo && typeof unitInfo.value === 'number' ? unitInfo.value : 0;
             const line = (unit > 0 ? unit : 0) * item.qty;

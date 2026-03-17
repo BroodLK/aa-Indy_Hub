@@ -385,6 +385,24 @@
                         </div>
                     </div>
 
+                    <div class="card border-0 bg-body-tertiary mt-2 mb-3">
+                        <div class="card-body py-3">
+                            <label for="ownedMaterialsInput" class="form-label fw-semibold mb-2">
+                                <i class="fas fa-box-open me-1"></i>{% trans "Owned Materials (optional)" %}
+                            </label>
+                            <textarea
+                                id="ownedMaterialsInput"
+                                class="form-control form-control-sm"
+                                rows="6"
+                                placeholder="Capital Corporate Hangar Bay&#9;4&#10;Capital Jump Drive&#9;4"
+                            ></textarea>
+                            <div class="form-text mt-2">
+                                {% trans "Paste one item per line in this format: Item Name [tab] Quantity. Click Compute to subtract owned quantities from the shopping list." %}
+                            </div>
+                            <div id="ownedMaterialsSummary" class="small text-muted mt-2"></div>
+                        </div>
+                    </div>
+
                     <div class="table-responsive craft-needed-table mt-2">
                         <table class="table table-sm align-middle mb-0" id="needed-table">
                             <thead class="table-light">

@@ -342,16 +342,56 @@
     function deriveStateFromDom() {
         const treeTab = document.getElementById('tab-tree');
         if (treeTab) {
+            // Aggregate switch states per type so repeated nodes stay consistent.
+            // Precedence: buy > prod > useless.
+            // Parent-locked nodes are ignored here because they are inherited UI state,
+            // not an explicit user decision for that type.
+            const aggregatedStates = new Map();
             treeTab.querySelectorAll('summary input.mat-switch').forEach((input) => {
                 const typeId = Number(input.getAttribute('data-type-id'));
                 if (!typeId) {
                     return;
                 }
+
+                const isFixedUseless = input.dataset && input.dataset.fixedMode === 'useless';
+                const isParentLocked = input.dataset && input.dataset.lockedByParent === 'true';
+                const current = aggregatedStates.get(typeId) || {
+                    hasBuy: false,
+                    hasProd: false,
+                    hasUseless: false
+                };
+
+                if (isFixedUseless) {
+                    current.hasUseless = true;
+                    aggregatedStates.set(typeId, current);
+                    return;
+                }
+
+                if (isParentLocked) {
+                    aggregatedStates.set(typeId, current);
+                    return;
+                }
+
+                if (!input.checked) {
+                    current.hasBuy = true;
+                } else {
+                    current.hasProd = true;
+                }
+                aggregatedStates.set(typeId, current);
+            });
+
+            aggregatedStates.forEach((flags, typeId) => {
                 let state = 'prod';
-                if (input.disabled) {
-                    state = 'useless';
-                } else if (!input.checked) {
+                if (flags.hasBuy) {
                     state = 'buy';
+                } else if (flags.hasProd) {
+                    state = 'prod';
+                } else if (flags.hasUseless) {
+                    state = 'useless';
+                } else {
+                    // No explicit decision found for this type in DOM snapshot.
+                    // Keep prior state to avoid clobbering user intent.
+                    return;
                 }
                 setSwitchState(typeId, state);
             });
