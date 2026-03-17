@@ -2420,12 +2420,15 @@ def craft_bp(request, type_id):
                     for row in cursor.fetchall():
                         # IMPORTANT: Apply ME rounding per-run (per job/cycle), then multiply.
                         # Doing ceil((base_qty * runs) * (1 - ME)) underestimates for small base quantities.
-                        per_run_qty = ceil((row[2] or 0) * (100 - blueprint_me) / 100)
+                        base_per_run_qty = int(row[2] or 0)
+                        per_run_qty = ceil(base_per_run_qty * (100 - blueprint_me) / 100)
                         qty = int(per_run_qty) * int(runs)
+                        qty_default = base_per_run_qty * int(runs)
                         mat = {
                             "type_id": row[0],
                             "type_name": get_type_name(row[0]),
                             "quantity": qty,
+                            "quantity_default": qty_default,
                             # Default values, will be overwritten if blueprint exists
                             "cycles": None,
                             "produced_per_cycle": None,

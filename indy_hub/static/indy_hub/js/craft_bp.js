@@ -352,6 +352,7 @@ function refreshTreeSwitchHierarchy() {
 
     const switches = Array.from(treeTab.querySelectorAll('input.mat-switch'));
     switches.forEach(applyParentLockState);
+    refreshTreeBlueprintContextLabels();
 }
 
 if (typeof window !== 'undefined' && !window.refreshTreeSwitchHierarchy) {
@@ -4087,7 +4088,7 @@ function buildBlueprintUsageContextByProductType() {
             selected: Boolean(selected),
             available: Boolean(available),
             owned: Boolean(userOwns),
-            isCopy: Boolean(bp?.is_copy ?? bp?.isCopy),
+            isCopy: Boolean(bp?.is_copy ?? bp?.isCopy) || (!userOwns && hasShared),
             me: meValue,
             te: teValue,
             defaultMe: 0,
@@ -4163,6 +4164,41 @@ function formatBlueprintContextForPlanItem(typeId, contextsByProductType = null)
     const meDelta = bpMe - defaultMe;
     const deltaPrefix = meDelta >= 0 ? '+' : '';
     return `${__('BPC')}: ${context.blueprintName} (${sourceLabel}) | ${__('BP ME')}: ${bpMe} | ${__('Default ME')}: ${defaultMe} | ${__('Delta')}: ${deltaPrefix}${meDelta}`;
+}
+
+function formatBlueprintContextForTreeItem(typeId, contextsByProductType = null) {
+    const numericTypeId = Number(typeId) || 0;
+    if (!numericTypeId) {
+        return '';
+    }
+    const context = getBlueprintUsageContextForProductType(numericTypeId, contextsByProductType);
+    if (!context || !context.active) {
+        return '';
+    }
+    const mode = getTreeSwitchModeForType(numericTypeId);
+    if (mode !== 'prod') {
+        return '';
+    }
+    const kind = context.isCopy ? __('BPC') : __('BPO');
+    return `${kind} ${__('ME')}: ${Number(context.me) || 0} ${__('TE')}: ${Number(context.te) || 0}`;
+}
+
+function refreshTreeBlueprintContextLabels() {
+    const treeTab = document.getElementById('tab-tree');
+    if (!treeTab) {
+        return;
+    }
+    const contextsByProductType = buildBlueprintUsageContextByProductType();
+    treeTab.querySelectorAll('summary[data-type-id]').forEach((summaryEl) => {
+        const typeId = Number(summaryEl.getAttribute('data-type-id') || 0) || 0;
+        const contextEl = summaryEl.querySelector('.tree-bp-context');
+        if (!contextEl || !typeId) {
+            return;
+        }
+        const text = formatBlueprintContextForTreeItem(typeId, contextsByProductType);
+        contextEl.textContent = text;
+        contextEl.classList.toggle('d-none', !text);
+    });
 }
 
 function getBlueprintConfigsForFinancialPlanner() {
@@ -4587,7 +4623,6 @@ function updateMaterialsTabFromState() {
     const fallbackGroupName = __('Other');
     const aggregated = new Map();
     const usageByType = buildMaterialUsageTargetsByType();
-    const blueprintContextsByProductType = buildBlueprintUsageContextByProductType();
     const treeScopedItems = computeNeededItemsFromTreeWithOwned(window.SimulationAPI, new Map());
     const items = Array.isArray(CRAFT_COMPUTED_NEEDED_ROWS)
         ? CRAFT_COMPUTED_NEEDED_ROWS
@@ -4654,10 +4689,7 @@ function updateMaterialsTabFromState() {
                 <td class="fw-semibold">
                     <div class="d-flex align-items-center gap-3">
                         <img src="https://images.evetech.net/types/${item.typeId}/icon?size=32" alt="${escapeHtml(item.typeName)}" class="rounded" style="width:30px;height:30px;background:#f3f4f6;" onerror="this.style.display='none';">
-                        <div class="d-flex flex-column">
-                            <span class="badge bg-info-subtle text-info-emphasis px-2 py-1">${escapeHtml(item.typeName)}</span>
-                            <span class="small text-muted mt-1">${escapeHtml(formatBlueprintContextForPlanItem(Number(item.typeId) || 0, blueprintContextsByProductType))}</span>
-                        </div>
+                        <span class="badge bg-info-subtle text-info-emphasis px-2 py-1">${escapeHtml(item.typeName)}</span>
                     </div>
                 </td>
                 <td class="text-end">
