@@ -912,6 +912,26 @@ document.addEventListener('DOMContentLoaded', function() {
                     activeTabInput.value = target.replace('#tab-', '');
                 }
             }
+
+            // Persist current Buy/Prod decisions when updating runs.
+            let buyDecisions = [];
+            if (typeof getCurrentBuyCraftDecisions === 'function') {
+                buyDecisions = getCurrentBuyCraftDecisions();
+            } else {
+                buyDecisions = Array.from(document.querySelectorAll('.mat-switch'))
+                    .filter((switchEl) => !switchEl.checked)
+                    .map((switchEl) => switchEl.getAttribute('data-type-id'))
+                    .filter((value) => value);
+            }
+
+            let buyInput = controlForm.querySelector('input[name="buy"]');
+            if (!buyInput) {
+                buyInput = document.createElement('input');
+                buyInput.type = 'hidden';
+                buyInput.name = 'buy';
+                controlForm.appendChild(buyInput);
+            }
+            buyInput.value = Array.from(new Set(buyDecisions)).join(',');
         });
     }
 

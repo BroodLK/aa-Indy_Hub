@@ -4335,6 +4335,191 @@ function parseOwnedMaterialsInput(rawText) {
     };
 }
 
+function buildOwnedTypeLookupFromPayload(ownedByName, labelsByName) {
+    const payload = window.BLUEPRINT_DATA || {};
+    const nameToTypeIds = new Map();
+    const byType = new Map();
+    const matchedNames = new Set();
+    const unresolvedNames = [];
+
+    const addNameType = (typeId, typeName) => {
+        const numericTypeId = Number(typeId) || 0;
+        const normalizedName = normalizeOwnedMaterialName(typeName);
+        if (!numericTypeId || !normalizedName) {
+            return;
+        }
+        if (!nameToTypeIds.has(normalizedName)) {
+            nameToTypeIds.set(normalizedName, new Set());
+        }
+        nameToTypeIds.get(normalizedName).add(numericTypeId);
+    };
+
+    const walkTree = (nodes) => {
+        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+            const typeId = Number(node && (node.type_id || node.typeId)) || 0;
+            const typeName = String((node && (node.type_name || node.typeName)) || '');
+            addNameType(typeId, typeName);
+            const children = Array.isArray(node && node.sub_materials)
+                ? node.sub_materials
+                : (Array.isArray(node && node.subMaterials) ? node.subMaterials : []);
+            if (children.length > 0) {
+                walkTree(children);
+            }
+        });
+    };
+
+    const addArrayEntries = (items) => {
+        (Array.isArray(items) ? items : []).forEach((item) => {
+            const typeId = Number(item && (item.type_id || item.typeId)) || 0;
+            const typeName = String((item && (item.type_name || item.typeName)) || '');
+            addNameType(typeId, typeName);
+        });
+    };
+
+    walkTree(payload.materials_tree);
+    addArrayEntries(payload.materials);
+    addArrayEntries(payload.direct_materials);
+
+    const grouped = payload.materials_by_group || payload.materialsByGroup || {};
+    Object.values(grouped).forEach((group) => {
+        if (!group || !Array.isArray(group.items)) {
+            return;
+        }
+        addArrayEntries(group.items);
+    });
+
+    ownedByName.forEach((qty, normalizedName) => {
+        const typeIds = nameToTypeIds.get(normalizedName);
+        if (!typeIds || typeIds.size === 0) {
+            unresolvedNames.push(labelsByName.get(normalizedName) || normalizedName);
+            return;
+        }
+
+        const chosenTypeId = Array.from(typeIds)[0];
+        byType.set(chosenTypeId, (byType.get(chosenTypeId) || 0) + qty);
+        matchedNames.add(normalizedName);
+    });
+
+    return {
+        byType,
+        matchedNames,
+        unresolvedNames,
+    };
+}
+
+function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
+    const payload = window.BLUEPRINT_DATA || {};
+    const rootNodes = Array.isArray(payload.materials_tree) ? payload.materials_tree : [];
+    if (rootNodes.length === 0) {
+        return null;
+    }
+
+    const marketGroupMap = payload.market_group_map || {};
+    const results = new Map(); // typeId -> { typeId, typeName, quantity, marketGroup }
+    const remainingOwned = new Map(ownedByType || []);
+
+    const addResult = (typeId, typeName, marketGroup, qty) => {
+        const numericTypeId = Number(typeId) || 0;
+        const normalizedQty = Math.max(0, Math.ceil(Number(qty) || 0));
+        if (!numericTypeId || normalizedQty <= 0) {
+            return;
+        }
+        const existing = results.get(numericTypeId) || {
+            typeId: numericTypeId,
+            typeName: String(typeName || ''),
+            quantity: 0,
+            marketGroup: String(marketGroup || ''),
+        };
+        existing.quantity += normalizedQty;
+        if (!existing.typeName && typeName) {
+            existing.typeName = String(typeName);
+        }
+        if (!existing.marketGroup && marketGroup) {
+            existing.marketGroup = String(marketGroup);
+        }
+        results.set(numericTypeId, existing);
+    };
+
+    const resolveSwitchState = (typeId, craftable) => {
+        if (!craftable) {
+            return 'prod';
+        }
+        if (api && typeof api.getSwitchState === 'function') {
+            const state = api.getSwitchState(typeId);
+            if (state === 'buy' || state === 'prod' || state === 'useless') {
+                return state;
+            }
+        }
+        const switchEl = document.querySelector(`#tab-tree input.mat-switch[data-type-id="${typeId}"]`);
+        if (switchEl) {
+            if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
+                return 'useless';
+            }
+            return switchEl.checked ? 'prod' : 'buy';
+        }
+        return 'prod';
+    };
+
+    const walk = (nodes, multiplier) => {
+        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+            const typeId = Number(node && (node.type_id || node.typeId)) || 0;
+            if (!typeId) {
+                return;
+            }
+
+            const rawQty = Number(node && (node.quantity ?? node.qty ?? 0));
+            if (!Number.isFinite(rawQty) || rawQty <= 0) {
+                return;
+            }
+
+            const requiredQty = Math.max(0, Math.ceil(rawQty * multiplier));
+            if (requiredQty <= 0) {
+                return;
+            }
+
+            const typeName = String((node && (node.type_name || node.typeName)) || '');
+            const marketGroup = marketGroupMap[typeId] && marketGroupMap[typeId].group_name
+                ? String(marketGroupMap[typeId].group_name)
+                : '';
+            const children = Array.isArray(node && node.sub_materials)
+                ? node.sub_materials
+                : (Array.isArray(node && node.subMaterials) ? node.subMaterials : []);
+            const craftable = children.length > 0;
+            const state = resolveSwitchState(typeId, craftable);
+
+            if (state === 'useless') {
+                return;
+            }
+
+            const ownedQty = Math.max(0, Number(remainingOwned.get(typeId) || 0));
+            const consumedQty = Math.min(requiredQty, ownedQty);
+            if (consumedQty > 0) {
+                remainingOwned.set(typeId, ownedQty - consumedQty);
+            }
+
+            const missingQty = requiredQty - consumedQty;
+            if (missingQty <= 0) {
+                return;
+            }
+
+            if (craftable) {
+                if (state === 'buy') {
+                    addResult(typeId, typeName, marketGroup, missingQty);
+                    return;
+                }
+                const childMultiplier = missingQty / requiredQty;
+                walk(children, childMultiplier);
+                return;
+            }
+
+            addResult(typeId, typeName, marketGroup, missingQty);
+        });
+    };
+
+    walk(rootNodes, 1);
+    return Array.from(results.values());
+}
+
 /**
  * Compute needed purchase list based on user selections
  */
@@ -4357,8 +4542,20 @@ function computeNeededPurchases() {
         return;
     }
 
-    // Needed = leaf inputs + craftables switched to BUY (path-aware, handles shared children correctly).
-    const items = api.getNeededMaterials() || [];
+    // Resolve owned input to known type IDs from the current payload.
+    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
+    const ownedLookup = buildOwnedTypeLookupFromPayload(
+        ownedData.byName,
+        ownedData.labelsByName
+    );
+
+    // Recompute needed materials from the tree with owned quantities applied as supply.
+    // This supports:
+    // - BUY items: subtract directly
+    // - PROD craftables you already built: subtract their downstream component demand
+    const treeItems = computeNeededItemsFromTreeWithOwned(api, ownedLookup.byType);
+    const usedTreeComputation = Array.isArray(treeItems);
+    const items = usedTreeComputation ? treeItems : (api.getNeededMaterials() || []);
     const aggregated = new Map(); // typeId -> { typeId, name, qty, marketGroup }
     items.forEach((item) => {
         const typeId = Number(item.typeId ?? item.type_id) || 0;
@@ -4403,30 +4600,21 @@ function computeNeededPurchases() {
         return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
     });
 
-    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
-    const matchedOwnedNames = new Set();
-    const unmatchedOwnedNames = [];
-    const rowsToDisplay = rows
-        .map((item) => {
-            const normalizedName = normalizeOwnedMaterialName(item.name || String(item.typeId));
-            const ownedQty = ownedData.byName.get(normalizedName) || 0;
-            if (ownedQty > 0) {
-                matchedOwnedNames.add(normalizedName);
-            }
-            const adjustedQty = Math.max(0, Number(item.qty) - ownedQty);
-            return {
-                ...item,
-                qty: adjustedQty,
-            };
-        })
-        .filter((item) => item.qty > 0);
-
-    ownedData.byName.forEach((_, normalizedName) => {
-        if (!matchedOwnedNames.has(normalizedName)) {
-            const rawLabel = ownedData.labelsByName.get(normalizedName) || normalizedName;
-            unmatchedOwnedNames.push(rawLabel);
-        }
-    });
+    const rowsToDisplay = usedTreeComputation
+        ? rows
+        : rows
+            .map((item) => {
+                const normalizedName = normalizeOwnedMaterialName(item.name || String(item.typeId));
+                const ownedQty = ownedData.byName.get(normalizedName) || 0;
+                const adjustedQty = Math.max(0, Number(item.qty) - ownedQty);
+                return {
+                    ...item,
+                    qty: adjustedQty,
+                };
+            })
+            .filter((item) => item.qty > 0);
+    const matchedOwnedNames = ownedLookup.matchedNames;
+    const unmatchedOwnedNames = ownedLookup.unresolvedNames.slice();
 
     if (ownedSummaryEl) {
         if (ownedData.byName.size === 0 && ownedData.malformedLines.length === 0) {
