@@ -229,13 +229,22 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(ctx["buy_expected_jita_sell_total"], Decimal("850"))
         self.assertEqual(ctx["buy_expected_jita_buy_total"], Decimal("600"))
         self.assertEqual(ctx["buy_actual_revenue_total"], Decimal("780"))
-        self.assertEqual(ctx["buy_revenue_delta_jita_sell"], Decimal("-70"))
-        self.assertEqual(ctx["buy_revenue_delta_jita_buy"], Decimal("180"))
-        self.assertEqual(ctx["actual_exchange_profit"], Decimal("-170"))
+        self.assertEqual(ctx["buy_revenue_delta_jita_sell"], Decimal("-100"))
+        self.assertEqual(ctx["buy_revenue_delta_jita_buy"], Decimal("150"))
+        self.assertEqual(ctx["actual_exchange_profit"], Decimal("-250"))
+        self.assertEqual(ctx["actual_exchange_profit_with_wallet"], Decimal("-250"))
         self.assertEqual(ctx["realized_member_sale_profit"], Decimal("250.00"))
         self.assertEqual(ctx["potential_profit_jita_buy"], Decimal("100.00"))
         self.assertEqual(ctx["potential_profit_jita_sell"], Decimal("350.00"))
         self.assertEqual(ctx["potential_profit_jita_split"], Decimal("225.00"))
+        self.assertEqual(ctx["expected_profit_jita_split_with_wallet"], Decimal("225.00"))
+        self.assertEqual(ctx["contract_profit_margin_pct"], -33.33)
+        self.assertEqual(ctx["net_profit_margin_pct"], -33.33)
+        self.assertEqual(ctx["expected_margin_jita_split_pct"], 31.03)
+        self.assertEqual(ctx["projected_profit"], Decimal("-250.00"))
+        self.assertEqual(ctx["projected_margin_pct"], -33.33)
+        self.assertEqual(ctx["forecast_30d_profit"], Decimal("-7500.00"))
+        self.assertEqual(ctx["forecast_90d_profit"], Decimal("-22500.00"))
         self.assertEqual(ctx["snapshot_coverage_pct"], 100.0)
         self.assertEqual(ctx["potential_priced_type_count"], 1)
 
@@ -270,7 +279,7 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         older_order = MaterialExchangeBuyOrder.objects.create(
             config=self.config,
             buyer=self.member,
-            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            status=MaterialExchangeBuyOrder.Status.COMPLETED,
         )
         MaterialExchangeBuyOrderItem.objects.create(
             order=older_order,
@@ -285,7 +294,7 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         recent_order = MaterialExchangeBuyOrder.objects.create(
             config=self.config,
             buyer=self.member,
-            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            status=MaterialExchangeBuyOrder.Status.COMPLETED,
         )
         MaterialExchangeBuyOrderItem.objects.create(
             order=recent_order,
@@ -302,6 +311,34 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         )
         MaterialExchangeBuyOrder.objects.filter(pk=recent_order.pk).update(
             created_at=now - timedelta(days=1)
+        )
+        older_tx = MaterialExchangeTransaction.objects.create(
+            config=self.config,
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
+            buy_order=older_order,
+            user=self.member,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            unit_price=Decimal("100.00"),
+            total_price=Decimal("100.00"),
+        )
+        recent_tx = MaterialExchangeTransaction.objects.create(
+            config=self.config,
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
+            buy_order=recent_order,
+            user=self.member,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            unit_price=Decimal("200.00"),
+            total_price=Decimal("200.00"),
+        )
+        MaterialExchangeTransaction.objects.filter(pk=older_tx.pk).update(
+            completed_at=now - timedelta(days=10)
+        )
+        MaterialExchangeTransaction.objects.filter(pk=recent_tx.pk).update(
+            completed_at=now - timedelta(days=1)
         )
 
         start_date = (now - timedelta(days=2)).date().isoformat()
@@ -359,7 +396,7 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         base_buy_order = MaterialExchangeBuyOrder.objects.create(
             config=self.config,
             buyer=self.member,
-            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            status=MaterialExchangeBuyOrder.Status.COMPLETED,
         )
         MaterialExchangeBuyOrderItem.objects.create(
             order=base_buy_order,
@@ -374,7 +411,7 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         selected_buy_order = MaterialExchangeBuyOrder.objects.create(
             config=other_config,
             buyer=self.member,
-            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            status=MaterialExchangeBuyOrder.Status.COMPLETED,
         )
         MaterialExchangeBuyOrderItem.objects.create(
             order=selected_buy_order,
@@ -384,6 +421,28 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
             unit_price=Decimal("500.00"),
             total_price=Decimal("500.00"),
             stock_available_at_creation=999,
+        )
+        MaterialExchangeTransaction.objects.create(
+            config=self.config,
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
+            buy_order=base_buy_order,
+            user=self.member,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            unit_price=Decimal("100.00"),
+            total_price=Decimal("100.00"),
+        )
+        MaterialExchangeTransaction.objects.create(
+            config=other_config,
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
+            buy_order=selected_buy_order,
+            user=self.member,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            unit_price=Decimal("500.00"),
+            total_price=Decimal("500.00"),
         )
 
         self.client.force_login(self.manager)

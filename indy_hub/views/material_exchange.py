@@ -13,7 +13,7 @@ from django.contrib.auth.models import Permission
 from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Count, Max, Q, Sum
+from django.db.models import Count, Max, Min, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -25,6 +25,17 @@ from django.views.decorators.http import require_http_methods
 # Alliance Auth
 from allianceauth.authentication.models import UserProfile
 from allianceauth.services.hooks import get_extension_logger
+
+try:  # Optional dependency.
+    from corptools.models import (
+        CorporationMarketOrder,
+        CorporationWalletDivision,
+        CorporationWalletJournalEntry,
+    )
+except Exception:  # pragma: no cover - Corptools not installed/enabled.
+    CorporationMarketOrder = None
+    CorporationWalletDivision = None
+    CorporationWalletJournalEntry = None
 
 from ..decorators import indy_hub_permission_required, tokens_required
 from ..models import (
@@ -5943,6 +5954,38 @@ def material_exchange_stats_history(request):
     except Exception:
         wallet_division_names = {}
 
+    corptools_division_balance = Decimal("0")
+    if (
+        CorporationWalletDivision is not None
+        and int(chosen_corporation_id or 0) > 0
+    ):
+        try:
+            corptools_division_rows = list(
+                CorporationWalletDivision.objects.filter(
+                    corporation__corporation__corporation_id=int(chosen_corporation_id),
+                ).values("division", "name", "balance")
+            )
+            if corptools_division_rows:
+                division_scope_missing = False
+                for row in corptools_division_rows:
+                    try:
+                        division_idx = int(row.get("division") or 0)
+                    except (TypeError, ValueError):
+                        division_idx = 0
+                    if division_idx not in range(1, 8):
+                        continue
+                    division_name = str(row.get("name") or "").strip()
+                    if division_name:
+                        wallet_division_names[division_idx] = division_name
+                    if division_idx == int(chosen_wallet_division):
+                        corptools_division_balance = _to_decimal(row.get("balance"))
+        except Exception as exc:
+            logger.warning(
+                "Failed to read Corptools wallet divisions for corp %s: %s",
+                chosen_corporation_id,
+                exc,
+            )
+
     wallet_division_options = [
         {
             "id": idx,
@@ -6046,6 +6089,7 @@ def material_exchange_stats_history(request):
     wallet_journal_rows: list[dict] = []
     wallet_market_orders_rows: list[dict] = []
     wallet_market_monthly_map: dict[str, int] = {}
+    wallet_data_source = "esi"
 
     wallet_market_ref_types = {
         "market_transaction",
@@ -6065,51 +6109,117 @@ def material_exchange_stats_history(request):
     }
 
     if int(chosen_corporation_id or 0) > 0:
-        try:
-            wallet_character_id = _get_character_for_scope(
-                int(chosen_corporation_id),
-                "esi-wallet.read_corporation_wallets.v1",
-            )
-            wallet_journal_rows = shared_client.fetch_corporation_wallet_journal(
-                int(chosen_corporation_id),
-                division=int(chosen_wallet_division),
-                character_id=int(wallet_character_id),
-            )
-        except ESITokenError:
-            wallet_scope_missing = True
-        except (ESIClientError, Exception) as exc:
-            wallet_activity_error = str(exc)
-            logger.warning(
-                "Failed to fetch wallet journal for corp %s division %s: %s",
-                chosen_corporation_id,
-                chosen_wallet_division,
-                exc,
-            )
+        if (
+            CorporationWalletJournalEntry is not None
+            and CorporationMarketOrder is not None
+        ):
+            wallet_data_source = "corptools"
+            try:
+                wallet_journal_rows = list(
+                    CorporationWalletJournalEntry.objects.filter(
+                        division__corporation__corporation__corporation_id=int(
+                            chosen_corporation_id
+                        ),
+                        division__division=int(chosen_wallet_division),
+                    ).values(
+                        "date",
+                        "ref_type",
+                        "amount",
+                        "context_id",
+                    )
+                )
+            except Exception as exc:
+                wallet_activity_error = str(exc)
+                logger.warning(
+                    "Failed to read Corptools wallet journal for corp %s division %s: %s",
+                    chosen_corporation_id,
+                    chosen_wallet_division,
+                    exc,
+                )
 
-        try:
-            market_character_id = _get_character_for_scope(
-                int(chosen_corporation_id),
-                "esi-markets.read_corporation_orders.v1",
-            )
-            wallet_market_orders_rows = shared_client.fetch_corporation_orders(
-                int(chosen_corporation_id),
-                character_id=int(market_character_id),
-            )
-        except ESITokenError:
-            market_scope_missing = True
-        except (ESIClientError, Exception) as exc:
-            wallet_activity_error = wallet_activity_error or str(exc)
-            logger.warning(
-                "Failed to fetch market orders for corp %s: %s",
-                chosen_corporation_id,
-                exc,
-            )
+            try:
+                wallet_market_orders_rows = [
+                    {
+                        "wallet_division": int(chosen_wallet_division),
+                        "is_buy_order": row.get("is_buy_order"),
+                        "volume_remain": row.get("volume_remain"),
+                        "volume_total": row.get("volume_total"),
+                        "price": row.get("price"),
+                    }
+                    for row in CorporationMarketOrder.objects.filter(
+                        wallet_division__corporation__corporation__corporation_id=int(
+                            chosen_corporation_id
+                        ),
+                        wallet_division__division=int(chosen_wallet_division),
+                        state="active",
+                    ).values(
+                        "is_buy_order",
+                        "volume_remain",
+                        "volume_total",
+                        "price",
+                    )
+                ]
+            except Exception as exc:
+                wallet_activity_error = wallet_activity_error or str(exc)
+                logger.warning(
+                    "Failed to read Corptools market orders for corp %s division %s: %s",
+                    chosen_corporation_id,
+                    chosen_wallet_division,
+                    exc,
+                )
+        else:
+            wallet_data_source = "esi"
+            try:
+                wallet_character_id = _get_character_for_scope(
+                    int(chosen_corporation_id),
+                    "esi-wallet.read_corporation_wallets.v1",
+                )
+                wallet_journal_rows = shared_client.fetch_corporation_wallet_journal(
+                    int(chosen_corporation_id),
+                    division=int(chosen_wallet_division),
+                    character_id=int(wallet_character_id),
+                )
+            except ESITokenError:
+                wallet_scope_missing = True
+            except (ESIClientError, Exception) as exc:
+                wallet_activity_error = str(exc)
+                logger.warning(
+                    "Failed to fetch wallet journal for corp %s division %s: %s",
+                    chosen_corporation_id,
+                    chosen_wallet_division,
+                    exc,
+                )
+
+            try:
+                market_character_id = _get_character_for_scope(
+                    int(chosen_corporation_id),
+                    "esi-markets.read_corporation_orders.v1",
+                )
+                wallet_market_orders_rows = shared_client.fetch_corporation_orders(
+                    int(chosen_corporation_id),
+                    character_id=int(market_character_id),
+                )
+            except ESITokenError:
+                market_scope_missing = True
+            except (ESIClientError, Exception) as exc:
+                wallet_activity_error = wallet_activity_error or str(exc)
+                logger.warning(
+                    "Failed to fetch market orders for corp %s: %s",
+                    chosen_corporation_id,
+                    exc,
+                )
 
     wallet_activity_count = 0
     wallet_inflow_total = Decimal("0")
     wallet_outflow_total = Decimal("0")
     wallet_market_activity_count = 0
     wallet_market_activity_total = Decimal("0")
+    wallet_market_transaction_count = 0
+    wallet_market_transaction_total = Decimal("0")
+    wallet_market_escrow_count = 0
+    wallet_market_escrow_total = Decimal("0")
+    wallet_fee_count = 0
+    wallet_fee_total = Decimal("0")
     wallet_donation_count = 0
     wallet_donation_total = Decimal("0")
     wallet_withdrawal_count = 0
@@ -6148,6 +6258,21 @@ def material_exchange_stats_history(request):
                 wallet_market_monthly_map[month_key] = (
                     int(wallet_market_monthly_map.get(month_key, 0)) + 1
                 )
+            if ref_type == "market_transaction":
+                wallet_market_transaction_count += 1
+                wallet_market_transaction_total += amount
+            elif ref_type == "market_escrow":
+                wallet_market_escrow_count += 1
+                wallet_market_escrow_total += amount
+            elif ref_type in {
+                "broker_fee",
+                "brokers_fee",
+                "transaction_tax",
+                "market_provider_tax",
+                "market_fine_paid",
+            }:
+                wallet_fee_count += 1
+                wallet_fee_total += amount
 
         if ref_type in wallet_donation_ref_types:
             wallet_donation_count += 1
@@ -6210,6 +6335,14 @@ def material_exchange_stats_history(request):
             wallet_open_buy_orders += 1
         else:
             wallet_open_sell_orders += 1
+
+    wallet_supplemental_total = (
+        wallet_donation_total
+        + wallet_withdrawal_total
+        + wallet_fee_total
+        + wallet_market_transaction_total
+        + wallet_market_escrow_total
+    )
 
     market_trend_source_label = _("Wallet Market Activity")
     if not wallet_market_monthly_map:
@@ -6305,25 +6438,46 @@ def material_exchange_stats_history(request):
         else 0
     )
 
-    sell_cost_delta = sell_actual_cost_total - sell_expected_cost_total
-    buy_revenue_delta_jita_sell = buy_actual_revenue_total - buy_expected_jita_sell_total
-    buy_revenue_delta_jita_buy = buy_actual_revenue_total - buy_expected_jita_buy_total
-
-    total_buy_volume = buy_expected_total
-    total_sell_volume = sell_expected_cost_total
-    total_transactions = len(buy_rows) + len(sell_rows)
-    actual_exchange_profit = buy_actual_revenue_total - sell_actual_cost_total
-
-    member_sales_volume = buy_actual_revenue_total
-    jita_buy_value = buy_expected_jita_buy_total
-    jita_sell_value = buy_expected_jita_sell_total
-    jita_split_value = buy_expected_jita_split_total
-
     tx_rows = MaterialExchangeTransaction.objects.filter(
         config_id__in=selected_config_ids
     ).filter(
         Q(sell_order_id__in=sell_order_ids) | Q(buy_order_id__in=buy_order_ids)
     )
+    if filter_start:
+        tx_rows = tx_rows.filter(completed_at__gte=filter_start)
+    if filter_end:
+        tx_rows = tx_rows.filter(completed_at__lte=filter_end)
+
+    tx_time_rollup = tx_rows.aggregate(
+        first_completed=Min("completed_at"),
+        last_completed=Max("completed_at"),
+    )
+
+    contract_buy_total = _to_decimal(
+        tx_rows.filter(
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY
+        ).aggregate(total=Sum("total_price", default=0))["total"]
+    )
+    contract_sell_total = _to_decimal(
+        tx_rows.filter(
+            transaction_type=MaterialExchangeTransaction.TransactionType.SELL
+        ).aggregate(total=Sum("total_price", default=0))["total"]
+    )
+    contract_transaction_count = int(tx_rows.count())
+
+    total_buy_volume = contract_buy_total
+    total_sell_volume = contract_sell_total
+    total_transactions = contract_transaction_count
+    actual_exchange_profit = total_buy_volume - total_sell_volume
+    actual_exchange_profit_with_wallet = actual_exchange_profit + wallet_supplemental_total
+    sell_cost_delta = total_sell_volume - sell_expected_cost_total
+    buy_revenue_delta_jita_sell = total_buy_volume - buy_expected_jita_sell_total
+    buy_revenue_delta_jita_buy = total_buy_volume - buy_expected_jita_buy_total
+
+    member_sales_volume = total_buy_volume
+    jita_buy_value = buy_expected_jita_buy_total
+    jita_sell_value = buy_expected_jita_sell_total
+    jita_split_value = buy_expected_jita_split_total
 
     type_rollup: dict[int, dict[str, Decimal]] = {}
     for row in tx_rows.values(
@@ -6429,6 +6583,122 @@ def material_exchange_stats_history(request):
         potential_profit_jita_sell += rollup["sold_jita_sell"] - cogs_for_sold
         potential_profit_jita_split += rollup["sold_jita_split"] - cogs_for_sold
         potential_priced_type_count += 1
+
+    expected_profit_jita_buy_with_wallet = (
+        potential_profit_jita_buy + wallet_supplemental_total
+    )
+    expected_profit_jita_sell_with_wallet = (
+        potential_profit_jita_sell + wallet_supplemental_total
+    )
+    expected_profit_jita_split_with_wallet = (
+        potential_profit_jita_split + wallet_supplemental_total
+    )
+    projected_profit = actual_exchange_profit_with_wallet + unrealized_earnings_potential
+    projected_revenue = total_buy_volume + unrealized_inventory_value
+
+    contract_profit_margin_pct = (
+        round((actual_exchange_profit / total_buy_volume) * 100, 2)
+        if total_buy_volume > 0
+        else 0
+    )
+    net_profit_margin_pct = (
+        round((actual_exchange_profit_with_wallet / total_buy_volume) * 100, 2)
+        if total_buy_volume > 0
+        else 0
+    )
+    expected_margin_jita_split_pct = (
+        round((expected_profit_jita_split_with_wallet / jita_split_value) * 100, 2)
+        if jita_split_value > 0
+        else 0
+    )
+    expected_margin_jita_buy_pct = (
+        round((expected_profit_jita_buy_with_wallet / jita_buy_value) * 100, 2)
+        if jita_buy_value > 0
+        else 0
+    )
+    expected_margin_jita_sell_pct = (
+        round((expected_profit_jita_sell_with_wallet / jita_sell_value) * 100, 2)
+        if jita_sell_value > 0
+        else 0
+    )
+    projected_margin_pct = (
+        round((projected_profit / projected_revenue) * 100, 2)
+        if projected_revenue > 0
+        else 0
+    )
+    realized_vs_jita_buy_pct = (
+        round((member_sales_volume / jita_buy_value) * 100, 2) if jita_buy_value > 0 else 0
+    )
+    realized_vs_jita_sell_pct = (
+        round((member_sales_volume / jita_sell_value) * 100, 2)
+        if jita_sell_value > 0
+        else 0
+    )
+    realized_vs_jita_split_pct = (
+        round((member_sales_volume / jita_split_value) * 100, 2)
+        if jita_split_value > 0
+        else 0
+    )
+    wallet_adjustment_pct_of_revenue = (
+        round((wallet_supplemental_total / total_buy_volume) * 100, 2)
+        if total_buy_volume > 0
+        else 0
+    )
+    unrealized_roi_pct = (
+        round((unrealized_earnings_potential / unrealized_inventory_cost_basis) * 100, 2)
+        if unrealized_inventory_cost_basis > 0
+        else 0
+    )
+
+    analysis_window_start = filter_start or period_start or tx_time_rollup.get(
+        "first_completed"
+    )
+    analysis_window_end = filter_end or timezone.now()
+    if not analysis_window_start:
+        analysis_window_start = tx_time_rollup.get("first_completed")
+    if (
+        analysis_window_start is not None
+        and analysis_window_end is not None
+        and analysis_window_end < analysis_window_start
+    ):
+        analysis_window_end = analysis_window_start
+    analysis_window_days = (
+        max((analysis_window_end - analysis_window_start).days + 1, 1)
+        if analysis_window_start and analysis_window_end
+        else 0
+    )
+
+    average_daily_revenue = (
+        (total_buy_volume / Decimal(str(analysis_window_days))).quantize(Decimal("0.01"))
+        if analysis_window_days > 0
+        else Decimal("0")
+    )
+    average_daily_cost = (
+        (total_sell_volume / Decimal(str(analysis_window_days))).quantize(Decimal("0.01"))
+        if analysis_window_days > 0
+        else Decimal("0")
+    )
+    average_daily_net_profit = (
+        (actual_exchange_profit_with_wallet / Decimal(str(analysis_window_days))).quantize(
+            Decimal("0.01")
+        )
+        if analysis_window_days > 0
+        else Decimal("0")
+    )
+    forecast_30d_revenue = (average_daily_revenue * Decimal("30")).quantize(
+        Decimal("0.01")
+    )
+    forecast_30d_profit = (average_daily_net_profit * Decimal("30")).quantize(
+        Decimal("0.01")
+    )
+    forecast_90d_profit = (average_daily_net_profit * Decimal("90")).quantize(
+        Decimal("0.01")
+    )
+    forecast_30d_margin_pct = (
+        round((forecast_30d_profit / forecast_30d_revenue) * 100, 2)
+        if forecast_30d_revenue > 0
+        else 0
+    )
 
     contracts_qs = ESIContract.objects.filter(contract_type="item_exchange")
     if int(chosen_corporation_id or 0) > 0:
@@ -6549,23 +6819,14 @@ def material_exchange_stats_history(request):
         ),
     }
 
-    buy_orders_monthly_rows = (
-        buy_orders_qs.annotate(month=TruncMonth("created_at"))
-        .values("month")
+    tx_monthly_rows = (
+        tx_rows.annotate(month=TruncMonth("completed_at"))
+        .values("month", "transaction_type")
         .annotate(
             order_count=Count("id"),
-            total_value=Sum("items__total_price", default=0),
+            total_value=Sum("total_price", default=0),
         )
-        .order_by("month")
-    )
-    sell_orders_monthly_rows = (
-        sell_orders_qs.annotate(month=TruncMonth("created_at"))
-        .values("month")
-        .annotate(
-            order_count=Count("id"),
-            total_value=Sum("items__total_price", default=0),
-        )
-        .order_by("month")
+        .order_by("month", "transaction_type")
     )
 
     if all_contract_ids:
@@ -6578,25 +6839,29 @@ def material_exchange_stats_history(request):
     market_monthly_map: dict[str, int] = dict(wallet_market_monthly_map)
     month_keys: set[str] = set()
 
-    for row in buy_orders_monthly_rows:
+    for row in tx_monthly_rows:
         month = row.get("month")
         if not month:
             continue
         key = month.strftime("%Y-%m")
-        buy_monthly_map[key] = {
-            "count": int(row.get("order_count") or 0),
-            "value": _to_decimal(row.get("total_value")),
-        }
-        month_keys.add(key)
-
-    for row in sell_orders_monthly_rows:
-        month = row.get("month")
-        if not month:
+        tx_type = str(row.get("transaction_type") or "").strip().lower()
+        target = None
+        if tx_type == MaterialExchangeTransaction.TransactionType.BUY:
+            target = buy_monthly_map
+        elif tx_type == MaterialExchangeTransaction.TransactionType.SELL:
+            target = sell_monthly_map
+        if target is None:
             continue
-        key = month.strftime("%Y-%m")
-        sell_monthly_map[key] = {
-            "count": int(row.get("order_count") or 0),
-            "value": _to_decimal(row.get("total_value")),
+        existing = target.get(
+            key,
+            {
+                "count": 0,
+                "value": Decimal("0"),
+            },
+        )
+        target[key] = {
+            "count": int(existing.get("count") or 0) + int(row.get("order_count") or 0),
+            "value": _to_decimal(existing.get("value")) + _to_decimal(row.get("total_value")),
         }
         month_keys.add(key)
 
@@ -6697,15 +6962,26 @@ def material_exchange_stats_history(request):
         )
         if wallet_market_orders_rows
         else int(buyback_contracts_qs.count()),
+        "contract_buy_total": total_buy_volume,
+        "contract_sell_total": total_sell_volume,
+        "contract_transaction_count": contract_transaction_count,
         "wallet_activity_count": int(wallet_activity_count),
+        "wallet_division_balance": corptools_division_balance,
         "wallet_inflow_total": wallet_inflow_total,
         "wallet_outflow_total": wallet_outflow_total,
         "wallet_market_activity_count": int(wallet_market_activity_count),
         "wallet_market_activity_total": wallet_market_activity_total,
+        "wallet_market_transaction_count": int(wallet_market_transaction_count),
+        "wallet_market_transaction_total": wallet_market_transaction_total,
+        "wallet_market_escrow_count": int(wallet_market_escrow_count),
+        "wallet_market_escrow_total": wallet_market_escrow_total,
+        "wallet_fee_count": int(wallet_fee_count),
+        "wallet_fee_total": wallet_fee_total,
         "wallet_donation_count": int(wallet_donation_count),
         "wallet_donation_total": wallet_donation_total,
         "wallet_withdrawal_count": int(wallet_withdrawal_count),
         "wallet_withdrawal_total": wallet_withdrawal_total,
+        "wallet_supplemental_total": wallet_supplemental_total,
         "me_contract_wallet_entry_count": int(me_contract_wallet_entry_count),
         "me_contract_wallet_amount_total": me_contract_wallet_amount_total,
         "open_buy_orders": int(wallet_open_buy_orders),
@@ -6811,6 +7087,7 @@ def material_exchange_stats_history(request):
         "wallet_scope_missing": bool(wallet_scope_missing),
         "market_scope_missing": bool(market_scope_missing),
         "wallet_activity_error": wallet_activity_error,
+        "wallet_data_source": wallet_data_source,
         "chart_labels": chart_labels,
         "buy_volumes": buy_volumes,
         "sell_volumes": sell_volumes,
@@ -6840,6 +7117,7 @@ def material_exchange_stats_history(request):
         "buy_revenue_delta_jita_buy": buy_revenue_delta_jita_buy,
         "buy_contract_coverage_pct": buy_contract_coverage_pct,
         "actual_exchange_profit": actual_exchange_profit,
+        "actual_exchange_profit_with_wallet": actual_exchange_profit_with_wallet,
         "member_sales_volume": member_sales_volume,
         "jita_buy_value": jita_buy_value,
         "jita_sell_value": jita_sell_value,
@@ -6852,10 +7130,34 @@ def material_exchange_stats_history(request):
         "potential_profit_jita_buy": potential_profit_jita_buy,
         "potential_profit_jita_sell": potential_profit_jita_sell,
         "potential_profit_jita_split": potential_profit_jita_split,
+        "expected_profit_jita_buy_with_wallet": expected_profit_jita_buy_with_wallet,
+        "expected_profit_jita_sell_with_wallet": expected_profit_jita_sell_with_wallet,
+        "expected_profit_jita_split_with_wallet": expected_profit_jita_split_with_wallet,
         "potential_priced_type_count": potential_priced_type_count,
         "unrealized_inventory_value": unrealized_inventory_value,
         "unrealized_inventory_cost_basis": unrealized_inventory_cost_basis,
         "unrealized_earnings_potential": unrealized_earnings_potential,
+        "projected_profit": projected_profit,
+        "projected_revenue": projected_revenue,
+        "contract_profit_margin_pct": contract_profit_margin_pct,
+        "net_profit_margin_pct": net_profit_margin_pct,
+        "expected_margin_jita_buy_pct": expected_margin_jita_buy_pct,
+        "expected_margin_jita_sell_pct": expected_margin_jita_sell_pct,
+        "expected_margin_jita_split_pct": expected_margin_jita_split_pct,
+        "projected_margin_pct": projected_margin_pct,
+        "realized_vs_jita_buy_pct": realized_vs_jita_buy_pct,
+        "realized_vs_jita_sell_pct": realized_vs_jita_sell_pct,
+        "realized_vs_jita_split_pct": realized_vs_jita_split_pct,
+        "wallet_adjustment_pct_of_revenue": wallet_adjustment_pct_of_revenue,
+        "unrealized_roi_pct": unrealized_roi_pct,
+        "analysis_window_days": analysis_window_days,
+        "average_daily_revenue": average_daily_revenue,
+        "average_daily_cost": average_daily_cost,
+        "average_daily_net_profit": average_daily_net_profit,
+        "forecast_30d_revenue": forecast_30d_revenue,
+        "forecast_30d_profit": forecast_30d_profit,
+        "forecast_90d_profit": forecast_90d_profit,
+        "forecast_30d_margin_pct": forecast_30d_margin_pct,
         "contract_progress_stats": contract_progress_stats,
         "contract_stats": contract_stats,
         "contract_counts_raw": contract_counts_raw,
@@ -6870,7 +7172,7 @@ def material_exchange_stats_history(request):
         "most_bought_users": most_bought_users,
         "donation_stats": donation_stats,
         "data_limitations": _(
-            "Wallet-division statistics are sourced from corporation wallet journal and market orders when scopes are available. Material Exchange contract wallet totals include only contracts linked to Exchange orders."
+            "Bought/sold totals are contract-backed from Material Exchange transactions. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window."
         ),
         "nav_context": _build_nav_context(request.user),
     }

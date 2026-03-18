@@ -35,7 +35,7 @@
         <div class="me-stat-card" data-accent="primary">
             <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-shopping-cart"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Total Buy Orders Expected" %}</span>
+                <span class="me-stat-label">{% trans "Total Sold (Contract Data)" %}</span>
                 <span class="me-stat-value">{{ total_buy_volume|floatformat:0|intcomma }}</span>
                 <small class="text-muted">ISK</small>
             </div>
@@ -44,7 +44,7 @@
         <div class="me-stat-card" data-accent="success">
             <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-hand-holding-usd"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Total Sell Orders Expected" %}</span>
+                <span class="me-stat-label">{% trans "Total Bought (Contract Data)" %}</span>
                 <span class="me-stat-value">{{ total_sell_volume|floatformat:0|intcomma }}</span>
                 <small class="text-muted">ISK</small>
             </div>
@@ -53,8 +53,35 @@
         <div class="me-stat-card" data-accent="primary">
             <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-coins"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Actual Exchange Profit" %}</span>
-                <span class="me-stat-value">{{ actual_exchange_profit|floatformat:0|intcomma }}</span>
+                <span class="me-stat-label">{% trans "Exchange Profit (Contracts + Wallet Adjustments)" %}</span>
+                <span class="me-stat-value">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }}</span>
+                <small class="text-muted">ISK</small>
+            </div>
+            <span class="me-stat-glow" aria-hidden="true"></span>
+        </div>
+        <div class="me-stat-card" data-accent="success">
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-chart-line"></i></div>
+            <div class="me-stat-content">
+                <span class="me-stat-label">{% trans "Projected Profit (Incl Inventory Potential)" %}</span>
+                <span class="me-stat-value">{{ projected_profit|floatformat:0|intcomma }}</span>
+                <small class="text-muted">ISK</small>
+            </div>
+            <span class="me-stat-glow" aria-hidden="true"></span>
+        </div>
+        <div class="me-stat-card" data-accent="primary">
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-percentage"></i></div>
+            <div class="me-stat-content">
+                <span class="me-stat-label">{% trans "Expected Margin (Jita Split + Wallet)" %}</span>
+                <span class="me-stat-value">{{ expected_margin_jita_split_pct|floatformat:2 }}%</span>
+                <small class="text-muted">{% trans "Snapshot based" %}</small>
+            </div>
+            <span class="me-stat-glow" aria-hidden="true"></span>
+        </div>
+        <div class="me-stat-card" data-accent="success">
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-forward"></i></div>
+            <div class="me-stat-content">
+                <span class="me-stat-label">{% trans "Forecast 30D Net Profit (Run-Rate)" %}</span>
+                <span class="me-stat-value">{{ forecast_30d_profit|floatformat:0|intcomma }}</span>
                 <small class="text-muted">ISK</small>
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
@@ -66,7 +93,8 @@
             <div class="cap-note-card">
                 <ul class="cap-note-list">
                     <li>{% trans "Capital ship orders are excluded from this page." %}</li>
-                    <li>{% trans "Expected totals use order item totals. Actual totals use matched ESI contract prices when available." %}</li>
+                    <li>{% trans "Bought/sold totals use contract-backed Material Exchange transaction records." %}</li>
+                    <li>{% trans "Wallet activity is supplemental and captures donations, withdrawals, fees, and market refs not linked to order contracts." %}</li>
                     <li>{{ data_limitations }}</li>
                 </ul>
             </div>
@@ -153,7 +181,7 @@
                         <table class="table table-sm align-middle mb-0">
                             <tbody>
                                 <tr><th>{% trans "Expected Cost (Order Totals)" %}</th><td class="text-end">{{ sell_expected_cost_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Actual Cost (Contract Price)" %}</th><td class="text-end">{{ sell_actual_cost_total|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Actual Cost (Contract Data)" %}</th><td class="text-end">{{ total_sell_volume|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Delta (Actual - Expected)" %}</th><td class="text-end {% if sell_cost_delta >= 0 %}text-danger{% else %}text-success{% endif %}">{{ sell_cost_delta|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Expected Total At Jita Sell (Snapshot)" %}</th><td class="text-end">{{ sell_expected_jita_sell_total|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Expected Total At Jita Buy (Snapshot)" %}</th><td class="text-end">{{ sell_expected_jita_buy_total|floatformat:0|intcomma }} ISK</td></tr>
@@ -173,10 +201,34 @@
                             <tbody>
                                 <tr><th>{% trans "Expected Sale At Jita Sell (Buy Orders Snapshot)" %}</th><td class="text-end">{{ buy_expected_jita_sell_total|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Expected Sale At Jita Buy (Buy Orders Snapshot)" %}</th><td class="text-end">{{ buy_expected_jita_buy_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Actual Revenue (Contract Price)" %}</th><td class="text-end">{{ buy_actual_revenue_total|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Actual Revenue (Contract Data)" %}</th><td class="text-end">{{ total_buy_volume|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Contract-backed Net Profit" %}</th><td class="text-end {% if actual_exchange_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ actual_exchange_profit|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Wallet Supplemental Adjustments" %}</th><td class="text-end {% if donation_stats.wallet_supplemental_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_supplemental_total|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Net Profit (Contracts + Wallet)" %}</th><td class="text-end {% if actual_exchange_profit_with_wallet >= 0 %}text-success{% else %}text-danger{% endif %}">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Contract Profit Margin" %}</th><td class="text-end {% if contract_profit_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ contract_profit_margin_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Net Profit Margin (Contracts + Wallet)" %}</th><td class="text-end {% if net_profit_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ net_profit_margin_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Expected Margin At Jita Buy (+ Wallet)" %}</th><td class="text-end {% if expected_margin_jita_buy_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_margin_jita_buy_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Expected Margin At Jita Sell (+ Wallet)" %}</th><td class="text-end {% if expected_margin_jita_sell_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_margin_jita_sell_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Expected Net Profit At Jita Split (+ Wallet)" %}</th><td class="text-end {% if expected_profit_jita_split_with_wallet >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_profit_jita_split_with_wallet|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Expected Margin At Jita Split (+ Wallet)" %}</th><td class="text-end {% if expected_margin_jita_split_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_margin_jita_split_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Projected Profit (Incl Inventory Potential)" %}</th><td class="text-end {% if projected_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ projected_profit|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Projected Margin (Incl Inventory Potential)" %}</th><td class="text-end {% if projected_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ projected_margin_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Realized Revenue vs Jita Buy Snapshot" %}</th><td class="text-end {% if realized_vs_jita_buy_pct >= 100 %}text-success{% else %}text-danger{% endif %}">{{ realized_vs_jita_buy_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Realized Revenue vs Jita Sell Snapshot" %}</th><td class="text-end {% if realized_vs_jita_sell_pct >= 100 %}text-success{% else %}text-danger{% endif %}">{{ realized_vs_jita_sell_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Realized Revenue vs Jita Split Snapshot" %}</th><td class="text-end {% if realized_vs_jita_split_pct >= 100 %}text-success{% else %}text-danger{% endif %}">{{ realized_vs_jita_split_pct|floatformat:2 }}%</td></tr>
                                 <tr><th>{% trans "Actual vs Jita Sell Delta" %}</th><td class="text-end {% if buy_revenue_delta_jita_sell >= 0 %}text-success{% else %}text-danger{% endif %}">{{ buy_revenue_delta_jita_sell|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Actual vs Jita Buy Delta" %}</th><td class="text-end {% if buy_revenue_delta_jita_buy >= 0 %}text-success{% else %}text-danger{% endif %}">{{ buy_revenue_delta_jita_buy|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Wallet Adjustments as % of Revenue" %}</th><td class="text-end {% if wallet_adjustment_pct_of_revenue >= 0 %}text-success{% else %}text-danger{% endif %}">{{ wallet_adjustment_pct_of_revenue|floatformat:2 }}%</td></tr>
                                 <tr><th>{% trans "Unrealized Earnings Potential" %}</th><td class="text-end {% if unrealized_earnings_potential >= 0 %}text-success{% else %}text-danger{% endif %}">{{ unrealized_earnings_potential|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Unrealized Inventory ROI" %}</th><td class="text-end {% if unrealized_roi_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ unrealized_roi_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Analysis Window (Days)" %}</th><td class="text-end">{{ analysis_window_days|intcomma }}</td></tr>
+                                <tr><th>{% trans "Average Daily Revenue" %}</th><td class="text-end">{{ average_daily_revenue|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Average Daily Cost" %}</th><td class="text-end">{{ average_daily_cost|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Average Daily Net Profit (+ Wallet)" %}</th><td class="text-end {% if average_daily_net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ average_daily_net_profit|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Forecast Revenue (Next 30 Days)" %}</th><td class="text-end">{{ forecast_30d_revenue|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Forecast Net Profit (Next 30 Days)" %}</th><td class="text-end {% if forecast_30d_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ forecast_30d_profit|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Forecast Margin (Next 30 Days)" %}</th><td class="text-end {% if forecast_30d_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ forecast_30d_margin_pct|floatformat:2 }}%</td></tr>
+                                <tr><th>{% trans "Forecast Net Profit (Next 90 Days)" %}</th><td class="text-end {% if forecast_90d_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ forecast_90d_profit|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Buy Contract Coverage" %}</th><td class="text-end">{{ buy_contract_coverage_pct }}%</td></tr>
                             </tbody>
                         </table>
@@ -214,13 +266,24 @@
                         <tbody>
                             <tr><th>{% trans "Chosen Corp" %}</th><td class="text-end">{{ chosen_corporation_id|intcomma }}</td></tr>
                             <tr><th>{% trans "Chosen Wallet Division" %}</th><td class="text-end">{{ chosen_wallet_division }}</td></tr>
+                            <tr>
+                                <th>{% trans "Wallet Data Source" %}</th>
+                                <td class="text-end">
+                                    {% if wallet_data_source == "corptools" %}{% trans "Corptools cache" %}{% else %}{% trans "ESI live" %}{% endif %}
+                                </td>
+                            </tr>
+                            <tr><th>{% trans "Chosen Wallet Division Balance" %}</th><td class="text-end">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_activity_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Wallet Inflow" %}</th><td class="text-end">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Outflow" %}</th><td class="text-end">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Market Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Wallet Market Activity Total" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Market Transactions" %}</th><td class="text-end">{{ donation_stats.wallet_market_transaction_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_market_transaction_count|intcomma }})</td></tr>
+                            <tr><th>{% trans "Wallet Market Escrow" %}</th><td class="text-end">{{ donation_stats.wallet_market_escrow_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_market_escrow_count|intcomma }})</td></tr>
+                            <tr><th>{% trans "Wallet Fees And Taxes" %}</th><td class="text-end">{{ donation_stats.wallet_fee_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_fee_count|intcomma }})</td></tr>
                             <tr><th>{% trans "Wallet Donations" %}</th><td class="text-end">{{ donation_stats.wallet_donation_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_donation_count|intcomma }})</td></tr>
                             <tr><th>{% trans "Wallet Withdrawals" %}</th><td class="text-end">{{ donation_stats.wallet_withdrawal_total|floatformat:0|intcomma }} ISK ({{ donation_stats.wallet_withdrawal_count|intcomma }})</td></tr>
+                            <tr><th>{% trans "Wallet Supplemental Net" %}</th><td class="text-end {% if donation_stats.wallet_supplemental_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_supplemental_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Material Exchange Contract Wallet Entries" %}</th><td class="text-end">{{ donation_stats.me_contract_wallet_entry_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Material Exchange Contract Wallet Total" %}</th><td class="text-end">{{ donation_stats.me_contract_wallet_amount_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Open Market Orders (Wallet Division)" %}</th><td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td></tr>
@@ -243,8 +306,8 @@
                     <thead>
                         <tr>
                             <th>{% trans "Month" %}</th>
-                            <th class="text-end">{% trans "Buy Orders" %}</th>
-                            <th class="text-end">{% trans "Sell Orders" %}</th>
+                            <th class="text-end">{% trans "Buy Transactions" %}</th>
+                            <th class="text-end">{% trans "Sell Transactions" %}</th>
                             <th class="text-end">{{ market_trend_source_label }}</th>
                             <th class="text-end">{% trans "Buy Value" %}</th>
                             <th class="text-end">{% trans "Sell Value" %}</th>
