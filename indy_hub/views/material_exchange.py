@@ -6021,12 +6021,31 @@ def material_exchange_stats_history(request):
         period_start = month_anchor.replace(year=start_year, month=start_month)
         filter_start = period_start
 
-    selected_config_ids = list(
+    corp_config_ids = list(
+        MaterialExchangeConfig.objects.filter(
+            corporation_id=int(chosen_corporation_id or 0),
+        ).values_list("id", flat=True)
+    )
+    division_config_ids = list(
         MaterialExchangeConfig.objects.filter(
             corporation_id=int(chosen_corporation_id or 0),
             hangar_division=int(chosen_wallet_division or 0),
         ).values_list("id", flat=True)
     )
+    selected_config_ids = list(division_config_ids)
+    stats_scope_mode = "division"
+    stats_scope_note = ""
+    if not selected_config_ids and corp_config_ids:
+        selected_config_ids = list(corp_config_ids)
+        stats_scope_mode = "corp_fallback"
+        stats_scope_note = _(
+            "No Material Exchange configs found for this wallet division. Showing corp-wide Material Exchange data as fallback."
+        )
+    elif not selected_config_ids:
+        stats_scope_mode = "empty"
+        stats_scope_note = _(
+            "No Material Exchange configs found for this corporation yet."
+        )
     buy_orders_qs = MaterialExchangeBuyOrder.objects.filter(
         config_id__in=selected_config_ids
     )
@@ -6469,7 +6488,12 @@ def material_exchange_stats_history(request):
     total_sell_volume = contract_sell_total
     total_transactions = contract_transaction_count
     actual_exchange_profit = total_buy_volume - total_sell_volume
-    actual_exchange_profit_with_wallet = actual_exchange_profit + wallet_supplemental_total
+    wallet_supplemental_applied = (
+        wallet_supplemental_total if contract_transaction_count > 0 else Decimal("0")
+    )
+    actual_exchange_profit_with_wallet = (
+        actual_exchange_profit + wallet_supplemental_applied
+    )
     sell_cost_delta = total_sell_volume - sell_expected_cost_total
     buy_revenue_delta_jita_sell = total_buy_volume - buy_expected_jita_sell_total
     buy_revenue_delta_jita_buy = total_buy_volume - buy_expected_jita_buy_total
@@ -6585,13 +6609,13 @@ def material_exchange_stats_history(request):
         potential_priced_type_count += 1
 
     expected_profit_jita_buy_with_wallet = (
-        potential_profit_jita_buy + wallet_supplemental_total
+        potential_profit_jita_buy + wallet_supplemental_applied
     )
     expected_profit_jita_sell_with_wallet = (
-        potential_profit_jita_sell + wallet_supplemental_total
+        potential_profit_jita_sell + wallet_supplemental_applied
     )
     expected_profit_jita_split_with_wallet = (
-        potential_profit_jita_split + wallet_supplemental_total
+        potential_profit_jita_split + wallet_supplemental_applied
     )
     projected_profit = actual_exchange_profit_with_wallet + unrealized_earnings_potential
     projected_revenue = total_buy_volume + unrealized_inventory_value
@@ -6640,7 +6664,7 @@ def material_exchange_stats_history(request):
         else 0
     )
     wallet_adjustment_pct_of_revenue = (
-        round((wallet_supplemental_total / total_buy_volume) * 100, 2)
+        round((wallet_supplemental_applied / total_buy_volume) * 100, 2)
         if total_buy_volume > 0
         else 0
     )
@@ -7088,6 +7112,11 @@ def material_exchange_stats_history(request):
         "market_scope_missing": bool(market_scope_missing),
         "wallet_activity_error": wallet_activity_error,
         "wallet_data_source": wallet_data_source,
+        "stats_scope_mode": stats_scope_mode,
+        "stats_scope_note": stats_scope_note,
+        "corp_config_count": len(corp_config_ids),
+        "division_config_count": len(division_config_ids),
+        "selected_config_count": len(selected_config_ids),
         "chart_labels": chart_labels,
         "buy_volumes": buy_volumes,
         "sell_volumes": sell_volumes,
@@ -7118,6 +7147,7 @@ def material_exchange_stats_history(request):
         "buy_contract_coverage_pct": buy_contract_coverage_pct,
         "actual_exchange_profit": actual_exchange_profit,
         "actual_exchange_profit_with_wallet": actual_exchange_profit_with_wallet,
+        "wallet_supplemental_applied": wallet_supplemental_applied,
         "member_sales_volume": member_sales_volume,
         "jita_buy_value": jita_buy_value,
         "jita_sell_value": jita_sell_value,
@@ -7172,7 +7202,7 @@ def material_exchange_stats_history(request):
         "most_bought_users": most_bought_users,
         "donation_stats": donation_stats,
         "data_limitations": _(
-            "Bought/sold totals are contract-backed from Material Exchange transactions. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window."
+            "Bought/sold totals are contract-backed from Material Exchange transactions. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window. Wallet supplemental adjustments are only applied to net profit when at least one contract-backed transaction exists in the selected range."
         ),
         "nav_context": _build_nav_context(request.user),
     }

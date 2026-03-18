@@ -168,9 +168,18 @@
                 {% if wallet_activity_error %}
                 <div class="col-12 small text-warning">{% trans "Wallet activity sync encountered an error:" %} {{ wallet_activity_error }}</div>
                 {% endif %}
+                {% if stats_scope_note %}
+                <div class="col-12 small text-info">{{ stats_scope_note }} {% trans "Selected configs:" %} {{ selected_config_count }}.</div>
+                {% endif %}
             </div>
         </div>
     </form>
+
+    {% if total_transactions == 0 %}
+    <div class="alert alert-info mb-4">
+        {% trans "No contract-backed Material Exchange transactions were found in the selected period/scope. Profit and margin rows are neutral until transaction data exists." %}
+    </div>
+    {% endif %}
 
     <div class="row g-3 mb-3">
         <div class="col-xl-6">
@@ -203,7 +212,10 @@
                                 <tr><th>{% trans "Expected Sale At Jita Buy (Buy Orders Snapshot)" %}</th><td class="text-end">{{ buy_expected_jita_buy_total|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Actual Revenue (Contract Data)" %}</th><td class="text-end">{{ total_buy_volume|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Contract-backed Net Profit" %}</th><td class="text-end {% if actual_exchange_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ actual_exchange_profit|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Wallet Supplemental Adjustments" %}</th><td class="text-end {% if donation_stats.wallet_supplemental_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_supplemental_total|floatformat:0|intcomma }} ISK</td></tr>
+                                <tr><th>{% trans "Wallet Supplemental Adjustments (Applied)" %}</th><td class="text-end {% if wallet_supplemental_applied >= 0 %}text-success{% else %}text-danger{% endif %}">{{ wallet_supplemental_applied|floatformat:0|intcomma }} ISK</td></tr>
+                                {% if wallet_supplemental_applied != donation_stats.wallet_supplemental_total %}
+                                <tr><th>{% trans "Wallet Supplemental Available (Not Applied)" %}</th><td class="text-end {% if donation_stats.wallet_supplemental_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_supplemental_total|floatformat:0|intcomma }} ISK</td></tr>
+                                {% endif %}
                                 <tr><th>{% trans "Net Profit (Contracts + Wallet)" %}</th><td class="text-end {% if actual_exchange_profit_with_wallet >= 0 %}text-success{% else %}text-danger{% endif %}">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }} ISK</td></tr>
                                 <tr><th>{% trans "Contract Profit Margin" %}</th><td class="text-end {% if contract_profit_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ contract_profit_margin_pct|floatformat:2 }}%</td></tr>
                                 <tr><th>{% trans "Net Profit Margin (Contracts + Wallet)" %}</th><td class="text-end {% if net_profit_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ net_profit_margin_pct|floatformat:2 }}%</td></tr>
