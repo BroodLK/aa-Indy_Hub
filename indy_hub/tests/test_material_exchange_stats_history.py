@@ -384,7 +384,7 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(follow.context["chosen_corporation_id"], 789456)
         self.assertEqual(follow.context["chosen_wallet_division"], 4)
 
-    def test_stats_history_scopes_metrics_to_saved_corp_and_wallet_division(self) -> None:
+    def test_stats_history_scopes_metrics_to_saved_corporation(self) -> None:
         other_config = MaterialExchangeConfig.objects.create(
             corporation_id=789456,
             structure_id=60008494,
@@ -462,9 +462,9 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(response.context["chosen_wallet_division"], 4)
         self.assertEqual(response.context["total_transactions"], 1)
         self.assertEqual(response.context["total_buy_volume"], Decimal("500"))
-        self.assertEqual(response.context["stats_scope_mode"], "division")
+        self.assertEqual(response.context["stats_scope_mode"], "corp")
 
-    def test_stats_history_falls_back_to_corp_when_division_has_no_config(self) -> None:
+    def test_stats_history_uses_corp_scope_when_wallet_division_has_no_config(self) -> None:
         scoped_config = MaterialExchangeConfig.objects.create(
             corporation_id=789456,
             structure_id=60008494,
@@ -513,7 +513,8 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["chosen_corporation_id"], 789456)
         self.assertEqual(response.context["chosen_wallet_division"], 3)
-        self.assertEqual(response.context["stats_scope_mode"], "corp_fallback")
+        self.assertEqual(response.context["stats_scope_mode"], "corp")
+        self.assertEqual(response.context["stats_scope_note"], "")
         self.assertEqual(response.context["selected_config_count"], 1)
         self.assertEqual(response.context["total_transactions"], 1)
         self.assertEqual(response.context["total_buy_volume"], Decimal("500"))

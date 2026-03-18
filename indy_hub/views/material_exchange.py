@@ -6026,22 +6026,10 @@ def material_exchange_stats_history(request):
             corporation_id=int(chosen_corporation_id or 0),
         ).values_list("id", flat=True)
     )
-    division_config_ids = list(
-        MaterialExchangeConfig.objects.filter(
-            corporation_id=int(chosen_corporation_id or 0),
-            hangar_division=int(chosen_wallet_division or 0),
-        ).values_list("id", flat=True)
-    )
-    selected_config_ids = list(division_config_ids)
-    stats_scope_mode = "division"
+    selected_config_ids = list(corp_config_ids)
+    stats_scope_mode = "corp"
     stats_scope_note = ""
-    if not selected_config_ids and corp_config_ids:
-        selected_config_ids = list(corp_config_ids)
-        stats_scope_mode = "corp_fallback"
-        stats_scope_note = _(
-            "No Material Exchange configs found for this wallet division. Showing corp-wide Material Exchange data as fallback."
-        )
-    elif not selected_config_ids:
+    if not selected_config_ids:
         stats_scope_mode = "empty"
         stats_scope_note = _(
             "No Material Exchange configs found for this corporation yet."
@@ -7115,7 +7103,6 @@ def material_exchange_stats_history(request):
         "stats_scope_mode": stats_scope_mode,
         "stats_scope_note": stats_scope_note,
         "corp_config_count": len(corp_config_ids),
-        "division_config_count": len(division_config_ids),
         "selected_config_count": len(selected_config_ids),
         "chart_labels": chart_labels,
         "buy_volumes": buy_volumes,
