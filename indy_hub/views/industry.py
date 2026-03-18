@@ -3574,8 +3574,6 @@ def craft_bp(request, type_id):
                 ItemType.objects.filter(id__in=all_type_ids).select_related("group")
             )
             try:
-                from ..models import SdeMarketGroup
-
                 market_group_ids = {
                     int(et.market_group_id_raw)
                     for et in eve_types
