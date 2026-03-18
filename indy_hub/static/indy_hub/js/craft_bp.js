@@ -3006,15 +3006,15 @@ function initializeFinancialCalculations() {
         computeButton.addEventListener('click', computeNeededPurchases);
     }
 
-    // Initialize ME/TE configuration change handlers
+    // Initialize Configure tab change handlers (ME/TE/BP usage/build environment)
     initializeMETEHandlers();
 }
 
 /**
- * Initialize ME/TE configuration change handlers
+ * Initialize Configure tab change handlers
  */
 function initializeMETEHandlers() {
-    // Flag to track pending ME/TE changes
+    // Flag to track pending Configure changes
     window.craftBPFlags = window.craftBPFlags || {};
     window.craftBPFlags.hasPendingMETEChanges = false;
 
@@ -3022,14 +3022,15 @@ function initializeMETEHandlers() {
     const bpTypeId = getCurrentBlueprintTypeId();
     const storageKey = `craft_bp_config_${bpTypeId}`;
 
-    // Restore ME/TE from localStorage on page load
+    // Restore Configure settings from localStorage on page load
     restoreMETEFromLocalStorage(storageKey);
+    updateBuildEnvironmentSummary();
 
     function saveMETEToLocalStorage() {
         const config = getCurrentMETEConfig();
         try {
             localStorage.setItem(storageKey, JSON.stringify(config));
-            craftBPDebugLog('ME/TE config saved to localStorage');
+            craftBPDebugLog('Configure settings saved to localStorage');
         } catch (error) {
             console.error('Error saving to localStorage:', error);
         }
@@ -3041,23 +3042,24 @@ function initializeMETEHandlers() {
 
         if (!window.craftBPFlags.hasPendingMETEChanges) {
             window.craftBPFlags.hasPendingMETEChanges = true;
-            craftBPDebugLog('ME/TE changes detected - will apply on tab change');
+            craftBPDebugLog('Configure changes detected - will apply on tab change');
 
             // Visual feedback: add a subtle indicator that changes are pending
             const configTab = document.querySelector('#configure-tab-btn');
             if (configTab && !configTab.querySelector('.pending-changes-indicator')) {
                 const indicator = document.createElement('span');
                 indicator.className = 'pending-changes-indicator badge bg-warning text-dark ms-2';
-                indicator.textContent = '•';
+                indicator.textContent = '*';
                 indicator.title = __('Changes will apply when switching tabs');
                 configTab.appendChild(indicator);
             }
         }
+        updateBuildEnvironmentSummary();
     }
 
-    // Listen to Configure inputs (ME/TE + Use BP toggle) and schedule apply on tab change.
+    // Listen to Configure inputs (ME/TE + Use BP + build environment) and schedule apply on tab change.
     const configureInputs = document.querySelectorAll(
-        '#configure-pane input[name^="me_"], #configure-pane input[name^="te_"], #configure-pane input.bp-use-input[data-blueprint-type-id]'
+        '#configure-pane input[name^="me_"], #configure-pane input[name^="te_"], #configure-pane input.bp-use-input[data-blueprint-type-id], #configure-pane [data-build-env-input="1"]'
     );
     craftBPDebugLog(`Found ${configureInputs.length} Configure inputs to monitor for changes`);
 
@@ -3085,7 +3087,7 @@ function initializeMETEHandlers() {
             // If we're leaving the Configure tab and have pending changes, apply them
             if (targetTab !== 'configure' && window.craftBPFlags?.hasPendingMETEChanges) {
                 window.craftBPFlags.switchingToTab = targetTab;
-                craftBPDebugLog('Applying pending ME/TE changes...');
+                craftBPDebugLog('Applying pending Configure changes...');
                 applyPendingMETEChanges();
             }
         });
@@ -3115,13 +3117,168 @@ function parseUseBlueprintIdsFromUrl() {
     return ids;
 }
 
+function parseBuildEnvironmentFromUrl() {
+    const parsed = { hasAny: false };
+
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        parsed.hasAny = (
+            params.has('build_system')
+            || params.has('build_system_index')
+            || params.has('build_structure')
+            || params.has('build_rigs')
+        );
+        if (!parsed.hasAny) {
+            return parsed;
+        }
+
+        if (params.has('build_system')) {
+            parsed.system = String(params.get('build_system') || '').trim().slice(0, 64);
+        }
+        if (params.has('build_system_index')) {
+            const raw = Number(params.get('build_system_index') || 0);
+            if (Number.isFinite(raw)) {
+                parsed.systemIndex = Math.max(0, Math.min(raw, 100));
+            }
+        }
+        if (params.has('build_structure')) {
+            const structure = String(params.get('build_structure') || '').trim().toLowerCase();
+            parsed.structureType = structure || 'none';
+        }
+        if (params.has('build_rigs')) {
+            parsed.rigKeys = [];
+            const packed = String(params.get('build_rigs') || '').trim();
+            if (packed) {
+                const seen = new Set();
+                packed.split(',').forEach((raw) => {
+                    const key = String(raw || '').trim().toLowerCase();
+                    if (!key || seen.has(key)) {
+                        return;
+                    }
+                    seen.add(key);
+                    parsed.rigKeys.push(key);
+                });
+            }
+        }
+    } catch (e) {
+        // ignore
+    }
+
+    return parsed;
+}
+
+function applyBuildEnvironmentToDom(environment) {
+    if (!environment || typeof environment !== 'object') {
+        return;
+    }
+
+    const systemInput = document.getElementById('buildSystemInput');
+    if (systemInput && typeof environment.system === 'string') {
+        systemInput.value = environment.system;
+    }
+
+    const systemIndexInput = document.getElementById('buildSystemIndexInput');
+    if (systemIndexInput && environment.systemIndex !== undefined && environment.systemIndex !== null && environment.systemIndex !== '') {
+        const numeric = Number(environment.systemIndex);
+        if (Number.isFinite(numeric)) {
+            systemIndexInput.value = String(Math.max(0, Math.min(numeric, 100)));
+        }
+    }
+
+    const structureSelect = document.getElementById('buildStructureSelect');
+    if (structureSelect && typeof environment.structureType === 'string' && environment.structureType) {
+        const requested = environment.structureType.toLowerCase();
+        const option = Array.from(structureSelect.options || []).find(
+            (opt) => String(opt.value || '').toLowerCase() === requested
+        );
+        structureSelect.value = option ? option.value : 'none';
+    }
+
+    if (Array.isArray(environment.rigKeys)) {
+        const activeKeys = new Set(
+            environment.rigKeys
+                .map((key) => String(key || '').trim().toLowerCase())
+                .filter(Boolean)
+        );
+        document.querySelectorAll('#configure-pane .build-rig-input[data-rig-key]').forEach((input) => {
+            const key = String(input.getAttribute('data-rig-key') || '').trim().toLowerCase();
+            input.checked = activeKeys.has(key);
+        });
+    }
+}
+
+function getBuildEnvironmentFromDom() {
+    const structureSelect = document.getElementById('buildStructureSelect');
+    const selectedStructureOption = structureSelect
+        ? structureSelect.options[structureSelect.selectedIndex]
+        : null;
+    const structureType = structureSelect
+        ? String(structureSelect.value || 'none').trim().toLowerCase()
+        : 'none';
+    const structureBonus = selectedStructureOption
+        ? (Number(selectedStructureOption.getAttribute('data-material-bonus') || 0) || 0)
+        : 0;
+
+    const rigKeys = [];
+    let rigBonus = 0;
+    document.querySelectorAll('#configure-pane .build-rig-input[data-rig-key]').forEach((input) => {
+        if (!input.checked) {
+            return;
+        }
+        const key = String(input.getAttribute('data-rig-key') || '').trim().toLowerCase();
+        if (key) {
+            rigKeys.push(key);
+        }
+        const bonus = Number(input.getAttribute('data-material-bonus') || 0) || 0;
+        if (bonus > rigBonus) {
+            rigBonus = bonus;
+        }
+    });
+
+    const systemInput = document.getElementById('buildSystemInput');
+    const systemIndexInput = document.getElementById('buildSystemIndexInput');
+    const rawSystemIndex = Number(systemIndexInput ? systemIndexInput.value : 0);
+    const systemIndex = Number.isFinite(rawSystemIndex)
+        ? Math.max(0, Math.min(rawSystemIndex, 100))
+        : 0;
+    const effectiveBonus = 1 - ((1 - structureBonus) * (1 - rigBonus));
+
+    return {
+        system: String(systemInput ? systemInput.value : '').trim().slice(0, 64),
+        systemIndex,
+        structureType: structureType || 'none',
+        structureMaterialBonus: Math.max(0, structureBonus),
+        rigKeys: Array.from(new Set(rigKeys)),
+        rigMaterialBonus: Math.max(0, rigBonus),
+        effectiveMaterialBonus: Math.max(0, effectiveBonus),
+    };
+}
+
+function updateBuildEnvironmentSummary() {
+    const environment = getBuildEnvironmentFromDom();
+    const structureEl = document.getElementById('buildStructureBonusValue');
+    const rigEl = document.getElementById('buildRigBonusValue');
+    const effectiveEl = document.getElementById('buildEffectiveMaterialBonusValue');
+
+    if (structureEl) {
+        structureEl.textContent = `${(environment.structureMaterialBonus * 100).toFixed(2)}%`;
+    }
+    if (rigEl) {
+        rigEl.textContent = `${(environment.rigMaterialBonus * 100).toFixed(2)}%`;
+    }
+    if (effectiveEl) {
+        effectiveEl.textContent = `${(environment.effectiveMaterialBonus * 100).toFixed(2)}%`;
+    }
+}
+
 function restoreMETEFromLocalStorage(storageKey) {
     const urlUseIds = parseUseBlueprintIdsFromUrl();
+    const urlBuildEnvironment = parseBuildEnvironmentFromUrl();
 
     try {
         const savedConfig = localStorage.getItem(storageKey);
         if (!savedConfig) {
-            craftBPDebugLog('No saved ME/TE config in localStorage');
+            craftBPDebugLog('No saved Configure settings in localStorage');
             // Even without localStorage, URL can still carry BP selection.
             if (urlUseIds.size > 0) {
                 document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]').forEach((input) => {
@@ -3132,11 +3289,15 @@ function restoreMETEFromLocalStorage(storageKey) {
                     input.checked = urlUseIds.has(typeId);
                 });
             }
+            if (urlBuildEnvironment.hasAny) {
+                applyBuildEnvironmentToDom(urlBuildEnvironment);
+            }
+            updateBuildEnvironmentSummary();
             return;
         }
 
         const config = JSON.parse(savedConfig);
-        craftBPDebugLog('Restoring ME/TE from localStorage:', config);
+        craftBPDebugLog('Restoring Configure settings from localStorage:', config);
 
         // Apply saved values to inputs
         for (const [typeId, bpConfig] of Object.entries(config.blueprintConfigs || {})) {
@@ -3160,6 +3321,10 @@ function restoreMETEFromLocalStorage(storageKey) {
             }
         }
 
+        if (config.buildEnvironment && typeof config.buildEnvironment === 'object') {
+            applyBuildEnvironmentToDom(config.buildEnvironment);
+        }
+
         // URL override for easy sharing/bookmarking when present.
         if (urlUseIds.size > 0) {
             document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]').forEach((input) => {
@@ -3170,8 +3335,12 @@ function restoreMETEFromLocalStorage(storageKey) {
                 input.checked = urlUseIds.has(typeId);
             });
         }
+        if (urlBuildEnvironment.hasAny) {
+            applyBuildEnvironmentToDom(urlBuildEnvironment);
+        }
 
-        craftBPDebugLog('ME/TE config restored from localStorage');
+        updateBuildEnvironmentSummary();
+        craftBPDebugLog('Configure settings restored from localStorage');
     } catch (error) {
         console.error('Error restoring from localStorage:', error);
     }
@@ -3186,7 +3355,7 @@ function applyPendingMETEChanges() {
         return false; // No changes to apply
     }
 
-    craftBPDebugLog('Applying pending ME/TE changes by reloading page...');
+    craftBPDebugLog('Applying pending Configure changes by reloading page...');
 
     try {
         // Get current configuration values
@@ -3201,7 +3370,7 @@ function applyPendingMETEChanges() {
             return false;
         }
 
-        // Build URL with current ME/TE values
+        // Build URL with current Configure values
         // Start with a clean URL (only keep certain params)
         const cleanUrl = new URL(window.location.pathname, window.location.origin);
 
@@ -3245,6 +3414,20 @@ function applyPendingMETEChanges() {
             cleanUrl.searchParams.set('use_bp', useBlueprintTypeIds.join(','));
         }
 
+        const buildEnvironment = config.buildEnvironment || {};
+        if (buildEnvironment.system) {
+            cleanUrl.searchParams.set('build_system', buildEnvironment.system);
+        }
+        if (Number.isFinite(buildEnvironment.systemIndex) && buildEnvironment.systemIndex > 0) {
+            cleanUrl.searchParams.set('build_system_index', buildEnvironment.systemIndex);
+        }
+        if (buildEnvironment.structureType && buildEnvironment.structureType !== 'none') {
+            cleanUrl.searchParams.set('build_structure', buildEnvironment.structureType);
+        }
+        if (Array.isArray(buildEnvironment.rigKeys) && buildEnvironment.rigKeys.length > 0) {
+            cleanUrl.searchParams.set('build_rigs', buildEnvironment.rigKeys.join(','));
+        }
+
         craftBPDebugLog(`Reloading with URL: ${cleanUrl.toString()}`);
 
         // Keep the target tab (where user is switching to)
@@ -3259,7 +3442,7 @@ function applyPendingMETEChanges() {
         return true; // Page will reload
 
     } catch (error) {
-        console.error('Error applying ME/TE changes:', error);
+        console.error('Error applying Configure changes:', error);
         return false;
     }
 }
@@ -3271,7 +3454,8 @@ function getCurrentMETEConfig() {
     const config = {
         mainME: 0,
         mainTE: 0,
-        blueprintConfigs: {}
+        blueprintConfigs: {},
+        buildEnvironment: {}
     };
 
     // Get ME/TE inputs from config tab
@@ -3325,6 +3509,8 @@ function getCurrentMETEConfig() {
         }
         config.blueprintConfigs[blueprintTypeId].use = (!input.disabled && input.checked) ? 1 : 0;
     });
+
+    config.buildEnvironment = getBuildEnvironmentFromDom();
 
     return config;
 }
@@ -4242,7 +4428,6 @@ function refreshTreeQuantityLabels() {
         return;
     }
 
-    const contextsByProductType = buildBlueprintUsageContextByProductType();
     treeTab.querySelectorAll('summary[data-type-id]').forEach((summaryEl) => {
         const qtyWrap = summaryEl.querySelector('.tree-qty-wrap');
         const currentQtyEl = qtyWrap ? qtyWrap.querySelector('.tree-qty-current') : null;
@@ -4250,18 +4435,10 @@ function refreshTreeQuantityLabels() {
             return;
         }
 
-        const defaultQtyRaw = Number(
-            summaryEl.getAttribute('data-qty-default')
-            || summaryEl.getAttribute('data-qty')
-            || 0
-        );
+        const currentQtyRaw = Number(summaryEl.getAttribute('data-qty') || 0);
+        const defaultQtyRaw = Number(summaryEl.getAttribute('data-qty-default') || currentQtyRaw || 0);
+        const currentQty = Number.isFinite(currentQtyRaw) ? Math.max(0, Math.ceil(currentQtyRaw)) : 0;
         const defaultQty = Number.isFinite(defaultQtyRaw) ? Math.max(0, Math.ceil(defaultQtyRaw)) : 0;
-        if (defaultQty <= 0) {
-            return;
-        }
-
-        const appliedMe = getAppliedMeForTreeSummary(summaryEl, contextsByProductType);
-        const currentQty = Math.max(0, Math.ceil(defaultQty * (100 - appliedMe) / 100));
 
         currentQtyEl.textContent = `x${formatInteger(currentQty)}`;
 
@@ -4367,7 +4544,8 @@ function collectMissingBlueprintCopyRows() {
 
         const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || bpTypeId) || 0;
         const usageContext = getBlueprintUsageContextForProductType(productTypeId, blueprintContextsByProductType);
-        if (usageContext && !usageContext.active) {
+        // Show BPC demand unless this blueprint is explicitly enabled via "Use this BP".
+        if (usageContext && usageContext.active) {
             return;
         }
         const cyclesData = cyclesSummary[productTypeId]
@@ -4589,10 +4767,6 @@ function getTreeSwitchModeForType(typeId) {
     const numericTypeId = Number(typeId) || 0;
     if (!numericTypeId) {
         return 'prod';
-    }
-
-    if (!isBlueprintActiveForProductType(numericTypeId)) {
-        return 'buy';
     }
 
     if (window.SimulationAPI && typeof window.SimulationAPI.getSwitchState === 'function') {
@@ -4977,7 +5151,6 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
     const marketGroupMap = payload.market_group_map || {};
     const results = new Map(); // typeId -> { typeId, typeName, quantity, marketGroup }
     const remainingOwned = new Map(ownedByType || []);
-    const blueprintContextsByProductType = buildBlueprintUsageContextByProductType();
 
     const addResult = (typeId, typeName, marketGroup, qty) => {
         const numericTypeId = Number(typeId) || 0;
@@ -5008,9 +5181,6 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
         if (api && typeof api.getSwitchState === 'function') {
             const state = api.getSwitchState(typeId);
             if (state === 'buy' || state === 'prod' || state === 'useless') {
-                if (state !== 'useless' && !isBlueprintActiveForProductType(typeId, blueprintContextsByProductType)) {
-                    return 'buy';
-                }
                 return state;
             }
         }
@@ -5019,14 +5189,7 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
             if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
                 return 'useless';
             }
-            const mode = switchEl.checked ? 'prod' : 'buy';
-            if (mode !== 'useless' && !isBlueprintActiveForProductType(typeId, blueprintContextsByProductType)) {
-                return 'buy';
-            }
-            return mode;
-        }
-        if (!isBlueprintActiveForProductType(typeId, blueprintContextsByProductType)) {
-            return 'buy';
+            return switchEl.checked ? 'prod' : 'buy';
         }
         return 'prod';
     };

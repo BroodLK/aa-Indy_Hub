@@ -569,6 +569,106 @@
                     </div>
                 </section>
 
+                <section class="craft-section mb-4">
+                    <h3 class="craft-section-title">
+                        <i class="fas fa-industry text-warning"></i> {% trans "Build Environment" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-lg-4">
+                                    <label for="buildSystemInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "System" %}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="buildSystemInput"
+                                        class="form-control form-control-sm"
+                                        value="{{ build_environment.system|default:'' }}"
+                                        placeholder="Jita"
+                                        data-build-env-input="1"
+                                    >
+                                    <div class="form-text">{% trans "Used for industry index context." %}</div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <label for="buildSystemIndexInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "System Index %" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="buildSystemIndexInput"
+                                        class="form-control form-control-sm"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        value="{{ build_environment.system_index|default:0 }}"
+                                        data-build-env-input="1"
+                                    >
+                                    <div class="form-text">{% trans "Stored for cost/index calculations." %}</div>
+                                </div>
+                                <div class="col-lg-4">
+                                    <label for="buildStructureSelect" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Structure" %}
+                                    </label>
+                                    <select id="buildStructureSelect" class="form-select form-select-sm" data-build-env-input="1">
+                                        <option value="none" data-material-bonus="0" {% if build_environment.structure_type == "none" %}selected{% endif %}>
+                                            {% trans "No structure bonus" %}
+                                        </option>
+                                        <option value="raitaru" data-material-bonus="0.01" {% if build_environment.structure_type == "raitaru" %}selected{% endif %}>
+                                            Raitaru (1%)
+                                        </option>
+                                        <option value="azbel" data-material-bonus="0.01" {% if build_environment.structure_type == "azbel" %}selected{% endif %}>
+                                            Azbel (1%)
+                                        </option>
+                                        <option value="sotiyo" data-material-bonus="0.01" {% if build_environment.structure_type == "sotiyo" %}selected{% endif %}>
+                                            Sotiyo (1%)
+                                        </option>
+                                    </select>
+                                    <div class="form-text">{% trans "Material bonus from structure type." %}</div>
+                                </div>
+                            </div>
+
+                            <hr class="my-3">
+
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <label class="form-label small fw-semibold text-uppercase text-muted mb-0">
+                                    {% trans "Installed Manufacturing Rigs" %}
+                                </label>
+                                <span class="small text-muted">{% trans "Best selected rig bonus is applied to materials." %}</span>
+                            </div>
+                            <div class="row g-2">
+                                {% for rig in build_rig_catalog %}
+                                <div class="col-12 col-md-6 col-xl-4">
+                                    <div class="form-check">
+                                        <input
+                                            class="form-check-input build-rig-input"
+                                            type="checkbox"
+                                            id="buildRig{{ forloop.counter }}"
+                                            data-rig-key="{{ rig.key }}"
+                                            data-material-bonus="{{ rig.material_bonus }}"
+                                            data-build-env-input="1"
+                                            {% if rig.key in build_environment.rig_keys %}checked{% endif %}
+                                        >
+                                        <label class="form-check-label small" for="buildRig{{ forloop.counter }}">
+                                            {{ rig.label }} <span class="text-muted">({{ rig.tier }}, +{{ rig.material_bonus_pct|floatformat:2 }}%)</span>
+                                            <span class="text-body-secondary d-block opacity-75">{% trans "Applies to:" %} {{ rig.domains_label }}</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+
+                            <div class="mt-3 small">
+                                <div class="d-flex flex-wrap gap-3">
+                                    <span>{% trans "Structure bonus:" %} <strong id="buildStructureBonusValue">{{ build_environment.structure_material_bonus_pct|default:0|floatformat:2 }}%</strong></span>
+                                    <span>{% trans "Rig bonus (max):" %} <strong id="buildRigBonusValue">{{ build_environment.rig_material_bonus_pct|default:0|floatformat:2 }}%</strong></span>
+                                    <span>{% trans "Effective total bonus:" %} <strong id="buildEffectiveMaterialBonusValue">{{ build_environment.effective_material_bonus_pct|default:0|floatformat:2 }}%</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <section class="craft-section">
                     <div class="craft-section-header-with-actions mb-3">
                         <h3 class="craft-section-title mb-0">
@@ -809,6 +909,7 @@
                             <ul class="mb-0 ps-3">
                                 <li class="mb-2">{% trans "Use this BP defaults to OFF." %}</li>
                                 <li class="mb-2">{% trans "If a component BP is not selected, that component is treated as BUY in shopping/plan calculations." %}</li>
+                                <li class="mb-2">{% trans "Build Environment applies structure + rig material bonuses with formula: ceil(Base x (1-ME) x (1-Structure) x (1-Rig)); rig bonus applies only when rig domain matches the produced item." %}</li>
                                 <li class="mb-2">{% trans "ME/TE presets: Max, From Owned BP, Reset." %}</li>
                                 <li>{% trans "Missing run validation highlights copy shortfalls and can prefill copy requests." %}</li>
                             </ul>
@@ -1056,6 +1157,28 @@ document.addEventListener('DOMContentLoaded', function() {
                 controlForm.appendChild(buyInput);
             }
             buyInput.value = Array.from(new Set(buyDecisions)).join(',');
+
+            if (typeof getBuildEnvironmentFromDom === 'function') {
+                const env = getBuildEnvironmentFromDom() || {};
+                const ensureHidden = (name, value) => {
+                    let input = controlForm.querySelector(`input[name="${name}"]`);
+                    if (!input) {
+                        input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = name;
+                        controlForm.appendChild(input);
+                    }
+                    input.value = value;
+                };
+
+                ensureHidden('build_system', String(env.system || ''));
+                ensureHidden('build_system_index', String(env.systemIndex || 0));
+                ensureHidden('build_structure', String(env.structureType || 'none'));
+                ensureHidden(
+                    'build_rigs',
+                    Array.isArray(env.rigKeys) ? env.rigKeys.join(',') : ''
+                );
+            }
         });
     }
 
