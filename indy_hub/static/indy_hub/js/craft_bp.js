@@ -4662,8 +4662,7 @@ function updateFinancialTabFromState() {
         }
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
-    const bpcRows = collectMissingBlueprintCopyRows();
-    const sortedItems = [...bpcRows, ...sortedMaterials];
+    const sortedItems = sortedMaterials;
 
     const existingRows = new Map();
     tableBody.querySelectorAll('tr[data-type-id]').forEach(row => {
