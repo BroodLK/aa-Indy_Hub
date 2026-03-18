@@ -2,6 +2,7 @@
 
 # Standard Library
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
@@ -49,6 +50,7 @@ from ..models import (
     NotificationWebhookMessage,
     ProductionConfig,
     ProductionSimulation,
+    SdeMarketGroup,
 )
 from ..notifications import (
     build_site_url,
@@ -112,6 +114,119 @@ else:  # pragma: no cover - Eve SDE not installed
     ItemType = None
 
 logger = get_extension_logger(__name__)
+
+# Craft planner build-environment defaults for material quantity math.
+# Material formula per run:
+# ceil(base_qty * (1 - ME) * (1 - structure_bonus) * (1 - rig_bonus))
+CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE: dict[str, float] = {
+    "none": 0.0,
+    "raitaru": 0.01,
+    "azbel": 0.01,
+    "sotiyo": 0.01,
+}
+
+# Preloaded rig families for manufacturing material efficiency.
+# Bonus values are fractions (0.02 => 2%).
+CRAFT_MATERIAL_RIG_CATALOG: list[dict[str, object]] = [
+    {
+        "key": "equipment_t1",
+        "label": "Equipment Manufacturing Rig (T1)",
+        "tier": "T1",
+        "domains": ["equipment"],
+        "material_bonus": 0.02,
+    },
+    {
+        "key": "equipment_t2",
+        "label": "Equipment Manufacturing Rig (T2)",
+        "tier": "T2",
+        "domains": ["equipment"],
+        "material_bonus": 0.024,
+    },
+    {
+        "key": "component_t1",
+        "label": "Component Manufacturing Rig (T1)",
+        "tier": "T1",
+        "domains": ["component"],
+        "material_bonus": 0.02,
+    },
+    {
+        "key": "component_t2",
+        "label": "Component Manufacturing Rig (T2)",
+        "tier": "T2",
+        "domains": ["component"],
+        "material_bonus": 0.024,
+    },
+    {
+        "key": "capital_component_t1",
+        "label": "Capital Component Manufacturing Rig (T1)",
+        "tier": "T1",
+        "domains": ["capital_component"],
+        "material_bonus": 0.02,
+    },
+    {
+        "key": "capital_component_t2",
+        "label": "Capital Component Manufacturing Rig (T2)",
+        "tier": "T2",
+        "domains": ["capital_component"],
+        "material_bonus": 0.024,
+    },
+    {
+        "key": "ship_t1",
+        "label": "Ship Manufacturing Rig (T1)",
+        "tier": "T1",
+        "domains": ["ship"],
+        "material_bonus": 0.02,
+    },
+    {
+        "key": "ship_t2",
+        "label": "Ship Manufacturing Rig (T2)",
+        "tier": "T2",
+        "domains": ["ship"],
+        "material_bonus": 0.024,
+    },
+    {
+        "key": "capital_ship_t1",
+        "label": "Capital Ship Manufacturing Rig (T1)",
+        "tier": "T1",
+        "domains": ["capital_ship"],
+        "material_bonus": 0.02,
+    },
+    {
+        "key": "capital_ship_t2",
+        "label": "Capital Ship Manufacturing Rig (T2)",
+        "tier": "T2",
+        "domains": ["capital_ship"],
+        "material_bonus": 0.024,
+    },
+    {
+        "key": "structure_t1",
+        "label": "Structure Manufacturing Rig (T1)",
+        "tier": "T1",
+        "domains": ["structure"],
+        "material_bonus": 0.02,
+    },
+    {
+        "key": "structure_t2",
+        "label": "Structure Manufacturing Rig (T2)",
+        "tier": "T2",
+        "domains": ["structure"],
+        "material_bonus": 0.024,
+    },
+]
+
+CRAFT_RIG_DOMAIN_LABELS: dict[str, str] = {
+    "equipment": "Equipment",
+    "component": "Component",
+    "capital_component": "Capital Component",
+    "ship": "Ship",
+    "capital_ship": "Capital Ship",
+    "structure": "Structure",
+}
+
+CRAFT_MATERIAL_RIG_BONUS_BY_KEY: dict[str, float] = {
+    str(rig.get("key")): float(rig.get("material_bonus") or 0.0)
+    for rig in CRAFT_MATERIAL_RIG_CATALOG
+}
 
 try:
     # Alliance Auth
@@ -2270,6 +2385,25 @@ def collect_blueprints_with_level(blueprint_configs):
 @indy_hub_access_required
 @login_required
 def craft_bp(request, type_id):
+    def _parse_safe_system_name(raw_value: object) -> str:
+        value = str(raw_value or "").strip()
+        if not value:
+            return ""
+        value = re.sub(r"[^A-Za-z0-9\-_' .]", "", value)
+        return value[:64]
+
+    def _parse_bounded_percent(
+        raw_value: object,
+        *,
+        minimum: float = 0.0,
+        maximum: float = 100.0,
+    ) -> float:
+        try:
+            parsed = float(raw_value)
+        except (TypeError, ValueError):
+            return minimum
+        return max(minimum, min(parsed, maximum))
+
     try:
         num_runs = int(request.GET.get("runs", 1))
         if num_runs < 1:
@@ -2288,8 +2422,94 @@ def craft_bp(request, type_id):
     me = max(0, min(me, 10))
     te = max(0, min(te, 20))
 
+    build_system = _parse_safe_system_name(request.GET.get("build_system", ""))
+    build_system_index = _parse_bounded_percent(
+        request.GET.get("build_system_index", 0),
+        minimum=0.0,
+        maximum=100.0,
+    )
+    build_structure_type = str(request.GET.get("build_structure", "none") or "none")
+    build_structure_type = build_structure_type.strip().lower()
+    if build_structure_type not in CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE:
+        build_structure_type = "none"
+    build_structure_material_bonus = CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE.get(
+        build_structure_type, 0.0
+    )
+
+    selected_rig_keys: list[str] = []
+    raw_rig_keys = str(request.GET.get("build_rigs", "") or "")
+    if raw_rig_keys:
+        seen_rig_keys: set[str] = set()
+        for raw_key in raw_rig_keys.split(","):
+            rig_key = str(raw_key or "").strip().lower()
+            if not rig_key or rig_key in seen_rig_keys:
+                continue
+            if rig_key not in CRAFT_MATERIAL_RIG_BONUS_BY_KEY:
+                continue
+            seen_rig_keys.add(rig_key)
+            selected_rig_keys.append(rig_key)
+
+    selected_rig_bonus_by_domain: dict[str, float] = {}
+    for rig_key in selected_rig_keys:
+        rig_def = next(
+            (rig for rig in CRAFT_MATERIAL_RIG_CATALOG if rig.get("key") == rig_key),
+            None,
+        )
+        if not rig_def:
+            continue
+        rig_bonus = float(rig_def.get("material_bonus") or 0.0)
+        for domain in rig_def.get("domains", []) or []:
+            domain_key = str(domain or "").strip().lower()
+            if not domain_key:
+                continue
+            selected_rig_bonus_by_domain[domain_key] = max(
+                selected_rig_bonus_by_domain.get(domain_key, 0.0),
+                rig_bonus,
+            )
+
+    # Global summary: highest single selected rig bonus.
+    build_rig_material_bonus = (
+        max(selected_rig_bonus_by_domain.values())
+        if selected_rig_bonus_by_domain
+        else 0.0
+    )
+
+    effective_material_bonus = 1.0 - (
+        (1.0 - build_structure_material_bonus) * (1.0 - build_rig_material_bonus)
+    )
+    build_rig_catalog = [
+        {
+            **rig,
+            "material_bonus_pct": round(float(rig.get("material_bonus") or 0.0) * 100.0, 3),
+            "domains_label": ", ".join(
+                CRAFT_RIG_DOMAIN_LABELS.get(str(domain), str(domain).replace("_", " ").title())
+                for domain in (rig.get("domains") or [])
+            ),
+        }
+        for rig in CRAFT_MATERIAL_RIG_CATALOG
+    ]
+    build_rig_bonus_by_domain_pct = {
+        domain: round(value * 100.0, 3)
+        for domain, value in selected_rig_bonus_by_domain.items()
+    }
+
+    build_environment = {
+        "system": build_system,
+        "system_index": build_system_index,
+        "structure_type": build_structure_type,
+        "structure_material_bonus": build_structure_material_bonus,
+        "structure_material_bonus_pct": round(build_structure_material_bonus * 100.0, 3),
+        "rig_keys": selected_rig_keys,
+        "rig_material_bonus": build_rig_material_bonus,
+        "rig_material_bonus_pct": round(build_rig_material_bonus * 100.0, 3),
+        "rig_bonus_by_domain": selected_rig_bonus_by_domain,
+        "rig_bonus_by_domain_pct": build_rig_bonus_by_domain_pct,
+        "effective_material_bonus": effective_material_bonus,
+        "effective_material_bonus_pct": round(effective_material_bonus * 100.0, 3),
+    }
+
     logger.warning(
-        f"craft_bp START: me={me}, te={te} (from URL: me={request.GET.get('me', 'NOT SET')}, te={request.GET.get('te', 'NOT SET')})"
+        f"craft_bp START: me={me}, te={te}, structure={build_structure_type}, rig_bonus={build_rig_material_bonus:.4f} (from URL: me={request.GET.get('me', 'NOT SET')}, te={request.GET.get('te', 'NOT SET')})"
     )
     logger.warning(f"All GET params keys: {list(request.GET.keys())}")
 
@@ -2373,6 +2593,188 @@ def craft_bp(request, type_id):
             )
             final_product_qty = output_qty_per_run * num_runs
 
+        item_type_cache: dict[int, ItemType | None] = {}
+        market_group_path_cache: dict[int, list[str]] = {}
+        blueprint_product_type_cache: dict[int, int | None] = {}
+        product_domains_cache: dict[int, set[str]] = {}
+        blueprint_rig_bonus_cache: dict[int, float] = {}
+
+        market_groups = (
+            SdeMarketGroup.objects.all().values("id", "name", "parent_id")
+        )
+        market_group_by_id = {
+            int(row["id"]): {
+                "name": str(row.get("name") or ""),
+                "parent_id": int(row["parent_id"]) if row.get("parent_id") else None,
+            }
+            for row in market_groups
+        }
+
+        def _get_item_type(type_id_value: int | None) -> ItemType | None:
+            type_id_int = int(type_id_value or 0)
+            if not type_id_int:
+                return None
+            if type_id_int in item_type_cache:
+                return item_type_cache[type_id_int]
+            item_type = None
+            if ItemType is not None:
+                item_type = (
+                    ItemType.objects.filter(id=type_id_int)
+                    .select_related("group", "group__category")
+                    .first()
+                )
+            item_type_cache[type_id_int] = item_type
+            return item_type
+
+        def _get_market_group_path_names(market_group_id: int | None) -> list[str]:
+            group_id = int(market_group_id or 0)
+            if not group_id:
+                return []
+            if group_id in market_group_path_cache:
+                return market_group_path_cache[group_id]
+            path: list[str] = []
+            seen: set[int] = set()
+            current_id: int | None = group_id
+            while current_id and current_id not in seen:
+                seen.add(current_id)
+                node = market_group_by_id.get(current_id)
+                if not node:
+                    break
+                node_name = str(node.get("name") or "").strip()
+                if node_name:
+                    path.append(node_name)
+                current_id = node.get("parent_id")
+            path.reverse()
+            market_group_path_cache[group_id] = path
+            return path
+
+        def _is_capital_ship_domain(
+            path_text: str,
+            group_name: str,
+            category_name: str,
+        ) -> bool:
+            if category_name != "ship":
+                return False
+            capital_markers = (
+                "capital ships",
+                "freighters",
+                "jump freighters",
+                "carriers",
+                "dreadnoughts",
+                "force auxiliaries",
+                "supercarriers",
+                "titans",
+                "industrial command ships",
+                "capital industrial ships",
+            )
+            haystack = f"{path_text} {group_name}".strip()
+            return any(marker in haystack for marker in capital_markers)
+
+        def _resolve_product_domains(product_type_id_value: int | None) -> set[str]:
+            product_type_id_int = int(product_type_id_value or 0)
+            if not product_type_id_int:
+                return {"equipment"}
+            if product_type_id_int in product_domains_cache:
+                return product_domains_cache[product_type_id_int]
+
+            item_type = _get_item_type(product_type_id_int)
+            if not item_type:
+                product_domains_cache[product_type_id_int] = {"equipment"}
+                return {"equipment"}
+
+            group_name = (
+                str(getattr(getattr(item_type, "group", None), "name", "") or "")
+                .strip()
+                .lower()
+            )
+            category_name = (
+                str(
+                    getattr(
+                        getattr(getattr(item_type, "group", None), "category", None),
+                        "name",
+                        "",
+                    )
+                    or ""
+                )
+                .strip()
+                .lower()
+            )
+            market_path = _get_market_group_path_names(
+                getattr(item_type, "market_group_id_raw", None)
+            )
+            path_text = " > ".join(
+                [str(segment or "").strip().lower() for segment in market_path]
+            )
+
+            is_structure = category_name == "structure" or "structures" in path_text
+            is_ship = category_name == "ship" or "ships" in path_text
+            is_capital_ship = _is_capital_ship_domain(
+                path_text, group_name, category_name
+            )
+            is_capital_component = (
+                "capital components" in path_text
+                or "advanced capital construction components" in path_text
+            )
+            is_component = (
+                not is_capital_component
+                and (
+                    "components" in path_text
+                    or "component" in group_name
+                )
+            )
+
+            domains: set[str] = set()
+            if is_structure:
+                domains.add("structure")
+            if is_capital_ship:
+                domains.add("capital_ship")
+            elif is_ship:
+                domains.add("ship")
+            if is_capital_component:
+                domains.add("capital_component")
+            elif is_component:
+                domains.add("component")
+            if not domains:
+                domains.add("equipment")
+
+            product_domains_cache[product_type_id_int] = domains
+            return domains
+
+        def _get_blueprint_product_type_id(bp_type_id_value: int | None) -> int | None:
+            bp_type_id_int = int(bp_type_id_value or 0)
+            if not bp_type_id_int:
+                return None
+            if bp_type_id_int in blueprint_product_type_cache:
+                return blueprint_product_type_cache[bp_type_id_int]
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT product_eve_type_id
+                    FROM indy_hub_sdeindustryactivityproduct
+                    WHERE eve_type_id = %s AND activity_id IN (1, 11)
+                    LIMIT 1
+                    """,
+                    [bp_type_id_int],
+                )
+                row = cursor.fetchone()
+            product_type = int(row[0]) if row and row[0] else None
+            blueprint_product_type_cache[bp_type_id_int] = product_type
+            return product_type
+
+        def _get_blueprint_rig_bonus(bp_type_id_value: int | None) -> float:
+            bp_type_id_int = int(bp_type_id_value or 0)
+            if not bp_type_id_int:
+                return 0.0
+            if bp_type_id_int in blueprint_rig_bonus_cache:
+                return blueprint_rig_bonus_cache[bp_type_id_int]
+            product_type = _get_blueprint_product_type_id(bp_type_id_int)
+            domains = _resolve_product_domains(product_type)
+            bonus = 0.0
+            for domain in domains:
+                bonus = max(bonus, selected_rig_bonus_by_domain.get(domain, 0.0))
+            blueprint_rig_bonus_cache[bp_type_id_int] = bonus
+            return bonus
+
         # --- Build materials tree ---
         logger.debug(
             f"About to build materials tree with me_te_configs: {me_te_configs}"
@@ -2416,12 +2818,24 @@ def craft_bp(request, type_id):
                         """,
                         [bp_id],
                     )
+                    rig_bonus_for_blueprint = _get_blueprint_rig_bonus(bp_id)
                     mats = []
                     for row in cursor.fetchall():
-                        # IMPORTANT: Apply ME rounding per-run (per job/cycle), then multiply.
-                        # Doing ceil((base_qty * runs) * (1 - ME)) underestimates for small base quantities.
+                        # Apply material modifiers per run, then multiply by runs.
+                        # Final per-run qty:
+                        # ceil(base * (1-ME) * (1-structure_bonus) * (1-rig_bonus))
                         base_per_run_qty = int(row[2] or 0)
-                        per_run_qty = ceil(base_per_run_qty * (100 - blueprint_me) / 100)
+                        me_multiplier = max(0.0, (100 - blueprint_me) / 100.0)
+                        structure_multiplier = max(
+                            0.0, 1.0 - float(build_structure_material_bonus)
+                        )
+                        rig_multiplier = max(0.0, 1.0 - float(rig_bonus_for_blueprint))
+                        per_run_qty = ceil(
+                            base_per_run_qty
+                            * me_multiplier
+                            * structure_multiplier
+                            * rig_multiplier
+                        )
                         qty = int(per_run_qty) * int(runs)
                         qty_default = base_per_run_qty * int(runs)
                         mat = {
@@ -3113,12 +3527,21 @@ def craft_bp(request, type_id):
                 "WHERE m.eve_type_id = %s AND m.activity_id IN (1, 11)",
                 [type_id],
             )
+            root_rig_bonus = _get_blueprint_rig_bonus(type_id)
             for row in cursor.fetchall():
-                base_qty = row[2] * num_runs
-                # Apply ME bonus if applicable and round up to integer
-                # Standard Library
-
-                qty = ceil(base_qty * (100 - me) / 100)
+                base_per_run_qty = int(row[2] or 0)
+                me_multiplier = max(0.0, (100 - me) / 100.0)
+                structure_multiplier = max(
+                    0.0, 1.0 - float(build_structure_material_bonus)
+                )
+                rig_multiplier = max(0.0, 1.0 - float(root_rig_bonus))
+                per_run_qty = ceil(
+                    base_per_run_qty
+                    * me_multiplier
+                    * structure_multiplier
+                    * rig_multiplier
+                )
+                qty = int(per_run_qty) * int(num_runs)
                 direct_materials_list.append(
                     {
                         "type_id": row[0],
@@ -3277,6 +3700,8 @@ def craft_bp(request, type_id):
             ),
             "market_group_map": _to_serializable(market_group_map),
             "materials_by_group": _to_serializable(materials_by_group),
+            "build_environment": _to_serializable(build_environment),
+            "build_rig_catalog": _to_serializable(build_rig_catalog),
             "urls": {
                 "save": reverse("indy_hub:save_production_config"),
                 "load_list": reverse("indy_hub:production_simulations_list"),
@@ -3305,6 +3730,10 @@ def craft_bp(request, type_id):
             f'<input type="hidden" name="me" value="{me}">'
             f'<input type="hidden" name="te" value="{te}">'
             f'<input type="hidden" name="buy" value="{request.GET.get("buy", "")}">'
+            f'<input type="hidden" name="build_system" value="{build_system}">'
+            f'<input type="hidden" name="build_system_index" value="{build_system_index}">'
+            f'<input type="hidden" name="build_structure" value="{build_structure_type}">'
+            f'<input type="hidden" name="build_rigs" value="{",".join(selected_rig_keys)}">'
             f"{next_input}"
             f'<input type="hidden" name="active_tab" id="activeTabInput" value="{active_tab}">'
             "</form>"
@@ -3381,6 +3810,8 @@ def craft_bp(request, type_id):
             ),
             "market_group_map": market_group_map,
             "materials_by_group": materials_by_group,
+            "build_environment": build_environment,
+            "build_rig_catalog": build_rig_catalog,
             "blueprint_payload": blueprint_payload,
             "back_url": back_url,
             "craft_header_controls": mark_safe(craft_controls_html),
@@ -3409,6 +3840,36 @@ def craft_bp(request, type_id):
                 "product_type_id": None,
                 "me": 0,
                 "te": 0,
+                "build_environment": {
+                    "system": "",
+                    "system_index": 0.0,
+                    "structure_type": "none",
+                    "structure_material_bonus": 0.0,
+                    "structure_material_bonus_pct": 0.0,
+                    "rig_keys": [],
+                    "rig_material_bonus": 0.0,
+                    "rig_material_bonus_pct": 0.0,
+                    "rig_bonus_by_domain": {},
+                    "rig_bonus_by_domain_pct": {},
+                    "effective_material_bonus": 0.0,
+                    "effective_material_bonus_pct": 0.0,
+                },
+                "build_rig_catalog": [
+                    {
+                        **rig,
+                        "material_bonus_pct": round(
+                            float(rig.get("material_bonus") or 0.0) * 100.0, 3
+                        ),
+                        "domains_label": ", ".join(
+                            CRAFT_RIG_DOMAIN_LABELS.get(
+                                str(domain),
+                                str(domain).replace("_", " ").title(),
+                            )
+                            for domain in (rig.get("domains") or [])
+                        ),
+                    }
+                    for rig in CRAFT_MATERIAL_RIG_CATALOG
+                ],
                 "back_url": back_url,
             },
         )
