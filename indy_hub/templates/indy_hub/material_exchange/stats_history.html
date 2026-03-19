@@ -50,6 +50,24 @@
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
         </div>
+        <div class="me-stat-card" data-accent="info">
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-equals"></i></div>
+            <div class="me-stat-content">
+                <span class="me-stat-label">{% trans "Wallet Net Total" %}</span>
+                <span class="me-stat-value">{{ donation_stats.wallet_net_total|floatformat:0|intcomma }}</span>
+                <small class="text-muted">ISK</small>
+            </div>
+            <span class="me-stat-glow" aria-hidden="true"></span>
+        </div>
+        <div class="me-stat-card" data-accent="info">
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-forward"></i></div>
+            <div class="me-stat-content">
+                <span class="me-stat-label">{% trans "Wallet Net (Projected 30D)" %}</span>
+                <span class="me-stat-value">{{ donation_stats.wallet_net_projected_30d|floatformat:0|intcomma }}</span>
+                <small class="text-muted">ISK</small>
+            </div>
+            <span class="me-stat-glow" aria-hidden="true"></span>
+        </div>
         <div class="me-stat-card" data-accent="primary">
             <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-shopping-basket"></i></div>
             <div class="me-stat-content">
@@ -194,6 +212,8 @@
                             <tr><th>{% trans "Wallet Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_activity_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Wallet Inflow" %}</th><td class="text-end">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Outflow" %}</th><td class="text-end">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Net Total" %}</th><td class="text-end {% if donation_stats.wallet_net_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_net_total|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Net (Projected 30D)" %}</th><td class="text-end {% if donation_stats.wallet_net_projected_30d >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_net_projected_30d|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Market Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Wallet Market Activity Total" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Open Market Order Value" %}</th><td class="text-end">{{ donation_stats.open_order_value|floatformat:0|intcomma }} ISK</td></tr>

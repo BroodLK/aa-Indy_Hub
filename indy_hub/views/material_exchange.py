@@ -6233,6 +6233,8 @@ def material_exchange_stats_history(request):
     wallet_withdrawal_total = Decimal("0")
     me_contract_wallet_entry_count = 0
     me_contract_wallet_amount_total = Decimal("0")
+    wallet_first_posted_at = None
+    wallet_last_posted_at = None
     wallet_ref_type_rollup: dict[str, dict[str, Decimal | int]] = {}
 
     for row in wallet_journal_rows:
@@ -6245,6 +6247,11 @@ def material_exchange_stats_history(request):
         ref_type = str(row.get("ref_type") or "").strip().lower() or "unknown"
         amount = _to_decimal(row.get("amount"))
         wallet_activity_count += 1
+        if posted_at:
+            if wallet_first_posted_at is None or posted_at < wallet_first_posted_at:
+                wallet_first_posted_at = posted_at
+            if wallet_last_posted_at is None or posted_at > wallet_last_posted_at:
+                wallet_last_posted_at = posted_at
         if amount >= 0:
             wallet_inflow_total += amount
         else:
@@ -6349,6 +6356,30 @@ def material_exchange_stats_history(request):
         + wallet_fee_total
         + wallet_market_transaction_total
         + wallet_market_escrow_total
+    )
+    wallet_net_total = wallet_inflow_total - wallet_outflow_total
+    wallet_analysis_window_start = filter_start or wallet_first_posted_at
+    wallet_analysis_window_end = filter_end or timezone.now()
+    if (
+        wallet_analysis_window_start is not None
+        and wallet_analysis_window_end is not None
+        and wallet_analysis_window_end < wallet_analysis_window_start
+    ):
+        wallet_analysis_window_end = wallet_analysis_window_start
+    wallet_analysis_window_days = (
+        max((wallet_analysis_window_end - wallet_analysis_window_start).days + 1, 1)
+        if wallet_analysis_window_start and wallet_analysis_window_end
+        else 0
+    )
+    wallet_daily_net = (
+        (wallet_net_total / Decimal(str(wallet_analysis_window_days))).quantize(
+            Decimal("0.01")
+        )
+        if wallet_analysis_window_days > 0
+        else Decimal("0")
+    )
+    wallet_net_projected_30d = (wallet_daily_net * Decimal("30")).quantize(
+        Decimal("0.01")
     )
 
     market_trend_source_label = _("Wallet Market Activity")
@@ -7033,6 +7064,9 @@ def material_exchange_stats_history(request):
         "wallet_division_balance": corptools_division_balance,
         "wallet_inflow_total": wallet_inflow_total,
         "wallet_outflow_total": wallet_outflow_total,
+        "wallet_net_total": wallet_net_total,
+        "wallet_net_projected_30d": wallet_net_projected_30d,
+        "wallet_analysis_window_days": int(wallet_analysis_window_days),
         "wallet_market_activity_count": int(wallet_market_activity_count),
         "wallet_market_activity_total": wallet_market_activity_total,
         "wallet_market_transaction_count": int(wallet_market_transaction_count),
