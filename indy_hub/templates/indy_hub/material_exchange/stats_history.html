@@ -18,9 +18,9 @@
             <div>
                 <h2 class="h3 mb-1">
                     <i class="fas fa-chart-line me-2"></i>
-                    {% trans "Material Exchange Manager Stats" %}
+                    {% trans "Material Exchange Stats" %}
                 </h2>
-                <p class="description mb-0">{% trans "All non-capital buy/sell orders with expected vs actual contract outcomes." %}</p>
+                <p class="description mb-0">{% trans "Simple totals from wallet activity and contract-backed buy/sell orders." %}</p>
             </div>
             <div class="d-flex gap-2">
                 <a href="{% url 'indy_hub:material_exchange_transactions' %}" class="btn btn-outline-light">
@@ -33,56 +33,56 @@
 
     <div class="me-quick-stats mb-4">
         <div class="me-stat-card" data-accent="primary">
-            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-shopping-cart"></i></div>
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-arrow-down"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Total Sold" %}</span>
-                <span class="me-stat-value">{{ total_buy_volume|floatformat:0|intcomma }}</span>
+                <span class="me-stat-label">{% trans "Wallet Inflow" %}</span>
+                <span class="me-stat-value">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }}</span>
                 <small class="text-muted">ISK</small>
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
         </div>
         <div class="me-stat-card" data-accent="success">
-            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-hand-holding-usd"></i></div>
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-arrow-up"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Total Bought" %}</span>
+                <span class="me-stat-label">{% trans "Wallet Outflow" %}</span>
+                <span class="me-stat-value">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }}</span>
+                <small class="text-muted">ISK</small>
+            </div>
+            <span class="me-stat-glow" aria-hidden="true"></span>
+        </div>
+        <div class="me-stat-card" data-accent="primary">
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-shopping-basket"></i></div>
+            <div class="me-stat-content">
+                <span class="me-stat-label">{% trans "Total Bought (Hub)" %}</span>
                 <span class="me-stat-value">{{ total_sell_volume|floatformat:0|intcomma }}</span>
                 <small class="text-muted">ISK</small>
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
         </div>
-        <div class="me-stat-card" data-accent="primary">
-            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-coins"></i></div>
-            <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Exchange Profit" %}</span>
-                <span class="me-stat-value">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }}</span>
-                <small class="text-muted">ISK</small>
-            </div>
-            <span class="me-stat-glow" aria-hidden="true"></span>
-        </div>
         <div class="me-stat-card" data-accent="success">
-            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-chart-line"></i></div>
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-cash-register"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Projected Profit" %}</span>
-                <span class="me-stat-value">{{ projected_profit|floatformat:0|intcomma }}</span>
+                <span class="me-stat-label">{% trans "Total Sold (Hub)" %}</span>
+                <span class="me-stat-value">{{ total_buy_volume|floatformat:0|intcomma }}</span>
                 <small class="text-muted">ISK</small>
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
         </div>
         <div class="me-stat-card" data-accent="primary">
-            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-percentage"></i></div>
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-list-check"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Expected Margin" %}</span>
-                <span class="me-stat-value">{{ expected_margin_jita_split_pct|floatformat:2 }}%</span>
-                <small class="text-muted">{% trans "Snapshot based" %}</small>
+                <span class="me-stat-label">{% trans "Total Orders" %}</span>
+                <span class="me-stat-value">{{ contract_progress_stats.made|intcomma }}</span>
+                <small class="text-muted">{% trans "Buy + Sell" %}</small>
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
         </div>
         <div class="me-stat-card" data-accent="success">
-            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-forward"></i></div>
+            <div class="me-stat-icon" aria-hidden="true"><i class="fas fa-store"></i></div>
             <div class="me-stat-content">
-                <span class="me-stat-label">{% trans "Forecast 30D Net Profit" %}</span>
-                <span class="me-stat-value">{{ forecast_30d_profit|floatformat:0|intcomma }}</span>
-                <small class="text-muted">ISK</small>
+                <span class="me-stat-label">{% trans "Relevant Market Orders" %}</span>
+                <span class="me-stat-value">{{ donation_stats.market_orders_total|intcomma }}</span>
+                <small class="text-muted">{% trans "Open or proxy count" %}</small>
             </div>
             <span class="me-stat-glow" aria-hidden="true"></span>
         </div>
@@ -93,8 +93,8 @@
             <div class="cap-note-card">
                 <ul class="cap-note-list">
                     <li>{% trans "Capital ship orders are excluded from this page." %}</li>
-                    <li>{% trans "Bought/sold totals use contract-backed Material Exchange transaction records." %}</li>
-                    <li>{% trans "Wallet activity is supplemental and captures donations, withdrawals, fees, and market refs not linked to order contracts." %}</li>
+                    <li>{% trans "Bought/sold totals prefer matched ESI contract prices, with transaction fallbacks when contract prices are missing." %}</li>
+                    <li>{% trans "Wallet totals come from the selected corporation and wallet division." %}</li>
                     <li>{{ data_limitations }}</li>
                 </ul>
             </div>
@@ -175,105 +175,11 @@
         </div>
     </form>
 
-    {% if total_transactions == 0 %}
-    <div class="alert alert-info mb-4">
-        {% trans "No contract-backed Material Exchange transactions were found in the selected period/scope. Profit and margin rows are neutral until transaction data exists." %}
-    </div>
-    {% endif %}
-
     <div class="row g-3 mb-3">
         <div class="col-xl-6">
             <div class="card border-0 shadow-sm me-chart-card h-100">
                 <div class="card-body">
-                    <h5 class="mb-3">{% trans "Selling To Exchange: Expected vs Actual" %}</h5>
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0">
-                            <tbody>
-                                <tr><th>{% trans "Expected Cost" %}</th><td class="text-end">{{ sell_expected_cost_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Actual Cost" %}</th><td class="text-end">{{ total_sell_volume|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Delta Actual - Expected" %}</th><td class="text-end {% if sell_cost_delta >= 0 %}text-danger{% else %}text-success{% endif %}">{{ sell_cost_delta|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Expected Total At Jita Sell" %}</th><td class="text-end">{{ sell_expected_jita_sell_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Expected Total At Jita Buy" %}</th><td class="text-end">{{ sell_expected_jita_buy_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Sell Contract Coverage" %}</th><td class="text-end">{{ sell_contract_coverage_pct }}%</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "Buyback Revenue And Potential" %}</h5>
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0">
-                            <tbody>
-                                <tr><th>{% trans "Expected Sale At Jita Sell" %}</th><td class="text-end">{{ buy_expected_jita_sell_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Expected Sale At Jita Buy" %}</th><td class="text-end">{{ buy_expected_jita_buy_total|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Actual Revenue" %}</th><td class="text-end">{{ total_buy_volume|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Contract-backed Net Profit" %}</th><td class="text-end {% if actual_exchange_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ actual_exchange_profit|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Wallet Supplemental Adjustments Applied" %}</th><td class="text-end {% if wallet_supplemental_applied >= 0 %}text-success{% else %}text-danger{% endif %}">{{ wallet_supplemental_applied|floatformat:0|intcomma }} ISK</td></tr>
-                                {% if wallet_supplemental_applied != donation_stats.wallet_supplemental_total %}
-                                <tr><th>{% trans "Wallet Supplemental Available Not Applied" %}</th><td class="text-end {% if donation_stats.wallet_supplemental_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_supplemental_total|floatformat:0|intcomma }} ISK</td></tr>
-                                {% endif %}
-                                <tr><th>{% trans "Net Profit Contracts + Wallet" %}</th><td class="text-end {% if actual_exchange_profit_with_wallet >= 0 %}text-success{% else %}text-danger{% endif %}">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Contract Profit Margin" %}</th><td class="text-end {% if contract_profit_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ contract_profit_margin_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Net Profit Margin Contracts + Wallet" %}</th><td class="text-end {% if net_profit_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ net_profit_margin_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Expected Margin At Jita Buy + Wallet" %}</th><td class="text-end {% if expected_margin_jita_buy_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_margin_jita_buy_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Expected Margin At Jita Sell + Wallet" %}</th><td class="text-end {% if expected_margin_jita_sell_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_margin_jita_sell_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Expected Net Profit At Jita Split + Wallet" %}</th><td class="text-end {% if expected_profit_jita_split_with_wallet >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_profit_jita_split_with_wallet|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Expected Margin At Jita Split + Wallet" %}</th><td class="text-end {% if expected_margin_jita_split_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ expected_margin_jita_split_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Projected Profit Incl Inventory Potential" %}</th><td class="text-end {% if projected_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ projected_profit|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Projected Margin Incl Inventory Potential" %}</th><td class="text-end {% if projected_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ projected_margin_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Realized Revenue vs Jita Buy Snapshot" %}</th><td class="text-end {% if realized_vs_jita_buy_pct >= 100 %}text-success{% else %}text-danger{% endif %}">{{ realized_vs_jita_buy_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Realized Revenue vs Jita Sell Snapshot" %}</th><td class="text-end {% if realized_vs_jita_sell_pct >= 100 %}text-success{% else %}text-danger{% endif %}">{{ realized_vs_jita_sell_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Realized Revenue vs Jita Split Snapshot" %}</th><td class="text-end {% if realized_vs_jita_split_pct >= 100 %}text-success{% else %}text-danger{% endif %}">{{ realized_vs_jita_split_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Actual vs Jita Sell Delta" %}</th><td class="text-end {% if buy_revenue_delta_jita_sell >= 0 %}text-success{% else %}text-danger{% endif %}">{{ buy_revenue_delta_jita_sell|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Actual vs Jita Buy Delta" %}</th><td class="text-end {% if buy_revenue_delta_jita_buy >= 0 %}text-success{% else %}text-danger{% endif %}">{{ buy_revenue_delta_jita_buy|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Wallet Adjustments as % of Revenue" %}</th><td class="text-end {% if wallet_adjustment_pct_of_revenue >= 0 %}text-success{% else %}text-danger{% endif %}">{{ wallet_adjustment_pct_of_revenue|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Unrealized Earnings Potential" %}</th><td class="text-end {% if unrealized_earnings_potential >= 0 %}text-success{% else %}text-danger{% endif %}">{{ unrealized_earnings_potential|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Unrealized Inventory ROI" %}</th><td class="text-end {% if unrealized_roi_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ unrealized_roi_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Analysis Window Days" %}</th><td class="text-end">{{ analysis_window_days|intcomma }}</td></tr>
-                                <tr><th>{% trans "Average Daily Revenue" %}</th><td class="text-end">{{ average_daily_revenue|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Average Daily Cost" %}</th><td class="text-end">{{ average_daily_cost|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Average Daily Net Profit + Wallet" %}</th><td class="text-end {% if average_daily_net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ average_daily_net_profit|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Forecast Revenue Next 30 Days" %}</th><td class="text-end">{{ forecast_30d_revenue|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Forecast Net Profit Next 30 Days" %}</th><td class="text-end {% if forecast_30d_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ forecast_30d_profit|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Forecast Margin Next 30 Days" %}</th><td class="text-end {% if forecast_30d_margin_pct >= 0 %}text-success{% else %}text-danger{% endif %}">{{ forecast_30d_margin_pct|floatformat:2 }}%</td></tr>
-                                <tr><th>{% trans "Forecast Net Profit Next 90 Days" %}</th><td class="text-end {% if forecast_90d_profit >= 0 %}text-success{% else %}text-danger{% endif %}">{{ forecast_90d_profit|floatformat:0|intcomma }} ISK</td></tr>
-                                <tr><th>{% trans "Buy Contract Coverage" %}</th><td class="text-end">{{ buy_contract_coverage_pct }}%</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="row g-3 mb-3">
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "Contracts And Order States" %}</h5>
-                    <table class="table table-sm align-middle mb-0">
-                        <tbody>
-                            <tr><th>{% trans "Contracts Made" %}</th><td class="text-end">{{ contract_progress_stats.made|intcomma }}</td></tr>
-                            <tr><th>{% trans "Completed" %}</th><td class="text-end">{{ contract_progress_stats.completed|intcomma }}</td></tr>
-                            <tr><th>{% trans "Cancelled" %}</th><td class="text-end">{{ contract_progress_stats.cancelled|intcomma }}</td></tr>
-                            <tr><th>{% trans "Rejected" %}</th><td class="text-end">{{ contract_progress_stats.rejected|intcomma }}</td></tr>
-                            <tr><th>{% trans "Current Validated" %}</th><td class="text-end">{{ contract_progress_stats.current_validated|intcomma }}</td></tr>
-                            <tr><th>{% trans "Current Awaiting Validation" %}</th><td class="text-end">{{ contract_progress_stats.current_awaiting_validation|intcomma }}</td></tr>
-                            <tr><th>{% trans "Current Anomaly" %}</th><td class="text-end">{{ contract_progress_stats.current_anomaly|intcomma }}</td></tr>
-                            <tr><th>{% trans "ESI Contracts Total" %}</th><td class="text-end">{{ contract_stats.total|intcomma }}</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "Donations To Buyback Division" %}</h5>
+                    <h5 class="mb-3">{% trans "Wallet Summary" %}</h5>
                     <table class="table table-sm align-middle mb-0">
                         <tbody>
                             <tr><th>{% trans "Chosen Corp" %}</th><td class="text-end">{{ chosen_corporation_id|intcomma }}</td></tr>
@@ -284,25 +190,36 @@
                                     {% if wallet_data_source == "corptools" %}{% trans "Corptools cache" %}{% else %}{% trans "ESI live" %}{% endif %}
                                 </td>
                             </tr>
-                            <tr><th>{% trans "Chosen Wallet Division Balance" %}</th><td class="text-end">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Wallet Division Balance" %}</th><td class="text-end">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_activity_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Wallet Inflow" %}</th><td class="text-end">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Outflow" %}</th><td class="text-end">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }} ISK</td></tr>
                             <tr><th>{% trans "Wallet Market Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_count|intcomma }}</td></tr>
                             <tr><th>{% trans "Wallet Market Activity Total" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Wallet Market Transactions" %}</th><td class="text-end">{{ donation_stats.wallet_market_transaction_total|floatformat:0|intcomma }} ISK | {{ donation_stats.wallet_market_transaction_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Wallet Market Escrow" %}</th><td class="text-end">{{ donation_stats.wallet_market_escrow_total|floatformat:0|intcomma }} ISK | {{ donation_stats.wallet_market_escrow_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Wallet Fees And Taxes" %}</th><td class="text-end">{{ donation_stats.wallet_fee_total|floatformat:0|intcomma }} ISK | {{ donation_stats.wallet_fee_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Wallet Donations" %}</th><td class="text-end">{{ donation_stats.wallet_donation_total|floatformat:0|intcomma }} ISK | {{ donation_stats.wallet_donation_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Wallet Withdrawals" %}</th><td class="text-end">{{ donation_stats.wallet_withdrawal_total|floatformat:0|intcomma }} ISK | {{ donation_stats.wallet_withdrawal_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Wallet Supplemental Net" %}</th><td class="text-end {% if donation_stats.wallet_supplemental_total >= 0 %}text-success{% else %}text-danger{% endif %}">{{ donation_stats.wallet_supplemental_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Material Exchange Contract Wallet Entries" %}</th><td class="text-end">{{ donation_stats.me_contract_wallet_entry_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Material Exchange Contract Wallet Total" %}</th><td class="text-end">{{ donation_stats.me_contract_wallet_amount_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Open Market Orders Wallet Division" %}</th><td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td></tr>
-                            <tr><th>{% trans "Open Buy / Sell Orders" %}</th><td class="text-end">{{ donation_stats.open_buy_orders|intcomma }} / {{ donation_stats.open_sell_orders|intcomma }}</td></tr>
                             <tr><th>{% trans "Open Market Order Value" %}</th><td class="text-end">{{ donation_stats.open_order_value|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Donation Contracts Price 0 / Reward 0" %}</th><td class="text-end">{{ donation_stats.contracts|intcomma }}</td></tr>
-                            <tr><th>{% trans "Donation Contract Items At Jita Sell" %}</th><td class="text-end">{{ donation_stats.estimated_jita_sell|floatformat:0|intcomma }} ISK</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <div class="col-xl-6">
+            <div class="card border-0 shadow-sm me-chart-card h-100">
+                <div class="card-body">
+                    <h5 class="mb-3">{% trans "Order Summary" %}</h5>
+                    <table class="table table-sm align-middle mb-0">
+                        <tbody>
+                            <tr><th>{% trans "Total Orders" %}</th><td class="text-end">{{ contract_progress_stats.made|intcomma }}</td></tr>
+                            <tr><th>{% trans "Contract-backed Transactions" %}</th><td class="text-end">{{ donation_stats.contract_transaction_count|intcomma }}</td></tr>
+                            <tr><th>{% trans "Total Bought (Hub)" %}</th><td class="text-end">{{ total_sell_volume|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Total Sold (Hub)" %}</th><td class="text-end">{{ total_buy_volume|floatformat:0|intcomma }} ISK</td></tr>
+                            <tr><th>{% trans "Open Market Orders (Relevant)" %}</th><td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td></tr>
+                            <tr><th>{% trans "Open Buy / Sell Orders" %}</th><td class="text-end">{{ donation_stats.open_buy_orders|intcomma }} / {{ donation_stats.open_sell_orders|intcomma }}</td></tr>
+                            <tr><th>{% trans "Completed Orders" %}</th><td class="text-end">{{ contract_progress_stats.completed|intcomma }}</td></tr>
+                            <tr><th>{% trans "Cancelled Orders" %}</th><td class="text-end">{{ contract_progress_stats.cancelled|intcomma }}</td></tr>
+                            <tr><th>{% trans "Rejected Orders" %}</th><td class="text-end">{{ contract_progress_stats.rejected|intcomma }}</td></tr>
+                            <tr><th>{% trans "Current Validated" %}</th><td class="text-end">{{ contract_progress_stats.current_validated|intcomma }}</td></tr>
+                            <tr><th>{% trans "Current Awaiting Validation" %}</th><td class="text-end">{{ contract_progress_stats.current_awaiting_validation|intcomma }}</td></tr>
+                            <tr><th>{% trans "Current Anomaly" %}</th><td class="text-end">{{ contract_progress_stats.current_anomaly|intcomma }}</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -340,134 +257,6 @@
                         {% endfor %}
                     </tbody>
                 </table>
-            </div>
-        </div>
-    </div>
-
-    <div class="card border-0 shadow-sm me-chart-card mb-3">
-        <div class="card-body">
-            <h5 class="mb-3">{% trans "Wallet Activity Breakdown Ref Type" %}</h5>
-            <div class="table-responsive">
-                <table class="table table-hover align-middle me-transactions-table mb-0">
-                    <thead>
-                        <tr>
-                            <th>{% trans "Ref Type" %}</th>
-                            <th class="text-end">{% trans "Entries" %}</th>
-                            <th class="text-end">{% trans "Amount" %}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in wallet_ref_type_rows %}
-                        <tr>
-                            <td>{{ row.ref_type }}</td>
-                            <td class="text-end">{{ row.count|intcomma }}</td>
-                            <td class="text-end">{{ row.amount|floatformat:0|intcomma }} ISK</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="3" class="text-muted">{% trans "No wallet activity in this range." %}</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-
-    <div class="row g-3 mb-3">
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "Buy Order Statuses Current" %}</h5>
-                    <table class="table table-sm align-middle mb-0">
-                        <tbody>
-                            {% for status, count in buy_order_status_display_counts.items %}
-                            <tr><th>{{ status }}</th><td class="text-end">{{ count|intcomma }}</td></tr>
-                            {% empty %}
-                            <tr><td colspan="2" class="text-muted">{% trans "No buy orders in range." %}</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "Sell Order Statuses Current" %}</h5>
-                    <table class="table table-sm align-middle mb-0">
-                        <tbody>
-                            {% for status, count in sell_order_status_display_counts.items %}
-                            <tr><th>{{ status }}</th><td class="text-end">{{ count|intcomma }}</td></tr>
-                            {% empty %}
-                            <tr><td colspan="2" class="text-muted">{% trans "No sell orders in range." %}</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="row g-3">
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "User Ranking: Most Sold" %}</h5>
-                    <div class="table-responsive">
-                        <table class="table table-hover align-middle me-transactions-table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>{% trans "User" %}</th>
-                                    <th class="text-end">{% trans "Orders" %}</th>
-                                    <th class="text-end">{% trans "Quantity" %}</th>
-                                    <th class="text-end">{% trans "Total Sold" %}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in most_sold_users %}
-                                <tr>
-                                    <td class="fw-semibold">{{ row.main_character|default:row.username }}</td>
-                                    <td class="text-end">{{ row.orders|intcomma }}</td>
-                                    <td class="text-end">{{ row.quantity|intcomma }}</td>
-                                    <td class="text-end">{{ row.total_value|floatformat:0|intcomma }} ISK</td>
-                                </tr>
-                                {% empty %}
-                                <tr><td colspan="4" class="text-muted">{% trans "No sold ranking data." %}</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="col-xl-6">
-            <div class="card border-0 shadow-sm me-chart-card h-100">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "User Ranking: Most Bought" %}</h5>
-                    <div class="table-responsive">
-                        <table class="table table-hover align-middle me-transactions-table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>{% trans "User" %}</th>
-                                    <th class="text-end">{% trans "Orders" %}</th>
-                                    <th class="text-end">{% trans "Quantity" %}</th>
-                                    <th class="text-end">{% trans "Total Bought" %}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in most_bought_users %}
-                                <tr>
-                                    <td class="fw-semibold">{{ row.main_character|default:row.username }}</td>
-                                    <td class="text-end">{{ row.orders|intcomma }}</td>
-                                    <td class="text-end">{{ row.quantity|intcomma }}</td>
-                                    <td class="text-end">{{ row.total_value|floatformat:0|intcomma }} ISK</td>
-                                </tr>
-                                {% empty %}
-                                <tr><td colspan="4" class="text-muted">{% trans "No bought ranking data." %}</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
