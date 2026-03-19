@@ -6460,24 +6460,76 @@ def material_exchange_stats_history(request):
         last_completed=Max("completed_at"),
     )
 
-    contract_buy_total = _to_decimal(
+    tx_buy_total = _to_decimal(
         tx_rows.filter(
             transaction_type=MaterialExchangeTransaction.TransactionType.BUY
         ).aggregate(total=Sum("total_price", default=0))["total"]
     )
-    contract_sell_total = _to_decimal(
+    tx_sell_total = _to_decimal(
         tx_rows.filter(
             transaction_type=MaterialExchangeTransaction.TransactionType.SELL
         ).aggregate(total=Sum("total_price", default=0))["total"]
     )
     contract_transaction_count = int(tx_rows.count())
 
-    total_buy_volume = contract_buy_total
-    total_sell_volume = contract_sell_total
-    total_transactions = contract_transaction_count
+    sell_tx_totals_by_order = {
+        int(row["sell_order_id"]): _to_decimal(row.get("total_value"))
+        for row in tx_rows.filter(sell_order_id__isnull=False)
+        .values("sell_order_id")
+        .annotate(total_value=Sum("total_price", default=0))
+        if int(row.get("sell_order_id") or 0) > 0
+    }
+    buy_tx_totals_by_order = {
+        int(row["buy_order_id"]): _to_decimal(row.get("total_value"))
+        for row in tx_rows.filter(buy_order_id__isnull=False)
+        .values("buy_order_id")
+        .annotate(total_value=Sum("total_price", default=0))
+        if int(row.get("buy_order_id") or 0) > 0
+    }
+
+    # Use real contract prices first, and fallback to transaction totals for rows
+    # missing a matched contract price.
+    total_sell_volume = Decimal("0")
+    sell_orders_with_actual = 0
+    for row in sell_rows:
+        order_id = int(row.get("id") or 0)
+        cid = int(row.get("esi_contract_id") or 0)
+        if cid > 0 and cid in contract_price_map:
+            total_sell_volume += _to_decimal(contract_price_map.get(cid))
+            sell_orders_with_actual += 1
+            continue
+        fallback_total = _to_decimal(sell_tx_totals_by_order.get(order_id))
+        if fallback_total != 0:
+            total_sell_volume += fallback_total
+            sell_orders_with_actual += 1
+
+    total_buy_volume = Decimal("0")
+    buy_orders_with_actual = 0
+    for row in buy_rows:
+        order_id = int(row.get("id") or 0)
+        cid = int(row.get("esi_contract_id") or 0)
+        if cid > 0 and cid in contract_price_map:
+            total_buy_volume += _to_decimal(contract_price_map.get(cid))
+            buy_orders_with_actual += 1
+            continue
+        fallback_total = _to_decimal(buy_tx_totals_by_order.get(order_id))
+        if fallback_total != 0:
+            total_buy_volume += fallback_total
+            buy_orders_with_actual += 1
+
+    total_transactions = max(
+        contract_transaction_count,
+        sell_orders_with_actual + buy_orders_with_actual,
+    )
     actual_exchange_profit = total_buy_volume - total_sell_volume
+    has_actual_contract_activity = (
+        total_buy_volume > 0
+        or total_sell_volume > 0
+        or tx_buy_total > 0
+        or tx_sell_total > 0
+    )
     wallet_supplemental_applied = (
-        wallet_supplemental_total if contract_transaction_count > 0 else Decimal("0")
+        wallet_supplemental_total if has_actual_contract_activity else Decimal("0")
     )
     actual_exchange_profit_with_wallet = (
         actual_exchange_profit + wallet_supplemental_applied
@@ -7189,7 +7241,7 @@ def material_exchange_stats_history(request):
         "most_bought_users": most_bought_users,
         "donation_stats": donation_stats,
         "data_limitations": _(
-            "Bought/sold totals are contract-backed from Material Exchange transactions. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window. Wallet supplemental adjustments are only applied to net profit when at least one contract-backed transaction exists in the selected range."
+            "Actual bought/sold totals prefer matched ESI contract prices and fall back to Material Exchange transaction totals when a contract price is missing. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window. Wallet supplemental adjustments are only applied to net profit when contract-backed activity exists in the selected range."
         ),
         "nav_context": _build_nav_context(request.user),
     }
