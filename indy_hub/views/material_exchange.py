@@ -200,6 +200,30 @@ def _resolve_main_character_name(user) -> str:
     return str(getattr(user, "username", ""))
 
 
+def _format_duration_short(delta) -> str:
+    """Format a timedelta-like value as compact d/h/m text."""
+    if delta is None:
+        return "-"
+    try:
+        total_seconds = int(delta.total_seconds())
+    except Exception:
+        return "-"
+    if total_seconds < 0:
+        return "-"
+
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _seconds = divmod(remainder, 60)
+
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if days or hours:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
 def _build_timeline_breadcrumb_for_order(
     order, order_kind: str, perspective: str = "user"
 ):
@@ -5698,51 +5722,193 @@ def material_exchange_transactions(request):
         return redirect("indy_hub:material_exchange_index")
 
     # Filters
-    transaction_type = request.GET.get("type", "")  # 'sell', 'buy', or ''
-    user_filter = request.GET.get("user", "")
+    transaction_type = str(request.GET.get("type", "") or "").strip().lower()
+    if transaction_type not in {"", "sell", "buy"}:
+        transaction_type = ""
+    user_filter = str(request.GET.get("user", "") or "").strip()
 
-    transactions_qs = config.transactions.select_related(
+    transactions_base_qs = config.transactions.select_related(
         "user", "sell_order", "buy_order"
-    ).prefetch_related("sell_order__items", "buy_order__items")
-
+    )
     if transaction_type:
-        transactions_qs = transactions_qs.filter(transaction_type=transaction_type)
+        transactions_base_qs = transactions_base_qs.filter(
+            transaction_type=transaction_type
+        )
     if user_filter:
-        transactions_qs = transactions_qs.filter(user__username__icontains=user_filter)
+        transactions_base_qs = transactions_base_qs.filter(
+            user__username__icontains=user_filter
+        )
 
-    transactions_qs = transactions_qs.order_by("-completed_at")
+    grouped_rows: list[dict] = []
 
-    # Pagination
-    paginator = Paginator(transactions_qs, 50)
+    if transaction_type in {"", "sell"}:
+        sell_group_rows = list(
+            transactions_base_qs.filter(
+                transaction_type=MaterialExchangeTransaction.TransactionType.SELL,
+                sell_order_id__isnull=False,
+            )
+            .values(
+                "sell_order_id",
+                "user_id",
+                "user__username",
+                "sell_order__order_reference",
+                "sell_order__created_at",
+                "sell_order__esi_contract_id",
+            )
+            .annotate(
+                total_price=Sum("total_price", default=0),
+                completed_at=Max("completed_at"),
+                tx_count=Count("id"),
+            )
+        )
+        for row in sell_group_rows:
+            order_id = int(row.get("sell_order_id") or 0)
+            grouped_rows.append(
+                {
+                    "transaction_type": MaterialExchangeTransaction.TransactionType.SELL,
+                    "order_reference": str(row.get("sell_order__order_reference") or "")
+                    or f"SELL-{order_id}",
+                    "user_id": int(row.get("user_id") or 0),
+                    "username": str(row.get("user__username") or ""),
+                    "created_at": row.get("sell_order__created_at"),
+                    "completed_at": row.get("completed_at"),
+                    "contract_id": int(row.get("sell_order__esi_contract_id") or 0),
+                    "tx_count": int(row.get("tx_count") or 0),
+                    "total_price": Decimal(str(row.get("total_price") or 0)),
+                }
+            )
+
+    if transaction_type in {"", "buy"}:
+        buy_group_rows = list(
+            transactions_base_qs.filter(
+                transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
+                buy_order_id__isnull=False,
+            )
+            .values(
+                "buy_order_id",
+                "user_id",
+                "user__username",
+                "buy_order__order_reference",
+                "buy_order__created_at",
+                "buy_order__esi_contract_id",
+            )
+            .annotate(
+                total_price=Sum("total_price", default=0),
+                completed_at=Max("completed_at"),
+                tx_count=Count("id"),
+            )
+        )
+        for row in buy_group_rows:
+            order_id = int(row.get("buy_order_id") or 0)
+            grouped_rows.append(
+                {
+                    "transaction_type": MaterialExchangeTransaction.TransactionType.BUY,
+                    "order_reference": str(row.get("buy_order__order_reference") or "")
+                    or f"BUY-{order_id}",
+                    "user_id": int(row.get("user_id") or 0),
+                    "username": str(row.get("user__username") or ""),
+                    "created_at": row.get("buy_order__created_at"),
+                    "completed_at": row.get("completed_at"),
+                    "contract_id": int(row.get("buy_order__esi_contract_id") or 0),
+                    "tx_count": int(row.get("tx_count") or 0),
+                    "total_price": Decimal(str(row.get("total_price") or 0)),
+                }
+            )
+
+    contract_ids = {
+        int(row.get("contract_id") or 0)
+        for row in grouped_rows
+        if int(row.get("contract_id") or 0) > 0
+    }
+    contract_accepted_map = {
+        int(contract_id): accepted_at
+        for contract_id, accepted_at in ESIContract.objects.filter(
+            contract_id__in=list(contract_ids)
+        ).values_list("contract_id", "date_accepted")
+    }
+
+    grouped_user_ids = {
+        int(row.get("user_id") or 0)
+        for row in grouped_rows
+        if int(row.get("user_id") or 0) > 0
+    }
+    users_by_id = {
+        int(user.id): user for user in User.objects.filter(id__in=list(grouped_user_ids))
+    }
+
+    for row in grouped_rows:
+        user = users_by_id.get(int(row.get("user_id") or 0))
+        main_character = (
+            _resolve_main_character_name(user) if user else str(row.get("username") or "")
+        )
+        row["who"] = main_character or str(row.get("username") or "")
+        if row["transaction_type"] == MaterialExchangeTransaction.TransactionType.SELL:
+            row["party_from"] = row["who"]
+            row["party_to"] = "Hub"
+        else:
+            row["party_from"] = "Hub"
+            row["party_to"] = row["who"]
+        accepted_at = contract_accepted_map.get(int(row.get("contract_id") or 0))
+        row["accepted_at"] = accepted_at
+        created_at = row.get("created_at")
+        if created_at and accepted_at and accepted_at >= created_at:
+            row["acceptance_duration_display"] = _format_duration_short(
+                accepted_at - created_at
+            )
+        else:
+            row["acceptance_duration_display"] = "-"
+
+    grouped_rows.sort(
+        key=lambda item: item.get("completed_at")
+        or item.get("created_at")
+        or timezone.now(),
+        reverse=True,
+    )
+
+    # Pagination (order-level rows)
+    paginator = Paginator(grouped_rows, 50)
     page_number = request.GET.get("page", 1)
     page_obj = paginator.get_page(page_number)
-
     transactions = list(page_obj.object_list)
 
-    for tx in transactions:
-        if tx.sell_order_id:
-            order = tx.sell_order
-            tx.has_linked_order = True
-            tx.order_reference = order.order_reference or f"SELL-{tx.sell_order_id}"
-            tx.order_items = list(order.items.all())
-        elif tx.buy_order_id:
-            order = tx.buy_order
-            tx.has_linked_order = True
-            tx.order_reference = order.order_reference or f"BUY-{tx.buy_order_id}"
-            tx.order_items = list(order.items.all())
-        else:
-            tx.has_linked_order = False
-            tx.order_reference = ""
-            tx.order_items = []
-
-        if not tx.order_items:
-            tx.order_items = [tx]
-
-        tx.order_item_count = len(tx.order_items)
-        tx.order_total_price = sum(
-            (item.total_price for item in tx.order_items),
-            Decimal("0"),
+    top_user_rollup: dict[int, dict[str, object]] = {}
+    for row in grouped_rows:
+        user_id = int(row.get("user_id") or 0)
+        if user_id <= 0:
+            continue
+        bucket = top_user_rollup.setdefault(
+            user_id,
+            {
+                "username": str(row.get("username") or f"User {user_id}"),
+                "who": str(row.get("who") or row.get("username") or f"User {user_id}"),
+                "orders": 0,
+                "buy_total": Decimal("0"),
+                "sell_total": Decimal("0"),
+            },
         )
+        bucket["orders"] = int(bucket.get("orders") or 0) + 1
+        total_price = Decimal(str(row.get("total_price") or 0))
+        if row.get("transaction_type") == MaterialExchangeTransaction.TransactionType.BUY:
+            bucket["buy_total"] = Decimal(str(bucket.get("buy_total") or 0)) + total_price
+        else:
+            bucket["sell_total"] = Decimal(str(bucket.get("sell_total") or 0)) + total_price
+
+    top_users = []
+    for _user_id, bucket in top_user_rollup.items():
+        buy_total = Decimal(str(bucket.get("buy_total") or 0))
+        sell_total = Decimal(str(bucket.get("sell_total") or 0))
+        top_users.append(
+            {
+                "who": str(bucket.get("who") or bucket.get("username") or ""),
+                "orders": int(bucket.get("orders") or 0),
+                "buy_total": buy_total,
+                "sell_total": sell_total,
+                "net_flow": buy_total - sell_total,
+                "total_volume": buy_total + sell_total,
+            }
+        )
+    top_users.sort(key=lambda row: Decimal(str(row.get("total_volume") or 0)), reverse=True)
+    top_users = top_users[:10]
 
     # Aggregates for current month
     now = timezone.now()
@@ -5763,6 +5929,7 @@ def material_exchange_transactions(request):
         "config": config,
         "page_obj": page_obj,
         "transactions": transactions,
+        "top_users": top_users,
         "is_paginated": page_obj.has_other_pages(),
         "transaction_type": transaction_type,
         "user_filter": user_filter,
@@ -6056,6 +6223,8 @@ def material_exchange_stats_history(request):
             "seller_id",
             "status",
             "esi_contract_id",
+            "order_reference",
+            "created_at",
             "expected_total",
             "expected_qty",
         )
@@ -6069,6 +6238,8 @@ def material_exchange_stats_history(request):
             "buyer_id",
             "status",
             "esi_contract_id",
+            "order_reference",
+            "created_at",
             "expected_total",
             "expected_qty",
         )
@@ -6386,11 +6557,22 @@ def material_exchange_stats_history(request):
     if not wallet_market_monthly_map:
         market_trend_source_label = _("Market Orders (Buyback Proxy)")
 
-    contract_price_map = {
-        int(contract_id): _to_decimal(price)
-        for contract_id, price in ESIContract.objects.filter(
+    contract_meta_map = {
+        int(contract_id): {
+            "price": _to_decimal(price),
+            "date_accepted": date_accepted,
+        }
+        for contract_id, price, date_accepted in ESIContract.objects.filter(
             contract_id__in=list(all_contract_ids),
-        ).values_list("contract_id", "price")
+        ).values_list("contract_id", "price", "date_accepted")
+    }
+    contract_price_map = {
+        int(contract_id): _to_decimal(meta.get("price"))
+        for contract_id, meta in contract_meta_map.items()
+    }
+    contract_accepted_at_map = {
+        int(contract_id): meta.get("date_accepted")
+        for contract_id, meta in contract_meta_map.items()
     }
 
     sell_expected_cost_total = sum(
@@ -6503,19 +6685,39 @@ def material_exchange_stats_history(request):
     )
     contract_transaction_count = int(tx_rows.count())
 
-    sell_tx_totals_by_order = {
-        int(row["sell_order_id"]): _to_decimal(row.get("total_value"))
+    sell_tx_rollup_by_order = {
+        int(row["sell_order_id"]): {
+            "total_value": _to_decimal(row.get("total_value")),
+            "completed_at": row.get("completed_at"),
+        }
         for row in tx_rows.filter(sell_order_id__isnull=False)
         .values("sell_order_id")
-        .annotate(total_value=Sum("total_price", default=0))
+        .annotate(
+            total_value=Sum("total_price", default=0),
+            completed_at=Max("completed_at"),
+        )
         if int(row.get("sell_order_id") or 0) > 0
     }
-    buy_tx_totals_by_order = {
-        int(row["buy_order_id"]): _to_decimal(row.get("total_value"))
+    buy_tx_rollup_by_order = {
+        int(row["buy_order_id"]): {
+            "total_value": _to_decimal(row.get("total_value")),
+            "completed_at": row.get("completed_at"),
+        }
         for row in tx_rows.filter(buy_order_id__isnull=False)
         .values("buy_order_id")
-        .annotate(total_value=Sum("total_price", default=0))
+        .annotate(
+            total_value=Sum("total_price", default=0),
+            completed_at=Max("completed_at"),
+        )
         if int(row.get("buy_order_id") or 0) > 0
+    }
+    sell_tx_totals_by_order = {
+        int(order_id): _to_decimal((rollup or {}).get("total_value"))
+        for order_id, rollup in sell_tx_rollup_by_order.items()
+    }
+    buy_tx_totals_by_order = {
+        int(order_id): _to_decimal((rollup or {}).get("total_value"))
+        for order_id, rollup in buy_tx_rollup_by_order.items()
     }
 
     # Use real contract prices first, and fallback to transaction totals for rows
@@ -7159,6 +7361,9 @@ def material_exchange_stats_history(request):
         top_user_stats.append(
             {
                 "username": str(getattr(user, "username", "") or f"User {user_id}"),
+                "main_character": _resolve_main_character_name(user)
+                if user
+                else str(getattr(user, "username", "") or f"User {user_id}"),
                 "buy_volume": _to_decimal(bought.get("value")),
                 "sell_volume": _to_decimal(sold.get("value")),
                 "buy_orders": int(bought.get("orders") or 0),
@@ -7174,6 +7379,76 @@ def material_exchange_stats_history(request):
         reverse=True,
     )
     top_user_stats = top_user_stats[:10]
+
+    sell_rows_by_id = {int(row.get("id") or 0): row for row in sell_rows}
+    buy_rows_by_id = {int(row.get("id") or 0): row for row in buy_rows}
+    recent_transactions: list[dict[str, object]] = []
+
+    for order_id, rollup in sell_tx_rollup_by_order.items():
+        order_row = sell_rows_by_id.get(int(order_id))
+        if not order_row:
+            continue
+        user_id = int(order_row.get("seller_id") or 0)
+        user = user_map.get(user_id)
+        username = str(getattr(user, "username", "") or f"User {user_id}")
+        who = _resolve_main_character_name(user) if user else username
+        contract_id = int(order_row.get("esi_contract_id") or 0)
+        created_at = order_row.get("created_at")
+        accepted_at = contract_accepted_at_map.get(contract_id)
+        duration_display = "-"
+        if created_at and accepted_at and accepted_at >= created_at:
+            duration_display = _format_duration_short(accepted_at - created_at)
+        recent_transactions.append(
+            {
+                "order_reference": str(order_row.get("order_reference") or "")
+                or f"SELL-{int(order_id)}",
+                "transaction_type": MaterialExchangeTransaction.TransactionType.SELL,
+                "who": who,
+                "party_from": who,
+                "party_to": "Hub",
+                "total_price": _to_decimal((rollup or {}).get("total_value")),
+                "created_at": created_at,
+                "accepted_at": accepted_at,
+                "completed_at": (rollup or {}).get("completed_at"),
+                "acceptance_duration_display": duration_display,
+            }
+        )
+
+    for order_id, rollup in buy_tx_rollup_by_order.items():
+        order_row = buy_rows_by_id.get(int(order_id))
+        if not order_row:
+            continue
+        user_id = int(order_row.get("buyer_id") or 0)
+        user = user_map.get(user_id)
+        username = str(getattr(user, "username", "") or f"User {user_id}")
+        who = _resolve_main_character_name(user) if user else username
+        contract_id = int(order_row.get("esi_contract_id") or 0)
+        created_at = order_row.get("created_at")
+        accepted_at = contract_accepted_at_map.get(contract_id)
+        duration_display = "-"
+        if created_at and accepted_at and accepted_at >= created_at:
+            duration_display = _format_duration_short(accepted_at - created_at)
+        recent_transactions.append(
+            {
+                "order_reference": str(order_row.get("order_reference") or "")
+                or f"BUY-{int(order_id)}",
+                "transaction_type": MaterialExchangeTransaction.TransactionType.BUY,
+                "who": who,
+                "party_from": "Hub",
+                "party_to": who,
+                "total_price": _to_decimal((rollup or {}).get("total_value")),
+                "created_at": created_at,
+                "accepted_at": accepted_at,
+                "completed_at": (rollup or {}).get("completed_at"),
+                "acceptance_duration_display": duration_display,
+            }
+        )
+
+    recent_transactions.sort(
+        key=lambda row: row.get("completed_at") or row.get("created_at") or timezone.now(),
+        reverse=True,
+    )
+    recent_transactions = recent_transactions[:25]
 
     context = {
         "config": config,
@@ -7199,6 +7474,7 @@ def material_exchange_stats_history(request):
         "total_sell_volume": total_sell_volume,
         "total_transactions": total_transactions,
         "top_user_stats": top_user_stats,
+        "recent_transactions": recent_transactions,
         "period_options": period_options,
         "selected_period": selected_period,
         "period_start": period_start,

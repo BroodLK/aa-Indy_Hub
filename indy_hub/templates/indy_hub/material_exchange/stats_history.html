@@ -249,6 +249,82 @@
 
     <div class="card border-0 shadow-sm me-chart-card mb-3">
         <div class="card-body">
+            <h5 class="mb-3">{% trans "Recent Transactions" %}</h5>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle me-transactions-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Order" %}</th>
+                            <th>{% trans "Type" %}</th>
+                            <th>{% trans "Who" %}</th>
+                            <th>{% trans "From" %}</th>
+                            <th>{% trans "To" %}</th>
+                            <th class="text-end">{% trans "Total Price" %}</th>
+                            <th class="text-end">{% trans "Created -> Accepted" %}</th>
+                            <th class="text-end">{% trans "Completed" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tx in recent_transactions %}
+                        <tr>
+                            <td class="fw-semibold">{{ tx.order_reference }}</td>
+                            <td>
+                                {% if tx.transaction_type == "sell" %}
+                                <span class="badge text-bg-info">{% trans "Sell" %}</span>
+                                {% else %}
+                                <span class="badge text-bg-success">{% trans "Buy" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ tx.who }}</td>
+                            <td>{{ tx.party_from }}</td>
+                            <td>{{ tx.party_to }}</td>
+                            <td class="text-end">{{ tx.total_price|floatformat:0|intcomma }} ISK</td>
+                            <td class="text-end">{{ tx.acceptance_duration_display }}</td>
+                            <td class="text-end">{{ tx.completed_at|date:"Y-m-d H:i" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="8" class="text-muted">{% trans "No completed transactions in this range." %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm me-chart-card mb-3">
+        <div class="card-body">
+            <h5 class="mb-3">{% trans "Top Users" %}</h5>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle me-transactions-table mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "User" %}</th>
+                            <th class="text-end">{% trans "Orders" %}</th>
+                            <th class="text-end">{% trans "Bought" %}</th>
+                            <th class="text-end">{% trans "Sold" %}</th>
+                            <th class="text-end">{% trans "Net" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in top_user_stats %}
+                        <tr>
+                            <td class="fw-semibold">{{ row.main_character|default:row.username }}</td>
+                            <td class="text-end">{{ row.total_orders|intcomma }}</td>
+                            <td class="text-end">{{ row.buy_volume|floatformat:0|intcomma }} ISK</td>
+                            <td class="text-end">{{ row.sell_volume|floatformat:0|intcomma }} ISK</td>
+                            <td class="text-end {% if row.net_flow >= 0 %}text-success{% else %}text-danger{% endif %}">{{ row.net_flow|floatformat:0|intcomma }} ISK</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-muted">{% trans "No user totals in this range." %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm me-chart-card mb-3">
+        <div class="card-body">
             <h5 class="mb-3">{% trans "Orders Over Time" %}</h5>
             <div class="table-responsive">
                 <table class="table table-hover align-middle me-transactions-table mb-0 cap-queue-table">

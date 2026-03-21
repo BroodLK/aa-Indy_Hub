@@ -125,10 +125,10 @@
                             <th>{% trans "Order" %}</th>
                             <th>{% trans "Date" %}</th>
                             <th>{% trans "Type" %}</th>
-                            <th>{% trans "User" %}</th>
-                            <th>{% trans "Items" %}</th>
-                            <th>{% trans "Quantity" %}</th>
-                            <th>{% trans "Unit Price" %}</th>
+                            <th>{% trans "Who" %}</th>
+                            <th>{% trans "From" %}</th>
+                            <th>{% trans "To" %}</th>
+                            <th>{% trans "Created -> Accepted" %}</th>
                             <th>{% trans "Total Amount" %}</th>
                         </tr>
                     </thead>
@@ -137,16 +137,11 @@
                         <tr class="me-order-row">
                             <td>
                                 <div class="d-flex align-items-center gap-2 flex-wrap">
-                                    {% if tx.has_linked_order %}
                                     <span class="fw-semibold">{{ tx.order_reference }}</span>
-                                    {% else %}
-                                    <span class="badge rounded-pill text-bg-secondary">{% trans "No linked order" %}</span>
-                                    {% endif %}
-                                    {% if tx.order_item_count > 1 and tx.has_linked_order %}
-                                    <span class="badge rounded-pill text-bg-secondary">{{ tx.order_item_count }} {% trans "items" %}</span>
-                                    {% endif %}
                                 </div>
-                                <small class="text-muted">TX #{{ tx.id }}</small>
+                                {% if tx.tx_count > 1 %}
+                                <small class="text-muted">{{ tx.tx_count|intcomma }} {% trans "contract lines merged" %}</small>
+                                {% endif %}
                             </td>
                             <td>
                                 <div class="fw-semibold">{{ tx.completed_at|date:"Y-m-d" }}</div>
@@ -159,42 +154,47 @@
                                 <span class="badge text-bg-success">{% trans "Buy Order" %}</span>
                                 {% endif %}
                             </td>
-                            <td><span class="fw-semibold">{{ tx.user.username }}</span></td>
-                            <td>
-                                <ul class="me-order-items-list mb-0">
-                                    {% for item in tx.order_items %}
-                                    <li>{{ item.type_name }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </td>
-                            <td class="text-end">
-                                <ul class="me-order-items-list mb-0 me-order-items-list--numeric">
-                                    {% for item in tx.order_items %}
-                                    <li>{{ item.quantity|intcomma }}</li>
-                                    {% endfor %}
-                                </ul>
-                            </td>
-                            <td class="text-end">
-                                <ul class="me-order-items-list mb-0 me-order-items-list--numeric">
-                                    {% for item in tx.order_items %}
-                                    <li>{{ item.unit_price|floatformat:2|intcomma }} ISK</li>
-                                    {% endfor %}
-                                </ul>
-                            </td>
-                            <td class="text-end fw-semibold">
-                                <ul class="me-order-items-list mb-1 me-order-items-list--numeric">
-                                    {% for item in tx.order_items %}
-                                    <li>{{ item.total_price|floatformat:0|intcomma }} ISK</li>
-                                    {% endfor %}
-                                </ul>
-                                {% if tx.order_item_count > 1 %}
-                                <div class="small text-muted">{% trans "Order total" %}: {{ tx.order_total_price|floatformat:0|intcomma }} ISK</div>
-                                {% endif %}
-                            </td>
+                            <td><span class="fw-semibold">{{ tx.who }}</span></td>
+                            <td>{{ tx.party_from }}</td>
+                            <td>{{ tx.party_to }}</td>
+                            <td>{{ tx.acceptance_duration_display }}</td>
+                            <td class="text-end fw-semibold">{{ tx.total_price|floatformat:0|intcomma }} ISK</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+
+            <div class="card border-0 shadow-sm me-chart-card mt-4">
+                <div class="card-body">
+                    <h5 class="mb-3">{% trans "Top Users" %}</h5>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle me-transactions-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "User" %}</th>
+                                    <th class="text-end">{% trans "Orders" %}</th>
+                                    <th class="text-end">{% trans "Bought" %}</th>
+                                    <th class="text-end">{% trans "Sold" %}</th>
+                                    <th class="text-end">{% trans "Net" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in top_users %}
+                                <tr>
+                                    <td class="fw-semibold">{{ row.who }}</td>
+                                    <td class="text-end">{{ row.orders|intcomma }}</td>
+                                    <td class="text-end">{{ row.buy_total|floatformat:0|intcomma }} ISK</td>
+                                    <td class="text-end">{{ row.sell_total|floatformat:0|intcomma }} ISK</td>
+                                    <td class="text-end {% if row.net_flow >= 0 %}text-success{% else %}text-danger{% endif %}">{{ row.net_flow|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="5" class="text-muted">{% trans "No user totals for this filter." %}</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
 
             <!-- Pagination -->
