@@ -89,6 +89,15 @@ _RIG_LOCATION_FLAG_HINTS = (
     "fitting",
 )
 
+_ASSET_STRUCTURE_FLAGS = {
+    "OfficeFolder",
+    "StructureFuel",
+    "MoonMaterialBay",
+    "QuantumCoreRoom",
+    "ServiceSlot0",
+    "CorpDeliveries",
+}
+
 
 def _build_nav_context(user, *, active_tab: str | None = None) -> dict:
     return build_nav_context(
@@ -498,6 +507,55 @@ def _infer_structure_rigs_from_cached_assets(
     return rig_key_by_structure
 
 
+def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
+    try:
+        assets_qs, _ = get_corp_assets_cached(
+            int(corp_id),
+            allow_refresh=True,
+            as_queryset=True,
+        )
+    except Exception:
+        return set()
+
+    try:
+        office_folder_map = {
+            int(item_id): int(location_id)
+            for item_id, location_id in assets_qs.filter(location_flag="OfficeFolder")
+            .exclude(item_id__isnull=True)
+            .values_list("item_id", "location_id")
+            .distinct()
+        }
+    except Exception:
+        office_folder_map = {}
+
+    structure_ids: set[int] = set()
+    try:
+        for location_id in assets_qs.filter(
+            location_flag__in=_ASSET_STRUCTURE_FLAGS
+        ).values_list("location_id", flat=True):
+            if location_id:
+                structure_ids.add(int(location_id))
+    except Exception:
+        pass
+
+    try:
+        sag_rows = assets_qs.filter(location_flag__startswith="CorpSAG").values_list(
+            "location_id",
+            "location_flag",
+        )
+    except Exception:
+        sag_rows = []
+    for office_folder_item_id, _flag in sag_rows:
+        if not office_folder_item_id:
+            continue
+        structure_id = office_folder_map.get(int(office_folder_item_id))
+        if not structure_id:
+            structure_id = int(office_folder_item_id)
+        if structure_id:
+            structure_ids.add(int(structure_id))
+    return structure_ids
+
+
 def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[dict[str, object]]:
     """Return Athanor/Tatara choices from selected corp alliance scope (best-effort)."""
     structures_by_id: dict[int, dict[str, object]] = {}
@@ -587,10 +645,12 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
 
     # Fall back to corptools structure snapshots if live ESI lookup is unavailable.
     corptools_rows = _load_corptools_structure_rows(corp_ids)
+    corptools_by_structure_id: dict[int, dict[str, object]] = {}
     for row in corptools_rows:
         structure_id_int = int(row.get("structure_id") or 0)
         if structure_id_int <= 0:
             continue
+        corptools_by_structure_id[structure_id_int] = dict(row)
         location_id = int(row.get("location_id") or 0)
         if location_id > 0:
             location_ids.add(location_id)
@@ -611,6 +671,64 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
         merged_row = dict(row)
         merged_row["data_source"] = "corptools"
         structures_by_id[structure_id_int] = merged_row
+
+    # Reuse the same cached corp-asset structure discovery pattern as Material Exchange.
+    for corp_id in corp_ids:
+        structure_ids_from_assets = _extract_structure_ids_from_corp_assets(int(corp_id))
+        if not structure_ids_from_assets:
+            continue
+        try:
+            structure_names = resolve_structure_names(
+                sorted(structure_ids_from_assets),
+                corporation_id=int(corp_id),
+                user=user,
+                schedule_async=True,
+            )
+        except Exception:
+            structure_names = {}
+
+        for structure_id in structure_ids_from_assets:
+            if structure_id <= 0:
+                continue
+            corptools_row = corptools_by_structure_id.get(int(structure_id), {})
+            existing = structures_by_id.get(int(structure_id))
+            structure_name = str(structure_names.get(int(structure_id)) or "").strip()
+            if not structure_name:
+                structure_name = str(corptools_row.get("structure_name") or "").strip()
+            if not structure_name:
+                structure_name = f"Structure {int(structure_id)}"
+
+            if existing:
+                if str(existing.get("structure_name", "")).startswith("Structure "):
+                    existing["structure_name"] = structure_name
+                if int(existing.get("owner_corporation_id") or 0) <= 0:
+                    existing["owner_corporation_id"] = int(corp_id)
+                continue
+
+            structure_type_id = int(corptools_row.get("structure_type_id") or 0)
+            if structure_type_id and structure_type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+                continue
+            location_id = int(corptools_row.get("location_id") or 0)
+            if location_id > 0:
+                location_ids.add(location_id)
+            structures_by_id[int(structure_id)] = {
+                "structure_id": int(structure_id),
+                "structure_name": structure_name,
+                "structure_type_id": structure_type_id or None,
+                "structure_type_name": (
+                    str(corptools_row.get("structure_type_name") or "").strip()
+                    or _("Unknown structure type")
+                ),
+                "location_id": location_id if location_id > 0 else None,
+                "location_name": str(corptools_row.get("location_name") or ""),
+                "owner_corporation_id": int(corp_id),
+                "structure_bonus_percent": STRUCTURE_BONUS_BY_TYPE_ID.get(
+                    structure_type_id,
+                    Decimal("0.000"),
+                ),
+                "security_bonus_percent": Decimal("0.000"),
+                "data_source": "assets_cache",
+            }
 
     if not structures_by_id:
         return []
@@ -1127,7 +1245,6 @@ def reprocessing_become(request):
 
             selected_clone_id = int(request.POST.get("selected_clone_id") or 0)
             selected_structure_id = int(request.POST.get("structure_id") or 0)
-            rig_profile = _get_rig_profile(request.POST.get("rig_profile_key") or "none")
             margin_percent = _parse_margin_percent(request.POST.get("margin_percent"))
             requested_available = request.POST.get("is_available") == "on"
 
@@ -1153,6 +1270,9 @@ def reprocessing_become(request):
             if not structure_row:
                 messages.error(request, _("Please choose a valid structure."))
                 return redirect("indy_hub:reprocessing_become")
+            rig_profile = _get_rig_profile(
+                str(structure_row.get("suggested_rig_profile_key") or "none")
+            )
 
             try:
                 skill_levels = fetch_character_skill_levels(int(selected_character_id))
@@ -1295,7 +1415,6 @@ def reprocessing_become(request):
         "authorize_url": reverse("indy_hub:reprocessing_authorize_scopes"),
         "clone_options": clone_options,
         "structure_options": structure_options,
-        "rig_profiles": REPROCESSING_RIG_PROFILES,
         "skill_snapshot": skill_snapshot,
     }
     context.update(_build_nav_context(request.user, active_tab="reprocessing"))

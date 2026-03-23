@@ -218,22 +218,28 @@ def fetch_character_skill_levels(
         payload = result_obj.results(use_cache=True)
     except Exception as exc:
         if "is not of type 'string'" in str(exc) and token_obj is not None:
-            access_token = token_obj.valid_access_token()
-            result_obj = operation(
-                character_id=int(character_id),
-                token=access_token,
-                **request_kwargs,
-            )
-            payload = result_obj.results()
-        else:
-            if fallback_levels:
+            try:
+                access_token = token_obj.valid_access_token()
+                result_obj = operation(
+                    character_id=int(character_id),
+                    token=access_token,
+                    **request_kwargs,
+                )
+                payload = result_obj.results()
+            except Exception as nested_exc:
                 logger.debug(
-                    "Falling back to corptools cached skills for %s after ESI error: %s",
+                    "Using fallback skills for %s after token conversion error: %s",
                     character_id,
-                    exc,
+                    nested_exc,
                 )
                 return fallback_levels
-            raise
+        else:
+            logger.debug(
+                "Using fallback skills for %s after ESI error: %s",
+                character_id,
+                exc,
+            )
+            return fallback_levels
 
     payload_map = _coerce_mapping(payload)
     skill_rows = payload_map.get("skills", []) if payload_map else []
@@ -270,12 +276,17 @@ def _get_corptools_character_audit(character_id: int):
     try:
         # AA Example App
         from corptools.models.audits import CharacterAudit
+        # Django
+        from django.db.models import Q
     except Exception:
         return None
     try:
         return (
             CharacterAudit.objects.select_related("character")
-            .filter(character__character_id=int(character_id))
+            .filter(
+                Q(character__character_id=int(character_id))
+                | Q(character_id=int(character_id))
+            )
             .first()
         )
     except Exception:
@@ -338,22 +349,28 @@ def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]
 
     implants_by_clone: dict[int, list[tuple[int, str]]] = {}
     try:
-        implant_rows = Implant.objects.filter(clone__in=clones).values_list(
-            "clone_id",
-            "type_name_id",
-            "type_name__name",
+        implants = list(
+            Implant.objects.filter(clone__in=clones).select_related("type_name")
         )
     except Exception:
-        implant_rows = []
-    for clone_pk, type_id, type_name in implant_rows:
+        implants = []
+    for implant in implants:
         try:
-            clone_id_int = int(clone_pk)
-            type_id_int = int(type_id)
+            clone_id_int = int(getattr(implant, "clone_id", 0) or 0)
+            type_id_int = int(getattr(implant, "type_name_id", 0) or 0)
         except (TypeError, ValueError):
             continue
-        implants_by_clone.setdefault(clone_id_int, []).append(
-            (type_id_int, str(type_name or get_type_name(type_id_int) or ""))
-        )
+        if clone_id_int <= 0 or type_id_int <= 0:
+            continue
+        type_name_obj = getattr(implant, "type_name", None)
+        type_name = ""
+        for attr in ("name", "name_en", "name_en_us", "type_name"):
+            type_name = str(getattr(type_name_obj, attr, "") or "").strip()
+            if type_name:
+                break
+        if not type_name:
+            type_name = str(get_type_name(type_id_int) or "")
+        implants_by_clone.setdefault(clone_id_int, []).append((type_id_int, type_name))
 
     clone_rows: list[dict[str, object]] = []
     for idx, clone in enumerate(clones, start=1):
@@ -422,7 +439,20 @@ def fetch_character_clone_options(
         "GetCharactersCharacterIdClones",
     )
     if not operation:
-        return fallback_clones
+        if fallback_clones:
+            return fallback_clones
+        return [
+            {
+                "clone_id": 0,
+                "clone_label": "Active Clone",
+                "location_id": None,
+                "location_name": "",
+                "implant_type_ids": [],
+                "implant_names": [],
+                "beancounter_implants": [],
+                "beancounter_bonus_percent": Decimal("0.000"),
+            }
+        ]
 
     request_kwargs = {"If-None-Match": ""} if force_refresh else {}
     try:
@@ -441,22 +471,56 @@ def fetch_character_clone_options(
         payload = result_obj.results(use_cache=True)
     except Exception as exc:
         if "is not of type 'string'" in str(exc) and token_obj is not None:
-            access_token = token_obj.valid_access_token()
-            result_obj = operation(
-                character_id=int(character_id),
-                token=access_token,
-                **request_kwargs,
-            )
-            payload = result_obj.results()
-        else:
-            if fallback_clones:
-                logger.debug(
-                    "Falling back to corptools cached clones for %s after ESI error: %s",
-                    character_id,
-                    exc,
+            try:
+                access_token = token_obj.valid_access_token()
+                result_obj = operation(
+                    character_id=int(character_id),
+                    token=access_token,
+                    **request_kwargs,
                 )
-                return fallback_clones
-            raise
+                payload = result_obj.results()
+            except Exception as nested_exc:
+                logger.debug(
+                    "Using fallback clones for %s after token conversion error: %s",
+                    character_id,
+                    nested_exc,
+                )
+                clone_rows = fallback_clones
+                if not clone_rows:
+                    clone_rows = [
+                        {
+                            "clone_id": 0,
+                            "clone_label": "Active Clone",
+                            "location_id": None,
+                            "location_name": "",
+                            "implant_type_ids": [],
+                            "implant_names": [],
+                            "beancounter_implants": [],
+                            "beancounter_bonus_percent": Decimal("0.000"),
+                        }
+                    ]
+                return clone_rows
+        else:
+            logger.debug(
+                "Using fallback clones for %s after ESI error: %s",
+                character_id,
+                exc,
+            )
+            clone_rows = fallback_clones
+            if not clone_rows:
+                clone_rows = [
+                    {
+                        "clone_id": 0,
+                        "clone_label": "Active Clone",
+                        "location_id": None,
+                        "location_name": "",
+                        "implant_type_ids": [],
+                        "implant_names": [],
+                        "beancounter_implants": [],
+                        "beancounter_bonus_percent": Decimal("0.000"),
+                    }
+                ]
+            return clone_rows
 
     payload_map = _coerce_mapping(payload)
     jump_clones = payload_map.get("jump_clones", []) if payload_map else []
