@@ -184,8 +184,12 @@
                     textEl.textContent = label;
                 }
                 indicator.classList.remove("d-none");
+
                 Array.from(form.querySelectorAll("button, input, select, textarea")).forEach(function (el) {
                     if (el.type === "hidden") {
+                        return;
+                    }
+                    if (el.name === "items_text") {
                         return;
                     }
                     el.disabled = true;
