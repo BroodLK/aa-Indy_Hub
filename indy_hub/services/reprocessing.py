@@ -184,7 +184,11 @@ def fetch_character_skill_levels(
     force_refresh: bool = False,
 ) -> dict[int, dict[str, int]]:
     """Return character skills as {skill_id: {'active': int, 'trained': int}}."""
-    token_obj = Token.get_token(character_id, REPROCESSING_SKILLS_SCOPE)
+    fallback_levels = _fetch_corptools_skill_levels(int(character_id))
+    try:
+        token_obj = Token.get_token(character_id, REPROCESSING_SKILLS_SCOPE)
+    except Exception:
+        token_obj = None
     operation = _get_operation(
         "Skills",
         "get_characters_character_id_skills",
@@ -195,7 +199,7 @@ def fetch_character_skill_levels(
         "GetCharactersCharacterIdSkills",
     )
     if not operation:
-        return {}
+        return fallback_levels
 
     request_kwargs = {"If-None-Match": ""} if force_refresh else {}
     try:
@@ -213,7 +217,7 @@ def fetch_character_skill_levels(
         )
         payload = result_obj.results(use_cache=True)
     except Exception as exc:
-        if "is not of type 'string'" in str(exc):
+        if "is not of type 'string'" in str(exc) and token_obj is not None:
             access_token = token_obj.valid_access_token()
             result_obj = operation(
                 character_id=int(character_id),
@@ -222,6 +226,13 @@ def fetch_character_skill_levels(
             )
             payload = result_obj.results()
         else:
+            if fallback_levels:
+                logger.debug(
+                    "Falling back to corptools cached skills for %s after ESI error: %s",
+                    character_id,
+                    exc,
+                )
+                return fallback_levels
             raise
 
     payload_map = _coerce_mapping(payload)
@@ -240,7 +251,9 @@ def fetch_character_skill_levels(
             "active": int(row_map.get("active_skill_level") or 0),
             "trained": int(row_map.get("trained_skill_level") or 0),
         }
-    return levels
+    if levels:
+        return levels
+    return fallback_levels
 
 
 def _resolve_location_names(location_ids: list[int]) -> dict[int, str]:
@@ -253,13 +266,152 @@ def _resolve_location_names(location_ids: list[int]) -> dict[int, str]:
         return {}
 
 
+def _get_corptools_character_audit(character_id: int):
+    try:
+        # AA Example App
+        from corptools.models.audits import CharacterAudit
+    except Exception:
+        return None
+    try:
+        return (
+            CharacterAudit.objects.select_related("character")
+            .filter(character__character_id=int(character_id))
+            .first()
+        )
+    except Exception:
+        return None
+
+
+def _fetch_corptools_skill_levels(character_id: int) -> dict[int, dict[str, int]]:
+    audit = _get_corptools_character_audit(int(character_id))
+    if audit is None:
+        return {}
+    try:
+        # AA Example App
+        from corptools.models.skills import Skill
+    except Exception:
+        return {}
+    try:
+        rows = Skill.objects.filter(character=audit).values_list(
+            "skill_id",
+            "active_skill_level",
+            "trained_skill_level",
+        )
+    except Exception:
+        return {}
+
+    levels: dict[int, dict[str, int]] = {}
+    for skill_id, active_skill_level, trained_skill_level in rows:
+        try:
+            sid = int(skill_id)
+        except (TypeError, ValueError):
+            continue
+        if sid <= 0:
+            continue
+        levels[sid] = {
+            "active": int(active_skill_level or 0),
+            "trained": int(trained_skill_level or 0),
+        }
+    return levels
+
+
+def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]:
+    audit = _get_corptools_character_audit(int(character_id))
+    if audit is None:
+        return []
+    try:
+        # AA Example App
+        from corptools.models.clones import Implant, JumpClone
+    except Exception:
+        return []
+
+    try:
+        clones = list(
+            JumpClone.objects.filter(character=audit)
+            .select_related("location_name")
+            .order_by("id")
+        )
+    except Exception:
+        return []
+    if not clones:
+        return []
+
+    implants_by_clone: dict[int, list[tuple[int, str]]] = {}
+    try:
+        implant_rows = Implant.objects.filter(clone__in=clones).values_list(
+            "clone_id",
+            "type_name_id",
+            "type_name__name",
+        )
+    except Exception:
+        implant_rows = []
+    for clone_pk, type_id, type_name in implant_rows:
+        try:
+            clone_id_int = int(clone_pk)
+            type_id_int = int(type_id)
+        except (TypeError, ValueError):
+            continue
+        implants_by_clone.setdefault(clone_id_int, []).append(
+            (type_id_int, str(type_name or get_type_name(type_id_int) or ""))
+        )
+
+    clone_rows: list[dict[str, object]] = []
+    for idx, clone in enumerate(clones, start=1):
+        try:
+            row_clone_id = int(getattr(clone, "jump_clone_id", None) or 0)
+        except (TypeError, ValueError):
+            row_clone_id = 0
+        try:
+            location_id = int(getattr(clone, "location_id", None) or 0)
+        except (TypeError, ValueError):
+            location_id = 0
+
+        if row_clone_id <= 0:
+            row_clone_id = location_id if location_id > 0 else int(getattr(clone, "id", 0) or 0)
+
+        location_name = ""
+        location_obj = getattr(clone, "location_name", None)
+        if location_obj is not None:
+            location_name = str(getattr(location_obj, "location_name", "") or "").strip()
+
+        implant_pairs = implants_by_clone.get(int(getattr(clone, "id", 0) or 0), [])
+        implant_type_ids = [type_id for type_id, _ in implant_pairs if type_id > 0]
+        implant_names = [name for _type_id, name in implant_pairs if name]
+        beancounter_names = [n for n in implant_names if _is_beancounter_implant(n)]
+        beancounter_bonus = infer_beancounter_bonus_percent(beancounter_names)
+
+        clone_name = str(getattr(clone, "name", "") or "").strip()
+        label = clone_name or f"Clone {idx}"
+        if location_name:
+            label = f"{label} - {location_name}"
+
+        clone_rows.append(
+            {
+                "clone_id": int(row_clone_id or 0),
+                "location_id": location_id if location_id > 0 else None,
+                "implant_type_ids": implant_type_ids,
+                "implant_names": implant_names,
+                "beancounter_implants": beancounter_names,
+                "beancounter_bonus_percent": beancounter_bonus,
+                "clone_label": label,
+                "location_name": location_name,
+            }
+        )
+
+    return clone_rows
+
+
 def fetch_character_clone_options(
     character_id: int,
     *,
     force_refresh: bool = False,
 ) -> list[dict[str, object]]:
     """Return clone options with implant names and inferred beancounter bonuses."""
-    token_obj = Token.get_token(character_id, REPROCESSING_CLONES_SCOPE)
+    fallback_clones = _fetch_corptools_clone_options(int(character_id))
+    try:
+        token_obj = Token.get_token(character_id, REPROCESSING_CLONES_SCOPE)
+    except Exception:
+        token_obj = None
     operation = _get_operation(
         "Clones",
         "get_characters_character_id_clones",
@@ -270,7 +422,7 @@ def fetch_character_clone_options(
         "GetCharactersCharacterIdClones",
     )
     if not operation:
-        return []
+        return fallback_clones
 
     request_kwargs = {"If-None-Match": ""} if force_refresh else {}
     try:
@@ -288,7 +440,7 @@ def fetch_character_clone_options(
         )
         payload = result_obj.results(use_cache=True)
     except Exception as exc:
-        if "is not of type 'string'" in str(exc):
+        if "is not of type 'string'" in str(exc) and token_obj is not None:
             access_token = token_obj.valid_access_token()
             result_obj = operation(
                 character_id=int(character_id),
@@ -297,6 +449,13 @@ def fetch_character_clone_options(
             )
             payload = result_obj.results()
         else:
+            if fallback_clones:
+                logger.debug(
+                    "Falling back to corptools cached clones for %s after ESI error: %s",
+                    character_id,
+                    exc,
+                )
+                return fallback_clones
             raise
 
     payload_map = _coerce_mapping(payload)
@@ -352,6 +511,8 @@ def fetch_character_clone_options(
         row["clone_label"] = label
         row["location_name"] = location_name
 
+    if not clone_rows:
+        clone_rows = fallback_clones
     if not clone_rows:
         # Keep one selectable fallback option to avoid blocking signup UX.
         clone_rows = [

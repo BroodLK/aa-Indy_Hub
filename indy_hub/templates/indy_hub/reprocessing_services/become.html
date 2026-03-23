@@ -64,6 +64,9 @@
                     {% if scope_error %}
                     <div class="alert alert-warning">
                         <i class="fas fa-triangle-exclamation me-2"></i>{{ scope_error }}
+                        <a href="{{ authorize_url }}" class="btn btn-sm btn-primary ms-2">
+                            <i class="fas fa-key me-1"></i>{% trans "Re-authorize Scopes" %}
+                        </a>
                     </div>
                     {% endif %}
 
@@ -108,7 +111,7 @@
                                 <select name="structure_id" class="form-select" {% if not structure_options %}disabled{% endif %}>
                                     {% for structure in structure_options %}
                                     <option value="{{ structure.structure_id }}" {% if selected_profile and selected_profile.structure_id == structure.structure_id %}selected{% endif %}>
-                                        {{ structure.structure_name }}{% if structure.location_name %} - {{ structure.location_name }}{% endif %}
+                                        {{ structure.structure_name }}{% if structure.location_name %} - {{ structure.location_name }}{% endif %}{% if structure.suggested_rig_profile_key != 'none' %} - {{ structure.suggested_rig_profile_name }}{% endif %}
                                     </option>
                                     {% endfor %}
                                 </select>

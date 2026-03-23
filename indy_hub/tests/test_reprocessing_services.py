@@ -20,6 +20,8 @@ from indy_hub.services.reprocessing import (
     compute_estimated_yield_percent,
     contract_items_match_exact,
     contract_items_match_with_tolerance,
+    fetch_character_clone_options,
+    fetch_character_skill_levels,
     resolve_processing_skill_level_for_item,
 )
 
@@ -241,3 +243,47 @@ class ReprocessingSkillResolutionTests(TestCase):
             fallback_level=5,
         )
         self.assertEqual(level, 5)
+
+
+class ReprocessingCorptoolsFallbackTests(TestCase):
+    @patch("indy_hub.services.reprocessing.Token.get_token", side_effect=Exception("no token"))
+    @patch("indy_hub.services.reprocessing._get_operation", return_value=None)
+    @patch(
+        "indy_hub.services.reprocessing._fetch_corptools_skill_levels",
+        return_value={3385: {"active": 5, "trained": 5}},
+    )
+    def test_skill_lookup_uses_corptools_cache_when_esi_unavailable(
+        self,
+        _mock_corptools,
+        _mock_op,
+        _mock_token,
+    ):
+        levels = fetch_character_skill_levels(9000001)
+        self.assertEqual(levels.get(3385, {}).get("active"), 5)
+
+    @patch("indy_hub.services.reprocessing.Token.get_token", side_effect=Exception("no token"))
+    @patch("indy_hub.services.reprocessing._get_operation", return_value=None)
+    @patch(
+        "indy_hub.services.reprocessing._fetch_corptools_clone_options",
+        return_value=[
+            {
+                "clone_id": 11,
+                "clone_label": "Clone A",
+                "location_id": 60000001,
+                "location_name": "Jita IV",
+                "implant_type_ids": [27118],
+                "implant_names": ["Eifyr and Co. 'Beancounter' Reprocessing RX-804"],
+                "beancounter_implants": ["Eifyr and Co. 'Beancounter' Reprocessing RX-804"],
+                "beancounter_bonus_percent": Decimal("4.000"),
+            }
+        ],
+    )
+    def test_clone_lookup_uses_corptools_cache_when_esi_unavailable(
+        self,
+        _mock_corptools,
+        _mock_op,
+        _mock_token,
+    ):
+        clones = fetch_character_clone_options(9000001)
+        self.assertEqual(len(clones), 1)
+        self.assertEqual(clones[0]["clone_id"], 11)

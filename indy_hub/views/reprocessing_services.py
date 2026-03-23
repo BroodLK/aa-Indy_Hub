@@ -36,7 +36,7 @@ from ..models import (
     ReprocessingServiceRequestOutput,
 )
 from ..notifications import notify_multi, notify_user, send_discord_webhook
-from ..services.asset_cache import resolve_structure_names
+from ..services.asset_cache import get_corp_assets_cached, resolve_structure_names
 from ..services.esi_client import shared_client
 from ..services.reprocessing import (
     REPROCESSING_CLONES_SCOPE,
@@ -75,6 +75,20 @@ REPROCESSING_SERVICES_SCOPE_SET = sorted(
 _REQUEST_ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:,|;|\|)\s*")
 _REQUEST_ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,]*)$", re.IGNORECASE)
 
+_RIG_PROFILE_KEY_BY_NAME_PATTERN: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "moon_t2"),
+    (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+i$", re.IGNORECASE), "moon_t1"),
+    (re.compile(r"standup\s+m-set\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "ore_t2"),
+    (re.compile(r"standup\s+m-set\s+ore\s+grading\s+processor\s+i$", re.IGNORECASE), "ore_t1"),
+]
+
+_RIG_LOCATION_FLAG_HINTS = (
+    "rigslot",
+    "serviceslot",
+    "service",
+    "fitting",
+)
+
 
 def _build_nav_context(user, *, active_tab: str | None = None) -> dict:
     return build_nav_context(
@@ -91,6 +105,14 @@ def _to_decimal(value, *, fallback: Decimal = Decimal("0")) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return fallback
+
+
+def _rig_bonus_for_key(profile_key: str) -> Decimal:
+    normalized_key = str(profile_key or "").strip().lower()
+    for profile in REPROCESSING_RIG_PROFILES:
+        if str(profile.get("key") or "").strip().lower() == normalized_key:
+            return _to_decimal(profile.get("bonus_percent"), fallback=Decimal("0.000"))
+    return Decimal("0.000")
 
 
 def _get_material_exchange_admin_users() -> list[User]:
@@ -293,6 +315,189 @@ def _resolve_system_security_modifiers(system_ids: list[int]) -> dict[int, Decim
     return modifiers
 
 
+def _infer_rig_profile_key_from_type_name(type_name: str) -> str | None:
+    normalized = str(type_name or "").strip()
+    if not normalized:
+        return None
+    for pattern, profile_key in _RIG_PROFILE_KEY_BY_NAME_PATTERN:
+        if pattern.search(normalized):
+            return profile_key
+    return None
+
+
+def _pick_best_rig_profile_key(current_key: str | None, candidate_key: str | None) -> str | None:
+    if not candidate_key:
+        return current_key
+    if not current_key:
+        return candidate_key
+    if _rig_bonus_for_key(candidate_key) > _rig_bonus_for_key(current_key):
+        return candidate_key
+    return current_key
+
+
+def _load_corptools_structure_rows(corporation_ids: list[int]) -> list[dict[str, object]]:
+    try:
+        # AA Example App
+        from corptools.models.audits import CorporationAudit
+        from corptools.models.structures import Structure
+    except Exception:
+        return []
+
+    corp_ids = [int(corp_id) for corp_id in corporation_ids if int(corp_id) > 0]
+    if not corp_ids:
+        return []
+    try:
+        corp_audits = CorporationAudit.objects.filter(
+            corporation__corporation_id__in=corp_ids
+        ).select_related("corporation")
+        structures = (
+            Structure.objects.filter(
+                corporation__in=corp_audits,
+                type_id__in=SUPPORTED_STRUCTURE_TYPE_IDS,
+            )
+            .select_related("corporation__corporation", "system_name")
+            .order_by("structure_id")
+        )
+    except Exception:
+        return []
+
+    rows: list[dict[str, object]] = []
+    for structure in structures:
+        try:
+            structure_id = int(getattr(structure, "structure_id", 0) or 0)
+            type_id = int(getattr(structure, "type_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if structure_id <= 0 or type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+            continue
+
+        try:
+            location_id = int(getattr(structure, "system_id", 0) or 0)
+        except (TypeError, ValueError):
+            location_id = 0
+        location_name = ""
+        system_name = getattr(structure, "system_name", None)
+        if system_name is not None:
+            location_name = str(getattr(system_name, "name", "") or "").strip()
+
+        owner_corp_id = None
+        owner_corp = getattr(structure, "corporation", None)
+        owner_corp_eve = getattr(owner_corp, "corporation", None) if owner_corp else None
+        try:
+            owner_corp_id = int(getattr(owner_corp_eve, "corporation_id", 0) or 0) or None
+        except (TypeError, ValueError):
+            owner_corp_id = None
+
+        rows.append(
+            {
+                "structure_id": structure_id,
+                "structure_name": str(getattr(structure, "name", "") or "").strip(),
+                "structure_type_id": type_id,
+                "structure_type_name": (
+                    STRUCTURE_LABEL_BY_TYPE_ID.get(type_id)
+                    or get_type_name(type_id)
+                    or f"Type {type_id}"
+                ),
+                "location_id": location_id if location_id > 0 else None,
+                "location_name": location_name,
+                "owner_corporation_id": owner_corp_id,
+                "structure_bonus_percent": STRUCTURE_BONUS_BY_TYPE_ID.get(type_id, Decimal("0.000")),
+                "security_bonus_percent": Decimal("0.000"),
+            }
+        )
+    return rows
+
+
+def _infer_structure_rigs_from_corptools(
+    corporation_ids: list[int],
+    structure_ids: list[int],
+) -> dict[int, str]:
+    try:
+        # AA Example App
+        from corptools.models.assets import CorpAsset
+        from corptools.models.audits import CorporationAudit
+    except Exception:
+        return {}
+
+    corp_ids = [int(corp_id) for corp_id in corporation_ids if int(corp_id) > 0]
+    structure_ids = [int(structure_id) for structure_id in structure_ids if int(structure_id) > 0]
+    if not corp_ids or not structure_ids:
+        return {}
+
+    try:
+        corp_audits = CorporationAudit.objects.filter(corporation__corporation_id__in=corp_ids)
+        rows = CorpAsset.objects.filter(
+            corporation__in=corp_audits,
+            location_id__in=structure_ids,
+        ).values_list("location_id", "location_flag", "type_id", "type_name__name")
+    except Exception:
+        return {}
+
+    rig_key_by_structure: dict[int, str] = {}
+    for location_id, location_flag, type_id, type_name in rows:
+        try:
+            structure_id = int(location_id)
+            type_id_int = int(type_id)
+        except (TypeError, ValueError):
+            continue
+        flag_text = str(location_flag or "").strip().lower()
+        if flag_text and not any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
+            continue
+        type_name_text = str(type_name or get_type_name(type_id_int) or "")
+        candidate_key = _infer_rig_profile_key_from_type_name(type_name_text)
+        if not candidate_key:
+            continue
+        rig_key_by_structure[structure_id] = _pick_best_rig_profile_key(
+            rig_key_by_structure.get(structure_id),
+            candidate_key,
+        ) or candidate_key
+    return rig_key_by_structure
+
+
+def _infer_structure_rigs_from_cached_assets(
+    corporation_ids: list[int],
+    structure_ids: list[int],
+) -> dict[int, str]:
+    rig_key_by_structure: dict[int, str] = {}
+    structure_id_set = {int(structure_id) for structure_id in structure_ids if int(structure_id) > 0}
+    if not structure_id_set:
+        return rig_key_by_structure
+
+    for corp_id in corporation_ids:
+        try:
+            assets_qs, _ = get_corp_assets_cached(
+                int(corp_id),
+                allow_refresh=False,
+                as_queryset=True,
+                values_fields=["location_id", "location_flag", "type_id"],
+            )
+        except Exception:
+            continue
+        try:
+            asset_rows = assets_qs.filter(location_id__in=list(structure_id_set))
+        except Exception:
+            continue
+        for asset in asset_rows:
+            try:
+                structure_id = int(asset.get("location_id") or 0)
+                type_id = int(asset.get("type_id") or 0)
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if structure_id <= 0 or type_id <= 0:
+                continue
+            flag_text = str(asset.get("location_flag") or "").strip().lower()
+            if flag_text and not any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
+                continue
+            candidate_key = _infer_rig_profile_key_from_type_name(get_type_name(type_id))
+            if not candidate_key:
+                continue
+            rig_key_by_structure[structure_id] = _pick_best_rig_profile_key(
+                rig_key_by_structure.get(structure_id),
+                candidate_key,
+            ) or candidate_key
+    return rig_key_by_structure
+
+
 def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[dict[str, object]]:
     """Return Athanor/Tatara choices from selected corp alliance scope (best-effort)."""
     structures_by_id: dict[int, dict[str, object]] = {}
@@ -356,8 +561,19 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 int(type_id), Decimal("0.000")
             )
 
-            structures_by_id[int(structure_id)] = {
-                "structure_id": int(structure_id),
+            structure_id_int = int(structure_id)
+            existing = structures_by_id.get(structure_id_int)
+            if existing:
+                if structure_name and str(existing.get("structure_name", "")).startswith("Structure "):
+                    existing["structure_name"] = structure_name
+                if location_id_int > 0 and not existing.get("location_id"):
+                    existing["location_id"] = location_id_int
+                if int(existing.get("owner_corporation_id") or 0) <= 0:
+                    existing["owner_corporation_id"] = int(corp_id)
+                continue
+
+            structures_by_id[structure_id_int] = {
+                "structure_id": structure_id_int,
                 "structure_name": structure_name,
                 "structure_type_id": int(type_id),
                 "structure_type_name": structure_type_name,
@@ -366,7 +582,35 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 "owner_corporation_id": int(corp_id),
                 "structure_bonus_percent": structure_bonus_percent,
                 "security_bonus_percent": Decimal("0.000"),
+                "data_source": "esi",
             }
+
+    # Fall back to corptools structure snapshots if live ESI lookup is unavailable.
+    corptools_rows = _load_corptools_structure_rows(corp_ids)
+    for row in corptools_rows:
+        structure_id_int = int(row.get("structure_id") or 0)
+        if structure_id_int <= 0:
+            continue
+        location_id = int(row.get("location_id") or 0)
+        if location_id > 0:
+            location_ids.add(location_id)
+
+        existing = structures_by_id.get(structure_id_int)
+        if existing:
+            existing_name = str(existing.get("structure_name", "") or "").strip()
+            if not existing_name or existing_name.startswith("Structure "):
+                existing["structure_name"] = str(row.get("structure_name") or existing_name or "").strip()
+            if not existing.get("location_id") and location_id > 0:
+                existing["location_id"] = location_id
+            if not existing.get("location_name"):
+                existing["location_name"] = str(row.get("location_name") or "")
+            if int(existing.get("owner_corporation_id") or 0) <= 0:
+                existing["owner_corporation_id"] = int(row.get("owner_corporation_id") or 0) or None
+            continue
+
+        merged_row = dict(row)
+        merged_row["data_source"] = "corptools"
+        structures_by_id[structure_id_int] = merged_row
 
     if not structures_by_id:
         return []
@@ -383,6 +627,22 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
             row["security_bonus_percent"] = _to_decimal(
                 security_modifier_map.get(location_id, Decimal("0.000"))
             )
+
+    structure_ids = sorted(int(structure_id) for structure_id in structures_by_id.keys())
+    rig_key_hints = _infer_structure_rigs_from_corptools(corp_ids, structure_ids)
+    cached_rig_hints = _infer_structure_rigs_from_cached_assets(corp_ids, structure_ids)
+    for structure_id, profile_key in cached_rig_hints.items():
+        rig_key_hints[structure_id] = _pick_best_rig_profile_key(
+            rig_key_hints.get(structure_id),
+            profile_key,
+        ) or profile_key
+
+    for row in structures_by_id.values():
+        structure_id = int(row.get("structure_id") or 0)
+        rig_profile_key = rig_key_hints.get(structure_id)
+        row["suggested_rig_profile_key"] = rig_profile_key or "none"
+        rig_profile = _get_rig_profile(rig_profile_key or "none")
+        row["suggested_rig_profile_name"] = str(rig_profile.get("label") or "")
 
     rows = list(structures_by_id.values())
     rows.sort(key=lambda row: (str(row.get("structure_name", "")).lower(), int(row.get("structure_id", 0))))
@@ -798,17 +1058,33 @@ def reprocessing_become(request):
     scope_error = ""
 
     if selected_character_id and has_required_scopes:
+        skills_error = False
+        clones_error = False
         try:
             skill_levels = fetch_character_skill_levels(int(selected_character_id))
             skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
-            clone_options = fetch_character_clone_options(int(selected_character_id))
         except Exception as exc:
             logger.warning(
-                "Unable to load reprocessing character data for %s: %s",
+                "Unable to load reprocessing skills for %s: %s",
                 selected_character_id,
                 exc,
             )
-            scope_error = _("Unable to read character skills/clones. Re-authorize scopes and try again.")
+            skills_error = True
+        try:
+            clone_options = fetch_character_clone_options(int(selected_character_id))
+        except Exception as exc:
+            logger.warning(
+                "Unable to load reprocessing clones for %s: %s",
+                selected_character_id,
+                exc,
+            )
+            clones_error = True
+
+        if skills_error or clones_error:
+            scope_error = _(
+                "Unable to read character skills/clones from ESI, and no usable cached corptools records were found. "
+                "Re-authorize scopes and confirm corptools character sync has completed."
+            )
 
     if selected_corporation_id:
         try:
@@ -842,7 +1118,10 @@ def reprocessing_become(request):
             if not structure_options:
                 messages.error(
                     request,
-                    _("No Athanor/Tatara structures were found for that corporation/alliance scope."),
+                    _(
+                        "No Athanor/Tatara structures were found for that corporation/alliance scope. "
+                        "Re-authorize corporation structure scopes or wait for corptools structure/assets sync."
+                    ),
                 )
                 return redirect("indy_hub:reprocessing_become")
 
@@ -875,7 +1154,17 @@ def reprocessing_become(request):
                 messages.error(request, _("Please choose a valid structure."))
                 return redirect("indy_hub:reprocessing_become")
 
-            skill_levels = fetch_character_skill_levels(int(selected_character_id))
+            try:
+                skill_levels = fetch_character_skill_levels(int(selected_character_id))
+            except Exception:
+                messages.error(
+                    request,
+                    _(
+                        "Unable to refresh character skills from ESI/cached data. "
+                        "Re-authorize scopes and ensure corptools has synced this character."
+                    ),
+                )
+                return redirect("indy_hub:reprocessing_become")
             skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
             active_skill_levels_by_id: dict[str, int] = {}
             for raw_skill_id, row in (skill_levels or {}).items():
