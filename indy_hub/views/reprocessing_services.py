@@ -101,6 +101,35 @@ _ASSET_STRUCTURE_FLAGS = {
 }
 
 
+def _infer_supported_structure_type(
+    *,
+    structure_type_id: int | None,
+    structure_name: str | None,
+    structure_type_name: str | None,
+    structure_flags: set[str] | None = None,
+) -> tuple[int, str] | None:
+    type_id = int(structure_type_id or 0)
+    if type_id in SUPPORTED_STRUCTURE_TYPE_IDS:
+        return (
+            int(type_id),
+            str(
+                structure_type_name
+                or STRUCTURE_LABEL_BY_TYPE_ID.get(int(type_id))
+                or get_type_name(int(type_id))
+                or f"Type {int(type_id)}"
+            ),
+        )
+    label_probe = f"{structure_type_name or ''} {structure_name or ''}".lower()
+    if "athanor" in label_probe:
+        return (35835, STRUCTURE_LABEL_BY_TYPE_ID[35835])
+    if "tatara" in label_probe:
+        return (35836, STRUCTURE_LABEL_BY_TYPE_ID[35836])
+    if any(str(flag).lower() == "moonmaterialbay" for flag in (structure_flags or set())):
+        # Refineries expose MoonMaterialBay; when type is unavailable we infer Athanor conservatively.
+        return (35835, _("Athanor (inferred)"))
+    return None
+
+
 def _build_nav_context(user, *, active_tab: str | None = None) -> dict:
     return build_nav_context(
         user,
@@ -509,7 +538,7 @@ def _infer_structure_rigs_from_cached_assets(
     return rig_key_by_structure
 
 
-def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
+def _extract_structure_flag_map_from_corp_assets(corp_id: int) -> dict[int, set[str]]:
     try:
         assets_qs, _ = get_corp_assets_cached(
             int(corp_id),
@@ -517,7 +546,7 @@ def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
             as_queryset=True,
         )
     except Exception:
-        return set()
+        return {}
 
     try:
         office_folder_map = {
@@ -530,13 +559,14 @@ def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
     except Exception:
         office_folder_map = {}
 
-    structure_ids: set[int] = set()
+    structure_flags: dict[int, set[str]] = {}
     try:
-        for location_id in assets_qs.filter(
+        for location_id, location_flag in assets_qs.filter(
             location_flag__in=_ASSET_STRUCTURE_FLAGS
-        ).values_list("location_id", flat=True):
+        ).values_list("location_id", "location_flag"):
             if location_id:
-                structure_ids.add(int(location_id))
+                structure_id = int(location_id)
+                structure_flags.setdefault(structure_id, set()).add(str(location_flag or ""))
     except Exception:
         pass
 
@@ -554,8 +584,8 @@ def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
         if not structure_id:
             structure_id = int(office_folder_item_id)
         if structure_id:
-            structure_ids.add(int(structure_id))
-    return structure_ids
+            structure_flags.setdefault(int(structure_id), set()).add("CorpSAG")
+    return structure_flags
 
 
 def _get_cached_structure_name_map(structure_ids: list[int]) -> dict[int, str]:
@@ -614,7 +644,8 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
 
     # 2) Material Exchange-style cached corp assets (selected corp only) for fast non-ESI path.
     for corp_id in [int(selected_corporation_id)]:
-        structure_ids_from_assets = _extract_structure_ids_from_corp_assets(int(corp_id))
+        structure_flags_by_id = _extract_structure_flag_map_from_corp_assets(int(corp_id))
+        structure_ids_from_assets = set(structure_flags_by_id.keys())
         if not structure_ids_from_assets:
             continue
         structure_name_map = _get_cached_structure_name_map(
@@ -639,9 +670,15 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                     existing["owner_corporation_id"] = int(corp_id)
                 continue
 
-            structure_type_id = int(corptools_row.get("structure_type_id") or 0)
-            if structure_type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+            inferred_type = _infer_supported_structure_type(
+                structure_type_id=int(corptools_row.get("structure_type_id") or 0),
+                structure_name=structure_name,
+                structure_type_name=str(corptools_row.get("structure_type_name") or ""),
+                structure_flags=structure_flags_by_id.get(int(structure_id), set()),
+            )
+            if inferred_type is None:
                 continue
+            structure_type_id, structure_type_name = inferred_type
             location_id = int(corptools_row.get("location_id") or 0)
             if location_id > 0:
                 location_ids.add(location_id)
@@ -649,10 +686,7 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 "structure_id": int(structure_id),
                 "structure_name": structure_name,
                 "structure_type_id": structure_type_id or None,
-                "structure_type_name": (
-                    str(corptools_row.get("structure_type_name") or "").strip()
-                    or _("Unknown structure type")
-                ),
+                "structure_type_name": structure_type_name,
                 "location_id": location_id if location_id > 0 else None,
                 "location_name": str(corptools_row.get("location_name") or ""),
                 "owner_corporation_id": int(corp_id),
@@ -666,16 +700,20 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
 
     filtered_rows: list[dict[str, object]] = []
     for row in structures_by_id.values():
-        type_id = int(row.get("structure_type_id") or 0)
-        if type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+        inferred_type = _infer_supported_structure_type(
+            structure_type_id=int(row.get("structure_type_id") or 0),
+            structure_name=str(row.get("structure_name") or ""),
+            structure_type_name=str(row.get("structure_type_name") or ""),
+        )
+        if inferred_type is None:
             continue
-        row["structure_type_id"] = type_id
-        if not str(row.get("structure_type_name") or "").strip():
-            row["structure_type_name"] = (
-                STRUCTURE_LABEL_BY_TYPE_ID.get(type_id)
-                or get_type_name(type_id)
-                or f"Type {type_id}"
-            )
+        type_id, type_name = inferred_type
+        row["structure_type_id"] = int(type_id)
+        row["structure_type_name"] = str(type_name)
+        row["structure_bonus_percent"] = STRUCTURE_BONUS_BY_TYPE_ID.get(
+            int(type_id),
+            Decimal("0.000"),
+        )
         filtered_rows.append(row)
 
     if not filtered_rows:
@@ -1269,6 +1307,15 @@ def reprocessing_become(request):
         ),
         clone_options[0] if clone_options else None,
     )
+    selected_clone_beancounter_implants = _beancounter_implants(
+        list((selected_clone_row or {}).get("implant_names") or [])
+    )
+    if not selected_clone_beancounter_implants:
+        selected_clone_beancounter_implants = [
+            str(name)
+            for name in ((selected_clone_row or {}).get("beancounter_implants") or [])
+            if str(name or "").strip()
+        ]
 
     selected_structure_id_raw = (
         request.POST.get("structure_id")
@@ -1502,6 +1549,7 @@ def reprocessing_become(request):
         "selected_clone_id": int(selected_clone_id or 0),
         "selected_structure_id": int(selected_structure_id or 0),
         "selected_clone_row": selected_clone_row or {},
+        "selected_clone_beancounter_implants": selected_clone_beancounter_implants,
         "selected_structure_row": selected_structure_row or {},
         "estimated_yield_preview": estimated_yield_preview,
         "preview_rig_profile": preview_rig_profile,

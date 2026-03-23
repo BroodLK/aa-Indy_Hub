@@ -98,13 +98,13 @@
                                 <select name="selected_clone_id" class="form-select" {% if not clone_options %}disabled{% endif %} onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
                                     {% for clone in clone_options %}
                                     <option value="{{ clone.clone_id }}" {% if selected_clone_id == clone.clone_id %}selected{% endif %}>
-                                        {{ clone.clone_label }}
+                                        {{ clone.clone_label }}{% if clone.beancounter_implants %} | BC: {{ clone.beancounter_implants|join:", " }}{% endif %}
                                     </option>
                                     {% endfor %}
                                 </select>
                                 <div class="form-text">
-                                    {% if selected_clone_row.beancounter_implants %}
-                                        {% trans "Beancounter implants" %}: {{ selected_clone_row.beancounter_implants|join:", " }} ({{ selected_clone_row.beancounter_bonus_percent }}%)
+                                    {% if selected_clone_beancounter_implants %}
+                                        {% trans "Beancounter implants" %}: {{ selected_clone_beancounter_implants|join:", " }} ({{ selected_clone_row.beancounter_bonus_percent }}%)
                                     {% else %}
                                         {% trans "No Beancounter implants detected on this clone." %}
                                     {% endif %}
@@ -166,25 +166,13 @@
                         <div class="border rounded p-3 mt-3">
                             <small class="text-muted d-block">{% trans "All Reprocessing Skills" %}</small>
                             {% if reprocessing_skill_rows %}
-                            <div class="table-responsive mt-2">
-                                <table class="table table-sm align-middle mb-0">
-                                    <thead>
-                                        <tr>
-                                            <th>{% trans "Skill" %}</th>
-                                            <th class="text-end">{% trans "Active" %}</th>
-                                            <th class="text-end">{% trans "Trained" %}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {% for row in reprocessing_skill_rows %}
-                                        <tr>
-                                            <td>{{ row.skill_name }}</td>
-                                            <td class="text-end">{{ row.active_level }}</td>
-                                            <td class="text-end">{{ row.trained_level }}</td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
+                            <div class="mt-2 small">
+                                {% for row in reprocessing_skill_rows %}
+                                <div class="d-flex justify-content-between border-bottom py-1">
+                                    <span>{{ row.skill_name }}</span>
+                                    <span class="text-muted">{{ row.active_level }}/{{ row.trained_level }}</span>
+                                </div>
+                                {% endfor %}
                             </div>
                             {% else %}
                             <div class="small text-muted mt-2">{% trans "No reprocessing skills were found for this character in corptools cache." %}</div>
