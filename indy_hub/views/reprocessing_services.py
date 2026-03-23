@@ -511,7 +511,7 @@ def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
     try:
         assets_qs, _ = get_corp_assets_cached(
             int(corp_id),
-            allow_refresh=True,
+            allow_refresh=False,
             as_queryset=True,
         )
     except Exception:
@@ -562,88 +562,7 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
     corp_ids = _get_alliance_corporation_ids(int(selected_corporation_id))
     location_ids: set[int] = set()
 
-    for corp_id in corp_ids:
-        token = _get_token_for_corp_scope(user, int(corp_id), "esi-corporations.read_structures.v1")
-        if not token:
-            continue
-        try:
-            raw_structures = shared_client.fetch_corporation_structures(
-                int(corp_id),
-                character_id=int(token.character_id),
-            )
-        except Exception as exc:
-            logger.debug(
-                "Unable to load corp structures for corporation %s: %s",
-                corp_id,
-                exc,
-            )
-            continue
-
-        for raw_structure in raw_structures or []:
-            if not isinstance(raw_structure, dict):
-                continue
-            try:
-                structure_id = int(raw_structure.get("structure_id") or 0)
-                type_id = int(raw_structure.get("type_id") or 0)
-            except (TypeError, ValueError):
-                continue
-            if structure_id <= 0 or type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
-                continue
-
-            location_id = raw_structure.get("system_id") or raw_structure.get("solar_system_id")
-            try:
-                location_id_int = int(location_id or 0)
-            except (TypeError, ValueError):
-                location_id_int = 0
-            if location_id_int > 0:
-                location_ids.add(location_id_int)
-
-            structure_name = str(raw_structure.get("name") or "").strip()
-            if not structure_name:
-                resolved_name = resolve_structure_names(
-                    [int(structure_id)],
-                    corporation_id=int(corp_id),
-                    user=user,
-                    schedule_async=True,
-                ).get(int(structure_id))
-                structure_name = str(resolved_name or "").strip()
-            if not structure_name:
-                structure_name = f"Structure {int(structure_id)}"
-
-            structure_type_name = (
-                STRUCTURE_LABEL_BY_TYPE_ID.get(int(type_id))
-                or get_type_name(int(type_id))
-                or f"Type {int(type_id)}"
-            )
-            structure_bonus_percent = STRUCTURE_BONUS_BY_TYPE_ID.get(
-                int(type_id), Decimal("0.000")
-            )
-
-            structure_id_int = int(structure_id)
-            existing = structures_by_id.get(structure_id_int)
-            if existing:
-                if structure_name and str(existing.get("structure_name", "")).startswith("Structure "):
-                    existing["structure_name"] = structure_name
-                if location_id_int > 0 and not existing.get("location_id"):
-                    existing["location_id"] = location_id_int
-                if int(existing.get("owner_corporation_id") or 0) <= 0:
-                    existing["owner_corporation_id"] = int(corp_id)
-                continue
-
-            structures_by_id[structure_id_int] = {
-                "structure_id": structure_id_int,
-                "structure_name": structure_name,
-                "structure_type_id": int(type_id),
-                "structure_type_name": structure_type_name,
-                "location_id": location_id_int if location_id_int > 0 else None,
-                "location_name": "",
-                "owner_corporation_id": int(corp_id),
-                "structure_bonus_percent": structure_bonus_percent,
-                "security_bonus_percent": Decimal("0.000"),
-                "data_source": "esi",
-            }
-
-    # Fall back to corptools structure snapshots if live ESI lookup is unavailable.
+    # 1) Corptools cache first.
     corptools_rows = _load_corptools_structure_rows(corp_ids)
     corptools_by_structure_id: dict[int, dict[str, object]] = {}
     for row in corptools_rows:
@@ -672,8 +591,8 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
         merged_row["data_source"] = "corptools"
         structures_by_id[structure_id_int] = merged_row
 
-    # Reuse the same cached corp-asset structure discovery pattern as Material Exchange.
-    for corp_id in corp_ids:
+    # 2) Material Exchange-style cached corp assets (selected corp only) for fast non-ESI path.
+    for corp_id in [int(selected_corporation_id)]:
         structure_ids_from_assets = _extract_structure_ids_from_corp_assets(int(corp_id))
         if not structure_ids_from_assets:
             continue
@@ -729,6 +648,62 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 "security_bonus_percent": Decimal("0.000"),
                 "data_source": "assets_cache",
             }
+
+    # 3) Live ESI only as last resort (selected corp only) to avoid slow request-time fan-out.
+    if not structures_by_id:
+        corp_id = int(selected_corporation_id)
+        token = _get_token_for_corp_scope(user, corp_id, "esi-corporations.read_structures.v1")
+        if token:
+            try:
+                raw_structures = shared_client.fetch_corporation_structures(
+                    corp_id,
+                    character_id=int(token.character_id),
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Unable to load live corp structures for corporation %s: %s",
+                    corp_id,
+                    exc,
+                )
+                raw_structures = []
+
+            for raw_structure in raw_structures or []:
+                if not isinstance(raw_structure, dict):
+                    continue
+                try:
+                    structure_id = int(raw_structure.get("structure_id") or 0)
+                    type_id = int(raw_structure.get("type_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if structure_id <= 0 or type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+                    continue
+                location_id = raw_structure.get("system_id") or raw_structure.get("solar_system_id")
+                try:
+                    location_id_int = int(location_id or 0)
+                except (TypeError, ValueError):
+                    location_id_int = 0
+                if location_id_int > 0:
+                    location_ids.add(location_id_int)
+                structure_name = str(raw_structure.get("name") or "").strip() or f"Structure {structure_id}"
+                structures_by_id[int(structure_id)] = {
+                    "structure_id": int(structure_id),
+                    "structure_name": structure_name,
+                    "structure_type_id": int(type_id),
+                    "structure_type_name": (
+                        STRUCTURE_LABEL_BY_TYPE_ID.get(int(type_id))
+                        or get_type_name(int(type_id))
+                        or f"Type {int(type_id)}"
+                    ),
+                    "location_id": location_id_int if location_id_int > 0 else None,
+                    "location_name": "",
+                    "owner_corporation_id": corp_id,
+                    "structure_bonus_percent": STRUCTURE_BONUS_BY_TYPE_ID.get(
+                        int(type_id),
+                        Decimal("0.000"),
+                    ),
+                    "security_bonus_percent": Decimal("0.000"),
+                    "data_source": "esi",
+                }
 
     if not structures_by_id:
         return []

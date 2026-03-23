@@ -185,6 +185,8 @@ def fetch_character_skill_levels(
 ) -> dict[int, dict[str, int]]:
     """Return character skills as {skill_id: {'active': int, 'trained': int}}."""
     fallback_levels = _fetch_corptools_skill_levels(int(character_id))
+    if fallback_levels and not force_refresh:
+        return fallback_levels
     try:
         token_obj = Token.get_token(character_id, REPROCESSING_SKILLS_SCOPE)
     except Exception:
@@ -425,6 +427,8 @@ def fetch_character_clone_options(
 ) -> list[dict[str, object]]:
     """Return clone options with implant names and inferred beancounter bonuses."""
     fallback_clones = _fetch_corptools_clone_options(int(character_id))
+    if fallback_clones and not force_refresh:
+        return fallback_clones
     try:
         token_obj = Token.get_token(character_id, REPROCESSING_CLONES_SCOPE)
     except Exception:
