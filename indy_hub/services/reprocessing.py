@@ -667,9 +667,10 @@ def build_reprocessing_estimate(
             }
         )
 
+    # EVE contracts effectively operate in whole ISK; floor to avoid false mismatches.
     reward_isk = (
         total_value * (_to_decimal(margin_percent) / Decimal("100"))
-    ).quantize(Decimal("0.01"))
+    ).quantize(Decimal("1"), rounding=ROUND_FLOOR)
 
     return {
         "outputs": output_rows,

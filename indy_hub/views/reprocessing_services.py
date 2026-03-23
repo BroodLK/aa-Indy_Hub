@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # Standard Library
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 import hashlib
 import re
 import unicodedata
@@ -151,6 +151,13 @@ def _to_decimal(value, *, fallback: Decimal = Decimal("0")) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, TypeError, ValueError):
         return fallback
+
+
+def _floor_isk_amount(value, *, fallback: Decimal = Decimal("0")) -> Decimal:
+    amount = _to_decimal(value, fallback=fallback)
+    if amount < Decimal("0"):
+        amount = Decimal("0")
+    return amount.quantize(Decimal("1"), rounding=ROUND_FLOOR)
 
 
 def _rig_bonus_for_key(profile_key: str) -> Decimal:
@@ -904,8 +911,8 @@ def _verify_return_contract(service_request: ReprocessingServiceRequest) -> tupl
     if requester_character_id > 0 and int(contract.assignee_id or 0) != requester_character_id:
         return False, _("Return contract assignee does not match the requester character.")
 
-    expected_reward = Decimal(str(service_request.reward_isk or 0)).quantize(Decimal("0.01"))
-    contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
+    expected_reward = _floor_isk_amount(service_request.reward_isk)
+    contract_price = _floor_isk_amount(contract.price)
     if contract_price != expected_reward:
         return (
             False,
@@ -913,8 +920,8 @@ def _verify_return_contract(service_request: ReprocessingServiceRequest) -> tupl
                 "Return contract price mismatch. Expected %(expected)s ISK, got %(actual)s ISK."
             )
             % {
-                "expected": f"{expected_reward:,.2f}",
-                "actual": f"{contract_price:,.2f}",
+                "expected": f"{expected_reward:,.0f}",
+                "actual": f"{contract_price:,.0f}",
             },
         )
 

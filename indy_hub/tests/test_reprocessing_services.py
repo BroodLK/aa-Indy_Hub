@@ -346,6 +346,25 @@ class ReprocessingEstimateTests(TestCase):
         self.assertEqual(estimate["reward_isk"], Decimal("5.00"))
 
     @patch("indy_hub.services.reprocessing.fetch_fuzzwork_prices")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_outputs_for_type")
+    def test_estimate_reward_is_floored_to_whole_isk(
+        self,
+        mock_outputs,
+        mock_prices,
+    ):
+        mock_outputs.return_value = {34: 1}
+        mock_prices.return_value = {34: {"sell": Decimal("9.99")}}
+
+        estimate = build_reprocessing_estimate(
+            input_items=[{"type_id": 1234, "quantity": 1}],
+            yield_percent=Decimal("100.0"),
+            margin_percent=Decimal("33.0"),
+        )
+
+        self.assertEqual(estimate["total_output_value"], Decimal("9.99"))
+        self.assertEqual(estimate["reward_isk"], Decimal("3"))
+
+    @patch("indy_hub.services.reprocessing.fetch_fuzzwork_prices")
     @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size")
     @patch("indy_hub.services.reprocessing.get_reprocessing_outputs_for_type")
     def test_estimate_respects_portion_size(
@@ -646,7 +665,7 @@ class ReprocessingAutomationTaskTests(TestCase):
             assignee_id=90000001,
             title=f"Return {self.request.request_reference}",
             status="outstanding",
-            price=self.request.reward_isk,
+            price=int(self.request.reward_isk),
             reward="0",
         )
         ESIContractItem.objects.create(

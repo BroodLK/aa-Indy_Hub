@@ -7,7 +7,7 @@ Handles ESI contract checking, validation, and PM notifications for sell/buy ord
 import hashlib
 import re
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR
 
 # Third Party
 from celery import shared_task
@@ -135,6 +135,16 @@ _ACTIVE_REPROCESSING_STATUSES = [
     ReprocessingServiceRequest.Status.PROCESSING,
     ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
 ]
+
+
+def _floor_isk_amount(value: Decimal | str | int | float | None) -> Decimal:
+    try:
+        parsed = Decimal(str(value or 0))
+    except (InvalidOperation, TypeError, ValueError):
+        parsed = Decimal("0")
+    if parsed < 0:
+        parsed = Decimal("0")
+    return parsed.quantize(Decimal("1"), rounding=ROUND_FLOOR)
 
 
 def _normalize_esi_mapping(payload, *, context: str) -> dict | None:
@@ -647,10 +657,10 @@ def _validate_reprocessing_return_contract(
     if int(contract.assignee_id or 0) != int(service_request.requester_character_id or 0):
         return False, "Return contract assignee does not match requester character."
 
-    expected_price = Decimal(str(service_request.reward_isk or 0)).quantize(Decimal("0.01"))
-    contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
-    contract_reward = Decimal(str(contract.reward or 0)).quantize(Decimal("0.01"))
-    if contract_price != expected_price or contract_reward != Decimal("0.00"):
+    expected_price = _floor_isk_amount(service_request.reward_isk)
+    contract_price = _floor_isk_amount(contract.price)
+    contract_reward = _floor_isk_amount(contract.reward)
+    if contract_price != expected_price or contract_reward != Decimal("0"):
         return (
             False,
             "Return contract price/reward does not match expected reprocessing reward.",

@@ -82,7 +82,7 @@
                         </li>
                         <li>
                             {% trans "Price" %}:
-                            <strong id="reprocReturnPrice" data-copy-value="{{ service_request.reward_isk|floatformat:2 }}">{{ service_request.reward_isk|floatformat:2|intcomma }} ISK</strong> ({% trans "processor reward" %})
+                            <strong id="reprocReturnPrice" data-copy-value="{{ service_request.reward_isk|floatformat:0 }}">{{ service_request.reward_isk|floatformat:0|intcomma }} ISK</strong> ({% trans "processor reward" %})
                             <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocReturnPrice')" title="{% trans "Copy" %}">
                                 <i class="fas fa-copy" aria-hidden="true"></i>
                             </button>
