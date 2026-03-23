@@ -111,6 +111,7 @@ from .views.reprocessing_services import (
     reprocessing_authorize_scopes,
     reprocessing_become,
     reprocessing_browse,
+    reprocessing_my_requests,
     reprocessing_request_cancel,
     reprocessing_request_create,
     reprocessing_request_detail,
@@ -548,6 +549,11 @@ urlpatterns = [
         "reprocessing-services/browse/",
         reprocessing_browse,
         name="reprocessing_browse",
+    ),
+    path(
+        "reprocessing-services/my-requests/",
+        reprocessing_my_requests,
+        name="reprocessing_my_requests",
     ),
     path(
         "reprocessing-services/admin/applications/",

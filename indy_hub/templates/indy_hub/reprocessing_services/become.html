@@ -199,11 +199,16 @@
                         </div>
 
                         <div class="form-check form-switch mt-4">
-                            <input class="form-check-input" type="checkbox" id="isAvailableSwitch" name="is_available" {% if selected_profile and selected_profile.is_available %}checked{% endif %}>
+                            <input class="form-check-input" type="checkbox" id="isAvailableSwitch" name="is_available" {% if selected_profile and selected_profile.is_available %}checked{% endif %} {% if selected_profile and selected_profile.admin_force_unavailable %}disabled{% endif %}>
                             <label class="form-check-label" for="isAvailableSwitch">
                                 {% trans "Available for new contracts" %}
                             </label>
                         </div>
+                        {% if selected_profile and selected_profile.admin_force_unavailable %}
+                        <div class="small text-danger mt-1">
+                            {% trans "Availability is currently disabled by a Material Exchange admin. You can edit your profile, but only admins can re-enable availability." %}
+                        </div>
+                        {% endif %}
 
                         <div class="d-flex flex-wrap gap-2 mt-4">
                             <button type="submit" class="btn btn-primary">
@@ -249,6 +254,9 @@
                                         <div class="mt-1"><span class="badge bg-info text-dark">{% trans "Available" %}</span></div>
                                     {% else %}
                                         <div class="mt-1"><span class="badge bg-secondary">{% trans "Unavailable" %}</span></div>
+                                    {% endif %}
+                                    {% if profile.admin_force_unavailable %}
+                                        <div class="mt-1"><span class="badge bg-danger">{% trans "Admin Disabled" %}</span></div>
                                     {% endif %}
                                 </div>
                             </div>

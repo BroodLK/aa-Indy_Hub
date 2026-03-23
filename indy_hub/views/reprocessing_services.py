@@ -1344,6 +1344,19 @@ def _build_request_timeline(service_request: ReprocessingServiceRequest) -> list
     return timeline
 
 
+def _request_status_badge_class(status: str) -> str:
+    return {
+        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED: "bg-primary-subtle text-primary",
+        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT: "bg-info-subtle text-info",
+        ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED: "bg-success-subtle text-success",
+        ReprocessingServiceRequest.Status.PROCESSING: "bg-warning-subtle text-warning",
+        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT: "bg-warning-subtle text-warning",
+        ReprocessingServiceRequest.Status.COMPLETED: "bg-success",
+        ReprocessingServiceRequest.Status.DISPUTED: "bg-danger",
+        ReprocessingServiceRequest.Status.CANCELLED: "bg-secondary",
+    }.get(str(status or ""), "bg-secondary")
+
+
 @indy_hub_access_required
 @login_required
 def reprocessing_services_index(request):
@@ -1677,7 +1690,12 @@ def reprocessing_become(request):
                     profile.reviewed_by = None
                     profile.reviewed_at = None
                     profile.review_notes = ""
-                profile.is_available = bool(requested_available and profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED)
+                admin_forced_unavailable = bool(profile.admin_force_unavailable)
+                profile.is_available = bool(
+                    requested_available
+                    and profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED
+                    and not admin_forced_unavailable
+                )
                 profile.save()
 
                 if is_new_profile or approval_resubmitted:
@@ -1706,6 +1724,13 @@ def reprocessing_become(request):
                     )
 
                 if profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED:
+                    if requested_available and profile.admin_force_unavailable:
+                        messages.warning(
+                            request,
+                            _(
+                                "Availability is currently disabled by a Material Exchange admin and cannot be self-enabled."
+                            ),
+                        )
                     messages.success(request, _("Reprocessing profile updated."))
                 else:
                     messages.success(request, _("Reprocessing profile saved and queued for approval."))
@@ -1792,6 +1817,61 @@ def reprocessing_browse(request):
     return render(request, "indy_hub/reprocessing_services/browse.html", context)
 
 
+@indy_hub_access_required
+@login_required
+def reprocessing_my_requests(request):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.my_requests",
+        request=request,
+    )
+    requester_qs = (
+        ReprocessingServiceRequest.objects.select_related("processor_user")
+        .filter(requester=request.user)
+        .order_by("-updated_at", "-created_at")
+    )
+    processor_qs = (
+        ReprocessingServiceRequest.objects.select_related("requester")
+        .filter(processor_user=request.user)
+        .order_by("-updated_at", "-created_at")
+    )
+
+    requester_rows = [
+        {
+            "request": service_request,
+            "status_badge_class": _request_status_badge_class(service_request.status),
+            "counterparty_name": str(
+                service_request.processor_character_name
+                or getattr(service_request.processor_user, "username", "")
+                or "-"
+            ),
+            "counterparty_character_id": int(service_request.processor_character_id or 0),
+        }
+        for service_request in requester_qs
+    ]
+    processor_rows = [
+        {
+            "request": service_request,
+            "status_badge_class": _request_status_badge_class(service_request.status),
+            "counterparty_name": str(
+                service_request.requester_character_name
+                or getattr(service_request.requester, "username", "")
+                or "-"
+            ),
+            "counterparty_character_id": int(service_request.requester_character_id or 0),
+        }
+        for service_request in processor_qs
+    ]
+
+    context = {
+        "requester_rows": requester_rows,
+        "processor_rows": processor_rows,
+        "requester_count": len(requester_rows),
+        "processor_count": len(processor_rows),
+    }
+    context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+    return render(request, "indy_hub/reprocessing_services/my_requests.html", context)
+
+
 @indy_hub_permission_required("can_manage_material_hub")
 @login_required
 def reprocessing_admin_applications(request):
@@ -1824,8 +1904,53 @@ def reprocessing_admin_review(request, profile_id: int):
     review_notes = str(request.POST.get("review_notes") or "").strip()
     set_available = bool(request.POST.get("is_available") == "on")
 
-    if action not in {"approve", "reject"}:
+    if action not in {"approve", "reject", "admin_enable", "admin_disable"}:
         messages.error(request, _("Invalid review action."))
+        return redirect("indy_hub:reprocessing_admin_applications")
+
+    if action in {"admin_enable", "admin_disable"}:
+        if profile.approval_status != ReprocessingServiceProfile.ApprovalStatus.APPROVED:
+            messages.error(
+                request,
+                _("Only approved reprocessors can be manually enabled or disabled."),
+            )
+            return redirect("indy_hub:reprocessing_admin_applications")
+
+        profile.reviewed_by = request.user
+        profile.reviewed_at = timezone.now()
+        if review_notes:
+            profile.review_notes = review_notes
+
+        if action == "admin_disable":
+            profile.admin_force_unavailable = True
+            profile.is_available = False
+            profile.save()
+            notify_user(
+                profile.user,
+                _("Reprocessing availability disabled by admin"),
+                _(
+                    "A Material Exchange admin disabled new contracts for %(character)s."
+                )
+                % {"character": profile.character_name},
+                level="warning",
+                link=reverse("indy_hub:reprocessing_become"),
+            )
+            messages.warning(request, _("Reprocessor disabled by admin."))
+        else:
+            profile.admin_force_unavailable = False
+            profile.is_available = True
+            profile.save()
+            notify_user(
+                profile.user,
+                _("Reprocessing availability enabled by admin"),
+                _(
+                    "A Material Exchange admin enabled new contracts for %(character)s."
+                )
+                % {"character": profile.character_name},
+                level="success",
+                link=reverse("indy_hub:reprocessing_become"),
+            )
+            messages.success(request, _("Reprocessor enabled by admin."))
         return redirect("indy_hub:reprocessing_admin_applications")
 
     profile.reviewed_by = request.user
@@ -1834,6 +1959,7 @@ def reprocessing_admin_review(request, profile_id: int):
 
     if action == "approve":
         profile.approval_status = ReprocessingServiceProfile.ApprovalStatus.APPROVED
+        profile.admin_force_unavailable = False
         profile.is_available = set_available
         profile.save()
         notify_user(
@@ -1849,6 +1975,7 @@ def reprocessing_admin_review(request, profile_id: int):
         messages.success(request, _("Application approved."))
     else:
         profile.approval_status = ReprocessingServiceProfile.ApprovalStatus.REJECTED
+        profile.admin_force_unavailable = False
         profile.is_available = False
         profile.save()
         notify_user(

@@ -96,8 +96,10 @@
                         <tr>
                             <th>{% trans "Character" %}</th>
                             <th>{% trans "Status" %}</th>
+                            <th>{% trans "Availability" %}</th>
                             <th>{% trans "Reviewed By" %}</th>
                             <th>{% trans "Notes" %}</th>
+                            <th>{% trans "Admin Toggle" %}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -111,8 +113,39 @@
                                 <span class="badge bg-danger">{% trans "Rejected" %}</span>
                                 {% endif %}
                             </td>
+                            <td>
+                                {% if profile.approval_status == 'approved' %}
+                                    {% if profile.admin_force_unavailable %}
+                                    <span class="badge bg-danger">{% trans "Admin Disabled" %}</span>
+                                    {% elif profile.is_available %}
+                                    <span class="badge bg-success">{% trans "Enabled" %}</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{% trans "Disabled by User" %}</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
                             <td>{{ profile.reviewed_by|default:"-" }}</td>
                             <td class="small text-muted">{{ profile.review_notes|default:"-" }}</td>
+                            <td>
+                                {% if profile.approval_status == 'approved' %}
+                                <form method="post" action="{% url 'indy_hub:reprocessing_admin_review' profile.id %}">
+                                    {% csrf_token %}
+                                    {% if profile.admin_force_unavailable %}
+                                    <button type="submit" name="action" value="admin_enable" class="btn btn-sm btn-success">
+                                        <i class="fas fa-toggle-on me-1"></i>{% trans "Enable" %}
+                                    </button>
+                                    {% else %}
+                                    <button type="submit" name="action" value="admin_disable" class="btn btn-sm btn-outline-danger">
+                                        <i class="fas fa-toggle-off me-1"></i>{% trans "Disable" %}
+                                    </button>
+                                    {% endif %}
+                                </form>
+                                {% else %}
+                                <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>

@@ -7,8 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 # Django
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Permission, User
 from django.test import TestCase
+from django.urls import reverse
 from django.utils import timezone
 
 # Local
@@ -69,6 +70,18 @@ class ReprocessingProfileModelTests(TestCase):
         profile.refresh_from_db()
         self.assertTrue(profile.is_available)
 
+    def test_admin_force_unavailable_overrides_availability(self):
+        profile = ReprocessingServiceProfile.objects.create(
+            user=self.user,
+            character_id=9000005,
+            character_name="Refiner Five",
+            is_available=True,
+            admin_force_unavailable=True,
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+        )
+        profile.refresh_from_db()
+        self.assertFalse(profile.is_available)
+
     def test_request_reference_auto_generated(self):
         profile = ReprocessingServiceProfile.objects.create(
             user=self.user,
@@ -112,6 +125,152 @@ class ReprocessingProfileModelTests(TestCase):
             processor_character_name=profile.character_name,
         )
         self.assertEqual(req.request_reference, f"REPROCESSING-{req.id:010d}")
+
+
+class ReprocessingAdminAvailabilityToggleTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user("reproc_admin", password="secret")
+        self.processor = User.objects.create_user("reproc_processor", password="secret")
+        permission = Permission.objects.get(
+            content_type__app_label="indy_hub",
+            codename="can_manage_material_hub",
+        )
+        self.admin.user_permissions.add(permission)
+
+    @patch("indy_hub.views.reprocessing_services.notify_user")
+    def test_admin_disable_sets_lock_and_unavailable(self, _mock_notify):
+        profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=92000001,
+            character_name="Toggle Pilot",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+            admin_force_unavailable=False,
+        )
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_admin_review", args=[profile.id]),
+            {"action": "admin_disable"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        profile.refresh_from_db()
+        self.assertTrue(profile.admin_force_unavailable)
+        self.assertFalse(profile.is_available)
+        self.assertEqual(profile.reviewed_by, self.admin)
+        self.assertIsNotNone(profile.reviewed_at)
+
+    @patch("indy_hub.views.reprocessing_services.notify_user")
+    def test_admin_enable_clears_lock_and_available(self, _mock_notify):
+        profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=92000002,
+            character_name="Toggle Pilot Two",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=False,
+            admin_force_unavailable=True,
+        )
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_admin_review", args=[profile.id]),
+            {"action": "admin_enable"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        profile.refresh_from_db()
+        self.assertFalse(profile.admin_force_unavailable)
+        self.assertTrue(profile.is_available)
+        self.assertEqual(profile.reviewed_by, self.admin)
+        self.assertIsNotNone(profile.reviewed_at)
+
+    @patch("indy_hub.views.reprocessing_services.notify_user")
+    def test_admin_toggle_rejected_for_non_approved_profiles(self, _mock_notify):
+        profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=92000003,
+            character_name="Pending Pilot",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.PENDING,
+            is_available=False,
+            admin_force_unavailable=False,
+        )
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_admin_review", args=[profile.id]),
+            {"action": "admin_disable"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        profile.refresh_from_db()
+        self.assertFalse(profile.admin_force_unavailable)
+        self.assertFalse(profile.is_available)
+
+
+class ReprocessingMyRequestsViewTests(TestCase):
+    def setUp(self):
+        self.viewer = User.objects.create_user("reproc_viewer", password="secret")
+        self.other_user = User.objects.create_user("reproc_other", password="secret")
+        permission = Permission.objects.get(
+            content_type__app_label="indy_hub",
+            codename="can_access_indy_hub",
+        )
+        self.viewer.user_permissions.add(permission)
+
+        self.other_profile = ReprocessingServiceProfile.objects.create(
+            user=self.other_user,
+            character_id=93000001,
+            character_name="Other Processor",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+        self.viewer_profile = ReprocessingServiceProfile.objects.create(
+            user=self.viewer,
+            character_id=93000002,
+            character_name="Viewer Processor",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+
+    def test_my_requests_shows_client_and_processor_contracts(self):
+        requester_side = ReprocessingServiceRequest.objects.create(
+            request_reference="REPROCESSING-0000000101",
+            requester=self.viewer,
+            requester_character_id=94000001,
+            requester_character_name="Viewer Client",
+            processor_profile=self.other_profile,
+            processor_user=self.other_user,
+            processor_character_id=self.other_profile.character_id,
+            processor_character_name=self.other_profile.character_name,
+        )
+        processor_side = ReprocessingServiceRequest.objects.create(
+            request_reference="REPROCESSING-0000000102",
+            requester=self.other_user,
+            requester_character_id=94000002,
+            requester_character_name="Other Client",
+            processor_profile=self.viewer_profile,
+            processor_user=self.viewer,
+            processor_character_id=self.viewer_profile.character_id,
+            processor_character_name=self.viewer_profile.character_name,
+        )
+
+        self.client.force_login(self.viewer)
+        response = self.client.get(reverse("indy_hub:reprocessing_my_requests"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["requester_rows"]), 1)
+        self.assertEqual(len(response.context["processor_rows"]), 1)
+        self.assertContains(response, requester_side.request_reference)
+        self.assertContains(response, processor_side.request_reference)
+        self.assertContains(
+            response,
+            reverse("indy_hub:reprocessing_request_detail", args=[requester_side.id]),
+        )
+        self.assertContains(
+            response,
+            reverse("indy_hub:reprocessing_request_detail", args=[processor_side.id]),
+        )
 
 
 class ReprocessingContractMatcherTests(TestCase):

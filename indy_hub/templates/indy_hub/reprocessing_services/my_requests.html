@@ -1,0 +1,151 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+{% load humanize %}
+
+{% block page_title %}{% trans "Reprocessing Services" %} - {% trans "Browse My Requests" %}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1">
+                    <i class="fas fa-folder-open me-2"></i>{% trans "Browse My Requests" %}
+                </h2>
+                <p class="description mb-0">{% trans "Track all reprocessing contracts where you are the client or the assigned reprocessor." %}</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'indy_hub:reprocessing_browse' %}" class="btn btn-outline-light">
+                    <i class="fas fa-list me-1"></i>{% trans "Browse Reprocessors" %}
+                </a>
+                <a href="{% url 'indy_hub:reprocessing_become' %}" class="btn btn-outline-light">
+                    <i class="fas fa-user-gear me-1"></i>{% trans "Become a Reprocessor" %}
+                </a>
+            </div>
+        </div>
+        <i class="fas fa-folder-open header-bg"></i>
+    </div>
+
+    <div class="row g-3 mb-4">
+        <div class="col-md-6">
+            <div class="card h-100 border-primary border-opacity-25">
+                <div class="card-body">
+                    <div class="small text-muted">{% trans "As Client" %}</div>
+                    <div class="h3 mb-0">{{ requester_count }}</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card h-100 border-info border-opacity-25">
+                <div class="card-body">
+                    <div class="small text-muted">{% trans "As Reprocessor" %}</div>
+                    <div class="h3 mb-0">{{ processor_count }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header bg-primary bg-opacity-10">
+            <h5 class="mb-0"><i class="fas fa-user me-2"></i>{% trans "Requests Where You Are the Client" %}</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if requester_rows %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Reference" %}</th>
+                            <th>{% trans "Reprocessor" %}</th>
+                            <th>{% trans "Status" %}</th>
+                            <th>{% trans "Structure" %}</th>
+                            <th class="text-end">{% trans "Reward" %}</th>
+                            <th>{% trans "Updated" %}</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in requester_rows %}
+                        <tr>
+                            <td class="fw-semibold">{{ row.request.request_reference }}</td>
+                            <td>{{ row.counterparty_name }}</td>
+                            <td><span class="badge {{ row.status_badge_class }}">{{ row.request.get_status_display }}</span></td>
+                            <td>
+                                {{ row.request.structure_name }}
+                                {% if row.request.structure_location_name %}
+                                <div class="small text-muted">{{ row.request.structure_location_name }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ row.request.reward_isk|floatformat:2|intcomma }} ISK</td>
+                            <td>{{ row.request.updated_at|date:"Y-m-d H:i" }}</td>
+                            <td class="text-end">
+                                <a href="{% url 'indy_hub:reprocessing_request_detail' row.request.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-arrow-right me-1"></i>{% trans "View Details" %}
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-4 text-muted">{% trans "No reprocessing requests found where you are the client." %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-info bg-opacity-10">
+            <h5 class="mb-0"><i class="fas fa-recycle me-2"></i>{% trans "Requests Where You Are the Reprocessor" %}</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if processor_rows %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Reference" %}</th>
+                            <th>{% trans "Client" %}</th>
+                            <th>{% trans "Status" %}</th>
+                            <th>{% trans "Structure" %}</th>
+                            <th class="text-end">{% trans "Reward" %}</th>
+                            <th>{% trans "Updated" %}</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in processor_rows %}
+                        <tr>
+                            <td class="fw-semibold">{{ row.request.request_reference }}</td>
+                            <td>{{ row.counterparty_name }}</td>
+                            <td><span class="badge {{ row.status_badge_class }}">{{ row.request.get_status_display }}</span></td>
+                            <td>
+                                {{ row.request.structure_name }}
+                                {% if row.request.structure_location_name %}
+                                <div class="small text-muted">{{ row.request.structure_location_name }}</div>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">{{ row.request.reward_isk|floatformat:2|intcomma }} ISK</td>
+                            <td>{{ row.request.updated_at|date:"Y-m-d H:i" }}</td>
+                            <td class="text-end">
+                                <a href="{% url 'indy_hub:reprocessing_request_detail' row.request.id %}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-arrow-right me-1"></i>{% trans "View Details" %}
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-4 text-muted">{% trans "No reprocessing requests found where you are the assigned reprocessor." %}</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock content %}

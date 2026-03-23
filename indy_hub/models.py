@@ -3220,6 +3220,12 @@ class ReprocessingServiceProfile(models.Model):
         default=False,
         help_text=_("If enabled, this reprocessor accepts new requests."),
     )
+    admin_force_unavailable = models.BooleanField(
+        default=False,
+        help_text=_(
+            "When enabled by a Material Exchange admin, the reprocessor cannot self-enable availability."
+        ),
+    )
     margin_percent = models.DecimalField(
         max_digits=6,
         decimal_places=2,
@@ -3290,6 +3296,8 @@ class ReprocessingServiceProfile(models.Model):
 
     def save(self, *args, **kwargs):
         if self.approval_status != self.ApprovalStatus.APPROVED:
+            self.is_available = False
+        if self.admin_force_unavailable:
             self.is_available = False
         super().save(*args, **kwargs)
 

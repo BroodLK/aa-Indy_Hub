@@ -49,13 +49,6 @@
                             </button>
                         </li>
                         <li>
-                            {% trans "Reward" %}:
-                            <strong id="reprocInboundReward" data-copy-value="0">0 ISK</strong>
-                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocInboundReward')" title="{% trans "Copy" %}">
-                                <i class="fas fa-copy" aria-hidden="true"></i>
-                            </button>
-                        </li>
-                        <li>
                             <strong class="text-danger">{% trans "Title/Description" %}:</strong>
                             <span id="reprocInboundTitle" class="fw-bold text-warning">{{ service_request.request_reference }}</span>
                             <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocInboundTitle')" title="{% trans "Copy" %}">
@@ -92,6 +85,7 @@
                             </button>
                             <span class="text-danger">({% trans "REQUIRED!" %})</span>
                         </li>
+                        <li>{% trans "Duration" %}: <strong>{% trans "14 days" %}</strong></li>
                         <li>{% trans "Items" %}: {% trans "Send exact expected mineral types." %}</li>
                     </ol>
                     <div class="alert alert-warning mt-3 mb-0">
@@ -171,22 +165,11 @@
                     <h5 class="mb-0">{% trans "Actions" %}</h5>
                 </div>
                 <div class="card-body">
+                    <div class="alert alert-info mb-3">
+                        <i class="fas fa-robot me-2"></i>
+                        {% trans "Contract detection and verification are automatic. The system checks cached ESI contracts in the background and advances status when contracts match." %}
+                    </div>
                     <div class="d-flex flex-wrap gap-2">
-                        {% if can_submit_inbound %}
-                        <form method="post" action="{% url 'indy_hub:reprocessing_request_submit_inbound' service_request.id %}" class="d-flex gap-2">
-                            {% csrf_token %}
-                            <input type="number" name="inbound_contract_id" class="form-control form-control-sm" min="1" placeholder="{% trans 'Inbound contract ID' %}" required>
-                            <button type="submit" class="btn btn-sm btn-outline-primary">{% trans "Submit Inbound" %}</button>
-                        </form>
-                        {% endif %}
-
-                        {% if can_verify_inbound %}
-                        <form method="post" action="{% url 'indy_hub:reprocessing_request_verify_inbound' service_request.id %}">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-primary">{% trans "Verify Inbound" %}</button>
-                        </form>
-                        {% endif %}
-
                         {% if can_mark_processing %}
                         <form method="post" action="{% url 'indy_hub:reprocessing_request_mark_processing' service_request.id %}">
                             {% csrf_token %}
@@ -200,21 +183,6 @@
                             <button type="submit" class="btn btn-sm btn-outline-secondary">{% trans "Awaiting Return Contract" %}</button>
                         </form>
                         {% endif %}
-
-                        {% if can_submit_return %}
-                        <form method="post" action="{% url 'indy_hub:reprocessing_request_submit_return' service_request.id %}" class="d-flex gap-2">
-                            {% csrf_token %}
-                            <input type="number" name="return_contract_id" class="form-control form-control-sm" min="1" placeholder="{% trans 'Return contract ID' %}" required>
-                            <button type="submit" class="btn btn-sm btn-outline-primary">{% trans "Submit Return" %}</button>
-                        </form>
-                        {% endif %}
-
-                        {% if can_verify_return %}
-                        <form method="post" action="{% url 'indy_hub:reprocessing_request_verify_return' service_request.id %}">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-success">{% trans "Verify Return" %}</button>
-                        </form>
-                        {% endif %}
                     </div>
 
                     <div class="d-flex flex-wrap gap-2 mt-3">
@@ -222,14 +190,6 @@
                         <form method="post" action="{% url 'indy_hub:reprocessing_request_cancel' service_request.id %}" class="d-flex gap-2" onsubmit="return confirm('{% trans 'Cancel and remove this request?' %}');">
                             {% csrf_token %}
                             <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Cancel & Remove" %}</button>
-                        </form>
-                        {% endif %}
-
-                        {% if can_dispute %}
-                        <form method="post" action="{% url 'indy_hub:reprocessing_request_dispute' service_request.id %}" class="d-flex gap-2">
-                            {% csrf_token %}
-                            <input type="text" name="dispute_reason" class="form-control form-control-sm" placeholder="{% trans 'Dispute reason' %}" required>
-                            <button type="submit" class="btn btn-sm btn-danger">{% trans "Dispute" %}</button>
                         </form>
                         {% endif %}
                     </div>
