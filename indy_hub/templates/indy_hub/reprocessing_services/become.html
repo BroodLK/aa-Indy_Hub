@@ -64,9 +64,6 @@
                     {% if scope_error %}
                     <div class="alert alert-warning">
                         <i class="fas fa-triangle-exclamation me-2"></i>{{ scope_error }}
-                        <a href="{{ authorize_url }}" class="btn btn-sm btn-primary ms-2">
-                            <i class="fas fa-key me-1"></i>{% trans "Re-authorize Scopes" %}
-                        </a>
                     </div>
                     {% endif %}
 

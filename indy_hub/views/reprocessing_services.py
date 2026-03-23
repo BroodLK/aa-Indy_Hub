@@ -28,6 +28,7 @@ from esi.views import sso_redirect
 # Local
 from ..decorators import indy_hub_access_required, indy_hub_permission_required
 from ..models import (
+    CachedStructureName,
     ESIContract,
     NotificationWebhook,
     ReprocessingServiceProfile,
@@ -36,7 +37,7 @@ from ..models import (
     ReprocessingServiceRequestOutput,
 )
 from ..notifications import notify_multi, notify_user, send_discord_webhook
-from ..services.asset_cache import get_corp_assets_cached, resolve_structure_names
+from ..services.asset_cache import get_corp_assets_cached
 from ..services.esi_client import shared_client
 from ..services.reprocessing import (
     REPROCESSING_CLONES_SCOPE,
@@ -556,8 +557,27 @@ def _extract_structure_ids_from_corp_assets(corp_id: int) -> set[int]:
     return structure_ids
 
 
+def _get_cached_structure_name_map(structure_ids: list[int]) -> dict[int, str]:
+    ids = [int(structure_id) for structure_id in structure_ids if int(structure_id) > 0]
+    if not ids:
+        return {}
+    try:
+        rows = CachedStructureName.objects.filter(structure_id__in=ids).values_list(
+            "structure_id",
+            "name",
+        )
+    except Exception:
+        return {}
+    return {
+        int(structure_id): str(name or "").strip()
+        for structure_id, name in rows
+        if structure_id and str(name or "").strip()
+    }
+
+
 def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[dict[str, object]]:
     """Return Athanor/Tatara choices from selected corp alliance scope (best-effort)."""
+    _ = user
     structures_by_id: dict[int, dict[str, object]] = {}
     corp_ids = _get_alliance_corporation_ids(int(selected_corporation_id))
     location_ids: set[int] = set()
@@ -596,22 +616,16 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
         structure_ids_from_assets = _extract_structure_ids_from_corp_assets(int(corp_id))
         if not structure_ids_from_assets:
             continue
-        try:
-            structure_names = resolve_structure_names(
-                sorted(structure_ids_from_assets),
-                corporation_id=int(corp_id),
-                user=user,
-                schedule_async=True,
-            )
-        except Exception:
-            structure_names = {}
+        structure_name_map = _get_cached_structure_name_map(
+            sorted(structure_ids_from_assets)
+        )
 
         for structure_id in structure_ids_from_assets:
             if structure_id <= 0:
                 continue
             corptools_row = corptools_by_structure_id.get(int(structure_id), {})
             existing = structures_by_id.get(int(structure_id))
-            structure_name = str(structure_names.get(int(structure_id)) or "").strip()
+            structure_name = str(structure_name_map.get(int(structure_id)) or "").strip()
             if not structure_name:
                 structure_name = str(corptools_row.get("structure_name") or "").strip()
             if not structure_name:
@@ -648,62 +662,6 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 "security_bonus_percent": Decimal("0.000"),
                 "data_source": "assets_cache",
             }
-
-    # 3) Live ESI only as last resort (selected corp only) to avoid slow request-time fan-out.
-    if not structures_by_id:
-        corp_id = int(selected_corporation_id)
-        token = _get_token_for_corp_scope(user, corp_id, "esi-corporations.read_structures.v1")
-        if token:
-            try:
-                raw_structures = shared_client.fetch_corporation_structures(
-                    corp_id,
-                    character_id=int(token.character_id),
-                )
-            except Exception as exc:
-                logger.debug(
-                    "Unable to load live corp structures for corporation %s: %s",
-                    corp_id,
-                    exc,
-                )
-                raw_structures = []
-
-            for raw_structure in raw_structures or []:
-                if not isinstance(raw_structure, dict):
-                    continue
-                try:
-                    structure_id = int(raw_structure.get("structure_id") or 0)
-                    type_id = int(raw_structure.get("type_id") or 0)
-                except (TypeError, ValueError):
-                    continue
-                if structure_id <= 0 or type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
-                    continue
-                location_id = raw_structure.get("system_id") or raw_structure.get("solar_system_id")
-                try:
-                    location_id_int = int(location_id or 0)
-                except (TypeError, ValueError):
-                    location_id_int = 0
-                if location_id_int > 0:
-                    location_ids.add(location_id_int)
-                structure_name = str(raw_structure.get("name") or "").strip() or f"Structure {structure_id}"
-                structures_by_id[int(structure_id)] = {
-                    "structure_id": int(structure_id),
-                    "structure_name": structure_name,
-                    "structure_type_id": int(type_id),
-                    "structure_type_name": (
-                        STRUCTURE_LABEL_BY_TYPE_ID.get(int(type_id))
-                        or get_type_name(int(type_id))
-                        or f"Type {int(type_id)}"
-                    ),
-                    "location_id": location_id_int if location_id_int > 0 else None,
-                    "location_name": "",
-                    "owner_corporation_id": corp_id,
-                    "structure_bonus_percent": STRUCTURE_BONUS_BY_TYPE_ID.get(
-                        int(type_id),
-                        Decimal("0.000"),
-                    ),
-                    "security_bonus_percent": Decimal("0.000"),
-                    "data_source": "esi",
-                }
 
     if not structures_by_id:
         return []
@@ -1136,9 +1094,7 @@ def reprocessing_become(request):
     except (TypeError, ValueError):
         selected_corporation_id = None
 
-    has_required_scopes = bool(
-        selected_character_id and _character_has_required_scopes(request.user, int(selected_character_id))
-    )
+    has_required_scopes = True
 
     skill_snapshot = {
         "reprocessing": 0,
@@ -1150,7 +1106,7 @@ def reprocessing_become(request):
     structure_options: list[dict[str, object]] = []
     scope_error = ""
 
-    if selected_character_id and has_required_scopes:
+    if selected_character_id:
         skills_error = False
         clones_error = False
         try:
@@ -1175,8 +1131,8 @@ def reprocessing_become(request):
 
         if skills_error or clones_error:
             scope_error = _(
-                "Unable to read character skills/clones from ESI, and no usable cached corptools records were found. "
-                "Re-authorize scopes and confirm corptools character sync has completed."
+                "Unable to read character skills/clones from corptools cache. "
+                "Confirm corptools character sync has completed for this character."
             )
 
     if selected_corporation_id:
@@ -1196,12 +1152,6 @@ def reprocessing_become(request):
             if not selected_character_row:
                 messages.error(request, _("Please select one of your characters."))
                 return redirect("indy_hub:reprocessing_become")
-            if not has_required_scopes:
-                messages.warning(
-                    request,
-                    _("This character is missing required scopes. Authorize Reprocessing Services scopes first."),
-                )
-                return redirect("indy_hub:reprocessing_authorize_scopes")
             if not clone_options:
                 messages.error(request, _("No clone information available for this character."))
                 return redirect("indy_hub:reprocessing_become")
