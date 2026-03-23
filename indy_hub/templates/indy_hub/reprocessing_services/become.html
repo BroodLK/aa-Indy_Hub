@@ -95,23 +95,35 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Clone / Implant Set" %}</label>
-                                <select name="selected_clone_id" class="form-select" {% if not clone_options %}disabled{% endif %}>
+                                <select name="selected_clone_id" class="form-select" {% if not clone_options %}disabled{% endif %} onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
                                     {% for clone in clone_options %}
-                                    <option value="{{ clone.clone_id }}" {% if selected_profile and selected_profile.selected_clone_id == clone.clone_id %}selected{% endif %}>
+                                    <option value="{{ clone.clone_id }}" {% if selected_clone_id == clone.clone_id %}selected{% endif %}>
                                         {{ clone.clone_label }}
                                     </option>
                                     {% endfor %}
                                 </select>
+                                <div class="form-text">
+                                    {% if selected_clone_row.beancounter_implants %}
+                                        {% trans "Beancounter implants" %}: {{ selected_clone_row.beancounter_implants|join:", " }} ({{ selected_clone_row.beancounter_bonus_percent }}%)
+                                    {% else %}
+                                        {% trans "No Beancounter implants detected on this clone." %}
+                                    {% endif %}
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Reprocessing Structure" %}</label>
-                                <select name="structure_id" class="form-select" {% if not structure_options %}disabled{% endif %}>
+                                <select name="structure_id" class="form-select" {% if not structure_options %}disabled{% endif %} onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
                                     {% for structure in structure_options %}
-                                    <option value="{{ structure.structure_id }}" {% if selected_profile and selected_profile.structure_id == structure.structure_id %}selected{% endif %}>
+                                    <option value="{{ structure.structure_id }}" {% if selected_structure_id == structure.structure_id %}selected{% endif %}>
                                         {{ structure.structure_name }}{% if structure.location_name %} - {{ structure.location_name }}{% endif %}{% if structure.suggested_rig_profile_key != 'none' %} - {{ structure.suggested_rig_profile_name }}{% endif %}
                                     </option>
                                     {% endfor %}
                                 </select>
+                                {% if selected_structure_row.suggested_rig_profile_name %}
+                                <div class="form-text">
+                                    {% trans "Detected rig profile" %}: {{ selected_structure_row.suggested_rig_profile_name }}
+                                </div>
+                                {% endif %}
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Processor Margin (%)" %}</label>
@@ -138,6 +150,58 @@
                                     <small class="text-muted d-block">{% trans "Ore/Moon Processing" %}</small>
                                     <span class="fs-5 fw-semibold">{{ skill_snapshot.processing }}</span>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="border rounded p-3 mt-3">
+                            <small class="text-muted d-block">{% trans "Character Proficiency" %}</small>
+                            <div class="fw-semibold fs-5">
+                                {{ character_proficiency.label }} ({{ character_proficiency.percent }}%)
+                            </div>
+                            <div class="small text-muted">
+                                {% trans "Computed from all detected reprocessing-related skill levels for the selected character." %}
+                            </div>
+                        </div>
+
+                        <div class="border rounded p-3 mt-3">
+                            <small class="text-muted d-block">{% trans "All Reprocessing Skills" %}</small>
+                            {% if reprocessing_skill_rows %}
+                            <div class="table-responsive mt-2">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>{% trans "Skill" %}</th>
+                                            <th class="text-end">{% trans "Active" %}</th>
+                                            <th class="text-end">{% trans "Trained" %}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for row in reprocessing_skill_rows %}
+                                        <tr>
+                                            <td>{{ row.skill_name }}</td>
+                                            <td class="text-end">{{ row.active_level }}</td>
+                                            <td class="text-end">{{ row.trained_level }}</td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                            {% else %}
+                            <div class="small text-muted mt-2">{% trans "No reprocessing skills were found for this character in corptools cache." %}</div>
+                            {% endif %}
+                        </div>
+
+                        <div class="border rounded p-3 mt-3">
+                            <small class="text-muted d-block">{% trans "Estimated Yield Preview" %}</small>
+                            <div class="fw-semibold fs-5">
+                                {% if estimated_yield_preview is not None %}
+                                    {{ estimated_yield_preview }}%
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </div>
+                            <div class="small text-muted">
+                                {% trans "Approximation from selected clone implant bonus, structure type/security, and detected rig profile." %}
                             </div>
                         </div>
 

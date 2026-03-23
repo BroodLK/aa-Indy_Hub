@@ -42,6 +42,7 @@ from ..services.esi_client import shared_client
 from ..services.reprocessing import (
     REPROCESSING_CLONES_SCOPE,
     REPROCESSING_RIG_PROFILES,
+    REPROCESSING_SKILL_TYPE_IDS,
     REPROCESSING_SKILLS_SCOPE,
     STRUCTURE_BONUS_BY_TYPE_ID,
     STRUCTURE_LABEL_BY_TYPE_ID,
@@ -639,7 +640,7 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 continue
 
             structure_type_id = int(corptools_row.get("structure_type_id") or 0)
-            if structure_type_id and structure_type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+            if structure_type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
                 continue
             location_id = int(corptools_row.get("location_id") or 0)
             if location_id > 0:
@@ -663,7 +664,21 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
                 "data_source": "assets_cache",
             }
 
-    if not structures_by_id:
+    filtered_rows: list[dict[str, object]] = []
+    for row in structures_by_id.values():
+        type_id = int(row.get("structure_type_id") or 0)
+        if type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+            continue
+        row["structure_type_id"] = type_id
+        if not str(row.get("structure_type_name") or "").strip():
+            row["structure_type_name"] = (
+                STRUCTURE_LABEL_BY_TYPE_ID.get(type_id)
+                or get_type_name(type_id)
+                or f"Type {type_id}"
+            )
+        filtered_rows.append(row)
+
+    if not filtered_rows:
         return []
 
     if location_ids:
@@ -672,14 +687,14 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
         except Exception:
             location_name_map = {}
         security_modifier_map = _resolve_system_security_modifiers(sorted(location_ids))
-        for row in structures_by_id.values():
+        for row in filtered_rows:
             location_id = int(row.get("location_id") or 0)
             row["location_name"] = str(location_name_map.get(location_id, "") or "")
             row["security_bonus_percent"] = _to_decimal(
                 security_modifier_map.get(location_id, Decimal("0.000"))
             )
 
-    structure_ids = sorted(int(structure_id) for structure_id in structures_by_id.keys())
+    structure_ids = sorted(int(row.get("structure_id") or 0) for row in filtered_rows)
     rig_key_hints = _infer_structure_rigs_from_corptools(corp_ids, structure_ids)
     cached_rig_hints = _infer_structure_rigs_from_cached_assets(corp_ids, structure_ids)
     for structure_id, profile_key in cached_rig_hints.items():
@@ -688,14 +703,14 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
             profile_key,
         ) or profile_key
 
-    for row in structures_by_id.values():
+    for row in filtered_rows:
         structure_id = int(row.get("structure_id") or 0)
         rig_profile_key = rig_key_hints.get(structure_id)
         row["suggested_rig_profile_key"] = rig_profile_key or "none"
         rig_profile = _get_rig_profile(rig_profile_key or "none")
         row["suggested_rig_profile_name"] = str(rig_profile.get("label") or "")
 
-    rows = list(structures_by_id.values())
+    rows = list(filtered_rows)
     rows.sort(key=lambda row: (str(row.get("structure_name", "")).lower(), int(row.get("structure_id", 0))))
     return rows
 
@@ -837,6 +852,90 @@ def _avatar_url(character_id: int, *, size: int = 128) -> str:
 def _beancounter_implants(implant_names: list[str] | None) -> list[str]:
     names = [str(name or "").strip() for name in (implant_names or [])]
     return [name for name in names if name and ("beancounter" in name.lower() or "rx-80" in name.lower())]
+
+
+def _build_reprocessing_skill_rows(
+    skill_levels: dict[int, dict[str, int]] | None,
+) -> list[dict[str, object]]:
+    skill_levels = skill_levels or {}
+    core_skill_ids = [
+        int(REPROCESSING_SKILL_TYPE_IDS["reprocessing"]),
+        int(REPROCESSING_SKILL_TYPE_IDS["reprocessing_efficiency"]),
+        int(REPROCESSING_SKILL_TYPE_IDS["scrapmetal_processing"]),
+    ]
+    core_sort_index = {skill_id: idx for idx, skill_id in enumerate(core_skill_ids)}
+
+    def _extract_levels(raw_row: object) -> tuple[int, int]:
+        if isinstance(raw_row, dict):
+            return int(raw_row.get("active") or 0), int(raw_row.get("trained") or 0)
+        level = int(raw_row or 0)
+        return level, level
+
+    rows_by_skill_id: dict[int, dict[str, object]] = {}
+    for skill_id in core_skill_ids:
+        active_level, trained_level = _extract_levels(skill_levels.get(skill_id, {}))
+        rows_by_skill_id[skill_id] = {
+            "skill_id": int(skill_id),
+            "skill_name": str(get_type_name(int(skill_id)) or f"Skill {int(skill_id)}"),
+            "active_level": int(active_level),
+            "trained_level": int(trained_level),
+        }
+
+    for raw_skill_id, raw_row in skill_levels.items():
+        try:
+            skill_id = int(raw_skill_id)
+        except (TypeError, ValueError):
+            continue
+        if skill_id <= 0:
+            continue
+        skill_name = str(get_type_name(skill_id) or "").strip()
+        normalized = skill_name.lower()
+        if "processing" not in normalized and skill_id not in core_sort_index:
+            continue
+        active_level, trained_level = _extract_levels(raw_row)
+        rows_by_skill_id[skill_id] = {
+            "skill_id": int(skill_id),
+            "skill_name": skill_name or f"Skill {skill_id}",
+            "active_level": int(active_level),
+            "trained_level": int(trained_level),
+        }
+
+    rows = list(rows_by_skill_id.values())
+    rows.sort(
+        key=lambda row: (
+            0 if int(row.get("skill_id") or 0) in core_sort_index else 1,
+            core_sort_index.get(int(row.get("skill_id") or 0), 99),
+            str(row.get("skill_name", "")).lower(),
+        )
+    )
+    return rows
+
+
+def _compute_character_proficiency(
+    skill_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    levels = [
+        int(row.get("active_level") or 0)
+        for row in (skill_rows or [])
+        if int(row.get("skill_id") or 0) > 0
+    ]
+    if not levels:
+        return {"percent": Decimal("0.0"), "label": _("No data")}
+
+    percent = (
+        Decimal(str(sum(levels)))
+        / Decimal(str(max(len(levels), 1) * 5))
+        * Decimal("100")
+    ).quantize(Decimal("0.1"))
+    if percent >= Decimal("85.0"):
+        label = _("Expert")
+    elif percent >= Decimal("60.0"):
+        label = _("Advanced")
+    elif percent >= Decimal("35.0"):
+        label = _("Intermediate")
+    else:
+        label = _("Basic")
+    return {"percent": percent, "label": label}
 
 
 def _resolve_type_id_from_text(type_text: str) -> int | None:
@@ -1102,6 +1201,9 @@ def reprocessing_become(request):
         "processing": 0,
         "scrapmetal_processing": 0,
     }
+    selected_character_skill_levels: dict[int, dict[str, int]] = {}
+    reprocessing_skill_rows: list[dict[str, object]] = []
+    character_proficiency = {"percent": Decimal("0.0"), "label": _("No data")}
     clone_options: list[dict[str, object]] = []
     structure_options: list[dict[str, object]] = []
     scope_error = ""
@@ -1110,8 +1212,10 @@ def reprocessing_become(request):
         skills_error = False
         clones_error = False
         try:
-            skill_levels = fetch_character_skill_levels(int(selected_character_id))
-            skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
+            selected_character_skill_levels = fetch_character_skill_levels(int(selected_character_id))
+            skill_snapshot = build_reprocessing_skill_snapshot(selected_character_skill_levels)
+            reprocessing_skill_rows = _build_reprocessing_skill_rows(selected_character_skill_levels)
+            character_proficiency = _compute_character_proficiency(reprocessing_skill_rows)
         except Exception as exc:
             logger.warning(
                 "Unable to load reprocessing skills for %s: %s",
@@ -1146,6 +1250,65 @@ def reprocessing_become(request):
             )
             structure_options = []
 
+    selected_clone_id_raw = (
+        request.POST.get("selected_clone_id")
+        or request.GET.get("selected_clone_id")
+        or (getattr(selected_profile, "selected_clone_id", None) if selected_profile else None)
+    )
+    try:
+        selected_clone_id = int(selected_clone_id_raw or 0)
+    except (TypeError, ValueError):
+        selected_clone_id = 0
+    if selected_clone_id <= 0 and clone_options:
+        selected_clone_id = int(clone_options[0].get("clone_id") or 0)
+    selected_clone_row = next(
+        (
+            row
+            for row in clone_options
+            if int(row.get("clone_id") or 0) == int(selected_clone_id or 0)
+        ),
+        clone_options[0] if clone_options else None,
+    )
+
+    selected_structure_id_raw = (
+        request.POST.get("structure_id")
+        or request.GET.get("structure_id")
+        or (getattr(selected_profile, "structure_id", None) if selected_profile else None)
+    )
+    try:
+        selected_structure_id = int(selected_structure_id_raw or 0)
+    except (TypeError, ValueError):
+        selected_structure_id = 0
+    if selected_structure_id <= 0 and structure_options:
+        selected_structure_id = int(structure_options[0].get("structure_id") or 0)
+    selected_structure_row = next(
+        (
+            row
+            for row in structure_options
+            if int(row.get("structure_id") or 0) == int(selected_structure_id or 0)
+        ),
+        structure_options[0] if structure_options else None,
+    )
+
+    preview_rig_profile = _get_rig_profile(
+        str((selected_structure_row or {}).get("suggested_rig_profile_key") or "none")
+    )
+    estimated_yield_preview = None
+    if selected_clone_row and selected_structure_row:
+        estimated_yield_preview = compute_estimated_yield_percent(
+            skill_snapshot=skill_snapshot,
+            implant_bonus_percent=_to_decimal(
+                (selected_clone_row or {}).get("beancounter_bonus_percent")
+            ),
+            structure_bonus_percent=_to_decimal(
+                (selected_structure_row or {}).get("structure_bonus_percent")
+            ),
+            rig_bonus_percent=_to_decimal(preview_rig_profile.get("bonus_percent")),
+            security_bonus_percent=_to_decimal(
+                (selected_structure_row or {}).get("security_bonus_percent")
+            ),
+        )
+
     if request.method == "POST":
         action = str(request.POST.get("action") or "save_profile").strip().lower()
         if action in {"save_profile", "submit_application"}:
@@ -1162,8 +1325,7 @@ def reprocessing_become(request):
                 messages.error(
                     request,
                     _(
-                        "No Athanor/Tatara structures were found for that corporation/alliance scope. "
-                        "Re-authorize corporation structure scopes or wait for corptools structure/assets sync."
+                        "No Athanor/Tatara structures were found in corptools/cached assets for that corporation/alliance scope."
                     ),
                 )
                 return redirect("indy_hub:reprocessing_become")
@@ -1205,12 +1367,14 @@ def reprocessing_become(request):
                 messages.error(
                     request,
                     _(
-                        "Unable to refresh character skills from ESI/cached data. "
-                        "Re-authorize scopes and ensure corptools has synced this character."
+                        "Unable to refresh character skills from corptools cache. "
+                        "Ensure corptools has synced this character."
                     ),
                 )
                 return redirect("indy_hub:reprocessing_become")
             skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
+            reprocessing_skill_rows = _build_reprocessing_skill_rows(skill_levels)
+            character_proficiency = _compute_character_proficiency(reprocessing_skill_rows)
             active_skill_levels_by_id: dict[str, int] = {}
             for raw_skill_id, row in (skill_levels or {}).items():
                 try:
@@ -1335,6 +1499,14 @@ def reprocessing_become(request):
         "selected_profile": selected_profile,
         "selected_character_id": int(selected_character_id or 0),
         "selected_corporation_id": int(selected_corporation_id or 0),
+        "selected_clone_id": int(selected_clone_id or 0),
+        "selected_structure_id": int(selected_structure_id or 0),
+        "selected_clone_row": selected_clone_row or {},
+        "selected_structure_row": selected_structure_row or {},
+        "estimated_yield_preview": estimated_yield_preview,
+        "preview_rig_profile": preview_rig_profile,
+        "reprocessing_skill_rows": reprocessing_skill_rows,
+        "character_proficiency": character_proficiency,
         "has_required_scopes": has_required_scopes,
         "scope_error": scope_error,
         "authorize_url": reverse("indy_hub:reprocessing_authorize_scopes"),
