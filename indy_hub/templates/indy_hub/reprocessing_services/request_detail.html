@@ -34,9 +34,35 @@
                     <h6 class="fw-semibold">{% trans "Inbound Contract (Requester -> Reprocessor)" %}</h6>
                     <ol>
                         <li>{% trans "Type" %}: <strong>{% trans "Item Exchange" %}</strong></li>
-                        <li>{% trans "Assign To" %}: <strong>{{ service_request.processor_character_name }}</strong></li>
-                        <li>{% trans "Price" %}: <strong>0 ISK</strong></li>
-                        <li>{% trans "Reward" %}: <strong>0 ISK</strong></li>
+                        <li>
+                            {% trans "Assign To" %}:
+                            <strong id="reprocInboundAssignTo">{{ service_request.processor_character_name }}</strong>
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocInboundAssignTo')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                        </li>
+                        <li>
+                            {% trans "Price" %}:
+                            <strong id="reprocInboundPrice" data-copy-value="0">0 ISK</strong>
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocInboundPrice')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                        </li>
+                        <li>
+                            {% trans "Reward" %}:
+                            <strong id="reprocInboundReward" data-copy-value="0">0 ISK</strong>
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocInboundReward')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                        </li>
+                        <li>
+                            <strong class="text-danger">{% trans "Title/Description" %}:</strong>
+                            <span id="reprocInboundTitle" class="fw-bold text-warning">{{ service_request.request_reference }}</span>
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocInboundTitle')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <span class="text-danger">({% trans "REQUIRED!" %})</span>
+                        </li>
                         <li>{% trans "Duration" %}: <strong>{% trans "14 days" %}</strong></li>
                         <li>{% trans "Items" %}: {% trans "Must exactly match the submitted input list." %}</li>
                     </ol>
@@ -44,10 +70,35 @@
                     <h6 class="fw-semibold mt-4">{% trans "Return Contract (Reprocessor -> Requester)" %}</h6>
                     <ol>
                         <li>{% trans "Type" %}: <strong>{% trans "Item Exchange" %}</strong></li>
-                        <li>{% trans "Assign To" %}: <strong>{{ service_request.requester_character_name }}</strong></li>
-                        <li>{% trans "Price" %}: <strong>{{ service_request.reward_isk|floatformat:2|intcomma }} ISK</strong> ({% trans "processor reward" %})</li>
-                        <li>{% trans "Items" %}: {% trans "Send exact expected mineral types; quantities allow only 1% tolerance." %}</li>
+                        <li>
+                            {% trans "Assign To" %}:
+                            <strong id="reprocReturnAssignTo">{{ service_request.requester_character_name }}</strong>
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocReturnAssignTo')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                        </li>
+                        <li>
+                            {% trans "Price" %}:
+                            <strong id="reprocReturnPrice" data-copy-value="{{ service_request.reward_isk|floatformat:2 }}">{{ service_request.reward_isk|floatformat:2|intcomma }} ISK</strong> ({% trans "processor reward" %})
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocReturnPrice')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                        </li>
+                        <li>
+                            <strong class="text-danger">{% trans "Title/Description" %}:</strong>
+                            <span id="reprocReturnTitle" class="fw-bold text-warning">{{ service_request.request_reference }}</span>
+                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyContractField(this, 'reprocReturnTitle')" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <span class="text-danger">({% trans "REQUIRED!" %})</span>
+                        </li>
+                        <li>{% trans "Items" %}: {% trans "Send exact expected mineral types." %}</li>
                     </ol>
+                    <div class="alert alert-warning mt-3 mb-0">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>{% trans "Important:" %}</strong>
+                        {% trans "Include the exact request reference in the contract title/description for both inbound and return contracts." %}
+                    </div>
                 </div>
             </div>
 
@@ -221,3 +272,33 @@
     </div>
 </div>
 {% endblock content %}
+
+{% block extra_javascript %}
+{{ block.super }}
+<script>
+    function copyContractField(button, elementId) {
+        const source = document.getElementById(elementId);
+        if (!source) {
+            return;
+        }
+        const value = (source.dataset.copyValue || source.textContent || "").trim();
+        if (!value) {
+            return;
+        }
+        navigator.clipboard.writeText(value).then(() => {
+            const icon = button.querySelector("i");
+            if (!icon) {
+                return;
+            }
+            icon.classList.remove("fa-copy");
+            icon.classList.add("fa-check");
+            setTimeout(() => {
+                icon.classList.remove("fa-check");
+                icon.classList.add("fa-copy");
+            }, 1200);
+        }).catch(() => {
+            alert("{% trans 'Failed to copy to clipboard' %}");
+        });
+    }
+</script>
+{% endblock extra_javascript %}

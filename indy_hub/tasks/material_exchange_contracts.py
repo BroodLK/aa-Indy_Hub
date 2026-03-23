@@ -495,9 +495,13 @@ def _sync_contracts_for_corporation(corporation_id: int):
             if not contract_id:
                 continue
 
-            # Filter: only process contracts with "INDY" in title
+            # Filter: process Indy Hub contract titles for material exchange, reprocessing, and capitals.
             contract_title = contract_payload.get("title", "")
-            if "INDY" not in contract_title.upper():
+            contract_title_upper = str(contract_title or "").upper()
+            if not any(
+                marker in contract_title_upper
+                for marker in ("INDY", "REPROCESSING", "REPROC")
+            ):
                 continue
 
             indy_contracts_count += 1

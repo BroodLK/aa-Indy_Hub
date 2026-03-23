@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Standard Library
 from decimal import Decimal, InvalidOperation
+import hashlib
 import re
 import unicodedata
 
@@ -11,6 +12,7 @@ import unicodedata
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Permission, User
+from django.core.cache import cache
 from django.db import connection, transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
@@ -78,6 +80,7 @@ REPROCESSING_SERVICES_SCOPE_SET = sorted(
 _REQUEST_ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:,|;|\|)\s*")
 _REQUEST_ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
 _TYPE_TEXT_LOOKUP_CACHE: dict[str, int | None] = {}
+_REPROCESSING_ESTIMATE_CACHE_TTL_SECONDS = 15 * 60
 
 _RIG_PROFILE_KEY_BY_NAME_PATTERN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "moon_t2"),
@@ -784,6 +787,43 @@ def _build_expected_output_map(service_request: ReprocessingServiceRequest) -> d
     }
 
 
+def _contract_title_contains_request_reference(
+    *,
+    contract_title: str | None,
+    request_reference: str | None,
+) -> bool:
+    title = str(contract_title or "").strip().lower()
+    reference = str(request_reference or "").strip().lower()
+    if not reference:
+        return False
+    return reference in title
+
+
+def _normalize_items_text_for_cache(raw_text: str) -> str:
+    lines = [str(line or "").strip() for line in str(raw_text or "").splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _build_estimate_cache_token(
+    *,
+    profile_id: int,
+    requester_character_id: int | None,
+    items_text: str,
+    profile_updated_at,
+) -> str:
+    fingerprint = (
+        f"{int(profile_id)}|"
+        f"{int(requester_character_id or 0)}|"
+        f"{int(getattr(profile_updated_at, 'timestamp', lambda: 0)() or 0)}|"
+        f"{_normalize_items_text_for_cache(items_text)}"
+    )
+    return hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:24]
+
+
+def _build_estimate_cache_key(*, user_id: int, profile_id: int, token: str) -> str:
+    return f"indy_hub:reproc_estimate:{int(user_id)}:{int(profile_id)}:{str(token)}"
+
+
 def _verify_inbound_contract(service_request: ReprocessingServiceRequest) -> tuple[bool, str]:
     contract_id = int(service_request.inbound_contract_id or 0)
     if contract_id <= 0:
@@ -794,6 +834,17 @@ def _verify_inbound_contract(service_request: ReprocessingServiceRequest) -> tup
 
     if str(contract.contract_type or "").lower() != "item_exchange":
         return False, _("Inbound contract must be an Item Exchange contract.")
+    if not _contract_title_contains_request_reference(
+        contract_title=str(contract.title or ""),
+        request_reference=str(service_request.request_reference or ""),
+    ):
+        return (
+            False,
+            _(
+                "Inbound contract title/description must include request reference %(reference)s."
+            )
+            % {"reference": service_request.request_reference},
+        )
 
     contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
     contract_reward = Decimal(str(contract.reward or 0)).quantize(Decimal("0.01"))
@@ -832,6 +883,17 @@ def _verify_return_contract(service_request: ReprocessingServiceRequest) -> tupl
 
     if str(contract.contract_type or "").lower() != "item_exchange":
         return False, _("Return contract must be an Item Exchange contract.")
+    if not _contract_title_contains_request_reference(
+        contract_title=str(contract.title or ""),
+        request_reference=str(service_request.request_reference or ""),
+    ):
+        return (
+            False,
+            _(
+                "Return contract title/description must include request reference %(reference)s."
+            )
+            % {"reference": service_request.request_reference},
+        )
 
     expected_issuer_id = int(service_request.processor_character_id or 0)
     if expected_issuer_id > 0 and int(contract.issuer_id or 0) != expected_issuer_id:
@@ -1848,6 +1910,8 @@ def reprocessing_request_create(request, profile_id: int):
     parse_errors: list[str] = []
     estimate_payload: dict[str, object] | None = None
     unsupported_inputs: list[dict[str, int]] = []
+    estimate_cache_token = ""
+    estimate_cache_key = ""
 
     if request.method == "POST":
         if requester_character_rows and not selected_requester_row:
@@ -1864,9 +1928,23 @@ def reprocessing_request_create(request, profile_id: int):
                 "estimate_payload": None,
                 "unsupported_rows": [],
                 "estimate_ready": False,
+                "estimate_cache_key": "",
+                "estimate_token": "",
             }
             context.update(_build_nav_context(request.user, active_tab="reprocessing"))
             return render(request, "indy_hub/reprocessing_services/request_create.html", context)
+
+        estimate_cache_token = _build_estimate_cache_token(
+            profile_id=int(profile.id),
+            requester_character_id=int(selected_requester_character_id or 0),
+            items_text=items_text,
+            profile_updated_at=profile.updated_at,
+        )
+        estimate_cache_key = _build_estimate_cache_key(
+            user_id=int(request.user.id),
+            profile_id=int(profile.id),
+            token=estimate_cache_token,
+        )
 
         parsed_items, parse_errors = _parse_request_item_lines(items_text)
         if not parsed_items:
@@ -1885,62 +1963,96 @@ def reprocessing_request_create(request, profile_id: int):
                     _("Some item lines are invalid and were ignored: %(lines)s")
                     % {"lines": "; ".join(parse_errors[:5])},
                 )
-            profile_skill_map = (
-                profile.skill_levels
-                if isinstance(profile.skill_levels, dict)
-                else {}
-            )
-            raw_skill_levels_by_id = profile_skill_map.get("skill_levels_by_id") or {}
-            skill_levels_by_id: dict[int, int] = {}
-            if isinstance(raw_skill_levels_by_id, dict):
-                for raw_skill_id, raw_level in raw_skill_levels_by_id.items():
-                    try:
-                        skill_id = int(raw_skill_id)
-                        level = int(raw_level or 0)
-                    except (TypeError, ValueError):
-                        continue
-                    if skill_id > 0 and level > 0:
-                        skill_levels_by_id[skill_id] = level
+            used_cached_estimate = False
+            if action == "submit_request":
+                submitted_cache_key = str(request.POST.get("estimate_cache_key") or "").strip()
+                submitted_cache_token = str(request.POST.get("estimate_token") or "").strip()
+                if (
+                    submitted_cache_key
+                    and submitted_cache_token
+                    and submitted_cache_token == estimate_cache_token
+                    and submitted_cache_key == estimate_cache_key
+                ):
+                    cached = cache.get(submitted_cache_key)
+                    if isinstance(cached, dict) and str(cached.get("token") or "") == estimate_cache_token:
+                        cached_parsed_items = list(cached.get("parsed_items") or [])
+                        if cached_parsed_items == parsed_items:
+                            cached_estimate = cached.get("estimate_payload")
+                            if isinstance(cached_estimate, dict):
+                                estimate_payload = cached_estimate
+                                unsupported_inputs = list(cached.get("unsupported_inputs") or [])
+                                used_cached_estimate = True
 
-            base_skill_snapshot = {
-                "reprocessing": int(profile.reprocessing_skill_level or 0),
-                "reprocessing_efficiency": int(profile.reprocessing_efficiency_level or 0),
-                "processing": int(profile.processing_skill_level or 0),
-            }
-            yield_percent_by_type: dict[int, Decimal] = {}
-            security_bonus_raw = profile_skill_map.get("security_bonus_percent")
-            if security_bonus_raw is not None:
-                security_bonus_percent = _to_decimal(security_bonus_raw)
-                for row in parsed_items:
-                    source_type_id = int(row.get("type_id") or 0)
-                    if source_type_id <= 0:
-                        continue
-                    processing_level = resolve_processing_skill_level_for_item(
-                        type_id=source_type_id,
-                        skill_levels_by_id=skill_levels_by_id,
-                        fallback_level=int(base_skill_snapshot.get("processing") or 0),
-                    )
-                    yield_percent_by_type[source_type_id] = compute_estimated_yield_percent(
-                        skill_snapshot={
-                            "reprocessing": int(base_skill_snapshot["reprocessing"]),
-                            "reprocessing_efficiency": int(
-                                base_skill_snapshot["reprocessing_efficiency"]
-                            ),
-                            "processing": int(processing_level),
+            if not used_cached_estimate:
+                profile_skill_map = (
+                    profile.skill_levels
+                    if isinstance(profile.skill_levels, dict)
+                    else {}
+                )
+                raw_skill_levels_by_id = profile_skill_map.get("skill_levels_by_id") or {}
+                skill_levels_by_id: dict[int, int] = {}
+                if isinstance(raw_skill_levels_by_id, dict):
+                    for raw_skill_id, raw_level in raw_skill_levels_by_id.items():
+                        try:
+                            skill_id = int(raw_skill_id)
+                            level = int(raw_level or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if skill_id > 0 and level > 0:
+                            skill_levels_by_id[skill_id] = level
+
+                base_skill_snapshot = {
+                    "reprocessing": int(profile.reprocessing_skill_level or 0),
+                    "reprocessing_efficiency": int(profile.reprocessing_efficiency_level or 0),
+                    "processing": int(profile.processing_skill_level or 0),
+                }
+                yield_percent_by_type: dict[int, Decimal] = {}
+                security_bonus_raw = profile_skill_map.get("security_bonus_percent")
+                if security_bonus_raw is not None:
+                    security_bonus_percent = _to_decimal(security_bonus_raw)
+                    for row in parsed_items:
+                        source_type_id = int(row.get("type_id") or 0)
+                        if source_type_id <= 0:
+                            continue
+                        processing_level = resolve_processing_skill_level_for_item(
+                            type_id=source_type_id,
+                            skill_levels_by_id=skill_levels_by_id,
+                            fallback_level=int(base_skill_snapshot.get("processing") or 0),
+                        )
+                        yield_percent_by_type[source_type_id] = compute_estimated_yield_percent(
+                            skill_snapshot={
+                                "reprocessing": int(base_skill_snapshot["reprocessing"]),
+                                "reprocessing_efficiency": int(
+                                    base_skill_snapshot["reprocessing_efficiency"]
+                                ),
+                                "processing": int(processing_level),
+                            },
+                            implant_bonus_percent=_to_decimal(profile.beancounter_bonus_percent),
+                            structure_bonus_percent=_to_decimal(profile.structure_bonus_percent),
+                            rig_bonus_percent=_to_decimal(profile.rig_bonus_percent),
+                            security_bonus_percent=security_bonus_percent,
+                        )
+
+                estimate_payload = build_reprocessing_estimate(
+                    input_items=parsed_items,
+                    yield_percent=Decimal(str(profile.estimated_yield_percent or 0)),
+                    margin_percent=Decimal(str(profile.margin_percent or 0)),
+                    yield_percent_by_type=yield_percent_by_type,
+                )
+                unsupported_inputs = list(estimate_payload.get("unsupported_inputs") or [])
+
+                if estimate_payload and not parse_errors:
+                    cache.set(
+                        estimate_cache_key,
+                        {
+                            "token": estimate_cache_token,
+                            "parsed_items": parsed_items,
+                            "estimate_payload": estimate_payload,
+                            "unsupported_inputs": unsupported_inputs,
                         },
-                        implant_bonus_percent=_to_decimal(profile.beancounter_bonus_percent),
-                        structure_bonus_percent=_to_decimal(profile.structure_bonus_percent),
-                        rig_bonus_percent=_to_decimal(profile.rig_bonus_percent),
-                        security_bonus_percent=security_bonus_percent,
+                        timeout=_REPROCESSING_ESTIMATE_CACHE_TTL_SECONDS,
                     )
 
-            estimate_payload = build_reprocessing_estimate(
-                input_items=parsed_items,
-                yield_percent=Decimal(str(profile.estimated_yield_percent or 0)),
-                margin_percent=Decimal(str(profile.margin_percent or 0)),
-                yield_percent_by_type=yield_percent_by_type,
-            )
-            unsupported_inputs = list(estimate_payload.get("unsupported_inputs") or [])
             if unsupported_inputs:
                 unsupported_names = ", ".join(
                     f"{get_type_name(int(row['type_id']))} x{int(row['quantity'])}"
@@ -2038,10 +2150,15 @@ def reprocessing_request_create(request, profile_id: int):
             messages.success(
                 request,
                 _(
-                    "Request submitted. Create an inbound Item Exchange contract to %(processor)s with 0 ISK reward and 14-day completion."
+                    "Request submitted. Create an inbound Item Exchange contract to %(processor)s with 0 ISK reward, 14-day completion, and title %(reference)s."
                 )
-                % {"processor": profile.character_name},
+                % {
+                    "processor": profile.character_name,
+                    "reference": service_request.request_reference,
+                },
             )
+            if estimate_cache_key:
+                cache.delete(estimate_cache_key)
             return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
         elif action == "submit_request":
             messages.error(
@@ -2085,6 +2202,8 @@ def reprocessing_request_create(request, profile_id: int):
         "estimate_payload": estimate_payload,
         "unsupported_rows": unsupported_rows,
         "estimate_ready": estimate_ready,
+        "estimate_cache_key": estimate_cache_key,
+        "estimate_token": estimate_cache_token,
     }
     context.update(_build_nav_context(request.user, active_tab="reprocessing"))
     return render(request, "indy_hub/reprocessing_services/request_create.html", context)

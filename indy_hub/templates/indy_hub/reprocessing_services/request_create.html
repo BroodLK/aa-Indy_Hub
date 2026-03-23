@@ -140,6 +140,8 @@
                             <input type="hidden" name="action" value="submit_request">
                             <input type="hidden" name="requester_character_id" value="{{ selected_requester_character_id }}">
                             <textarea name="items_text" class="d-none">{{ items_text }}</textarea>
+                            <input type="hidden" name="estimate_cache_key" value="{{ estimate_cache_key }}">
+                            <input type="hidden" name="estimate_token" value="{{ estimate_token }}">
                             <button type="submit" class="btn btn-success w-100">
                                 <i class="fas fa-paper-plane me-1"></i>{% trans "Submit Request" %}
                             </button>
@@ -184,14 +186,7 @@
                     textEl.textContent = label;
                 }
                 indicator.classList.remove("d-none");
-
-                Array.from(form.querySelectorAll("button, input, select, textarea")).forEach(function (el) {
-                    if (el.type === "hidden") {
-                        return;
-                    }
-                    if (el.name === "items_text") {
-                        return;
-                    }
+                Array.from(form.querySelectorAll("button[type='submit']")).forEach(function (el) {
                     el.disabled = true;
                 });
             });

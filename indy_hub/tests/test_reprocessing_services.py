@@ -30,7 +30,7 @@ from indy_hub.views.reprocessing_services import _parse_request_item_lines
 class ReprocessingReferenceTests(TestCase):
     def test_generate_reprocessing_reference_format(self):
         ref = generate_reprocessing_reference()
-        self.assertTrue(ref.startswith("REPROC-"))
+        self.assertTrue(ref.startswith("REPROCESSING-"))
         suffix = ref.split("-", 1)[1]
         self.assertEqual(len(suffix), 10)
         self.assertTrue(suffix.isdigit())
@@ -76,7 +76,35 @@ class ReprocessingProfileModelTests(TestCase):
             processor_character_id=profile.character_id,
             processor_character_name=profile.character_name,
         )
-        self.assertTrue(req.request_reference.startswith("REPROC-"))
+        self.assertTrue(req.request_reference.startswith("REPROCESSING-"))
+
+    @patch(
+        "indy_hub.models.generate_reprocessing_reference",
+        return_value="REPROCESSING-1111111111",
+    )
+    def test_request_reference_collision_fallback_keeps_reprocessing_prefix(self, _mock_ref):
+        profile = ReprocessingServiceProfile.objects.create(
+            user=self.user,
+            character_id=9000004,
+            character_name="Refiner Four",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+        )
+        ReprocessingServiceRequest.objects.create(
+            requester=self.user,
+            processor_profile=profile,
+            processor_user=self.user,
+            processor_character_id=profile.character_id,
+            processor_character_name=profile.character_name,
+            request_reference="REPROCESSING-1111111111",
+        )
+        req = ReprocessingServiceRequest.objects.create(
+            requester=self.user,
+            processor_profile=profile,
+            processor_user=self.user,
+            processor_character_id=profile.character_id,
+            processor_character_name=profile.character_name,
+        )
+        self.assertEqual(req.request_reference, f"REPROCESSING-{req.id:010d}")
 
 
 class ReprocessingContractMatcherTests(TestCase):

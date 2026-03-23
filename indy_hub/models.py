@@ -28,8 +28,8 @@ def generate_order_reference():
 
 
 def generate_reprocessing_reference():
-    """Generate a random reprocessing request reference like REPROC-1234567890."""
-    return f"REPROC-{random.randint(1000000000, 9999999999)}"
+    """Generate a random reprocessing request reference like REPROCESSING-1234567890."""
+    return f"REPROCESSING-{random.randint(1000000000, 9999999999)}"
 
 
 class BlueprintManager(models.Manager):
@@ -3426,7 +3426,7 @@ class ReprocessingServiceRequest(models.Model):
                     break
             else:
                 super().save(*args, **kwargs)
-                self.request_reference = f"REPROC-{self.id:010d}"
+                self.request_reference = f"REPROCESSING-{self.id:010d}"
                 super().save(update_fields=["request_reference"])
                 return
         super().save(*args, **kwargs)
