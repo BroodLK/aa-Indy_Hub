@@ -24,6 +24,7 @@ from indy_hub.services.reprocessing import (
     fetch_character_skill_levels,
     resolve_processing_skill_level_for_item,
 )
+from indy_hub.views.reprocessing_services import _parse_request_item_lines
 
 
 class ReprocessingReferenceTests(TestCase):
@@ -287,3 +288,38 @@ class ReprocessingCorptoolsFallbackTests(TestCase):
         clones = fetch_character_clone_options(9000001)
         self.assertEqual(len(clones), 1)
         self.assertEqual(clones[0]["clone_id"], 11)
+
+
+class ReprocessingRequestLineParsingTests(TestCase):
+    @patch("indy_hub.views.reprocessing_services.get_type_name")
+    @patch("indy_hub.views.reprocessing_services._resolve_type_id_from_text")
+    def test_parses_ingame_tab_delimited_lines(
+        self,
+        mock_resolve,
+        mock_get_type_name,
+    ):
+        mock_resolve.side_effect = lambda text: {"Tritanium": 34, "Pyerite": 35}.get(str(text).strip())
+        mock_get_type_name.side_effect = lambda type_id: {34: "Tritanium", 35: "Pyerite"}.get(
+            int(type_id),
+            f"Type {type_id}",
+        )
+
+        rows, errors = _parse_request_item_lines("Tritanium\t1,250\nPyerite\t2\u202F000")
+
+        self.assertEqual(errors, [])
+        self.assertEqual(rows, [{"type_id": 35, "quantity": 2000}, {"type_id": 34, "quantity": 1250}])
+
+    @patch("indy_hub.views.reprocessing_services.get_type_name")
+    @patch("indy_hub.views.reprocessing_services._resolve_type_id_from_text")
+    def test_parses_tab_delimited_line_with_extra_columns(
+        self,
+        mock_resolve,
+        mock_get_type_name,
+    ):
+        mock_resolve.side_effect = lambda text: {"Tritanium": 34}.get(str(text).strip())
+        mock_get_type_name.side_effect = lambda type_id: {34: "Tritanium"}.get(int(type_id), f"Type {type_id}")
+
+        rows, errors = _parse_request_item_lines("Tritanium\t1,000\t4.50 m3")
+
+        self.assertEqual(errors, [])
+        self.assertEqual(rows, [{"type_id": 34, "quantity": 1000}])

@@ -50,8 +50,8 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">{% trans "Items (one line each)" %}</label>
-                            <textarea name="items_text" class="form-control" rows="10" placeholder="34, 100000&#10;Arkonor x 5000">{{ items_text }}</textarea>
-                            <div class="form-text">{% trans "Formats supported" %}: <code>type_id, quantity</code> {% trans "or" %} <code>item name x quantity</code>.</div>
+                            <textarea name="items_text" class="form-control" rows="10" placeholder="34, 100000&#10;Arkonor x 5000&#10;Arkonor&#9;5000">{{ items_text }}</textarea>
+                            <div class="form-text">{% trans "Formats supported" %}: <code>type_id, quantity</code>, <code>item name x quantity</code>, {% trans "or" %} <code>item name[TAB]quantity</code>.</div>
                         </div>
                         <div class="d-flex flex-wrap gap-2">
                             <button type="submit" name="action" value="estimate" class="btn btn-outline-primary">

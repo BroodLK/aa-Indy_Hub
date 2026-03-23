@@ -79,7 +79,7 @@
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Character" %}</label>
-                                <select name="character_id" class="form-select" onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
+                                <select name="character_id" class="form-select" data-refresh-trigger="true">
                                     {% for row in character_rows %}
                                     <option value="{{ row.character_id }}" {% if selected_character_id == row.character_id %}selected{% endif %}>
                                         {{ row.character_name }}{% if row.corporation_name %} ({{ row.corporation_name }}){% endif %}
@@ -89,7 +89,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Structure Discovery Corporation" %}</label>
-                                <select name="selected_corporation_id" class="form-select" onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
+                                <select name="selected_corporation_id" class="form-select" data-refresh-trigger="true">
                                     {% for corp in corporation_rows %}
                                     <option value="{{ corp.corporation_id }}" {% if selected_corporation_id == corp.corporation_id %}selected{% endif %}>
                                         {{ corp.corporation_name }}
@@ -100,7 +100,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Clone / Implant Set" %}</label>
-                                <select name="selected_clone_id" class="form-select" {% if not clone_options %}disabled{% endif %} onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
+                                <select name="selected_clone_id" class="form-select" data-refresh-trigger="true" {% if not clone_options %}disabled{% endif %}>
                                     {% for clone in clone_options %}
                                     <option value="{{ clone.clone_id }}" {% if selected_clone_id == clone.clone_id %}selected{% endif %}>
                                         {{ clone.clone_label }}{% if clone.beancounter_implants %} | BC: {{ clone.beancounter_implants|join:", " }}{% endif %}
@@ -117,7 +117,7 @@
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Reprocessing Structure" %}</label>
-                                <select name="structure_id" class="form-select" {% if not structure_options %}disabled{% endif %} onchange="this.form.querySelector('input[name=action]').value='refresh';this.form.submit();">
+                                <select name="structure_id" class="form-select" data-refresh-trigger="true" {% if not structure_options %}disabled{% endif %}>
                                     {% for structure in structure_options %}
                                     <option value="{{ structure.structure_id }}" {% if selected_structure_id == structure.structure_id %}selected{% endif %}>
                                         {{ structure.structure_name }}{% if structure.location_name %} - {{ structure.location_name }}{% endif %}{% if structure.suggested_rig_profile_key != 'none' %} - {{ structure.suggested_rig_profile_name }}{% endif %}
@@ -280,14 +280,15 @@
         if (!form || !indicator) {
             return;
         }
-        form.addEventListener("submit", function () {
+
+        function setLoadingState(action) {
             const actionInput = form.querySelector("input[name='action']");
-            const action = (actionInput && actionInput.value || "").toLowerCase();
+            const normalizedAction = (action || (actionInput && actionInput.value) || "").toLowerCase();
             const textEl = indicator.querySelector("[data-loading-text]");
             let label = "Loading...";
-            if (action === "refresh") {
+            if (normalizedAction === "refresh") {
                 label = "Loading character/structure data...";
-            } else if (action === "submit_application") {
+            } else if (normalizedAction === "submit_application") {
                 label = "Submitting application...";
             } else {
                 label = "Saving profile...";
@@ -296,12 +297,36 @@
                 textEl.textContent = label;
             }
             indicator.classList.remove("d-none");
+        }
 
+        function disableFormInputs() {
             Array.from(form.querySelectorAll("button, input, select, textarea")).forEach(function (el) {
                 if (el.type === "hidden") {
                     return;
                 }
                 el.disabled = true;
+            });
+        }
+
+        form.addEventListener("submit", function () {
+            setLoadingState();
+            disableFormInputs();
+        });
+
+        Array.from(form.querySelectorAll("[data-refresh-trigger='true']")).forEach(function (el) {
+            el.addEventListener("change", function () {
+                const actionInput = form.querySelector("input[name='action']");
+                if (actionInput) {
+                    actionInput.value = "refresh";
+                }
+                if (typeof form.requestSubmit === "function") {
+                    form.requestSubmit();
+                    return;
+                }
+                // Older browsers: manual loading state because form.submit() bypasses submit event.
+                setLoadingState("refresh");
+                disableFormInputs();
+                form.submit();
             });
         });
     })();

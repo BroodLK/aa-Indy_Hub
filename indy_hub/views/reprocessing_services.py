@@ -75,7 +75,7 @@ REPROCESSING_SERVICES_SCOPE_SET = sorted(
 )
 
 _REQUEST_ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:,|;|\|)\s*")
-_REQUEST_ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,]*)$", re.IGNORECASE)
+_REQUEST_ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
 
 _RIG_PROFILE_KEY_BY_NAME_PATTERN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "moon_t2"),
@@ -1000,40 +1000,67 @@ def _resolve_type_id_from_text(type_text: str) -> int | None:
 
 
 def _parse_request_item_lines(raw_text: str) -> tuple[list[dict[str, int]], list[str]]:
+    def _parse_positive_quantity(raw_value: str | int | None) -> int | None:
+        text_value = str(raw_value or "").strip()
+        if not text_value:
+            return None
+        normalized = (
+            text_value.replace("\u00A0", " ")
+            .replace("\u202F", " ")
+            .replace("\u2009", " ")
+            .replace("_", "")
+            .replace("'", "")
+        )
+        compact = normalized.replace(" ", "")
+        if compact.isdigit():
+            parsed = int(compact)
+            return parsed if parsed > 0 else None
+        if re.match(r"^\d{1,3}(?:[.,]\d{3})+$", compact):
+            parsed = int(compact.replace(",", "").replace(".", ""))
+            return parsed if parsed > 0 else None
+        return None
+
     rows_by_type: dict[int, int] = {}
     errors: list[str] = []
     lines = [str(line or "").strip() for line in str(raw_text or "").splitlines()]
     for line in lines:
         if not line:
             continue
-        line_no_commas = line.replace("\t", " ").strip()
         type_part = ""
-        qty_part = ""
+        quantity: int | None = None
 
-        split_parts = _REQUEST_ITEM_LINE_SPLIT_RE.split(line_no_commas, maxsplit=1)
-        if len(split_parts) == 2:
-            type_part, qty_part = split_parts[0], split_parts[1]
-        else:
-            match = _REQUEST_ITEM_QTY_RE.match(line_no_commas)
-            if match:
-                type_part = str(match.group(1))
-                qty_part = str(match.group(2))
+        tab_parts = [str(part or "").strip() for part in line.split("\t") if str(part or "").strip()]
+        if len(tab_parts) >= 2:
+            type_part = tab_parts[0]
+            for quantity_candidate in tab_parts[1:]:
+                quantity = _parse_positive_quantity(quantity_candidate)
+                if quantity is not None:
+                    break
+
+        if not type_part or quantity is None:
+            normalized_line = (
+                line.replace("\u00A0", " ")
+                .replace("\u202F", " ")
+                .replace("\u2009", " ")
+                .strip()
+            )
+            split_parts = _REQUEST_ITEM_LINE_SPLIT_RE.split(normalized_line, maxsplit=1)
+            if len(split_parts) == 2:
+                type_part = split_parts[0]
+                quantity = _parse_positive_quantity(split_parts[1])
             else:
-                space_parts = line_no_commas.rsplit(" ", 1)
-                if len(space_parts) == 2 and space_parts[1].replace(",", "").isdigit():
-                    type_part, qty_part = space_parts[0], space_parts[1]
+                match = _REQUEST_ITEM_QTY_RE.match(normalized_line)
+                if match:
+                    type_part = str(match.group(1))
+                    quantity = _parse_positive_quantity(match.group(2))
+                else:
+                    space_parts = normalized_line.rsplit(" ", 1)
+                    if len(space_parts) == 2:
+                        type_part = space_parts[0]
+                        quantity = _parse_positive_quantity(space_parts[1])
 
         type_part = str(type_part or "").strip()
-        qty_part = str(qty_part or "").strip().replace(",", "")
-        if not type_part or not qty_part:
-            errors.append(line)
-            continue
-
-        if not qty_part.isdigit():
-            errors.append(line)
-            continue
-        quantity = int(qty_part)
-        if quantity <= 0:
+        if not type_part or quantity is None:
             errors.append(line)
             continue
 
