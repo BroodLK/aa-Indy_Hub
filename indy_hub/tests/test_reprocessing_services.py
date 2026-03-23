@@ -1,6 +1,7 @@
 """Tests for reprocessing services models and helpers."""
 
 # Standard Library
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,13 +9,19 @@ from unittest.mock import patch
 # Django
 from django.contrib.auth.models import User
 from django.test import TestCase
+from django.utils import timezone
 
 # Local
 from indy_hub.models import (
+    ESIContract,
+    ESIContractItem,
     ReprocessingServiceProfile,
     ReprocessingServiceRequest,
+    ReprocessingServiceRequestItem,
+    ReprocessingServiceRequestOutput,
     generate_reprocessing_reference,
 )
+from indy_hub.tasks.material_exchange_contracts import auto_progress_reprocessing_requests
 from indy_hub.services.reprocessing import (
     build_reprocessing_estimate,
     compute_estimated_yield_percent,
@@ -351,3 +358,179 @@ class ReprocessingRequestLineParsingTests(TestCase):
 
         self.assertEqual(errors, [])
         self.assertEqual(rows, [{"type_id": 34, "quantity": 1000}])
+
+
+class ReprocessingAutomationTaskTests(TestCase):
+    def setUp(self):
+        self.requester = User.objects.create_user("req_user", password="secret")
+        self.processor = User.objects.create_user("proc_user", password="secret")
+        self.profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=91000001,
+            character_name="Processor Main",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+        self.request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            requester_character_id=90000001,
+            requester_character_name="Requester Main",
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            reward_isk=Decimal("123456.78"),
+            tolerance_percent=Decimal("1.00"),
+        )
+        ReprocessingServiceRequestItem.objects.create(
+            request=self.request,
+            type_id=12345,
+            type_name="Compressed Arkonor",
+            quantity=100,
+        )
+        ReprocessingServiceRequestOutput.objects.create(
+            request=self.request,
+            type_id=34,
+            type_name="Tritanium",
+            expected_quantity=1000,
+        )
+
+    def _create_contract(
+        self,
+        *,
+        contract_id: int,
+        issuer_id: int,
+        assignee_id: int,
+        title: str,
+        status: str = "outstanding",
+        price: Decimal | str = "0",
+        reward: Decimal | str = "0",
+    ) -> ESIContract:
+        now = timezone.now()
+        return ESIContract.objects.create(
+            contract_id=int(contract_id),
+            issuer_id=int(issuer_id),
+            issuer_corporation_id=98000001,
+            assignee_id=int(assignee_id),
+            acceptor_id=0,
+            contract_type="item_exchange",
+            status=str(status),
+            title=str(title),
+            start_location_id=60003760,
+            end_location_id=60003760,
+            price=Decimal(str(price)),
+            reward=Decimal(str(reward)),
+            collateral=Decimal("0"),
+            date_issued=now - timedelta(minutes=5),
+            date_expired=now + timedelta(days=7),
+            corporation_id=98000001,
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    def test_auto_progresses_inbound_and_return_contracts(self, mock_notify_user):
+        inbound = self._create_contract(
+            contract_id=700000001,
+            issuer_id=90000001,
+            assignee_id=91000001,
+            title=f"Inbound {self.request.request_reference}",
+            status="outstanding",
+            price="0",
+            reward="0",
+        )
+        ESIContractItem.objects.create(
+            contract=inbound,
+            record_id=1,
+            type_id=12345,
+            quantity=100,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        auto_progress_reprocessing_requests()
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.inbound_contract_id, inbound.contract_id)
+        self.assertEqual(
+            self.request.status,
+            ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+        )
+        self.assertTrue(
+            any(
+                call.args[1] == "Inbound reprocessing contract sent"
+                for call in mock_notify_user.call_args_list
+            )
+        )
+
+        inbound.status = "in_progress"
+        inbound.acceptor_id = 91000001
+        inbound.date_accepted = timezone.now()
+        inbound.save(update_fields=["status", "acceptor_id", "date_accepted", "last_synced"])
+
+        auto_progress_reprocessing_requests()
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.PROCESSING)
+        self.assertIsNotNone(self.request.inbound_contract_verified_at)
+        self.assertTrue(
+            any(
+                call.args[1] == "Inbound reprocessing contract accepted"
+                for call in mock_notify_user.call_args_list
+            )
+        )
+
+        return_contract = self._create_contract(
+            contract_id=700000002,
+            issuer_id=91000001,
+            assignee_id=90000001,
+            title=f"Return {self.request.request_reference}",
+            status="outstanding",
+            price=self.request.reward_isk,
+            reward="0",
+        )
+        ESIContractItem.objects.create(
+            contract=return_contract,
+            record_id=2,
+            type_id=34,
+            quantity=1000,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        auto_progress_reprocessing_requests()
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.return_contract_id, return_contract.contract_id)
+        self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.COMPLETED)
+        self.assertIsNotNone(self.request.completed_at)
+        self.assertTrue(
+            any(
+                call.args[1] == "Return reprocessing contract sent"
+                for call in mock_notify_user.call_args_list
+            )
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    def test_auto_marks_disputed_on_inbound_item_mismatch(self, mock_notify_user):
+        bad_inbound = self._create_contract(
+            contract_id=700000003,
+            issuer_id=90000001,
+            assignee_id=91000001,
+            title=f"Inbound {self.request.request_reference}",
+            status="outstanding",
+            price="0",
+            reward="0",
+        )
+        ESIContractItem.objects.create(
+            contract=bad_inbound,
+            record_id=3,
+            type_id=12345,
+            quantity=99,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        auto_progress_reprocessing_requests()
+        self.request.refresh_from_db()
+        self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.DISPUTED)
+        self.assertIn("Inbound contract items", self.request.dispute_reason)
+        self.assertGreaterEqual(mock_notify_user.call_count, 2)
+        titles = [call.args[1] for call in mock_notify_user.call_args_list]
+        self.assertTrue(all(title == "Reprocessing contract anomaly" for title in titles))

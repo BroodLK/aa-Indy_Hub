@@ -65,6 +65,7 @@ from indy_hub.models import (
     MaterialExchangeTransaction,
     NotificationWebhook,
     NotificationWebhookMessage,
+    ReprocessingServiceRequest,
 )
 from indy_hub.notifications import (
     notify_multi,
@@ -86,6 +87,11 @@ from indy_hub.services.esi_client import (
     get_retry_after_seconds,
     shared_client,
 )
+from indy_hub.services.reprocessing import (
+    aggregate_contract_items_by_type,
+    contract_items_match_exact,
+    contract_items_match_with_tolerance,
+)
 from indy_hub.utils.analytics import emit_analytics_event
 from indy_hub.utils.eve import get_type_name
 
@@ -96,6 +102,28 @@ _structure_name_cache: dict[int, str] = {}
 _type_market_group_cache: dict[int, int | None] = {}
 _market_group_children_cache: dict[int | None, set[int]] | None = None
 _expanded_group_cache: dict[tuple[int, ...], set[int]] = {}
+
+_REPROCESSING_SENT_STATUSES = {
+    "outstanding",
+    "in_progress",
+    "finished",
+    "finished_issuer",
+    "finished_contractor",
+}
+_REPROCESSING_ACCEPTED_STATUSES = {
+    "in_progress",
+    "finished",
+    "finished_issuer",
+    "finished_contractor",
+}
+_REPROCESSING_FAILED_STATUSES = {
+    "cancelled",
+    "rejected",
+    "failed",
+    "expired",
+    "deleted",
+    "reversed",
+}
 
 
 def _normalize_esi_mapping(payload, *, context: str) -> dict | None:
@@ -374,6 +402,456 @@ def sync_esi_contracts():
             )
 
 
+def _reprocessing_request_detail_link(service_request: ReprocessingServiceRequest) -> str:
+    return f"/indy_hub/reprocessing-services/requests/{int(service_request.id)}/"
+
+
+def _contract_title_contains_request_reference(
+    *,
+    contract_title: str | None,
+    request_reference: str | None,
+) -> bool:
+    title = str(contract_title or "").strip().lower()
+    reference = str(request_reference or "").strip().lower()
+    if not title or not reference:
+        return False
+    return reference in title
+
+
+def _reprocessing_has_note_marker(
+    service_request: ReprocessingServiceRequest,
+    marker: str,
+) -> bool:
+    notes = str(service_request.notes or "")
+    return str(marker or "") in notes
+
+
+def _reprocessing_add_note_marker(
+    service_request: ReprocessingServiceRequest,
+    marker: str,
+) -> bool:
+    marker_text = str(marker or "").strip()
+    if not marker_text:
+        return False
+    if _reprocessing_has_note_marker(service_request, marker_text):
+        return False
+    notes = str(service_request.notes or "").strip()
+    service_request.notes = (
+        f"{notes}\n{marker_text}" if notes else marker_text
+    )
+    return True
+
+
+def _reprocessing_expected_input_map(
+    service_request: ReprocessingServiceRequest,
+) -> dict[int, int]:
+    return {
+        int(item.type_id): int(item.quantity)
+        for item in service_request.items.all()
+        if int(item.quantity or 0) > 0
+    }
+
+
+def _reprocessing_expected_output_map(
+    service_request: ReprocessingServiceRequest,
+) -> dict[int, int]:
+    return {
+        int(output.type_id): int(output.expected_quantity)
+        for output in service_request.expected_outputs.all()
+        if int(output.expected_quantity or 0) > 0
+    }
+
+
+def _reprocessing_find_contract_candidate(
+    *,
+    request_reference: str,
+    issuer_id: int,
+    assignee_id: int,
+    exclude_contract_id: int = 0,
+) -> ESIContract | None:
+    if not request_reference or issuer_id <= 0 or assignee_id <= 0:
+        return None
+    queryset = ESIContract.objects.filter(
+        contract_type__iexact="item_exchange",
+        issuer_id=int(issuer_id),
+        assignee_id=int(assignee_id),
+        title__icontains=str(request_reference),
+    ).order_by("-date_issued", "-contract_id")
+    if int(exclude_contract_id or 0) > 0:
+        queryset = queryset.exclude(contract_id=int(exclude_contract_id))
+    return queryset.prefetch_related("items").first()
+
+
+def _is_reprocessing_contract_accepted(
+    *,
+    contract: ESIContract,
+    expected_acceptor_id: int,
+) -> bool:
+    if int(contract.acceptor_id or 0) > 0 and int(expected_acceptor_id or 0) > 0:
+        return int(contract.acceptor_id) == int(expected_acceptor_id)
+    if contract.date_accepted is not None:
+        return True
+    return str(contract.status or "").strip().lower() in _REPROCESSING_ACCEPTED_STATUSES
+
+
+def _validate_reprocessing_inbound_contract(
+    *,
+    service_request: ReprocessingServiceRequest,
+    contract: ESIContract,
+    expected_items_by_type: dict[int, int],
+) -> tuple[bool, str]:
+    if str(contract.contract_type or "").strip().lower() != "item_exchange":
+        return False, "Inbound contract must be Item Exchange."
+    if not _contract_title_contains_request_reference(
+        contract_title=str(contract.title or ""),
+        request_reference=str(service_request.request_reference or ""),
+    ):
+        return False, "Inbound contract title/description is missing request reference."
+    if int(contract.issuer_id or 0) != int(service_request.requester_character_id or 0):
+        return False, "Inbound contract issuer does not match requester character."
+    if int(contract.assignee_id or 0) != int(service_request.processor_character_id or 0):
+        return False, "Inbound contract assignee does not match reprocessor character."
+
+    price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
+    reward = Decimal(str(contract.reward or 0)).quantize(Decimal("0.01"))
+    if price != Decimal("0.00") or reward != Decimal("0.00"):
+        return False, "Inbound contract must have 0 ISK price and 0 ISK reward."
+
+    if str(contract.status or "").strip().lower() in _REPROCESSING_FAILED_STATUSES:
+        return (
+            False,
+            f"Inbound contract moved to {contract.status}.",
+        )
+
+    matches_exact = contract_items_match_exact(
+        contract_items=contract.items.all(),
+        expected_by_type=expected_items_by_type,
+    )
+    if not matches_exact:
+        return (
+            False,
+            "Inbound contract items do not exactly match the submitted source item list.",
+        )
+    return True, ""
+
+
+def _validate_reprocessing_return_contract(
+    *,
+    service_request: ReprocessingServiceRequest,
+    contract: ESIContract,
+    expected_outputs_by_type: dict[int, int],
+) -> tuple[bool, str]:
+    if str(contract.contract_type or "").strip().lower() != "item_exchange":
+        return False, "Return contract must be Item Exchange."
+    if not _contract_title_contains_request_reference(
+        contract_title=str(contract.title or ""),
+        request_reference=str(service_request.request_reference or ""),
+    ):
+        return False, "Return contract title/description is missing request reference."
+    if int(contract.issuer_id or 0) != int(service_request.processor_character_id or 0):
+        return False, "Return contract issuer does not match reprocessor character."
+    if int(contract.assignee_id or 0) != int(service_request.requester_character_id or 0):
+        return False, "Return contract assignee does not match requester character."
+
+    expected_price = Decimal(str(service_request.reward_isk or 0)).quantize(Decimal("0.01"))
+    contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
+    contract_reward = Decimal(str(contract.reward or 0)).quantize(Decimal("0.01"))
+    if contract_price != expected_price or contract_reward != Decimal("0.00"):
+        return (
+            False,
+            "Return contract price/reward does not match expected reprocessing reward.",
+        )
+
+    if str(contract.status or "").strip().lower() in _REPROCESSING_FAILED_STATUSES:
+        return (
+            False,
+            f"Return contract moved to {contract.status}.",
+        )
+
+    matches_tolerance, tolerance_errors = contract_items_match_with_tolerance(
+        contract_items=contract.items.all(),
+        expected_by_type=expected_outputs_by_type,
+        tolerance_percent=Decimal(str(service_request.tolerance_percent or 1)),
+    )
+    if not matches_tolerance:
+        return False, "; ".join(tolerance_errors)
+    return True, ""
+
+
+def _set_reprocessing_request_anomaly(
+    *,
+    service_request: ReprocessingServiceRequest,
+    stage: str,
+    reason: str,
+    contract: ESIContract | None = None,
+) -> None:
+    contract_id = int(getattr(contract, "contract_id", 0) or 0)
+    reason_text = str(reason or "Unknown contract validation failure").strip()
+    signature = hashlib.sha1(reason_text.encode("utf-8")).hexdigest()[:10]
+    marker = (
+        f"[AUTO-REPROC-ANOMALY:{stage}:{contract_id}:{signature}]"
+    )
+    if _reprocessing_has_note_marker(service_request, marker):
+        return
+
+    detail_link = _reprocessing_request_detail_link(service_request)
+    contract_label = f" Contract #{contract_id}." if contract_id > 0 else ""
+    message = (
+        f"Request {service_request.request_reference} has a contract anomaly during {stage}."
+        f"{contract_label}\n\nReason: {reason_text}\n\n"
+        "This request was moved to disputed for admin review."
+    )
+    notify_user(
+        service_request.requester,
+        _("Reprocessing contract anomaly"),
+        _(message),
+        level="warning",
+        link=detail_link,
+    )
+    notify_user(
+        service_request.processor_user,
+        _("Reprocessing contract anomaly"),
+        _(message),
+        level="warning",
+        link=detail_link,
+    )
+
+    service_request.status = ReprocessingServiceRequest.Status.DISPUTED
+    service_request.dispute_reason = reason_text
+    _reprocessing_add_note_marker(service_request, marker)
+    service_request.save(update_fields=["status", "dispute_reason", "notes", "updated_at"])
+
+
+def _process_reprocessing_request_contracts(
+    service_request: ReprocessingServiceRequest,
+) -> None:
+    if service_request.is_terminal:
+        return
+    requester_character_id = int(service_request.requester_character_id or 0)
+    processor_character_id = int(service_request.processor_character_id or 0)
+    if requester_character_id <= 0 or processor_character_id <= 0:
+        return
+
+    detail_link = _reprocessing_request_detail_link(service_request)
+    expected_inputs_by_type = _reprocessing_expected_input_map(service_request)
+    expected_outputs_by_type = _reprocessing_expected_output_map(service_request)
+    now = timezone.now()
+
+    inbound_contract = None
+    inbound_contract_id = int(service_request.inbound_contract_id or 0)
+    if inbound_contract_id > 0:
+        inbound_contract = (
+            ESIContract.objects.filter(contract_id=inbound_contract_id)
+            .prefetch_related("items")
+            .first()
+        )
+    if inbound_contract is None:
+        inbound_contract = _reprocessing_find_contract_candidate(
+            request_reference=str(service_request.request_reference or ""),
+            issuer_id=requester_character_id,
+            assignee_id=processor_character_id,
+        )
+
+    if inbound_contract is not None:
+        inbound_ok, inbound_error = _validate_reprocessing_inbound_contract(
+            service_request=service_request,
+            contract=inbound_contract,
+            expected_items_by_type=expected_inputs_by_type,
+        )
+        if not inbound_ok:
+            _set_reprocessing_request_anomaly(
+                service_request=service_request,
+                stage="inbound",
+                reason=inbound_error,
+                contract=inbound_contract,
+            )
+            return
+
+        updated_fields: set[str] = set()
+        if int(service_request.inbound_contract_id or 0) != int(inbound_contract.contract_id):
+            service_request.inbound_contract_id = int(inbound_contract.contract_id)
+            updated_fields.add("inbound_contract_id")
+        if service_request.status == ReprocessingServiceRequest.Status.REQUEST_SUBMITTED:
+            service_request.status = ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT
+            updated_fields.add("status")
+
+        inbound_status = str(inbound_contract.status or "").strip().lower()
+        sent_marker = f"[AUTO-REPROC-INBOUND-SENT:{int(inbound_contract.contract_id)}]"
+        if (
+            inbound_status in _REPROCESSING_SENT_STATUSES
+            and not _reprocessing_has_note_marker(service_request, sent_marker)
+        ):
+            notify_user(
+                service_request.processor_user,
+                _("Inbound reprocessing contract sent"),
+                _(
+                    "Requester %(character)s sent inbound contract %(contract)s for %(reference)s."
+                )
+                % {
+                    "character": service_request.requester_character_name
+                    or service_request.requester.username,
+                    "contract": f"#{inbound_contract.contract_id}",
+                    "reference": service_request.request_reference,
+                },
+                level="info",
+                link=detail_link,
+            )
+            if _reprocessing_add_note_marker(service_request, sent_marker):
+                updated_fields.add("notes")
+
+        accepted_marker = (
+            f"[AUTO-REPROC-INBOUND-ACCEPTED:{int(inbound_contract.contract_id)}]"
+        )
+        if _is_reprocessing_contract_accepted(
+            contract=inbound_contract,
+            expected_acceptor_id=processor_character_id,
+        ):
+            if service_request.inbound_contract_verified_at is None:
+                service_request.inbound_contract_verified_at = now
+                updated_fields.add("inbound_contract_verified_at")
+            if service_request.status in {
+                ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+                ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+                ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+            }:
+                service_request.status = ReprocessingServiceRequest.Status.PROCESSING
+                updated_fields.add("status")
+            if not _reprocessing_has_note_marker(service_request, accepted_marker):
+                notify_user(
+                    service_request.requester,
+                    _("Inbound reprocessing contract accepted"),
+                    _(
+                        "Inbound contract %(contract)s for %(reference)s was accepted by %(processor)s."
+                    )
+                    % {
+                        "contract": f"#{inbound_contract.contract_id}",
+                        "reference": service_request.request_reference,
+                        "processor": service_request.processor_character_name
+                        or service_request.processor_user.username,
+                    },
+                    level="success",
+                    link=detail_link,
+                )
+                if _reprocessing_add_note_marker(service_request, accepted_marker):
+                    updated_fields.add("notes")
+
+        if updated_fields:
+            service_request.save(update_fields=sorted(updated_fields | {"updated_at"}))
+
+    inbound_complete = bool(service_request.inbound_contract_verified_at)
+    if not inbound_complete:
+        return
+
+    return_contract = None
+    return_contract_id = int(service_request.return_contract_id or 0)
+    if return_contract_id > 0:
+        return_contract = (
+            ESIContract.objects.filter(contract_id=return_contract_id)
+            .prefetch_related("items")
+            .first()
+        )
+    if return_contract is None:
+        return_contract = _reprocessing_find_contract_candidate(
+            request_reference=str(service_request.request_reference or ""),
+            issuer_id=processor_character_id,
+            assignee_id=requester_character_id,
+            exclude_contract_id=int(service_request.inbound_contract_id or 0),
+        )
+    if return_contract is None:
+        return
+
+    return_ok, return_error = _validate_reprocessing_return_contract(
+        service_request=service_request,
+        contract=return_contract,
+        expected_outputs_by_type=expected_outputs_by_type,
+    )
+    if not return_ok:
+        _set_reprocessing_request_anomaly(
+            service_request=service_request,
+            stage="return",
+            reason=return_error,
+            contract=return_contract,
+        )
+        return
+
+    updated_fields: set[str] = set()
+    if int(service_request.return_contract_id or 0) != int(return_contract.contract_id):
+        service_request.return_contract_id = int(return_contract.contract_id)
+        updated_fields.add("return_contract_id")
+
+    return_sent_marker = f"[AUTO-REPROC-RETURN-SENT:{int(return_contract.contract_id)}]"
+    if not _reprocessing_has_note_marker(service_request, return_sent_marker):
+        notify_user(
+            service_request.requester,
+            _("Return reprocessing contract sent"),
+            _(
+                "Reprocessor %(processor)s sent return contract %(contract)s for %(reference)s."
+            )
+            % {
+                "processor": service_request.processor_character_name
+                or service_request.processor_user.username,
+                "contract": f"#{return_contract.contract_id}",
+                "reference": service_request.request_reference,
+            },
+            level="success",
+            link=detail_link,
+        )
+        if _reprocessing_add_note_marker(service_request, return_sent_marker):
+            updated_fields.add("notes")
+
+    if service_request.return_contract_verified_at is None:
+        service_request.return_contract_verified_at = now
+        updated_fields.add("return_contract_verified_at")
+    if service_request.completed_at is None:
+        service_request.completed_at = now
+        updated_fields.add("completed_at")
+    if service_request.status != ReprocessingServiceRequest.Status.COMPLETED:
+        service_request.status = ReprocessingServiceRequest.Status.COMPLETED
+        updated_fields.add("status")
+
+    actual_by_type = aggregate_contract_items_by_type(
+        return_contract.items.filter(is_included=True)
+    )
+    outputs_to_update: list = []
+    for output in service_request.expected_outputs.all():
+        actual_quantity = int(actual_by_type.get(int(output.type_id), 0))
+        if int(output.actual_quantity or 0) != actual_quantity:
+            output.actual_quantity = actual_quantity
+            outputs_to_update.append(output)
+    if outputs_to_update:
+        for output in outputs_to_update:
+            output.save(update_fields=["actual_quantity"])
+
+    if updated_fields:
+        service_request.save(update_fields=sorted(updated_fields | {"updated_at"}))
+
+
+def auto_progress_reprocessing_requests() -> None:
+    active_statuses = [
+        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+        ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+        ReprocessingServiceRequest.Status.PROCESSING,
+        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+    ]
+    requests = (
+        ReprocessingServiceRequest.objects.filter(status__in=active_statuses)
+        .select_related("requester", "processor_user", "processor_profile")
+        .prefetch_related("items", "expected_outputs")
+        .order_by("updated_at")
+    )
+    for service_request in requests:
+        try:
+            _process_reprocessing_request_contracts(service_request)
+        except Exception as exc:
+            logger.error(
+                "Failed automated reprocessing contract processing for request %s: %s",
+                service_request.request_reference or service_request.id,
+                exc,
+                exc_info=True,
+            )
+
+
 @shared_task(
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 2, "countdown": 5},
@@ -412,6 +890,9 @@ def run_material_exchange_cycle():
 
     # Step 5: check completion/payment for approved orders
     check_completed_material_exchange_contracts()
+
+    # Step 6: auto-process reprocessing request contracts
+    auto_progress_reprocessing_requests()
 
 
 def _sync_contracts_for_corporation(corporation_id: int):

@@ -1912,6 +1912,7 @@ def reprocessing_request_create(request, profile_id: int):
     unsupported_inputs: list[dict[str, int]] = []
     estimate_cache_token = ""
     estimate_cache_key = ""
+    submit_blocked_by_estimate_state = False
 
     if request.method == "POST":
         if requester_character_rows and not selected_requester_row:
@@ -1967,12 +1968,22 @@ def reprocessing_request_create(request, profile_id: int):
             if action == "submit_request":
                 submitted_cache_key = str(request.POST.get("estimate_cache_key") or "").strip()
                 submitted_cache_token = str(request.POST.get("estimate_token") or "").strip()
-                if (
-                    submitted_cache_key
-                    and submitted_cache_token
-                    and submitted_cache_token == estimate_cache_token
-                    and submitted_cache_key == estimate_cache_key
+                if not submitted_cache_key or not submitted_cache_token:
+                    submit_blocked_by_estimate_state = True
+                    messages.error(
+                        request,
+                        _("Estimate data is missing. Click Estimate again before submitting."),
+                    )
+                elif (
+                    submitted_cache_token != estimate_cache_token
+                    or submitted_cache_key != estimate_cache_key
                 ):
+                    submit_blocked_by_estimate_state = True
+                    messages.error(
+                        request,
+                        _("Estimate data is out of date. Click Estimate again before submitting."),
+                    )
+                else:
                     cached = cache.get(submitted_cache_key)
                     if isinstance(cached, dict) and str(cached.get("token") or "") == estimate_cache_token:
                         cached_parsed_items = list(cached.get("parsed_items") or [])
@@ -1982,8 +1993,16 @@ def reprocessing_request_create(request, profile_id: int):
                                 estimate_payload = cached_estimate
                                 unsupported_inputs = list(cached.get("unsupported_inputs") or [])
                                 used_cached_estimate = True
+                    if not used_cached_estimate:
+                        submit_blocked_by_estimate_state = True
+                        messages.error(
+                            request,
+                            _(
+                                "Estimate expired or no longer matches your input. Click Estimate again before submitting."
+                            ),
+                        )
 
-            if not used_cached_estimate:
+            if not used_cached_estimate and action != "submit_request":
                 profile_skill_map = (
                     profile.skill_levels
                     if isinstance(profile.skill_levels, dict)
@@ -2053,7 +2072,7 @@ def reprocessing_request_create(request, profile_id: int):
                         timeout=_REPROCESSING_ESTIMATE_CACHE_TTL_SECONDS,
                     )
 
-            if unsupported_inputs:
+            if estimate_payload and unsupported_inputs:
                 unsupported_names = ", ".join(
                     f"{get_type_name(int(row['type_id']))} x{int(row['quantity'])}"
                     for row in unsupported_inputs[:8]
@@ -2063,7 +2082,7 @@ def reprocessing_request_create(request, profile_id: int):
                     _("Some items have no SDE reprocessing outputs and are unsupported: %(items)s")
                     % {"items": unsupported_names},
                 )
-            elif not (estimate_payload.get("outputs") or []):
+            elif estimate_payload and not (estimate_payload.get("outputs") or []):
                 messages.error(request, _("No reprocessing outputs were produced from the submitted inputs."))
 
         if (
@@ -2160,7 +2179,7 @@ def reprocessing_request_create(request, profile_id: int):
             if estimate_cache_key:
                 cache.delete(estimate_cache_key)
             return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
-        elif action == "submit_request":
+        elif action == "submit_request" and not submit_blocked_by_estimate_state:
             messages.error(
                 request,
                 _("Generate a valid estimate first, then submit the request."),
