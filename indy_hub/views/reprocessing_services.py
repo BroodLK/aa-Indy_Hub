@@ -1081,7 +1081,8 @@ def _resolve_type_id_from_text(type_text: str) -> int | None:
         except Exception:
             resolved_type_id = None
 
-    _TYPE_TEXT_LOOKUP_CACHE[cache_key] = resolved_type_id
+    if resolved_type_id:
+        _TYPE_TEXT_LOOKUP_CACHE[cache_key] = resolved_type_id
     return resolved_type_id
 
 
@@ -1869,7 +1870,14 @@ def reprocessing_request_create(request, profile_id: int):
 
         parsed_items, parse_errors = _parse_request_item_lines(items_text)
         if not parsed_items:
-            messages.error(request, _("Enter at least one valid item line."))
+            if parse_errors:
+                messages.error(
+                    request,
+                    _("No valid item lines were parsed. Invalid lines: %(lines)s")
+                    % {"lines": "; ".join(parse_errors[:5])},
+                )
+            else:
+                messages.error(request, _("Enter at least one valid item line."))
         else:
             if parse_errors:
                 messages.warning(
