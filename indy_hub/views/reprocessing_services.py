@@ -2316,7 +2316,7 @@ def reprocessing_request_create(request, profile_id: int):
                 request.user,
                 _("Reprocessing request submitted"),
                 _(
-                    "Your request %(reference)s has been submitted. Follow the inbound contract instructions on the detail page."
+                    "Your request %(reference)s has been submitted. \n\nFollow the contract instructions on the details page."
                 )
                 % {"reference": service_request.request_reference},
                 level="success",
@@ -2326,8 +2326,8 @@ def reprocessing_request_create(request, profile_id: int):
                 profile.user,
                 _("Incoming reprocessing request"),
                 _(
-                    "%(character)s sent a new reprocessing request %(reference)s.\n"
-                    "Create guidance is now available on the request detail page."
+                    "%(character)s sent a new reprocessing request %(reference)s.\n\n"
+                    "Follow the return instructions on the request detail page."
                 )
                 % {
                     "character": selected_requester_character_name,

@@ -663,7 +663,7 @@ def _validate_reprocessing_return_contract(
     if contract_price != expected_price or contract_reward != Decimal("0"):
         return (
             False,
-            "Return contract price/reward does not match expected reprocessing reward.",
+            "Return contract reward does not match expected reprocessing reward.",
         )
 
     if str(contract.status or "").strip().lower() in _REPROCESSING_FAILED_STATUSES:
@@ -698,13 +698,10 @@ def _reprocessing_validation_summary_for_notification(
     stage_key = str(stage or "").strip().lower()
     if stage_key == "inbound":
         return (
-            "Validation passed: title/reference, issuer/assignee, "
-            "0 ISK price/reward, and exact submitted input items matched."
+            "Validation passed."
         )
-    tolerance_value = Decimal(str(tolerance_percent or 1)).quantize(Decimal("0.01"))
     return (
-        "Validation passed: title/reference, issuer/assignee, reward price, "
-        f"0 ISK reward field, and expected output items matched within {tolerance_value}% tolerance."
+        "Validation passed"
     )
 
 
@@ -738,8 +735,7 @@ def _set_reprocessing_request_anomaly(
     contract_label = f" Contract #{contract_id}." if contract_id > 0 else ""
     message = (
         f"Request {service_request.request_reference} has a contract anomaly during {stage}."
-        f"{contract_label}\n\nReason: {reason_text}\n\n"
-        "This request was automatically flagged as a contract anomaly for admin review."
+        f"{contract_label}\n\nReason: {reason_text}"
     )
     notify_user(
         service_request.requester,
@@ -1021,7 +1017,7 @@ def _process_reprocessing_request_contracts(
                 service_request.processor_user,
                 _("Inbound reprocessing contract sent"),
                 _(
-                    "Requester %(character)s sent inbound contract %(contract)s for %(reference)s.\n%(validation)s"
+                    "Requester %(character)s sent contract *%(contract)s* for *%(reference)s*.\n\n%(validation)s"
                 )
                 % {
                     "character": service_request.requester_character_name
