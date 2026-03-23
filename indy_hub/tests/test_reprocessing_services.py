@@ -694,6 +694,8 @@ class ReprocessingAutomationTaskTests(TestCase):
         self.request.refresh_from_db()
         self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.DISPUTED)
         self.assertIn("Inbound contract items", self.request.dispute_reason)
+        self.assertIn("Missing:", self.request.dispute_reason)
+        self.assertIn("expected 100, actual 99", self.request.dispute_reason)
         self.assertGreaterEqual(mock_notify_user.call_count, 2)
         titles = [call.args[1] for call in mock_notify_user.call_args_list]
         self.assertTrue(all(title == "Reprocessing contract anomaly" for title in titles))

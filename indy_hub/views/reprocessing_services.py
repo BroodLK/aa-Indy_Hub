@@ -1332,7 +1332,7 @@ def _build_request_timeline(service_request: ReprocessingServiceRequest) -> list
         timeline.append(
             {
                 "key": ReprocessingServiceRequest.Status.DISPUTED,
-                "label": _("Disputed"),
+                "label": _("Contract anomaly"),
                 "icon": "fa-triangle-exclamation",
                 "done": True,
                 "timestamp": service_request.updated_at,
@@ -1362,6 +1362,16 @@ def _request_status_badge_class(status: str) -> str:
         ReprocessingServiceRequest.Status.DISPUTED: "bg-danger",
         ReprocessingServiceRequest.Status.CANCELLED: "bg-secondary",
     }.get(str(status or ""), "bg-secondary")
+
+
+def _request_status_label(status: str) -> str:
+    status_value = str(status or "")
+    if status_value == ReprocessingServiceRequest.Status.DISPUTED:
+        return str(_("Contract anomaly"))
+    for choice_value, choice_label in ReprocessingServiceRequest.Status.choices:
+        if status_value == str(choice_value):
+            return str(choice_label)
+    return status_value
 
 
 @indy_hub_access_required
@@ -1854,6 +1864,7 @@ def reprocessing_my_requests(request):
         {
             "request": service_request,
             "status_badge_class": _request_status_badge_class(service_request.status),
+            "status_label": _request_status_label(service_request.status),
             "counterparty_name": str(
                 service_request.processor_character_name
                 or getattr(service_request.processor_user, "username", "")
@@ -1867,6 +1878,7 @@ def reprocessing_my_requests(request):
         {
             "request": service_request,
             "status_badge_class": _request_status_badge_class(service_request.status),
+            "status_label": _request_status_label(service_request.status),
             "counterparty_name": str(
                 service_request.requester_character_name
                 or getattr(service_request.requester, "username", "")
@@ -2428,6 +2440,7 @@ def reprocessing_request_detail(request, request_id: int):
 
     context = {
         "service_request": service_request,
+        "status_label": _request_status_label(service_request.status),
         "timeline": _build_request_timeline(service_request),
         "is_requester": is_requester,
         "is_processor": is_processor,
@@ -2793,9 +2806,9 @@ def reprocessing_request_dispute(request, request_id: int):
     detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
     notify_user(
         service_request.requester,
-        _("Reprocessing request disputed"),
+        _("Reprocessing request anomaly"),
         _(
-            "Request %(reference)s has been marked disputed."
+            "Request %(reference)s has been marked as a contract anomaly."
         )
         % {"reference": service_request.request_reference},
         level="warning",
@@ -2803,22 +2816,22 @@ def reprocessing_request_dispute(request, request_id: int):
     )
     notify_user(
         service_request.processor_user,
-        _("Reprocessing request disputed"),
+        _("Reprocessing request anomaly"),
         _(
-            "Request %(reference)s has been marked disputed."
+            "Request %(reference)s has been marked as a contract anomaly."
         )
         % {"reference": service_request.request_reference},
         level="warning",
         link=detail_link,
     )
     _notify_material_exchange_admins(
-        title="Reprocessing request disputed",
+        title="Reprocessing request anomaly",
         message=(
-            f"Request {service_request.request_reference} was disputed.\n"
+            f"Request {service_request.request_reference} was marked as a contract anomaly.\n"
             f"Reason: {dispute_reason}"
         ),
         level="warning",
         link=detail_link,
     )
-    messages.warning(request, _("Request marked as disputed. Material Exchange admins have been notified."))
+    messages.warning(request, _("Request marked as a contract anomaly. Material Exchange admins have been notified."))
     return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)

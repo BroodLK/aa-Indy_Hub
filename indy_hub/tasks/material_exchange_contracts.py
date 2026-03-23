@@ -7,7 +7,7 @@ Handles ESI contract checking, validation, and PM notifications for sell/buy ord
 import hashlib
 import re
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 
 # Third Party
 from celery import shared_task
@@ -473,6 +473,82 @@ def _reprocessing_expected_output_map(
     }
 
 
+def _build_reprocessing_items_mismatch_details(
+    *,
+    expected_by_type: dict[int, int],
+    actual_by_type: dict[int, int],
+    tolerance_percent: Decimal | None = None,
+) -> str:
+    expected: dict[int, int] = {
+        int(type_id): int(qty)
+        for type_id, qty in (expected_by_type or {}).items()
+        if int(qty or 0) > 0
+    }
+    actual: dict[int, int] = {
+        int(type_id): int(qty)
+        for type_id, qty in (actual_by_type or {}).items()
+        if int(qty or 0) > 0
+    }
+
+    if expected == actual and tolerance_percent is None:
+        return ""
+
+    missing_lines: list[str] = []
+    surplus_lines: list[str] = []
+    tolerance_lines: list[str] = []
+
+    tolerance_ratio = (
+        None
+        if tolerance_percent is None
+        else (Decimal(str(tolerance_percent or 0)) / Decimal("100"))
+    )
+
+    for type_id in sorted(set(expected.keys()) | set(actual.keys())):
+        expected_qty = int(expected.get(type_id, 0))
+        actual_qty = int(actual.get(type_id, 0))
+        type_name = str(get_type_name(int(type_id)) or f"Type {int(type_id)}")
+
+        if expected_qty > actual_qty:
+            missing_lines.append(
+                f"- {int(expected_qty - actual_qty):,} {type_name} "
+                f"(expected {expected_qty:,}, actual {actual_qty:,})"
+            )
+        elif actual_qty > expected_qty:
+            surplus_lines.append(
+                f"- {int(actual_qty - expected_qty):,} {type_name} "
+                f"(expected {expected_qty:,}, actual {actual_qty:,})"
+            )
+
+        if (
+            tolerance_ratio is not None
+            and expected_qty > 0
+            and actual_qty > 0
+            and expected_qty != actual_qty
+        ):
+            max_delta = max(
+                1,
+                int(
+                    (Decimal(expected_qty) * tolerance_ratio)
+                    .to_integral_value(rounding=ROUND_CEILING)
+                ),
+            )
+            delta = abs(actual_qty - expected_qty)
+            if delta > max_delta:
+                tolerance_lines.append(
+                    f"- {type_name}: expected {expected_qty:,}, actual {actual_qty:,} "
+                    f"(allowed +/- {max_delta:,})"
+                )
+
+    sections: list[str] = []
+    if missing_lines:
+        sections.append("Missing:\n" + "\n".join(missing_lines))
+    if surplus_lines:
+        sections.append("Surplus:\n" + "\n".join(surplus_lines))
+    if tolerance_lines:
+        sections.append("Out of Tolerance:\n" + "\n".join(tolerance_lines))
+    return "\n\n".join(sections)
+
+
 def _reprocessing_find_contract_candidate(
     *,
     request_reference: str,
@@ -539,9 +615,16 @@ def _validate_reprocessing_inbound_contract(
         expected_by_type=expected_items_by_type,
     )
     if not matches_exact:
+        mismatch_details = _build_reprocessing_items_mismatch_details(
+            expected_by_type=expected_items_by_type,
+            actual_by_type=aggregate_contract_items_by_type(contract.items.all()),
+        )
         return (
             False,
-            "Inbound contract items do not exactly match the submitted source item list.",
+            (
+                "Inbound contract items do not exactly match the submitted source item list."
+                + (f"\n\n{mismatch_details}" if mismatch_details else "")
+            ),
         )
     return True, ""
 
@@ -585,7 +668,15 @@ def _validate_reprocessing_return_contract(
         tolerance_percent=Decimal(str(service_request.tolerance_percent or 1)),
     )
     if not matches_tolerance:
-        return False, "; ".join(tolerance_errors)
+        mismatch_details = _build_reprocessing_items_mismatch_details(
+            expected_by_type=expected_outputs_by_type,
+            actual_by_type=aggregate_contract_items_by_type(contract.items.all()),
+            tolerance_percent=Decimal(str(service_request.tolerance_percent or 1)),
+        )
+        base_error = "; ".join(tolerance_errors)
+        if mismatch_details:
+            return False, f"{base_error}\n\n{mismatch_details}".strip()
+        return False, base_error
     return True, ""
 
 
@@ -623,12 +714,22 @@ def _set_reprocessing_request_anomaly(
     if _reprocessing_has_note_marker(service_request, marker):
         return
 
+    # Persist the disputed status first to avoid sending misleading notifications
+    # if the database write fails.
+    service_request.status = ReprocessingServiceRequest.Status.DISPUTED
+    service_request.dispute_reason = reason_text
+    notes_changed = _reprocessing_add_note_marker(service_request, marker)
+    update_fields = ["status", "dispute_reason", "updated_at"]
+    if notes_changed:
+        update_fields.append("notes")
+    service_request.save(update_fields=update_fields)
+
     detail_link = _reprocessing_request_detail_link(service_request)
     contract_label = f" Contract #{contract_id}." if contract_id > 0 else ""
     message = (
         f"Request {service_request.request_reference} has a contract anomaly during {stage}."
         f"{contract_label}\n\nReason: {reason_text}\n\n"
-        "This request was moved to disputed for admin review."
+        "This request was automatically flagged as a contract anomaly for admin review."
     )
     notify_user(
         service_request.requester,
@@ -644,11 +745,6 @@ def _set_reprocessing_request_anomaly(
         level="warning",
         link=detail_link,
     )
-
-    service_request.status = ReprocessingServiceRequest.Status.DISPUTED
-    service_request.dispute_reason = reason_text
-    _reprocessing_add_note_marker(service_request, marker)
-    service_request.save(update_fields=["status", "dispute_reason", "notes", "updated_at"])
 
 
 def _is_reprocessing_contract_relevant(
