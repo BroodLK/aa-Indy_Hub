@@ -299,18 +299,15 @@
             indicator.classList.remove("d-none");
         }
 
-        function disableFormInputs() {
-            Array.from(form.querySelectorAll("button, input, select, textarea")).forEach(function (el) {
-                if (el.type === "hidden") {
-                    return;
-                }
+        function disableSubmitButtons() {
+            Array.from(form.querySelectorAll("button[type='submit']")).forEach(function (el) {
                 el.disabled = true;
             });
         }
 
         form.addEventListener("submit", function () {
             setLoadingState();
-            disableFormInputs();
+            disableSubmitButtons();
         });
 
         Array.from(form.querySelectorAll("[data-refresh-trigger='true']")).forEach(function (el) {
@@ -325,7 +322,7 @@
                 }
                 // Older browsers: manual loading state because form.submit() bypasses submit event.
                 setLoadingState("refresh");
-                disableFormInputs();
+                disableSubmitButtons();
                 form.submit();
             });
         });

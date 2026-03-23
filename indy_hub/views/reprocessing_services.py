@@ -5,12 +5,13 @@ from __future__ import annotations
 # Standard Library
 from decimal import Decimal, InvalidOperation
 import re
+import unicodedata
 
 # Django
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Permission, User
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -76,6 +77,7 @@ REPROCESSING_SERVICES_SCOPE_SET = sorted(
 
 _REQUEST_ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:,|;|\|)\s*")
 _REQUEST_ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
+_TYPE_TEXT_LOOKUP_CACHE: dict[str, int | None] = {}
 
 _RIG_PROFILE_KEY_BY_NAME_PATTERN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "moon_t2"),
@@ -977,26 +979,110 @@ def _compute_character_proficiency(
 
 
 def _resolve_type_id_from_text(type_text: str) -> int | None:
-    normalized = str(type_text or "").strip()
+    def _normalize_text(value: str | None) -> str:
+        text = unicodedata.normalize("NFKC", str(value or ""))
+        text = (
+            text.replace("\u00A0", " ")
+            .replace("\u202F", " ")
+            .replace("\u2009", " ")
+            .replace("\u2010", "-")
+            .replace("\u2011", "-")
+            .replace("\u2012", "-")
+            .replace("\u2013", "-")
+            .replace("\u2014", "-")
+            .replace("\u2212", "-")
+        )
+        text = re.sub(r"\s*-\s*", "-", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    normalized = _normalize_text(type_text)
     if not normalized:
         return None
     if normalized.isdigit():
         value = int(normalized)
         return value if value > 0 else None
 
+    cache_key = normalized.casefold()
+    if cache_key in _TYPE_TEXT_LOOKUP_CACHE:
+        return _TYPE_TEXT_LOOKUP_CACHE[cache_key]
+
+    candidates: list[str] = [normalized]
+    if "-" in normalized:
+        candidates.append(normalized.replace("-", " "))
+    grade_dash = re.sub(r"(?i)\b([ivx]+)\s+grade\b", r"\1-Grade", normalized)
+    grade_space = re.sub(r"(?i)\b([ivx]+)-grade\b", r"\1 Grade", normalized)
+    candidates.extend([grade_dash, grade_space])
+    deduped_candidates: list[str] = []
+    seen_candidate_keys: set[str] = set()
+    for candidate in candidates:
+        key = _normalize_text(candidate).casefold()
+        if not key or key in seen_candidate_keys:
+            continue
+        seen_candidate_keys.add(key)
+        deduped_candidates.append(_normalize_text(candidate))
+
+    resolved_type_id: int | None = None
     try:
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
-    except Exception:
-        return None
 
-    try:
-        exact_match = ItemType.objects.filter(name__iexact=normalized).values_list("id", flat=True).first()
+        for candidate in deduped_candidates:
+            exact_match = (
+                ItemType.objects.filter(name__iexact=candidate)
+                .values_list("id", flat=True)
+                .first()
+            )
+            if exact_match:
+                resolved_type_id = int(exact_match)
+                break
     except Exception:
-        exact_match = None
-    if exact_match:
-        return int(exact_match)
-    return None
+        resolved_type_id = None
+
+    if not resolved_type_id:
+        try:
+            with connection.cursor() as cursor:
+                for candidate in deduped_candidates:
+                    cursor.execute(
+                        "SELECT id FROM eve_sde_itemtype WHERE lower(name)=lower(%s) LIMIT 1",
+                        [candidate],
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        resolved_type_id = int(row[0])
+                        break
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM eve_sde_itemtype
+                        WHERE lower(
+                            replace(
+                                replace(
+                                    replace(
+                                        replace(name, %s, '-'),
+                                        %s,
+                                        '-'
+                                    ),
+                                    %s,
+                                    '-'
+                                ),
+                                %s,
+                                '-'
+                            )
+                        ) = lower(%s)
+                        LIMIT 1
+                        """,
+                        ["\u2011", "\u2013", "\u2014", "\u2212", candidate],
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        resolved_type_id = int(row[0])
+                        break
+        except Exception:
+            resolved_type_id = None
+
+    _TYPE_TEXT_LOOKUP_CACHE[cache_key] = resolved_type_id
+    return resolved_type_id
 
 
 def _parse_request_item_lines(raw_text: str) -> tuple[list[dict[str, int]], list[str]]:
@@ -1784,13 +1870,13 @@ def reprocessing_request_create(request, profile_id: int):
         parsed_items, parse_errors = _parse_request_item_lines(items_text)
         if not parsed_items:
             messages.error(request, _("Enter at least one valid item line."))
-        elif parse_errors:
-            messages.error(
-                request,
-                _("Some item lines are invalid and could not be parsed: %(lines)s")
-                % {"lines": "; ".join(parse_errors[:5])},
-            )
         else:
+            if parse_errors:
+                messages.warning(
+                    request,
+                    _("Some item lines are invalid and were ignored: %(lines)s")
+                    % {"lines": "; ".join(parse_errors[:5])},
+                )
             profile_skill_map = (
                 profile.skill_levels
                 if isinstance(profile.skill_levels, dict)
