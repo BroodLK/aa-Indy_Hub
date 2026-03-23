@@ -1749,6 +1749,7 @@ def reprocessing_request_create(request, profile_id: int):
                 "parse_errors": [],
                 "estimate_payload": None,
                 "unsupported_rows": [],
+                "estimate_ready": False,
             }
             context.update(_build_nav_context(request.user, active_tab="reprocessing"))
             return render(request, "indy_hub/reprocessing_services/request_create.html", context)
@@ -1921,6 +1922,11 @@ def reprocessing_request_create(request, profile_id: int):
                 % {"processor": profile.character_name},
             )
             return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+        elif action == "submit_request":
+            messages.error(
+                request,
+                _("Generate a valid estimate first, then submit the request."),
+            )
 
     parsed_item_rows = [
         {
@@ -1938,6 +1944,13 @@ def reprocessing_request_create(request, profile_id: int):
         }
         for row in unsupported_inputs
     ]
+    estimate_ready = bool(
+        estimate_payload
+        and (estimate_payload.get("outputs") or [])
+        and not unsupported_inputs
+        and parsed_items
+        and not parse_errors
+    )
 
     context = {
         "profile": profile,
@@ -1950,6 +1963,7 @@ def reprocessing_request_create(request, profile_id: int):
         "parse_errors": parse_errors,
         "estimate_payload": estimate_payload,
         "unsupported_rows": unsupported_rows,
+        "estimate_ready": estimate_ready,
     }
     context.update(_build_nav_context(request.user, active_tab="reprocessing"))
     return render(request, "indy_hub/reprocessing_services/request_create.html", context)
@@ -2317,26 +2331,25 @@ def reprocessing_request_cancel(request, request_id: int):
         messages.error(request, _("This request is already closed."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
 
-    cancel_reason = str(request.POST.get("cancel_reason") or "").strip()
-    if cancel_reason:
-        service_request.notes = f"{service_request.notes}\n\nCancel reason: {cancel_reason}".strip()
-    service_request.status = ReprocessingServiceRequest.Status.CANCELLED
-    service_request.cancelled_at = timezone.now()
-    service_request.save(update_fields=["status", "cancelled_at", "notes", "updated_at"])
+    request_reference = service_request.request_reference
+    processor_user = service_request.processor_user
+    browse_link = reverse("indy_hub:reprocessing_browse")
+    service_request.delete()
 
-    detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
-    notify_user(
-        service_request.processor_user,
-        _("Reprocessing request cancelled"),
-        _(
-            "Request %(reference)s was cancelled by the requester."
+    if processor_user and processor_user.id != request.user.id:
+        notify_user(
+            processor_user,
+            _("Reprocessing request cancelled"),
+            _(
+                "Request %(reference)s was cancelled by the requester and removed."
+            )
+            % {"reference": request_reference},
+            level="warning",
+            link=browse_link,
         )
-        % {"reference": service_request.request_reference},
-        level="warning",
-        link=detail_link,
-    )
-    messages.success(request, _("Request cancelled."))
-    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    messages.success(request, _("Request cancelled and removed."))
+    return redirect("indy_hub:index")
 
 
 @indy_hub_access_required

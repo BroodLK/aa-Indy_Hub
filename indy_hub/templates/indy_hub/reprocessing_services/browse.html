@@ -8,10 +8,41 @@
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
 <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+<style>
+    .reprocessing-browse-page .blueprint-list-group {
+        --bp-list-font-scale: 1.25;
+    }
+
+    .reprocessing-browse-page .blueprint-list-content {
+        text-transform: none;
+        letter-spacing: 0.02em;
+        color: var(--bs-body-color);
+    }
+
+    .reprocessing-browse-page .blueprint-list-content .small {
+        font-size: 0.9rem !important;
+        line-height: 1.35;
+        color: var(--bs-body-color) !important;
+    }
+
+    .reprocessing-browse-page .blueprint-list-item .badge {
+        font-size: 0.78rem;
+    }
+
+    .reprocessing-browse-page .blueprint-list-item .btn.btn-sm {
+        font-size: 0.9rem;
+    }
+
+    @media (max-width: 575.98px) {
+        .reprocessing-browse-page .blueprint-list-group {
+            --bp-list-font-scale: 1.1;
+        }
+    }
+</style>
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
+<div class="container-fluid py-4 reprocessing-browse-page">
     <div class="page-header mb-4">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
             <div>

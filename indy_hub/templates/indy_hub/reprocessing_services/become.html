@@ -67,7 +67,12 @@
                     </div>
                     {% endif %}
 
-                    <form method="post">
+                    <div id="becomeLoadingIndicator" class="alert alert-info d-none mb-3">
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span data-loading-text>{% trans "Loading..." %}</span>
+                    </div>
+
+                    <form method="post" id="reprocessingBecomeForm">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="save_profile">
 
@@ -265,3 +270,40 @@
     {% endif %}
 </div>
 {% endblock content %}
+
+{% block extra_javascript %}
+{{ block.super }}
+<script>
+    (function () {
+        const form = document.getElementById("reprocessingBecomeForm");
+        const indicator = document.getElementById("becomeLoadingIndicator");
+        if (!form || !indicator) {
+            return;
+        }
+        form.addEventListener("submit", function () {
+            const actionInput = form.querySelector("input[name='action']");
+            const action = (actionInput && actionInput.value || "").toLowerCase();
+            const textEl = indicator.querySelector("[data-loading-text]");
+            let label = "Loading...";
+            if (action === "refresh") {
+                label = "Loading character/structure data...";
+            } else if (action === "submit_application") {
+                label = "Submitting application...";
+            } else {
+                label = "Saving profile...";
+            }
+            if (textEl) {
+                textEl.textContent = label;
+            }
+            indicator.classList.remove("d-none");
+
+            Array.from(form.querySelectorAll("button, input, select, textarea")).forEach(function (el) {
+                if (el.type === "hidden") {
+                    return;
+                }
+                el.disabled = true;
+            });
+        });
+    })();
+</script>
+{% endblock extra_javascript %}

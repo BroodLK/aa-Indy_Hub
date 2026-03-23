@@ -33,7 +33,12 @@
                     <h5 class="mb-0">{% trans "Input Items" %}</h5>
                 </div>
                 <div class="card-body">
-                    <form method="post">
+                    <div id="requestLoadingIndicator" class="alert alert-info d-none mb-3">
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span data-loading-text>{% trans "Processing..." %}</span>
+                    </div>
+
+                    <form method="post" id="reprocessingEstimateForm">
                         {% csrf_token %}
                         <div class="mb-3">
                             <label class="form-label fw-semibold">{% trans "Requester Character" %}</label>
@@ -51,9 +56,6 @@
                         <div class="d-flex flex-wrap gap-2">
                             <button type="submit" name="action" value="estimate" class="btn btn-outline-primary">
                                 <i class="fas fa-calculator me-1"></i>{% trans "Estimate" %}
-                            </button>
-                            <button type="submit" name="action" value="submit_request" class="btn btn-success">
-                                <i class="fas fa-paper-plane me-1"></i>{% trans "Submit Request" %}
                             </button>
                         </div>
                     </form>
@@ -132,6 +134,17 @@
                             <span class="fw-semibold">{% trans "Processor Reward" %}</span>
                             <span class="fw-bold text-warning">{{ estimate_payload.reward_isk|floatformat:2|intcomma }} ISK</span>
                         </div>
+                        {% if estimate_ready %}
+                        <form method="post" id="reprocessingSubmitForm" class="mt-3">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="submit_request">
+                            <input type="hidden" name="requester_character_id" value="{{ selected_requester_character_id }}">
+                            <textarea name="items_text" class="d-none">{{ items_text }}</textarea>
+                            <button type="submit" class="btn btn-success w-100">
+                                <i class="fas fa-paper-plane me-1"></i>{% trans "Submit Request" %}
+                            </button>
+                        </form>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -150,3 +163,38 @@
     </div>
 </div>
 {% endblock content %}
+
+{% block extra_javascript %}
+{{ block.super }}
+<script>
+    (function () {
+        const indicator = document.getElementById("requestLoadingIndicator");
+        if (!indicator) {
+            return;
+        }
+
+        function bindLoading(formId, label) {
+            const form = document.getElementById(formId);
+            if (!form) {
+                return;
+            }
+            form.addEventListener("submit", function () {
+                const textEl = indicator.querySelector("[data-loading-text]");
+                if (textEl) {
+                    textEl.textContent = label;
+                }
+                indicator.classList.remove("d-none");
+                Array.from(form.querySelectorAll("button, input, select, textarea")).forEach(function (el) {
+                    if (el.type === "hidden") {
+                        return;
+                    }
+                    el.disabled = true;
+                });
+            });
+        }
+
+        bindLoading("reprocessingEstimateForm", "Generating estimate...");
+        bindLoading("reprocessingSubmitForm", "Submitting request...");
+    })();
+</script>
+{% endblock extra_javascript %}
