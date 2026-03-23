@@ -2429,7 +2429,7 @@ def reprocessing_request_detail(request, request_id: int):
         ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
     }
     can_verify_return = (is_requester or is_processor or is_admin) and status == ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT
-    can_cancel = (is_requester or is_admin) and not service_request.is_terminal
+    can_cancel = (is_requester or is_admin) and status != ReprocessingServiceRequest.Status.COMPLETED
     can_dispute = (is_requester or is_processor or is_admin) and not service_request.is_terminal
 
     inbound_contract = (
@@ -2503,7 +2503,7 @@ def reprocessing_request_submit_inbound(request, request_id: int):
         messages.error(request, _("Enter a valid inbound contract ID."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
 
-    if service_request.is_terminal:
+    if service_request.status == ReprocessingServiceRequest.Status.COMPLETED:
         messages.error(request, _("This request is already closed."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
     if service_request.status not in {

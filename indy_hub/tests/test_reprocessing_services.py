@@ -277,6 +277,98 @@ class ReprocessingMyRequestsViewTests(TestCase):
         )
 
 
+class ReprocessingCancelRequestTests(TestCase):
+    def setUp(self):
+        self.requester = User.objects.create_user("cancel_requester", password="secret")
+        self.processor = User.objects.create_user("cancel_processor", password="secret")
+        permission = Permission.objects.get(
+            content_type__app_label="indy_hub",
+            codename="can_access_indy_hub",
+        )
+        self.requester.user_permissions.add(permission)
+        self.processor.user_permissions.add(permission)
+        self.profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=95000001,
+            character_name="Cancel Processor",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+
+    @patch("indy_hub.views.reprocessing_services.notify_user")
+    def test_requester_can_cancel_disputed_request(self, _mock_notify):
+        service_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            requester_character_id=95010001,
+            requester_character_name="Cancel Client",
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.DISPUTED,
+            dispute_reason="auto anomaly",
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("indy_hub:index"))
+        self.assertFalse(
+            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
+        )
+
+    def test_disputed_request_detail_shows_cancel_permission_for_requester(self):
+        service_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            requester_character_id=95010003,
+            requester_character_name="Cancel Client 3",
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.DISPUTED,
+            dispute_reason="auto anomaly",
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.get(
+            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["can_cancel"])
+
+    @patch("indy_hub.views.reprocessing_services.notify_user")
+    def test_requester_cannot_cancel_completed_request(self, _mock_notify):
+        service_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            requester_character_id=95010002,
+            requester_character_name="Cancel Client 2",
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.COMPLETED,
+            completed_at=timezone.now(),
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]),
+        )
+        self.assertTrue(
+            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
+        )
+
 class ReprocessingContractMatcherTests(TestCase):
     def test_exact_match_requires_same_types_and_quantities(self):
         items = [
