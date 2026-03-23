@@ -124,6 +124,17 @@ _REPROCESSING_FAILED_STATUSES = {
     "deleted",
     "reversed",
 }
+_REPROCESSING_CONTRACT_ITEM_SYNC_STATUSES = {
+    "outstanding",
+    "in_progress",
+}
+_ACTIVE_REPROCESSING_STATUSES = [
+    ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+    ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+    ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+    ReprocessingServiceRequest.Status.PROCESSING,
+    ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+]
 
 
 def _normalize_esi_mapping(payload, *, context: str) -> dict | None:
@@ -578,6 +589,24 @@ def _validate_reprocessing_return_contract(
     return True, ""
 
 
+def _reprocessing_validation_summary_for_notification(
+    *,
+    stage: str,
+    tolerance_percent: Decimal | None = None,
+) -> str:
+    stage_key = str(stage or "").strip().lower()
+    if stage_key == "inbound":
+        return (
+            "Validation passed: title/reference, issuer/assignee, "
+            "0 ISK price/reward, and exact submitted input items matched."
+        )
+    tolerance_value = Decimal(str(tolerance_percent or 1)).quantize(Decimal("0.01"))
+    return (
+        "Validation passed: title/reference, issuer/assignee, reward price, "
+        f"0 ISK reward field, and expected output items matched within {tolerance_value}% tolerance."
+    )
+
+
 def _set_reprocessing_request_anomaly(
     *,
     service_request: ReprocessingServiceRequest,
@@ -620,6 +649,204 @@ def _set_reprocessing_request_anomaly(
     service_request.dispute_reason = reason_text
     _reprocessing_add_note_marker(service_request, marker)
     service_request.save(update_fields=["status", "dispute_reason", "notes", "updated_at"])
+
+
+def _is_reprocessing_contract_relevant(
+    *,
+    contract_title: str | None,
+    active_references_upper: set[str],
+) -> bool:
+    title_upper = str(contract_title or "").strip().upper()
+    if not title_upper:
+        return False
+    if any(ref in title_upper for ref in active_references_upper):
+        return True
+    return "REPROCESSING" in title_upper or "REPROC" in title_upper
+
+
+def sync_reprocessing_character_contracts() -> None:
+    active_rows = list(
+        ReprocessingServiceRequest.objects.filter(status__in=_ACTIVE_REPROCESSING_STATUSES)
+        .values("request_reference", "requester_character_id", "processor_character_id")
+    )
+    if not active_rows:
+        return
+
+    active_references_upper = {
+        str(row.get("request_reference") or "").strip().upper()
+        for row in active_rows
+        if str(row.get("request_reference") or "").strip()
+    }
+    participant_character_ids = sorted(
+        {
+            int(row.get("requester_character_id") or 0)
+            for row in active_rows
+            if int(row.get("requester_character_id") or 0) > 0
+        }
+        | {
+            int(row.get("processor_character_id") or 0)
+            for row in active_rows
+            if int(row.get("processor_character_id") or 0) > 0
+        }
+    )
+    if not participant_character_ids:
+        return
+
+    synced_contract_count = 0
+    synced_item_count = 0
+    synced_items_contract_ids: set[int] = set()
+    for character_id in participant_character_ids:
+        try:
+            contracts = shared_client.fetch_character_contracts(character_id=character_id)
+        except ESIUnmodifiedError:
+            continue
+        except ESIRateLimitError as exc:
+            logger.warning(
+                "ESI rate limit during reprocessing character contract sync for %s: %s",
+                character_id,
+                exc,
+            )
+            continue
+        except (ESITokenError, ESIForbiddenError) as exc:
+            logger.debug(
+                "Skipping reprocessing character contract sync for %s: %s",
+                character_id,
+                exc,
+            )
+            continue
+        except Exception as exc:
+            logger.warning(
+                "Failed fetching character contracts for reprocessing character %s: %s",
+                character_id,
+                exc,
+            )
+            continue
+
+        if not isinstance(contracts, list):
+            logger.warning(
+                "Unexpected payload type for character contracts (%s): %s",
+                character_id,
+                type(contracts).__name__,
+            )
+            continue
+
+        for contract_data in contracts:
+            contract_payload = _normalize_esi_mapping(
+                contract_data,
+                context=f"reprocessing character contract ({character_id})",
+            )
+            if not contract_payload:
+                continue
+
+            contract_id = int(contract_payload.get("contract_id") or 0)
+            if contract_id <= 0:
+                continue
+
+            contract_title = str(contract_payload.get("title") or "")
+            if not _is_reprocessing_contract_relevant(
+                contract_title=contract_title,
+                active_references_upper=active_references_upper,
+            ):
+                continue
+
+            issuer_corporation_id = int(contract_payload.get("issuer_corporation_id") or 0)
+            contract, _created = ESIContract.objects.update_or_create(
+                contract_id=contract_id,
+                defaults={
+                    "issuer_id": int(contract_payload.get("issuer_id") or 0),
+                    "issuer_corporation_id": issuer_corporation_id,
+                    "assignee_id": int(contract_payload.get("assignee_id") or 0),
+                    "acceptor_id": int(contract_payload.get("acceptor_id") or 0),
+                    "contract_type": str(contract_payload.get("type") or "unknown"),
+                    "status": str(contract_payload.get("status") or "unknown"),
+                    "title": contract_title,
+                    "start_location_id": contract_payload.get("start_location_id"),
+                    "end_location_id": contract_payload.get("end_location_id"),
+                    "price": Decimal(str(contract_payload.get("price") or 0)),
+                    "reward": Decimal(str(contract_payload.get("reward") or 0)),
+                    "collateral": Decimal(str(contract_payload.get("collateral") or 0)),
+                    "date_issued": contract_payload.get("date_issued") or timezone.now(),
+                    "date_expired": contract_payload.get("date_expired")
+                    or (timezone.now() + timedelta(days=7)),
+                    "date_accepted": contract_payload.get("date_accepted"),
+                    "date_completed": contract_payload.get("date_completed"),
+                    # Character contracts are not owned by a specific corp cache scope.
+                    "corporation_id": 0,
+                },
+            )
+            synced_contract_count += 1
+
+            contract_status = str(contract_payload.get("status") or "").strip().lower()
+            if (
+                str(contract_payload.get("type") or "").strip().lower() != "item_exchange"
+                or contract_status not in _REPROCESSING_CONTRACT_ITEM_SYNC_STATUSES
+                or contract_id in synced_items_contract_ids
+            ):
+                continue
+
+            try:
+                contract_items = shared_client.fetch_character_contract_items(
+                    character_id=character_id,
+                    contract_id=contract_id,
+                )
+            except ESIUnmodifiedError:
+                synced_items_contract_ids.add(contract_id)
+                continue
+            except ESIClientError as exc:
+                if "404" in str(exc):
+                    logger.debug(
+                        "No character contract items available for %s (404).",
+                        contract_id,
+                    )
+                else:
+                    logger.warning(
+                        "Failed fetching character contract items for %s: %s",
+                        contract_id,
+                        exc,
+                    )
+                continue
+            except Exception as exc:
+                logger.warning(
+                    "Failed fetching character contract items for %s: %s",
+                    contract_id,
+                    exc,
+                )
+                continue
+
+            if not isinstance(contract_items, list):
+                logger.warning(
+                    "Unexpected payload type for character contract items (%s): %s",
+                    contract_id,
+                    type(contract_items).__name__,
+                )
+                continue
+
+            ESIContractItem.objects.filter(contract=contract).delete()
+            for item_data in contract_items:
+                item_payload = _normalize_esi_mapping(
+                    item_data,
+                    context=f"reprocessing character contract item ({contract_id})",
+                )
+                if not item_payload:
+                    continue
+                ESIContractItem.objects.create(
+                    contract=contract,
+                    record_id=int(item_payload.get("record_id") or 0),
+                    type_id=int(item_payload.get("type_id") or 0),
+                    quantity=int(item_payload.get("quantity") or 0),
+                    raw_quantity=item_payload.get("raw_quantity"),
+                    is_included=bool(item_payload.get("is_included", False)),
+                    is_singleton=bool(item_payload.get("is_singleton", False)),
+                )
+                synced_item_count += 1
+            synced_items_contract_ids.add(contract_id)
+
+    if synced_contract_count or synced_item_count:
+        logger.info(
+            "Reprocessing character contract sync completed: %s contracts, %s items.",
+            synced_contract_count,
+            synced_item_count,
+        )
 
 
 def _process_reprocessing_request_contracts(
@@ -681,17 +908,21 @@ def _process_reprocessing_request_contracts(
             inbound_status in _REPROCESSING_SENT_STATUSES
             and not _reprocessing_has_note_marker(service_request, sent_marker)
         ):
+            validation_summary = _reprocessing_validation_summary_for_notification(
+                stage="inbound",
+            )
             notify_user(
                 service_request.processor_user,
                 _("Inbound reprocessing contract sent"),
                 _(
-                    "Requester %(character)s sent inbound contract %(contract)s for %(reference)s."
+                    "Requester %(character)s sent inbound contract %(contract)s for %(reference)s.\n%(validation)s"
                 )
                 % {
                     "character": service_request.requester_character_name
                     or service_request.requester.username,
                     "contract": f"#{inbound_contract.contract_id}",
                     "reference": service_request.request_reference,
+                    "validation": validation_summary,
                 },
                 level="info",
                 link=detail_link,
@@ -781,17 +1012,22 @@ def _process_reprocessing_request_contracts(
 
     return_sent_marker = f"[AUTO-REPROC-RETURN-SENT:{int(return_contract.contract_id)}]"
     if not _reprocessing_has_note_marker(service_request, return_sent_marker):
+        validation_summary = _reprocessing_validation_summary_for_notification(
+            stage="return",
+            tolerance_percent=Decimal(str(service_request.tolerance_percent or 1)),
+        )
         notify_user(
             service_request.requester,
             _("Return reprocessing contract sent"),
             _(
-                "Reprocessor %(processor)s sent return contract %(contract)s for %(reference)s."
+                "Reprocessor %(processor)s sent return contract %(contract)s for %(reference)s.\n%(validation)s"
             )
             % {
                 "processor": service_request.processor_character_name
                 or service_request.processor_user.username,
                 "contract": f"#{return_contract.contract_id}",
                 "reference": service_request.request_reference,
+                "validation": validation_summary,
             },
             level="success",
             link=detail_link,
@@ -827,15 +1063,8 @@ def _process_reprocessing_request_contracts(
 
 
 def auto_progress_reprocessing_requests() -> None:
-    active_statuses = [
-        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
-        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
-        ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
-        ReprocessingServiceRequest.Status.PROCESSING,
-        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
-    ]
     requests = (
-        ReprocessingServiceRequest.objects.filter(status__in=active_statuses)
+        ReprocessingServiceRequest.objects.filter(status__in=_ACTIVE_REPROCESSING_STATUSES)
         .select_related("requester", "processor_user", "processor_profile")
         .prefetch_related("items", "expected_outputs")
         .order_by("updated_at")
@@ -863,35 +1092,43 @@ def run_material_exchange_cycle():
     """
     End-to-end cycle: sync contracts, validate pending sell orders,
     validate pending buy orders, then check completion of approved orders.
+    Reprocessing contract automation runs regardless of Material Exchange config.
     Intended to be scheduled in Celery Beat to simplify orchestration.
     """
+    material_exchange_enabled = True
     try:
-        if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Material Exchange disabled; skipping cycle.")
-            return
+        material_exchange_enabled = bool(MaterialExchangeSettings.get_solo().is_enabled)
     except Exception:
-        pass
+        material_exchange_enabled = True
 
-    if not MaterialExchangeConfig.objects.exists():
-        logger.info("Material Exchange not configured; skipping cycle.")
-        return
+    material_exchange_has_config = bool(MaterialExchangeConfig.objects.exists())
 
-    # Step 1: sync cached contracts
-    sync_esi_contracts()
+    if material_exchange_enabled and material_exchange_has_config:
+        # Step 1: sync cached contracts
+        sync_esi_contracts()
 
-    # Step 2: validate pending sell orders using cached contracts
-    validate_material_exchange_sell_orders()
+        # Step 2: validate pending sell orders using cached contracts
+        validate_material_exchange_sell_orders()
 
-    # Step 3: validate pending buy orders using cached contracts
-    validate_material_exchange_buy_orders()
+        # Step 3: validate pending buy orders using cached contracts
+        validate_material_exchange_buy_orders()
 
-    # Step 4: process capital ship order workflow
-    process_capital_ship_orders()
+        # Step 4: process capital ship order workflow
+        process_capital_ship_orders()
 
-    # Step 5: check completion/payment for approved orders
-    check_completed_material_exchange_contracts()
+        # Step 5: check completion/payment for approved orders
+        check_completed_material_exchange_contracts()
+    else:
+        logger.info(
+            "Skipping Material Exchange contract workflow (enabled=%s, has_config=%s).",
+            material_exchange_enabled,
+            material_exchange_has_config,
+        )
 
-    # Step 6: auto-process reprocessing request contracts
+    # Step 6: sync character contracts used by active reprocessing requests
+    sync_reprocessing_character_contracts()
+
+    # Step 7: auto-process reprocessing request contracts
     auto_progress_reprocessing_requests()
 
 

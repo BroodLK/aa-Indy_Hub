@@ -152,11 +152,6 @@ def setup_periodic_tasks():
                 month_of_year=_cron_value("month_of_year"),
             )
         enabled = True
-        if name == "indy-hub-material-exchange-cycle":
-            try:
-                enabled = MaterialExchangeSettings.get_solo().is_enabled
-            except Exception:
-                enabled = True
 
         args_json = json.dumps([])
         desired_task = conf["task"]

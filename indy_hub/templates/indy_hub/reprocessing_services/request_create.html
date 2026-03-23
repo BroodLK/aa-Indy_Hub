@@ -47,6 +47,15 @@
                                 <option value="{{ row.character_id }}" {% if selected_requester_character_id == row.character_id %}selected{% endif %}>{{ row.character_name }}</option>
                                 {% endfor %}
                             </select>
+                            {% if not requester_has_required_scopes %}
+                            <div class="alert alert-warning mt-2 mb-0">
+                                <i class="fas fa-key me-2"></i>
+                                {% trans "The selected contract-from character is missing required ESI scopes for skills, clones, and contracts." %}
+                                <a href="{{ authorize_url }}" class="btn btn-sm btn-primary ms-2">
+                                    <i class="fas fa-key me-1"></i>{% trans "Authorize Scopes" %}
+                                </a>
+                            </div>
+                            {% endif %}
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">{% trans "Items (one line each)" %}</label>

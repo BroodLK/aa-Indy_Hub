@@ -22,7 +22,11 @@ from indy_hub.models import (
     ReprocessingServiceRequestOutput,
     generate_reprocessing_reference,
 )
-from indy_hub.tasks.material_exchange_contracts import auto_progress_reprocessing_requests
+from indy_hub.tasks.material_exchange_contracts import (
+    auto_progress_reprocessing_requests,
+    run_material_exchange_cycle,
+    sync_reprocessing_character_contracts,
+)
 from indy_hub.services.reprocessing import (
     build_reprocessing_estimate,
     compute_estimated_yield_percent,
@@ -693,3 +697,259 @@ class ReprocessingAutomationTaskTests(TestCase):
         self.assertGreaterEqual(mock_notify_user.call_count, 2)
         titles = [call.args[1] for call in mock_notify_user.call_args_list]
         self.assertTrue(all(title == "Reprocessing contract anomaly" for title in titles))
+
+
+class ReprocessingCharacterContractSyncTests(TestCase):
+    def setUp(self):
+        self.requester = User.objects.create_user("sync_req", password="secret")
+        self.processor = User.objects.create_user("sync_proc", password="secret")
+        self.profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=91010001,
+            character_name="Sync Processor",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+        self.request = ReprocessingServiceRequest.objects.create(
+            request_reference="REPROCESSING-1234567890",
+            requester=self.requester,
+            requester_character_id=90010001,
+            requester_character_name="Sync Requester",
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            reward_isk=Decimal("1000.00"),
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contract_items")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contracts")
+    def test_syncs_character_contracts_for_active_reprocessing_requests(
+        self,
+        mock_fetch_contracts,
+        mock_fetch_contract_items,
+    ):
+        now = timezone.now()
+
+        def _contracts_for_character(character_id: int):
+            if int(character_id) != int(self.request.requester_character_id):
+                return []
+            return [
+                {
+                    "contract_id": 710010001,
+                    "issuer_id": int(self.request.requester_character_id),
+                    "issuer_corporation_id": 98000001,
+                    "assignee_id": int(self.request.processor_character_id),
+                    "acceptor_id": 0,
+                    "type": "item_exchange",
+                    "status": "outstanding",
+                    "title": f"Inbound {self.request.request_reference}",
+                    "start_location_id": 60003760,
+                    "end_location_id": 60003760,
+                    "price": "0",
+                    "reward": "0",
+                    "collateral": "0",
+                    "date_issued": now - timedelta(minutes=2),
+                    "date_expired": now + timedelta(days=7),
+                    "date_accepted": None,
+                    "date_completed": None,
+                }
+            ]
+
+        mock_fetch_contracts.side_effect = _contracts_for_character
+        mock_fetch_contract_items.return_value = [
+            {
+                "record_id": 1,
+                "type_id": 12345,
+                "quantity": 100,
+                "raw_quantity": None,
+                "is_included": True,
+                "is_singleton": False,
+            }
+        ]
+
+        sync_reprocessing_character_contracts()
+
+        contract = ESIContract.objects.get(contract_id=710010001)
+        self.assertEqual(contract.issuer_id, int(self.request.requester_character_id))
+        self.assertEqual(contract.assignee_id, int(self.request.processor_character_id))
+        self.assertIn(self.request.request_reference, contract.title)
+        self.assertEqual(ESIContractItem.objects.filter(contract=contract).count(), 1)
+
+
+class ReprocessingCycleExecutionTests(TestCase):
+    def test_reprocessing_steps_run_when_material_exchange_disabled_or_unconfigured(self):
+        with patch(
+            "indy_hub.tasks.material_exchange_contracts.MaterialExchangeSettings.get_solo",
+            return_value=SimpleNamespace(is_enabled=False),
+        ), patch(
+            "indy_hub.tasks.material_exchange_contracts.MaterialExchangeConfig.objects.exists",
+            return_value=False,
+        ), patch(
+            "indy_hub.tasks.material_exchange_contracts.sync_esi_contracts"
+        ) as mock_sync_esi, patch(
+            "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_sell_orders"
+        ) as mock_validate_sell, patch(
+            "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_buy_orders"
+        ) as mock_validate_buy, patch(
+            "indy_hub.tasks.material_exchange_contracts.process_capital_ship_orders"
+        ) as mock_capital_orders, patch(
+            "indy_hub.tasks.material_exchange_contracts.check_completed_material_exchange_contracts"
+        ) as mock_check_completed, patch(
+            "indy_hub.tasks.material_exchange_contracts.sync_reprocessing_character_contracts"
+        ) as mock_sync_reprocessing, patch(
+            "indy_hub.tasks.material_exchange_contracts.auto_progress_reprocessing_requests"
+        ) as mock_auto_progress:
+            run_material_exchange_cycle()
+
+        mock_sync_esi.assert_not_called()
+        mock_validate_sell.assert_not_called()
+        mock_validate_buy.assert_not_called()
+        mock_capital_orders.assert_not_called()
+        mock_check_completed.assert_not_called()
+        mock_sync_reprocessing.assert_called_once()
+        mock_auto_progress.assert_called_once()
+
+
+class ReprocessingScopeWarningsViewTests(TestCase):
+    def setUp(self):
+        self.requester = User.objects.create_user("scope_req_user", password="secret")
+        self.processor = User.objects.create_user("scope_proc_user", password="secret")
+        permission = Permission.objects.get(
+            content_type__app_label="indy_hub",
+            codename="can_access_indy_hub",
+        )
+        self.requester.user_permissions.add(permission)
+        self.processor.user_permissions.add(permission)
+
+    @patch("indy_hub.views.reprocessing_services._character_has_required_scopes", return_value=False)
+    @patch("indy_hub.views.reprocessing_services._get_user_main_character", return_value=(91020001, "Scope Requester"))
+    @patch(
+        "indy_hub.views.reprocessing_services._get_user_character_rows",
+        return_value=[
+            {
+                "character_id": 91020001,
+                "character_name": "Scope Requester",
+                "corporation_id": 98000001,
+                "corporation_name": "Scope Corp",
+            }
+        ],
+    )
+    def test_request_create_shows_scope_warning_for_selected_contract_from_character(
+        self,
+        _mock_character_rows,
+        _mock_main_character,
+        _mock_scope_check,
+    ):
+        profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=91030001,
+            character_name="Scope Processor",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.get(
+            reverse("indy_hub:reprocessing_request_create", args=[profile.id])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["requester_has_required_scopes"])
+        self.assertEqual(
+            response.context["authorize_url"],
+            reverse("indy_hub:reprocessing_authorize_scopes"),
+        )
+        self.assertContains(
+            response,
+            "The selected contract-from character is missing required ESI scopes",
+        )
+        self.assertContains(response, reverse("indy_hub:reprocessing_authorize_scopes"))
+
+    @patch(
+        "indy_hub.views.reprocessing_services._fetch_reprocessing_structures",
+        return_value=[
+            {
+                "structure_id": 1030,
+                "structure_name": "Tatara Alpha",
+                "structure_type_id": 35836,
+                "structure_type_name": "Tatara",
+                "location_name": "Sakht",
+                "security_bonus_percent": Decimal("0.0"),
+                "structure_bonus_percent": Decimal("0.5"),
+                "suggested_rig_profile_key": "none",
+                "suggested_rig_profile_name": "No rig profile",
+            }
+        ],
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services.fetch_character_clone_options",
+        return_value=[
+            {
+                "clone_id": 1,
+                "clone_label": "Clone 1",
+                "implant_type_ids": [],
+                "implant_names": [],
+                "beancounter_bonus_percent": Decimal("0.0"),
+            }
+        ],
+    )
+    @patch("indy_hub.views.reprocessing_services.fetch_character_skill_levels", return_value={})
+    @patch(
+        "indy_hub.views.reprocessing_services._character_has_required_scopes",
+        side_effect=lambda _user, character_id: int(character_id) == 91020001,
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._get_user_corporation_rows",
+        return_value=[{"corporation_id": 98000001, "corporation_name": "Scope Corp"}],
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._get_user_main_character",
+        return_value=(91020001, "Scope Main"),
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._get_user_character_rows",
+        return_value=[
+            {
+                "character_id": 91020001,
+                "character_name": "Scope Main",
+                "corporation_id": 98000001,
+                "corporation_name": "Scope Corp",
+            }
+        ],
+    )
+    def test_become_shows_scope_warning_for_existing_profile_character(
+        self,
+        _mock_character_rows,
+        _mock_main_character,
+        _mock_corp_rows,
+        _mock_scope_check,
+        _mock_skill_levels,
+        _mock_clones,
+        _mock_structures,
+    ):
+        ReprocessingServiceProfile.objects.create(
+            user=self.requester,
+            character_id=91040001,
+            character_name="Profile Character",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+            structure_name="Old Tatara",
+            structure_location_name="QXW",
+            estimated_yield_percent=Decimal("81.000"),
+            margin_percent=Decimal("5.00"),
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.get(reverse("indy_hub:reprocessing_become"))
+
+        self.assertEqual(response.status_code, 200)
+        existing_profiles = list(response.context["existing_profiles"])
+        self.assertEqual(len(existing_profiles), 1)
+        self.assertFalse(existing_profiles[0].has_required_scopes)
+        self.assertContains(
+            response,
+            "This profile character is missing required ESI scopes.",
+        )
+        self.assertContains(response, reverse("indy_hub:reprocessing_authorize_scopes"))

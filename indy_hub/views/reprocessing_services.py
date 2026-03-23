@@ -71,6 +71,7 @@ REPROCESSING_SERVICES_SCOPE_SET = sorted(
     {
         REPROCESSING_SKILLS_SCOPE,
         REPROCESSING_CLONES_SCOPE,
+        "esi-contracts.read_character_contracts.v1",
         "esi-universe.read_structures.v1",
         "esi-corporations.read_structures.v1",
         "esi-characters.read_corporation_roles.v1",
@@ -932,7 +933,13 @@ def _verify_return_contract(service_request: ReprocessingServiceRequest) -> tupl
 def _character_has_required_scopes(user, character_id: int) -> bool:
     return (
         Token.objects.filter(user=user, character_id=character_id)
-        .require_scopes([REPROCESSING_SKILLS_SCOPE, REPROCESSING_CLONES_SCOPE])
+        .require_scopes(
+            [
+                REPROCESSING_SKILLS_SCOPE,
+                REPROCESSING_CLONES_SCOPE,
+                "esi-contracts.read_character_contracts.v1",
+            ]
+        )
         .require_valid()
         .exists()
     )
@@ -1436,6 +1443,10 @@ def reprocessing_become(request):
     scope_error = ""
 
     if selected_character_id:
+        has_required_scopes = _character_has_required_scopes(
+            request.user,
+            int(selected_character_id),
+        )
         skills_error = False
         clones_error = False
         try:
@@ -1739,6 +1750,10 @@ def reprocessing_become(request):
     for profile in existing_profiles:
         profile.portrait_url = _avatar_url(int(profile.character_id), size=64)
         profile.beancounter_implants = _beancounter_implants(profile.selected_implant_names)
+        profile.has_required_scopes = _character_has_required_scopes(
+            request.user,
+            int(profile.character_id),
+        )
 
     context = {
         "character_rows": character_rows,
@@ -2030,6 +2045,13 @@ def reprocessing_request_create(request, profile_id: int):
         if selected_requester_row
         else (str(main_character_name) if main_character_name else request.user.username)
     )
+    requester_has_required_scopes = True
+    if int(selected_requester_character_id or 0) > 0:
+        requester_has_required_scopes = _character_has_required_scopes(
+            request.user,
+            int(selected_requester_character_id),
+        )
+    authorize_url = reverse("indy_hub:reprocessing_authorize_scopes")
 
     items_text = str(request.POST.get("items_text") or "").strip()
     action = str(request.POST.get("action") or "").strip().lower()
@@ -2050,6 +2072,8 @@ def reprocessing_request_create(request, profile_id: int):
                 "requester_character_rows": requester_character_rows,
                 "selected_requester_character_id": selected_requester_character_id,
                 "selected_requester_character_name": selected_requester_character_name,
+                "requester_has_required_scopes": requester_has_required_scopes,
+                "authorize_url": authorize_url,
                 "items_text": items_text,
                 "parsed_item_rows": [],
                 "parse_errors": [],
@@ -2342,6 +2366,8 @@ def reprocessing_request_create(request, profile_id: int):
         "requester_character_rows": requester_character_rows,
         "selected_requester_character_id": selected_requester_character_id,
         "selected_requester_character_name": selected_requester_character_name,
+        "requester_has_required_scopes": requester_has_required_scopes,
+        "authorize_url": authorize_url,
         "items_text": items_text,
         "parsed_item_rows": parsed_item_rows,
         "parse_errors": parse_errors,
