@@ -1494,7 +1494,7 @@ def _get_user_corporations(user):
 def _get_corp_structures(user, corp_id):
     """Get list of player structures using lazy queryset and resolve names for user's DIRECTOR characters."""
 
-    cache_key = f"indy_hub:material_exchange:corp_structures:v3:{int(corp_id)}"
+    cache_key = f"indy_hub:material_exchange:corp_structures:v4:{int(corp_id)}"
     cached = cache.get(cache_key)
     if cached is not None:
         try:
@@ -1573,15 +1573,25 @@ def _get_corp_structures(user, corp_id):
 
     # Resolve structure names using user's DIRECTOR characters
     # This will use /universe/structures/{structure_id} for each structure
-    structure_names = resolve_structure_names(
-        sorted(loc_ids), character_id=None, corporation_id=int(corp_id), user=user
-    )
+    try:
+        structure_names = resolve_structure_names(
+            sorted(loc_ids),
+            character_id=None,
+            corporation_id=int(corp_id),
+            user=user,
+            schedule_async=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to resolve structure names for corporation %s: %s", corp_id, exc
+        )
+        structure_names = {}
 
     structures: list[dict] = []
     for loc_id in sorted(loc_ids):
-        resolved_name = structure_names.get(loc_id)
-        if not resolved_name or str(resolved_name).startswith(PLACEHOLDER_PREFIX):
-            continue
+        resolved_name = str(structure_names.get(loc_id) or "").strip()
+        if not resolved_name:
+            resolved_name = f"{PLACEHOLDER_PREFIX}{int(loc_id)}"
         structures.append(
             {
                 "id": loc_id,

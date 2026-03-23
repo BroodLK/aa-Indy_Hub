@@ -1,0 +1,127 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+
+{% block page_title %}{% trans "Reprocessing Services" %} - {% trans "Application Review" %}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1"><i class="fas fa-user-check me-2"></i>{% trans "Reprocessor Applications" %}</h2>
+                <p class="description mb-0">{% trans "Approve or reject pending reprocessor profiles." %}</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'indy_hub:reprocessing_browse' %}" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Listings" %}
+                </a>
+            </div>
+        </div>
+        <i class="fas fa-user-check header-bg"></i>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header bg-warning bg-opacity-10">
+            <h5 class="mb-0">{% trans "Pending Applications" %} ({{ pending_profiles|length }})</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if pending_profiles %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Character" %}</th>
+                            <th>{% trans "Structure" %}</th>
+                            <th>{% trans "Yield" %}</th>
+                            <th>{% trans "Margin" %}</th>
+                            <th>{% trans "Actions" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for profile in pending_profiles %}
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">{{ profile.character_name }}</div>
+                                <div class="small text-muted">{{ profile.user.username }}</div>
+                            </td>
+                            <td>
+                                {{ profile.structure_name }}
+                                {% if profile.structure_location_name %}
+                                <div class="small text-muted">{{ profile.structure_location_name }}</div>
+                                {% endif %}
+                            </td>
+                            <td>{{ profile.estimated_yield_percent }}%</td>
+                            <td>{{ profile.margin_percent }}%</td>
+                            <td>
+                                <form method="post" action="{% url 'indy_hub:reprocessing_admin_review' profile.id %}" class="d-flex flex-wrap gap-2">
+                                    {% csrf_token %}
+                                    <input type="text" name="review_notes" class="form-control form-control-sm" placeholder="{% trans 'Review note (optional)' %}" style="max-width: 280px;">
+                                    <div class="form-check form-switch align-self-center">
+                                        <input class="form-check-input" type="checkbox" name="is_available" id="available_{{ profile.id }}" checked>
+                                        <label class="form-check-label small" for="available_{{ profile.id }}">{% trans "Available" %}</label>
+                                    </div>
+                                    <button type="submit" name="action" value="approve" class="btn btn-sm btn-success">
+                                        <i class="fas fa-check me-1"></i>{% trans "Approve" %}
+                                    </button>
+                                    <button type="submit" name="action" value="reject" class="btn btn-sm btn-outline-danger">
+                                        <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-3 text-muted">{% trans "No pending applications." %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header bg-primary bg-opacity-10">
+            <h5 class="mb-0">{% trans "Recently Reviewed" %}</h5>
+        </div>
+        <div class="card-body p-0">
+            {% if reviewed_profiles %}
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Character" %}</th>
+                            <th>{% trans "Status" %}</th>
+                            <th>{% trans "Reviewed By" %}</th>
+                            <th>{% trans "Notes" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for profile in reviewed_profiles %}
+                        <tr>
+                            <td>{{ profile.character_name }}</td>
+                            <td>
+                                {% if profile.approval_status == 'approved' %}
+                                <span class="badge bg-success">{% trans "Approved" %}</span>
+                                {% else %}
+                                <span class="badge bg-danger">{% trans "Rejected" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ profile.reviewed_by|default:"-" }}</td>
+                            <td class="small text-muted">{{ profile.review_notes|default:"-" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="p-3 text-muted">{% trans "No reviewed applications yet." %}</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock content %}

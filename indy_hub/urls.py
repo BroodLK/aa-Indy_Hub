@@ -105,6 +105,24 @@ from .views.material_exchange_orders import (
     sell_order_delete,
     sell_order_detail,
 )
+from .views.reprocessing_services import (
+    reprocessing_admin_applications,
+    reprocessing_admin_review,
+    reprocessing_authorize_scopes,
+    reprocessing_become,
+    reprocessing_browse,
+    reprocessing_request_cancel,
+    reprocessing_request_create,
+    reprocessing_request_detail,
+    reprocessing_request_dispute,
+    reprocessing_request_mark_awaiting_return,
+    reprocessing_request_mark_processing,
+    reprocessing_request_submit_inbound,
+    reprocessing_request_submit_return,
+    reprocessing_request_verify_inbound,
+    reprocessing_request_verify_return,
+    reprocessing_services_index,
+)
 from .views.user import (
     authorize_all,
     authorize_assets,
@@ -509,5 +527,86 @@ urlpatterns = [
         "material-exchange/order/<int:order_id>/assign-contract/",
         material_exchange_assign_contract,
         name="material_exchange_assign_contract",
+    ),
+    # Reprocessing Services
+    path(
+        "reprocessing-services/",
+        reprocessing_services_index,
+        name="reprocessing_services_index",
+    ),
+    path(
+        "reprocessing-services/authorize/",
+        reprocessing_authorize_scopes,
+        name="reprocessing_authorize_scopes",
+    ),
+    path(
+        "reprocessing-services/become/",
+        reprocessing_become,
+        name="reprocessing_become",
+    ),
+    path(
+        "reprocessing-services/browse/",
+        reprocessing_browse,
+        name="reprocessing_browse",
+    ),
+    path(
+        "reprocessing-services/admin/applications/",
+        reprocessing_admin_applications,
+        name="reprocessing_admin_applications",
+    ),
+    path(
+        "reprocessing-services/admin/applications/<int:profile_id>/review/",
+        reprocessing_admin_review,
+        name="reprocessing_admin_review",
+    ),
+    path(
+        "reprocessing-services/request/<int:profile_id>/",
+        reprocessing_request_create,
+        name="reprocessing_request_create",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/",
+        reprocessing_request_detail,
+        name="reprocessing_request_detail",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/submit-inbound/",
+        reprocessing_request_submit_inbound,
+        name="reprocessing_request_submit_inbound",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/verify-inbound/",
+        reprocessing_request_verify_inbound,
+        name="reprocessing_request_verify_inbound",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/mark-processing/",
+        reprocessing_request_mark_processing,
+        name="reprocessing_request_mark_processing",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/awaiting-return/",
+        reprocessing_request_mark_awaiting_return,
+        name="reprocessing_request_mark_awaiting_return",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/submit-return/",
+        reprocessing_request_submit_return,
+        name="reprocessing_request_submit_return",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/verify-return/",
+        reprocessing_request_verify_return,
+        name="reprocessing_request_verify_return",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/cancel/",
+        reprocessing_request_cancel,
+        name="reprocessing_request_cancel",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/dispute/",
+        reprocessing_request_dispute,
+        name="reprocessing_request_dispute",
     ),
 ]

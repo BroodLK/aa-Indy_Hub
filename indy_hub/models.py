@@ -27,6 +27,11 @@ def generate_order_reference():
     return f"INDY-{random.randint(1000000000, 9999999999)}"
 
 
+def generate_reprocessing_reference():
+    """Generate a random reprocessing request reference like REPROC-1234567890."""
+    return f"REPROC-{random.randint(1000000000, 9999999999)}"
+
+
 class BlueprintManager(models.Manager):
     """Manager for Blueprint operations (local only)"""
 
@@ -3168,6 +3173,332 @@ class MaterialExchangeTransaction(models.Model):
             "jita_sell_total_value_snapshot": _total(jita_sell),
             "jita_split_total_value_snapshot": _total(jita_split),
         }
+
+
+class ReprocessingServiceProfile(models.Model):
+    """Character-based reprocessing profile published by a user."""
+
+    class ApprovalStatus(models.TextChoices):
+        PENDING = "pending", _("Pending approval")
+        APPROVED = "approved", _("Approved")
+        REJECTED = "rejected", _("Rejected")
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="reprocessing_profiles",
+    )
+    character_id = models.BigIntegerField(unique=True, db_index=True)
+    character_name = models.CharField(max_length=255, blank=True)
+    corporation_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    corporation_name = models.CharField(max_length=255, blank=True)
+    alliance_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    alliance_name = models.CharField(max_length=255, blank=True)
+    selected_corporation_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=_("Corporation context used to discover alliance structures."),
+    )
+
+    approval_status = models.CharField(
+        max_length=16,
+        choices=ApprovalStatus.choices,
+        default=ApprovalStatus.PENDING,
+        db_index=True,
+    )
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_reprocessing_profiles",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_notes = models.TextField(blank=True)
+
+    is_available = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, this reprocessor accepts new requests."),
+    )
+    margin_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal("5.00"),
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
+        help_text=_("Reward percentage based on Jita sell value of refined outputs."),
+    )
+
+    selected_clone_id = models.BigIntegerField(null=True, blank=True)
+    selected_clone_label = models.CharField(max_length=255, blank=True)
+    selected_implant_type_ids = models.JSONField(default=list, blank=True)
+    selected_implant_names = models.JSONField(default=list, blank=True)
+    beancounter_bonus_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal("0.000"),
+        help_text=_("Implant reprocessing bonus percentage."),
+    )
+
+    reprocessing_skill_level = models.PositiveSmallIntegerField(default=0)
+    reprocessing_efficiency_level = models.PositiveSmallIntegerField(default=0)
+    processing_skill_level = models.PositiveSmallIntegerField(default=0)
+    skill_levels = models.JSONField(default=dict, blank=True)
+
+    structure_id = models.BigIntegerField(default=0, db_index=True)
+    structure_name = models.CharField(max_length=255, blank=True)
+    structure_type_id = models.IntegerField(null=True, blank=True)
+    structure_type_name = models.CharField(max_length=255, blank=True)
+    structure_location_name = models.CharField(max_length=255, blank=True)
+    structure_bonus_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal("0.000"),
+    )
+    rig_profile_key = models.CharField(max_length=80, blank=True)
+    rig_profile_name = models.CharField(max_length=255, blank=True)
+    rig_bonus_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal("0.000"),
+    )
+    estimated_yield_percent = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal("0.000"),
+        help_text=_("Estimated net reprocessing yield percentage for listing sort."),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Reprocessing Service Profile")
+        verbose_name_plural = _("Reprocessing Service Profiles")
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["approval_status", "is_available"]),
+            models.Index(fields=["character_name"]),
+            models.Index(fields=["estimated_yield_percent", "margin_percent"]),
+        ]
+
+    def __str__(self):
+        return f"{self.character_name or self.character_id} ({self.get_approval_status_display()})"
+
+    @property
+    def is_approved(self) -> bool:
+        return self.approval_status == self.ApprovalStatus.APPROVED
+
+    def save(self, *args, **kwargs):
+        if self.approval_status != self.ApprovalStatus.APPROVED:
+            self.is_available = False
+        super().save(*args, **kwargs)
+
+
+class ReprocessingServiceRequest(models.Model):
+    """Customer request lifecycle for character-based reprocessing service."""
+
+    class Status(models.TextChoices):
+        REQUEST_SUBMITTED = "request_submitted", _("Request submitted")
+        AWAITING_INBOUND_CONTRACT = "awaiting_inbound_contract", _(
+            "Awaiting inbound contract"
+        )
+        INBOUND_CONTRACT_VERIFIED = "inbound_contract_verified", _(
+            "Inbound contract verified"
+        )
+        PROCESSING = "processing", _("Processing")
+        AWAITING_RETURN_CONTRACT = "awaiting_return_contract", _(
+            "Awaiting return contract"
+        )
+        COMPLETED = "completed", _("Completed")
+        DISPUTED = "disputed", _("Disputed")
+        CANCELLED = "cancelled", _("Cancelled")
+
+    request_reference = models.CharField(
+        max_length=64,
+        unique=True,
+        blank=True,
+        db_index=True,
+    )
+    requester = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="reprocessing_requests",
+    )
+    requester_character_id = models.BigIntegerField(null=True, blank=True)
+    requester_character_name = models.CharField(max_length=255, blank=True)
+
+    processor_profile = models.ForeignKey(
+        ReprocessingServiceProfile,
+        on_delete=models.PROTECT,
+        related_name="requests",
+    )
+    processor_user = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="processor_reprocessing_requests",
+    )
+    processor_character_id = models.BigIntegerField(db_index=True)
+    processor_character_name = models.CharField(max_length=255, blank=True)
+
+    status = models.CharField(
+        max_length=40,
+        choices=Status.choices,
+        default=Status.REQUEST_SUBMITTED,
+        db_index=True,
+    )
+
+    structure_id = models.BigIntegerField(default=0)
+    structure_name = models.CharField(max_length=255, blank=True)
+    structure_type_name = models.CharField(max_length=255, blank=True)
+    structure_location_name = models.CharField(max_length=255, blank=True)
+
+    margin_percent_snapshot = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    estimated_yield_percent_snapshot = models.DecimalField(
+        max_digits=6,
+        decimal_places=3,
+        default=Decimal("0.000"),
+    )
+    estimated_output_value = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    reward_isk = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    tolerance_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("1.00"),
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("5"))],
+    )
+
+    inbound_contract_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    inbound_contract_verified_at = models.DateTimeField(null=True, blank=True)
+    return_contract_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    return_contract_verified_at = models.DateTimeField(null=True, blank=True)
+
+    notes = models.TextField(blank=True)
+    dispute_reason = models.TextField(blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Reprocessing Service Request")
+        verbose_name_plural = _("Reprocessing Service Requests")
+        default_permissions = ()
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "-created_at"]),
+            models.Index(fields=["requester", "-created_at"]),
+            models.Index(fields=["processor_user", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.request_reference or self.id} ({self.get_status_display()})"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            self.Status.COMPLETED,
+            self.Status.CANCELLED,
+            self.Status.DISPUTED,
+        }
+
+    def save(self, *args, **kwargs):
+        if not self.request_reference:
+            max_attempts = 100
+            for _attempt in range(max_attempts):
+                reference = generate_reprocessing_reference()
+                if not ReprocessingServiceRequest.objects.filter(
+                    request_reference=reference
+                ).exists():
+                    self.request_reference = reference
+                    break
+            else:
+                super().save(*args, **kwargs)
+                self.request_reference = f"REPROC-{self.id:010d}"
+                super().save(update_fields=["request_reference"])
+                return
+        super().save(*args, **kwargs)
+
+
+class ReprocessingServiceRequestItem(models.Model):
+    """Requested source items to be reprocessed."""
+
+    request = models.ForeignKey(
+        ReprocessingServiceRequest,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    type_id = models.IntegerField(db_index=True)
+    type_name = models.CharField(max_length=255, blank=True)
+    quantity = models.BigIntegerField(validators=[MinValueValidator(1)])
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Reprocessing Request Item")
+        verbose_name_plural = _("Reprocessing Request Items")
+        default_permissions = ()
+        unique_together = ("request", "type_id")
+        indexes = [
+            models.Index(fields=["request", "type_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.type_name or self.type_id} x{self.quantity}"
+
+
+class ReprocessingServiceRequestOutput(models.Model):
+    """Expected refined outputs for a reprocessing request."""
+
+    request = models.ForeignKey(
+        ReprocessingServiceRequest,
+        on_delete=models.CASCADE,
+        related_name="expected_outputs",
+    )
+    type_id = models.IntegerField(db_index=True)
+    type_name = models.CharField(max_length=255, blank=True)
+    expected_quantity = models.BigIntegerField(default=0)
+    actual_quantity = models.BigIntegerField(null=True, blank=True)
+    estimated_unit_price = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    estimated_total_value = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        verbose_name = _("Reprocessing Request Output")
+        verbose_name_plural = _("Reprocessing Request Outputs")
+        default_permissions = ()
+        unique_together = ("request", "type_id")
+        indexes = [
+            models.Index(fields=["request", "type_id"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.type_name or self.type_id}: "
+            f"{self.expected_quantity} expected"
+        )
 
 
 class ESIContract(models.Model):

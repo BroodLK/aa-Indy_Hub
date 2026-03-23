@@ -36,6 +36,7 @@ def build_nav_context(
     overview_url = reverse("indy_hub:index")
     blueprints_url = reverse("indy_hub:all_bp_list")
     blueprint_sharing_url = reverse("indy_hub:bp_copy_request_page")
+    reprocessing_url = reverse("indy_hub:reprocessing_browse")
     material_hub_url = reverse("indy_hub:material_exchange_index")
     try:
         capital_orders_url = reverse("indy_hub:capital_ship_orders")
@@ -54,6 +55,7 @@ def build_nav_context(
     overview_class = ""
     blueprints_class = ""
     blueprint_sharing_class = ""
+    reprocessing_class = ""
     material_hub_class = ""
     capital_orders_class = ""
     industry_class = ""
@@ -65,6 +67,7 @@ def build_nav_context(
         "overview",
         "blueprints",
         "blueprint_sharing",
+        "reprocessing",
         "material_hub",
         "capital_orders",
         "industry",
@@ -78,6 +81,8 @@ def build_nav_context(
             blueprints_class = "active fw-semibold"
         elif active_tab == "blueprint_sharing":
             blueprint_sharing_class = "active fw-semibold"
+        elif active_tab == "reprocessing":
+            reprocessing_class = "active fw-semibold"
         elif active_tab == "material_hub":
             material_hub_class = "active fw-semibold"
         elif active_tab == "capital_orders":
@@ -105,6 +110,8 @@ def build_nav_context(
         "blueprints_nav_class": blueprints_class,
         "blueprint_sharing_nav_url": blueprint_sharing_url,
         "blueprint_sharing_nav_class": blueprint_sharing_class,
+        "reprocessing_nav_url": reprocessing_url,
+        "reprocessing_nav_class": reprocessing_class,
         "material_hub_nav_url": material_hub_nav_url,
         "material_hub_nav_class": material_hub_class,
         "capital_orders_nav_url": capital_orders_nav_url,

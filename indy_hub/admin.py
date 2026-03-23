@@ -12,6 +12,10 @@ from .models import (
     CharacterSettings,
     CorporationSharingSetting,
     IndustryJob,
+    ReprocessingServiceProfile,
+    ReprocessingServiceRequest,
+    ReprocessingServiceRequestItem,
+    ReprocessingServiceRequestOutput,
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
@@ -692,6 +696,130 @@ class CapitalShipOrderAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+
+@admin.register(ReprocessingServiceProfile)
+class ReprocessingServiceProfileAdmin(admin.ModelAdmin):
+    list_display = [
+        "character_name",
+        "user",
+        "approval_status",
+        "is_available",
+        "margin_percent",
+        "structure_name",
+        "estimated_yield_percent",
+        "updated_at",
+    ]
+    list_filter = ["approval_status", "is_available", "updated_at"]
+    search_fields = [
+        "character_name",
+        "user__username",
+        "corporation_name",
+        "structure_name",
+    ]
+    readonly_fields = ["created_at", "updated_at", "reviewed_at"]
+    fieldsets = (
+        (
+            "Identity",
+            {
+                "fields": (
+                    "user",
+                    "character_id",
+                    "character_name",
+                    "corporation_id",
+                    "corporation_name",
+                    "alliance_id",
+                    "alliance_name",
+                )
+            },
+        ),
+        (
+            "Approval",
+            {
+                "fields": (
+                    "approval_status",
+                    "reviewed_by",
+                    "reviewed_at",
+                    "review_notes",
+                    "is_available",
+                )
+            },
+        ),
+        (
+            "Service Configuration",
+            {
+                "fields": (
+                    "margin_percent",
+                    "selected_clone_id",
+                    "selected_clone_label",
+                    "selected_implant_type_ids",
+                    "selected_implant_names",
+                    "beancounter_bonus_percent",
+                    "reprocessing_skill_level",
+                    "reprocessing_efficiency_level",
+                    "processing_skill_level",
+                    "skill_levels",
+                    "structure_id",
+                    "structure_name",
+                    "structure_type_id",
+                    "structure_type_name",
+                    "structure_location_name",
+                    "structure_bonus_percent",
+                    "rig_profile_key",
+                    "rig_profile_name",
+                    "rig_bonus_percent",
+                    "estimated_yield_percent",
+                )
+            },
+        ),
+        (
+            "Audit",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+
+
+class ReprocessingServiceRequestItemInline(admin.TabularInline):
+    model = ReprocessingServiceRequestItem
+    extra = 0
+    readonly_fields = ["type_id", "type_name", "quantity", "created_at", "updated_at"]
+
+
+class ReprocessingServiceRequestOutputInline(admin.TabularInline):
+    model = ReprocessingServiceRequestOutput
+    extra = 0
+    readonly_fields = [
+        "type_id",
+        "type_name",
+        "expected_quantity",
+        "actual_quantity",
+        "estimated_unit_price",
+        "estimated_total_value",
+    ]
+
+
+@admin.register(ReprocessingServiceRequest)
+class ReprocessingServiceRequestAdmin(admin.ModelAdmin):
+    list_display = [
+        "request_reference",
+        "requester",
+        "processor_character_name",
+        "status",
+        "estimated_output_value",
+        "reward_isk",
+        "created_at",
+    ]
+    list_filter = ["status", "created_at"]
+    search_fields = [
+        "request_reference",
+        "requester__username",
+        "requester_character_name",
+        "processor_character_name",
+    ]
+    readonly_fields = ["created_at", "updated_at"]
+    inlines = [ReprocessingServiceRequestItemInline, ReprocessingServiceRequestOutputInline]
 
 
 @admin.register(MaterialExchangeTransaction)

@@ -1,0 +1,1846 @@
+"""Reprocessing Services views."""
+
+from __future__ import annotations
+
+# Standard Library
+from decimal import Decimal, InvalidOperation
+import re
+
+# Django
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import Permission, User
+from django.db import transaction
+from django.db.models import Q
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
+from django.views.decorators.http import require_http_methods
+
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership, UserProfile
+from allianceauth.eveonline.models import EveCharacter, EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
+from esi.models import Token
+from esi.views import sso_redirect
+
+# Local
+from ..decorators import indy_hub_access_required, indy_hub_permission_required
+from ..models import (
+    ESIContract,
+    NotificationWebhook,
+    ReprocessingServiceProfile,
+    ReprocessingServiceRequest,
+    ReprocessingServiceRequestItem,
+    ReprocessingServiceRequestOutput,
+)
+from ..notifications import notify_multi, notify_user, send_discord_webhook
+from ..services.asset_cache import resolve_structure_names
+from ..services.esi_client import shared_client
+from ..services.reprocessing import (
+    REPROCESSING_CLONES_SCOPE,
+    REPROCESSING_RIG_PROFILES,
+    REPROCESSING_SKILLS_SCOPE,
+    STRUCTURE_BONUS_BY_TYPE_ID,
+    STRUCTURE_LABEL_BY_TYPE_ID,
+    SUPPORTED_STRUCTURE_TYPE_IDS,
+    aggregate_contract_items_by_type,
+    build_reprocessing_estimate,
+    build_reprocessing_skill_snapshot,
+    compute_estimated_yield_percent,
+    contract_items_match_exact,
+    contract_items_match_with_tolerance,
+    fetch_character_clone_options,
+    fetch_character_skill_levels,
+    infer_security_modifier,
+    resolve_processing_skill_level_for_item,
+)
+from ..utils.analytics import emit_view_analytics_event
+from ..utils.eve import get_character_name, get_corporation_name, get_type_name
+from .navigation import build_nav_context
+
+logger = get_extension_logger(__name__)
+
+REPROCESSING_SERVICES_SCOPE_SET = sorted(
+    {
+        REPROCESSING_SKILLS_SCOPE,
+        REPROCESSING_CLONES_SCOPE,
+        "esi-universe.read_structures.v1",
+        "esi-corporations.read_structures.v1",
+        "esi-characters.read_corporation_roles.v1",
+    }
+)
+
+_REQUEST_ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:,|;|\|)\s*")
+_REQUEST_ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,]*)$", re.IGNORECASE)
+
+
+def _build_nav_context(user, *, active_tab: str | None = None) -> dict:
+    return build_nav_context(
+        user,
+        active_tab=active_tab,
+        can_manage_corp=user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+        can_manage_material_hub=user.has_perm("indy_hub.can_manage_material_hub"),
+        can_access_indy_hub=user.has_perm("indy_hub.can_access_indy_hub"),
+    )
+
+
+def _to_decimal(value, *, fallback: Decimal = Decimal("0")) -> Decimal:
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return fallback
+
+
+def _get_material_exchange_admin_users() -> list[User]:
+    try:
+        permission = Permission.objects.get(
+            codename="can_manage_material_hub",
+            content_type__app_label="indy_hub",
+        )
+    except Permission.DoesNotExist:
+        return []
+    return list(
+        User.objects.filter(
+            Q(groups__permissions=permission) | Q(user_permissions=permission),
+            is_active=True,
+        ).distinct()
+    )
+
+
+def _notify_material_exchange_admins(
+    *,
+    title: str,
+    message: str,
+    level: str = "info",
+    link: str | None = None,
+) -> None:
+    webhook = NotificationWebhook.get_material_exchange_webhook()
+    if webhook and webhook.webhook_url:
+        sent = send_discord_webhook(
+            webhook.webhook_url,
+            title,
+            message,
+            level=level,
+            link=link,
+            mention_everyone=bool(getattr(webhook, "ping_here", False)),
+            embed_title=f"[Reprocessing] {title}",
+        )
+        if sent:
+            return
+    notify_multi(
+        _get_material_exchange_admin_users(),
+        title,
+        message,
+        level=level,
+        link=link,
+    )
+
+
+def _get_user_main_character(user) -> tuple[int | None, str]:
+    try:
+        profile = UserProfile.objects.select_related("main_character").get(user=user)
+        character = getattr(profile, "main_character", None)
+        if character and getattr(character, "character_id", None):
+            return int(character.character_id), str(character.character_name or "")
+    except Exception:
+        pass
+    return None, ""
+
+
+def _get_user_character_rows(user) -> list[dict[str, object]]:
+    ownerships = CharacterOwnership.objects.filter(user=user).select_related("character")
+    rows: list[dict[str, object]] = []
+    for ownership in ownerships:
+        character = ownership.character
+        if not character:
+            continue
+        try:
+            character_id = int(character.character_id)
+        except (TypeError, ValueError):
+            continue
+        corp_id = getattr(character, "corporation_id", None)
+        corp_name = getattr(character, "corporation_name", "") or get_corporation_name(corp_id)
+        rows.append(
+            {
+                "character_id": character_id,
+                "character_name": str(character.character_name or get_character_name(character_id)),
+                "corporation_id": int(corp_id) if corp_id else None,
+                "corporation_name": str(corp_name or ""),
+            }
+        )
+    rows.sort(key=lambda row: str(row.get("character_name", "")).lower())
+    return rows
+
+
+def _get_user_corporation_rows(user) -> list[dict[str, object]]:
+    rows = _get_user_character_rows(user)
+    seen: set[int] = set()
+    corporations: list[dict[str, object]] = []
+    for row in rows:
+        corp_id = row.get("corporation_id")
+        if not corp_id:
+            continue
+        corp_id_int = int(corp_id)
+        if corp_id_int in seen:
+            continue
+        seen.add(corp_id_int)
+        corporations.append(
+            {
+                "corporation_id": corp_id_int,
+                "corporation_name": str(row.get("corporation_name") or get_corporation_name(corp_id_int)),
+            }
+        )
+    corporations.sort(key=lambda row: str(row.get("corporation_name", "")).lower())
+    return corporations
+
+
+def _get_token_for_corp_scope(user, corp_id: int, scope: str):
+    tokens = Token.objects.filter(user=user).require_scopes([scope]).require_valid()
+    for token in tokens:
+        try:
+            character = getattr(token, "character", None)
+            if character and int(getattr(character, "corporation_id", 0) or 0) == int(corp_id):
+                return token
+        except Exception:
+            continue
+        try:
+            stored_character = EveCharacter.objects.get_character_by_id(int(token.character_id))
+            if stored_character is None:
+                stored_character = EveCharacter.objects.create_character(int(token.character_id))
+            if stored_character and int(getattr(stored_character, "corporation_id", 0) or 0) == int(corp_id):
+                return token
+        except Exception:
+            continue
+    return None
+
+
+def _resolve_corp_and_alliance_names(corporation_id: int | None) -> tuple[str, int | None, str]:
+    if not corporation_id:
+        return "", None, ""
+    corp_name = get_corporation_name(int(corporation_id))
+    alliance_id: int | None = None
+    alliance_name = ""
+    try:
+        corp_obj = EveCorporationInfo.objects.filter(corporation_id=int(corporation_id)).first()
+        if not corp_obj:
+            corp_obj = EveCorporationInfo.objects.create_corporation(int(corporation_id))
+        if corp_obj:
+            corp_name = str(getattr(corp_obj, "corporation_name", "") or corp_name or "")
+            raw_alliance_id = getattr(corp_obj, "alliance_id", None)
+            alliance_id = int(raw_alliance_id) if raw_alliance_id else None
+    except Exception:
+        alliance_id = None
+
+    if alliance_id:
+        try:
+            # Alliance Auth
+            from allianceauth.eveonline.models import EveAllianceInfo
+
+            alliance_obj = EveAllianceInfo.objects.filter(alliance_id=alliance_id).first()
+            if alliance_obj:
+                alliance_name = str(getattr(alliance_obj, "alliance_name", "") or "")
+        except Exception:
+            alliance_name = ""
+
+    return str(corp_name or ""), alliance_id, alliance_name
+
+
+def _get_alliance_corporation_ids(selected_corporation_id: int) -> list[int]:
+    corp_ids: set[int] = {int(selected_corporation_id)}
+    try:
+        corp_obj = EveCorporationInfo.objects.filter(
+            corporation_id=int(selected_corporation_id)
+        ).first()
+        if not corp_obj:
+            corp_obj = EveCorporationInfo.objects.create_corporation(int(selected_corporation_id))
+        alliance_id = getattr(corp_obj, "alliance_id", None) if corp_obj else None
+        if alliance_id:
+            alliance_corps = EveCorporationInfo.objects.filter(
+                alliance_id=int(alliance_id)
+            ).values_list("corporation_id", flat=True)
+            corp_ids.update(int(corp_id) for corp_id in alliance_corps if corp_id)
+    except Exception:
+        pass
+    return sorted(corp_ids)
+
+
+def _resolve_system_security_modifiers(system_ids: list[int]) -> dict[int, Decimal]:
+    system_ids = [int(x) for x in system_ids if int(x) > 0]
+    if not system_ids:
+        return {}
+    try:
+        # Alliance Auth (External Libs)
+        import eve_sde.models as sde_models
+    except Exception:
+        return {}
+
+    solar_system_model = getattr(sde_models, "SolarSystem", None)
+    if solar_system_model is None:
+        return {}
+    try:
+        rows = solar_system_model.objects.filter(id__in=system_ids).values_list("id", "security_status")
+    except Exception:
+        return {}
+
+    modifiers: dict[int, Decimal] = {}
+    for system_id, security_status in rows:
+        try:
+            modifiers[int(system_id)] = infer_security_modifier(_to_decimal(security_status))
+        except Exception:
+            modifiers[int(system_id)] = Decimal("0.000")
+    return modifiers
+
+
+def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[dict[str, object]]:
+    """Return Athanor/Tatara choices from selected corp alliance scope (best-effort)."""
+    structures_by_id: dict[int, dict[str, object]] = {}
+    corp_ids = _get_alliance_corporation_ids(int(selected_corporation_id))
+    location_ids: set[int] = set()
+
+    for corp_id in corp_ids:
+        token = _get_token_for_corp_scope(user, int(corp_id), "esi-corporations.read_structures.v1")
+        if not token:
+            continue
+        try:
+            raw_structures = shared_client.fetch_corporation_structures(
+                int(corp_id),
+                character_id=int(token.character_id),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Unable to load corp structures for corporation %s: %s",
+                corp_id,
+                exc,
+            )
+            continue
+
+        for raw_structure in raw_structures or []:
+            if not isinstance(raw_structure, dict):
+                continue
+            try:
+                structure_id = int(raw_structure.get("structure_id") or 0)
+                type_id = int(raw_structure.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if structure_id <= 0 or type_id not in SUPPORTED_STRUCTURE_TYPE_IDS:
+                continue
+
+            location_id = raw_structure.get("system_id") or raw_structure.get("solar_system_id")
+            try:
+                location_id_int = int(location_id or 0)
+            except (TypeError, ValueError):
+                location_id_int = 0
+            if location_id_int > 0:
+                location_ids.add(location_id_int)
+
+            structure_name = str(raw_structure.get("name") or "").strip()
+            if not structure_name:
+                resolved_name = resolve_structure_names(
+                    [int(structure_id)],
+                    corporation_id=int(corp_id),
+                    user=user,
+                    schedule_async=True,
+                ).get(int(structure_id))
+                structure_name = str(resolved_name or "").strip()
+            if not structure_name:
+                structure_name = f"Structure {int(structure_id)}"
+
+            structure_type_name = (
+                STRUCTURE_LABEL_BY_TYPE_ID.get(int(type_id))
+                or get_type_name(int(type_id))
+                or f"Type {int(type_id)}"
+            )
+            structure_bonus_percent = STRUCTURE_BONUS_BY_TYPE_ID.get(
+                int(type_id), Decimal("0.000")
+            )
+
+            structures_by_id[int(structure_id)] = {
+                "structure_id": int(structure_id),
+                "structure_name": structure_name,
+                "structure_type_id": int(type_id),
+                "structure_type_name": structure_type_name,
+                "location_id": location_id_int if location_id_int > 0 else None,
+                "location_name": "",
+                "owner_corporation_id": int(corp_id),
+                "structure_bonus_percent": structure_bonus_percent,
+                "security_bonus_percent": Decimal("0.000"),
+            }
+
+    if not structures_by_id:
+        return []
+
+    if location_ids:
+        try:
+            location_name_map = shared_client.resolve_ids_to_names(sorted(location_ids))
+        except Exception:
+            location_name_map = {}
+        security_modifier_map = _resolve_system_security_modifiers(sorted(location_ids))
+        for row in structures_by_id.values():
+            location_id = int(row.get("location_id") or 0)
+            row["location_name"] = str(location_name_map.get(location_id, "") or "")
+            row["security_bonus_percent"] = _to_decimal(
+                security_modifier_map.get(location_id, Decimal("0.000"))
+            )
+
+    rows = list(structures_by_id.values())
+    rows.sort(key=lambda row: (str(row.get("structure_name", "")).lower(), int(row.get("structure_id", 0))))
+    return rows
+
+def _get_rig_profile(profile_key: str) -> dict[str, object]:
+    normalized_key = str(profile_key or "").strip().lower()
+    for profile in REPROCESSING_RIG_PROFILES:
+        if str(profile.get("key")) == normalized_key:
+            return dict(profile)
+    return dict(REPROCESSING_RIG_PROFILES[0])
+
+
+def _user_can_access_request(user, service_request: ReprocessingServiceRequest) -> bool:
+    if user.id == service_request.requester_id:
+        return True
+    if user.id == service_request.processor_user_id:
+        return True
+    return bool(user.has_perm("indy_hub.can_manage_material_hub"))
+
+
+def _build_expected_item_map(service_request: ReprocessingServiceRequest) -> dict[int, int]:
+    return {
+        int(item.type_id): int(item.quantity)
+        for item in service_request.items.all()
+    }
+
+
+def _build_expected_output_map(service_request: ReprocessingServiceRequest) -> dict[int, int]:
+    return {
+        int(output.type_id): int(output.expected_quantity)
+        for output in service_request.expected_outputs.all()
+    }
+
+
+def _verify_inbound_contract(service_request: ReprocessingServiceRequest) -> tuple[bool, str]:
+    contract_id = int(service_request.inbound_contract_id or 0)
+    if contract_id <= 0:
+        return False, _("Inbound contract ID is not set.")
+    contract = ESIContract.objects.filter(contract_id=contract_id).prefetch_related("items").first()
+    if not contract:
+        return False, _("Inbound contract was not found in cached ESI contracts.")
+
+    if str(contract.contract_type or "").lower() != "item_exchange":
+        return False, _("Inbound contract must be an Item Exchange contract.")
+
+    contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
+    contract_reward = Decimal(str(contract.reward or 0)).quantize(Decimal("0.01"))
+    if contract_price != Decimal("0.00") or contract_reward != Decimal("0.00"):
+        return False, _("Inbound contract must be created with 0 ISK price and 0 reward.")
+
+    expected_assignee_ids = {
+        int(service_request.processor_character_id or 0),
+        int(service_request.processor_profile.corporation_id or 0),
+    }
+    expected_assignee_ids = {value for value in expected_assignee_ids if value > 0}
+    if expected_assignee_ids and int(contract.assignee_id or 0) not in expected_assignee_ids:
+        return False, _("Inbound contract assignee does not match the selected reprocessor.")
+
+    requester_character_id = int(service_request.requester_character_id or 0)
+    if requester_character_id > 0 and int(contract.issuer_id or 0) != requester_character_id:
+        return False, _("Inbound contract issuer does not match the requester character.")
+
+    expected_by_type = _build_expected_item_map(service_request)
+    if not contract_items_match_exact(
+        contract_items=contract.items.filter(is_included=True),
+        expected_by_type=expected_by_type,
+    ):
+        return False, _("Inbound contract items do not exactly match the submitted request.")
+
+    return True, _("Inbound contract verified.")
+
+
+def _verify_return_contract(service_request: ReprocessingServiceRequest) -> tuple[bool, str]:
+    contract_id = int(service_request.return_contract_id or 0)
+    if contract_id <= 0:
+        return False, _("Return contract ID is not set.")
+    contract = ESIContract.objects.filter(contract_id=contract_id).prefetch_related("items").first()
+    if not contract:
+        return False, _("Return contract was not found in cached ESI contracts.")
+
+    if str(contract.contract_type or "").lower() != "item_exchange":
+        return False, _("Return contract must be an Item Exchange contract.")
+
+    expected_issuer_id = int(service_request.processor_character_id or 0)
+    if expected_issuer_id > 0 and int(contract.issuer_id or 0) != expected_issuer_id:
+        return False, _("Return contract issuer does not match the selected reprocessor.")
+
+    requester_character_id = int(service_request.requester_character_id or 0)
+    if requester_character_id > 0 and int(contract.assignee_id or 0) != requester_character_id:
+        return False, _("Return contract assignee does not match the requester character.")
+
+    expected_reward = Decimal(str(service_request.reward_isk or 0)).quantize(Decimal("0.01"))
+    contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
+    if contract_price != expected_reward:
+        return (
+            False,
+            _(
+                "Return contract price mismatch. Expected %(expected)s ISK, got %(actual)s ISK."
+            )
+            % {
+                "expected": f"{expected_reward:,.2f}",
+                "actual": f"{contract_price:,.2f}",
+            },
+        )
+
+    expected_by_type = _build_expected_output_map(service_request)
+    matches, errors = contract_items_match_with_tolerance(
+        contract_items=contract.items.filter(is_included=True),
+        expected_by_type=expected_by_type,
+        tolerance_percent=Decimal(str(service_request.tolerance_percent or Decimal("1.00"))),
+    )
+    if not matches:
+        return False, "\n".join(errors)
+
+    return True, _("Return contract verified.")
+
+
+def _character_has_required_scopes(user, character_id: int) -> bool:
+    return (
+        Token.objects.filter(user=user, character_id=character_id)
+        .require_scopes([REPROCESSING_SKILLS_SCOPE, REPROCESSING_CLONES_SCOPE])
+        .require_valid()
+        .exists()
+    )
+
+
+def _parse_margin_percent(raw_value: str | None) -> Decimal:
+    margin = _to_decimal((raw_value or "").strip() or "0")
+    if margin < Decimal("0"):
+        margin = Decimal("0")
+    if margin > Decimal("100"):
+        margin = Decimal("100")
+    return margin.quantize(Decimal("0.01"))
+
+
+def _avatar_url(character_id: int, *, size: int = 128) -> str:
+    return f"https://images.evetech.net/characters/{int(character_id)}/portrait?size={int(size)}"
+
+
+def _beancounter_implants(implant_names: list[str] | None) -> list[str]:
+    names = [str(name or "").strip() for name in (implant_names or [])]
+    return [name for name in names if name and ("beancounter" in name.lower() or "rx-80" in name.lower())]
+
+
+def _resolve_type_id_from_text(type_text: str) -> int | None:
+    normalized = str(type_text or "").strip()
+    if not normalized:
+        return None
+    if normalized.isdigit():
+        value = int(normalized)
+        return value if value > 0 else None
+
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+    except Exception:
+        return None
+
+    try:
+        exact_match = ItemType.objects.filter(name__iexact=normalized).values_list("id", flat=True).first()
+    except Exception:
+        exact_match = None
+    if exact_match:
+        return int(exact_match)
+    return None
+
+
+def _parse_request_item_lines(raw_text: str) -> tuple[list[dict[str, int]], list[str]]:
+    rows_by_type: dict[int, int] = {}
+    errors: list[str] = []
+    lines = [str(line or "").strip() for line in str(raw_text or "").splitlines()]
+    for line in lines:
+        if not line:
+            continue
+        line_no_commas = line.replace("\t", " ").strip()
+        type_part = ""
+        qty_part = ""
+
+        split_parts = _REQUEST_ITEM_LINE_SPLIT_RE.split(line_no_commas, maxsplit=1)
+        if len(split_parts) == 2:
+            type_part, qty_part = split_parts[0], split_parts[1]
+        else:
+            match = _REQUEST_ITEM_QTY_RE.match(line_no_commas)
+            if match:
+                type_part = str(match.group(1))
+                qty_part = str(match.group(2))
+            else:
+                space_parts = line_no_commas.rsplit(" ", 1)
+                if len(space_parts) == 2 and space_parts[1].replace(",", "").isdigit():
+                    type_part, qty_part = space_parts[0], space_parts[1]
+
+        type_part = str(type_part or "").strip()
+        qty_part = str(qty_part or "").strip().replace(",", "")
+        if not type_part or not qty_part:
+            errors.append(line)
+            continue
+
+        if not qty_part.isdigit():
+            errors.append(line)
+            continue
+        quantity = int(qty_part)
+        if quantity <= 0:
+            errors.append(line)
+            continue
+
+        type_id = _resolve_type_id_from_text(type_part)
+        if not type_id:
+            errors.append(line)
+            continue
+
+        rows_by_type[type_id] = rows_by_type.get(type_id, 0) + quantity
+
+    rows = [
+        {"type_id": int(type_id), "quantity": int(quantity)}
+        for type_id, quantity in sorted(rows_by_type.items(), key=lambda x: get_type_name(int(x[0])).lower())
+    ]
+    return rows, errors
+
+
+def _build_request_timeline(service_request: ReprocessingServiceRequest) -> list[dict[str, object]]:
+    status = service_request.status
+    completed = {
+        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED: [ReprocessingServiceRequest.Status.REQUEST_SUBMITTED],
+        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT: [
+            ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+            ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+        ],
+        ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED: [
+            ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+            ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+        ],
+        ReprocessingServiceRequest.Status.PROCESSING: [
+            ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+            ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+            ReprocessingServiceRequest.Status.PROCESSING,
+        ],
+        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT: [
+            ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+            ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+            ReprocessingServiceRequest.Status.PROCESSING,
+            ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+        ],
+        ReprocessingServiceRequest.Status.COMPLETED: [
+            ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+            ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+            ReprocessingServiceRequest.Status.PROCESSING,
+            ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+            ReprocessingServiceRequest.Status.COMPLETED,
+        ],
+    }.get(status, [ReprocessingServiceRequest.Status.REQUEST_SUBMITTED])
+
+    timeline = [
+        {
+            "key": ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+            "label": _("Request submitted"),
+            "icon": "fa-paper-plane",
+            "done": ReprocessingServiceRequest.Status.REQUEST_SUBMITTED in completed,
+            "timestamp": service_request.created_at,
+        },
+        {
+            "key": ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            "label": _("Awaiting inbound contract"),
+            "icon": "fa-file-import",
+            "done": ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT in completed,
+            "timestamp": service_request.updated_at
+            if status != ReprocessingServiceRequest.Status.REQUEST_SUBMITTED
+            else None,
+        },
+        {
+            "key": ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED,
+            "label": _("Inbound contract verified"),
+            "icon": "fa-check-circle",
+            "done": ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED in completed,
+            "timestamp": service_request.inbound_contract_verified_at,
+        },
+        {
+            "key": ReprocessingServiceRequest.Status.PROCESSING,
+            "label": _("Processing"),
+            "icon": "fa-industry",
+            "done": ReprocessingServiceRequest.Status.PROCESSING in completed,
+            "timestamp": service_request.updated_at
+            if status in {
+                ReprocessingServiceRequest.Status.PROCESSING,
+                ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+                ReprocessingServiceRequest.Status.COMPLETED,
+            }
+            else None,
+        },
+        {
+            "key": ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+            "label": _("Awaiting return contract"),
+            "icon": "fa-file-export",
+            "done": ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT in completed,
+            "timestamp": service_request.updated_at
+            if status in {
+                ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+                ReprocessingServiceRequest.Status.COMPLETED,
+            }
+            else None,
+        },
+        {
+            "key": ReprocessingServiceRequest.Status.COMPLETED,
+            "label": _("Completed"),
+            "icon": "fa-flag-checkered",
+            "done": ReprocessingServiceRequest.Status.COMPLETED in completed,
+            "timestamp": service_request.completed_at,
+        },
+    ]
+
+    if status == ReprocessingServiceRequest.Status.DISPUTED:
+        timeline.append(
+            {
+                "key": ReprocessingServiceRequest.Status.DISPUTED,
+                "label": _("Disputed"),
+                "icon": "fa-triangle-exclamation",
+                "done": True,
+                "timestamp": service_request.updated_at,
+            }
+        )
+    if status == ReprocessingServiceRequest.Status.CANCELLED:
+        timeline.append(
+            {
+                "key": ReprocessingServiceRequest.Status.CANCELLED,
+                "label": _("Cancelled"),
+                "icon": "fa-ban",
+                "done": True,
+                "timestamp": service_request.cancelled_at or service_request.updated_at,
+            }
+        )
+    return timeline
+
+
+@indy_hub_access_required
+@login_required
+def reprocessing_services_index(request):
+    emit_view_analytics_event(view_name="reprocessing_services.index", request=request)
+    return redirect("indy_hub:reprocessing_browse")
+
+
+@indy_hub_access_required
+@login_required
+def reprocessing_authorize_scopes(request):
+    emit_view_analytics_event(view_name="reprocessing_services.authorize", request=request)
+    return sso_redirect(
+        request,
+        scopes=" ".join(REPROCESSING_SERVICES_SCOPE_SET),
+        return_to="indy_hub:reprocessing_become",
+    )
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["GET", "POST"])
+def reprocessing_become(request):
+    emit_view_analytics_event(view_name="reprocessing_services.become", request=request)
+    character_rows = _get_user_character_rows(request.user)
+    corporation_rows = _get_user_corporation_rows(request.user)
+    profile_qs = ReprocessingServiceProfile.objects.filter(user=request.user).order_by("character_name")
+    existing_profiles = list(profile_qs)
+    profile_by_character = {int(profile.character_id): profile for profile in existing_profiles}
+
+    main_character_id, _main_character_name = _get_user_main_character(request.user)
+    selected_character_id_raw = request.POST.get("character_id") or request.GET.get("character_id")
+    selected_character_id: int | None = None
+    try:
+        selected_character_id = int(selected_character_id_raw or 0)
+    except (TypeError, ValueError):
+        selected_character_id = None
+    if not selected_character_id:
+        if main_character_id:
+            selected_character_id = int(main_character_id)
+        elif character_rows:
+            selected_character_id = int(character_rows[0]["character_id"])
+
+    selected_character_row = next(
+        (
+            row
+            for row in character_rows
+            if int(row.get("character_id", 0)) == int(selected_character_id or 0)
+        ),
+        None,
+    )
+    selected_profile = profile_by_character.get(int(selected_character_id or 0))
+
+    selected_corporation_id_raw = (
+        request.POST.get("selected_corporation_id")
+        or request.GET.get("selected_corporation_id")
+        or (getattr(selected_profile, "selected_corporation_id", None) if selected_profile else None)
+        or (selected_character_row.get("corporation_id") if selected_character_row else None)
+    )
+    selected_corporation_id: int | None = None
+    try:
+        selected_corporation_id = int(selected_corporation_id_raw or 0) or None
+    except (TypeError, ValueError):
+        selected_corporation_id = None
+
+    has_required_scopes = bool(
+        selected_character_id and _character_has_required_scopes(request.user, int(selected_character_id))
+    )
+
+    skill_snapshot = {
+        "reprocessing": 0,
+        "reprocessing_efficiency": 0,
+        "processing": 0,
+        "scrapmetal_processing": 0,
+    }
+    clone_options: list[dict[str, object]] = []
+    structure_options: list[dict[str, object]] = []
+    scope_error = ""
+
+    if selected_character_id and has_required_scopes:
+        try:
+            skill_levels = fetch_character_skill_levels(int(selected_character_id))
+            skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
+            clone_options = fetch_character_clone_options(int(selected_character_id))
+        except Exception as exc:
+            logger.warning(
+                "Unable to load reprocessing character data for %s: %s",
+                selected_character_id,
+                exc,
+            )
+            scope_error = _("Unable to read character skills/clones. Re-authorize scopes and try again.")
+
+    if selected_corporation_id:
+        try:
+            structure_options = _fetch_reprocessing_structures(request.user, int(selected_corporation_id))
+        except Exception as exc:
+            logger.warning(
+                "Unable to load reprocessing structures for corp %s: %s",
+                selected_corporation_id,
+                exc,
+            )
+            structure_options = []
+
+    if request.method == "POST":
+        action = str(request.POST.get("action") or "save_profile").strip().lower()
+        if action in {"save_profile", "submit_application"}:
+            if not selected_character_row:
+                messages.error(request, _("Please select one of your characters."))
+                return redirect("indy_hub:reprocessing_become")
+            if not has_required_scopes:
+                messages.warning(
+                    request,
+                    _("This character is missing required scopes. Authorize Reprocessing Services scopes first."),
+                )
+                return redirect("indy_hub:reprocessing_authorize_scopes")
+            if not clone_options:
+                messages.error(request, _("No clone information available for this character."))
+                return redirect("indy_hub:reprocessing_become")
+            if not selected_corporation_id:
+                messages.error(request, _("Please choose a corporation context for structure discovery."))
+                return redirect("indy_hub:reprocessing_become")
+            if not structure_options:
+                messages.error(
+                    request,
+                    _("No Athanor/Tatara structures were found for that corporation/alliance scope."),
+                )
+                return redirect("indy_hub:reprocessing_become")
+
+            selected_clone_id = int(request.POST.get("selected_clone_id") or 0)
+            selected_structure_id = int(request.POST.get("structure_id") or 0)
+            rig_profile = _get_rig_profile(request.POST.get("rig_profile_key") or "none")
+            margin_percent = _parse_margin_percent(request.POST.get("margin_percent"))
+            requested_available = request.POST.get("is_available") == "on"
+
+            clone_row = next(
+                (
+                    row
+                    for row in clone_options
+                    if int(row.get("clone_id") or 0) == selected_clone_id
+                ),
+                None,
+            )
+            if not clone_row:
+                clone_row = clone_options[0]
+
+            structure_row = next(
+                (
+                    row
+                    for row in structure_options
+                    if int(row.get("structure_id") or 0) == selected_structure_id
+                ),
+                None,
+            )
+            if not structure_row:
+                messages.error(request, _("Please choose a valid structure."))
+                return redirect("indy_hub:reprocessing_become")
+
+            skill_levels = fetch_character_skill_levels(int(selected_character_id))
+            skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
+            active_skill_levels_by_id: dict[str, int] = {}
+            for raw_skill_id, row in (skill_levels or {}).items():
+                try:
+                    skill_id = int(raw_skill_id)
+                    active_level = int((row or {}).get("active") or 0)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if skill_id > 0 and active_level > 0:
+                    active_skill_levels_by_id[str(skill_id)] = active_level
+            estimated_yield = compute_estimated_yield_percent(
+                skill_snapshot=skill_snapshot,
+                implant_bonus_percent=_to_decimal(clone_row.get("beancounter_bonus_percent")),
+                structure_bonus_percent=_to_decimal(structure_row.get("structure_bonus_percent")),
+                rig_bonus_percent=_to_decimal(rig_profile.get("bonus_percent")),
+                security_bonus_percent=_to_decimal(structure_row.get("security_bonus_percent")),
+            )
+
+            character_corp_id = int(selected_character_row.get("corporation_id") or 0) or None
+            character_corp_name = str(selected_character_row.get("corporation_name") or "")
+            _scope_corp_name, alliance_id, alliance_name = _resolve_corp_and_alliance_names(selected_corporation_id)
+
+            with transaction.atomic():
+                profile = profile_by_character.get(int(selected_character_id))
+                is_new_profile = profile is None
+                if profile is None:
+                    profile = ReprocessingServiceProfile(
+                        user=request.user,
+                        character_id=int(selected_character_id),
+                    )
+
+                profile.character_name = str(selected_character_row.get("character_name") or get_character_name(int(selected_character_id)))
+                profile.corporation_id = character_corp_id
+                profile.corporation_name = character_corp_name
+                profile.alliance_id = alliance_id
+                profile.alliance_name = alliance_name
+                profile.selected_corporation_id = int(selected_corporation_id)
+
+                profile.margin_percent = margin_percent
+                profile.selected_clone_id = int(clone_row.get("clone_id") or 0)
+                profile.selected_clone_label = str(clone_row.get("clone_label") or "")
+                profile.selected_implant_type_ids = [int(tid) for tid in (clone_row.get("implant_type_ids") or []) if int(tid) > 0]
+                profile.selected_implant_names = [str(name) for name in (clone_row.get("implant_names") or []) if str(name or "").strip()]
+                profile.beancounter_bonus_percent = _to_decimal(clone_row.get("beancounter_bonus_percent")).quantize(Decimal("0.001"))
+
+                profile.reprocessing_skill_level = int(skill_snapshot.get("reprocessing") or 0)
+                profile.reprocessing_efficiency_level = int(skill_snapshot.get("reprocessing_efficiency") or 0)
+                profile.processing_skill_level = int(skill_snapshot.get("processing") or 0)
+                profile.skill_levels = {
+                    "reprocessing": int(skill_snapshot.get("reprocessing") or 0),
+                    "reprocessing_efficiency": int(skill_snapshot.get("reprocessing_efficiency") or 0),
+                    "processing": int(skill_snapshot.get("processing") or 0),
+                    "scrapmetal_processing": int(skill_snapshot.get("scrapmetal_processing") or 0),
+                    "security_bonus_percent": str(
+                        _to_decimal(structure_row.get("security_bonus_percent")).quantize(
+                            Decimal("0.001")
+                        )
+                    ),
+                    "skill_levels_by_id": active_skill_levels_by_id,
+                }
+
+                profile.structure_id = int(structure_row.get("structure_id") or 0)
+                profile.structure_name = str(structure_row.get("structure_name") or "")
+                profile.structure_type_id = int(structure_row.get("structure_type_id") or 0) or None
+                profile.structure_type_name = str(structure_row.get("structure_type_name") or "")
+                profile.structure_location_name = str(structure_row.get("location_name") or "")
+                profile.structure_bonus_percent = _to_decimal(structure_row.get("structure_bonus_percent")).quantize(Decimal("0.001"))
+                profile.rig_profile_key = str(rig_profile.get("key") or "")
+                profile.rig_profile_name = str(rig_profile.get("label") or "")
+                profile.rig_bonus_percent = _to_decimal(rig_profile.get("bonus_percent")).quantize(Decimal("0.001"))
+                profile.estimated_yield_percent = _to_decimal(estimated_yield).quantize(Decimal("0.001"))
+
+                approval_resubmitted = False
+                if profile.approval_status != ReprocessingServiceProfile.ApprovalStatus.APPROVED or action == "submit_application":
+                    if profile.approval_status != ReprocessingServiceProfile.ApprovalStatus.PENDING:
+                        approval_resubmitted = True
+                    profile.approval_status = ReprocessingServiceProfile.ApprovalStatus.PENDING
+                    profile.reviewed_by = None
+                    profile.reviewed_at = None
+                    profile.review_notes = ""
+                profile.is_available = bool(requested_available and profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED)
+                profile.save()
+
+                if is_new_profile or approval_resubmitted:
+                    profile_link = request.build_absolute_uri(
+                        reverse("indy_hub:reprocessing_admin_applications")
+                    )
+                    _notify_material_exchange_admins(
+                        title="Reprocessing application submitted",
+                        message=(
+                            f"{profile.character_name} submitted a reprocessing profile for review.\n"
+                            f"Yield: {profile.estimated_yield_percent}% | Margin: {profile.margin_percent}%\n"
+                            f"Structure: {profile.structure_name}"
+                        ),
+                        level="info",
+                        link=profile_link,
+                    )
+                    notify_user(
+                        request.user,
+                        _("Reprocessing application submitted"),
+                        _(
+                            "Your reprocessing profile for %(character)s has been submitted and is awaiting Material Exchange admin approval."
+                        )
+                        % {"character": profile.character_name},
+                        level="info",
+                        link=reverse("indy_hub:reprocessing_become"),
+                    )
+
+                if profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED:
+                    messages.success(request, _("Reprocessing profile updated."))
+                else:
+                    messages.success(request, _("Reprocessing profile saved and queued for approval."))
+                return redirect("indy_hub:reprocessing_become")
+
+    for profile in existing_profiles:
+        profile.portrait_url = _avatar_url(int(profile.character_id), size=64)
+        profile.beancounter_implants = _beancounter_implants(profile.selected_implant_names)
+
+    context = {
+        "character_rows": character_rows,
+        "corporation_rows": corporation_rows,
+        "existing_profiles": existing_profiles,
+        "selected_profile": selected_profile,
+        "selected_character_id": int(selected_character_id or 0),
+        "selected_corporation_id": int(selected_corporation_id or 0),
+        "has_required_scopes": has_required_scopes,
+        "scope_error": scope_error,
+        "authorize_url": reverse("indy_hub:reprocessing_authorize_scopes"),
+        "clone_options": clone_options,
+        "structure_options": structure_options,
+        "rig_profiles": REPROCESSING_RIG_PROFILES,
+        "skill_snapshot": skill_snapshot,
+    }
+    context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+    return render(request, "indy_hub/reprocessing_services/become.html", context)
+
+
+@indy_hub_access_required
+@login_required
+def reprocessing_browse(request):
+    emit_view_analytics_event(view_name="reprocessing_services.browse", request=request)
+    sort_key = str(request.GET.get("sort") or "yield_desc").strip().lower()
+    order_map = {
+        "yield_desc": ["-estimated_yield_percent", "margin_percent", "character_name"],
+        "yield_asc": ["estimated_yield_percent", "margin_percent", "character_name"],
+        "margin_asc": ["margin_percent", "-estimated_yield_percent", "character_name"],
+        "margin_desc": ["-margin_percent", "-estimated_yield_percent", "character_name"],
+        "location": ["structure_location_name", "-estimated_yield_percent", "character_name"],
+        "character": ["character_name"],
+    }
+    queryset = ReprocessingServiceProfile.objects.filter(
+        approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+        is_available=True,
+    ).order_by(*order_map.get(sort_key, order_map["yield_desc"]))
+
+    profile_cards = []
+    for profile in queryset:
+        beancounter_names = _beancounter_implants(profile.selected_implant_names)
+        profile_cards.append(
+            {
+                "profile": profile,
+                "portrait_url": _avatar_url(int(profile.character_id), size=128),
+                "beancounter_implants": beancounter_names,
+                "skills": {
+                    "reprocessing": int(profile.reprocessing_skill_level or 0),
+                    "efficiency": int(profile.reprocessing_efficiency_level or 0),
+                    "processing": int(profile.processing_skill_level or 0),
+                },
+            }
+        )
+
+    context = {
+        "profile_cards": profile_cards,
+        "sort_key": sort_key,
+        "sort_options": [
+            ("yield_desc", _("Highest yield")),
+            ("yield_asc", _("Lowest yield")),
+            ("margin_asc", _("Lowest margin")),
+            ("margin_desc", _("Highest margin")),
+            ("location", _("Location")),
+            ("character", _("Character name")),
+        ],
+    }
+    context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+    return render(request, "indy_hub/reprocessing_services/browse.html", context)
+
+
+@indy_hub_permission_required("can_manage_material_hub")
+@login_required
+def reprocessing_admin_applications(request):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.admin_applications",
+        request=request,
+    )
+    pending_profiles = ReprocessingServiceProfile.objects.filter(
+        approval_status=ReprocessingServiceProfile.ApprovalStatus.PENDING
+    ).order_by("created_at")
+    reviewed_profiles = ReprocessingServiceProfile.objects.exclude(
+        approval_status=ReprocessingServiceProfile.ApprovalStatus.PENDING
+    ).select_related("reviewed_by").order_by("-reviewed_at", "-updated_at")[:100]
+
+    context = {
+        "pending_profiles": pending_profiles,
+        "reviewed_profiles": reviewed_profiles,
+    }
+    context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+    return render(request, "indy_hub/reprocessing_services/admin_applications.html", context)
+
+
+@indy_hub_permission_required("can_manage_material_hub")
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_admin_review(request, profile_id: int):
+    emit_view_analytics_event(view_name="reprocessing_services.admin_review", request=request)
+    profile = get_object_or_404(ReprocessingServiceProfile, pk=int(profile_id))
+    action = str(request.POST.get("action") or "").strip().lower()
+    review_notes = str(request.POST.get("review_notes") or "").strip()
+    set_available = bool(request.POST.get("is_available") == "on")
+
+    if action not in {"approve", "reject"}:
+        messages.error(request, _("Invalid review action."))
+        return redirect("indy_hub:reprocessing_admin_applications")
+
+    profile.reviewed_by = request.user
+    profile.reviewed_at = timezone.now()
+    profile.review_notes = review_notes
+
+    if action == "approve":
+        profile.approval_status = ReprocessingServiceProfile.ApprovalStatus.APPROVED
+        profile.is_available = set_available
+        profile.save()
+        notify_user(
+            profile.user,
+            _("Reprocessing application approved"),
+            _(
+                "Your reprocessing profile for %(character)s has been approved."
+            )
+            % {"character": profile.character_name},
+            level="success",
+            link=reverse("indy_hub:reprocessing_become"),
+        )
+        messages.success(request, _("Application approved."))
+    else:
+        profile.approval_status = ReprocessingServiceProfile.ApprovalStatus.REJECTED
+        profile.is_available = False
+        profile.save()
+        notify_user(
+            profile.user,
+            _("Reprocessing application rejected"),
+            _(
+                "Your reprocessing profile for %(character)s was rejected. Review notes and resubmit when ready."
+            )
+            % {"character": profile.character_name},
+            level="warning",
+            link=reverse("indy_hub:reprocessing_become"),
+        )
+        messages.warning(request, _("Application rejected."))
+    return redirect("indy_hub:reprocessing_admin_applications")
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["GET", "POST"])
+def reprocessing_request_create(request, profile_id: int):
+    emit_view_analytics_event(view_name="reprocessing_services.request_create", request=request)
+    profile = get_object_or_404(
+        ReprocessingServiceProfile.objects.select_related("user"),
+        pk=int(profile_id),
+        approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+    )
+    if not profile.is_available:
+        messages.error(request, _("This reprocessor is currently unavailable for new requests."))
+        return redirect("indy_hub:reprocessing_browse")
+
+    requester_character_rows = _get_user_character_rows(request.user)
+    main_character_id, main_character_name = _get_user_main_character(request.user)
+    selected_requester_character_id_raw = (
+        request.POST.get("requester_character_id")
+        or request.GET.get("requester_character_id")
+        or (main_character_id or 0)
+        or (requester_character_rows[0]["character_id"] if requester_character_rows else 0)
+    )
+    try:
+        selected_requester_character_id = int(selected_requester_character_id_raw or 0)
+    except (TypeError, ValueError):
+        selected_requester_character_id = int(main_character_id or 0)
+    selected_requester_row = next(
+        (
+            row
+            for row in requester_character_rows
+            if int(row.get("character_id", 0)) == int(selected_requester_character_id)
+        ),
+        None,
+    )
+    selected_requester_character_name = (
+        str(selected_requester_row.get("character_name"))
+        if selected_requester_row
+        else (str(main_character_name) if main_character_name else request.user.username)
+    )
+
+    items_text = str(request.POST.get("items_text") or "").strip()
+    action = str(request.POST.get("action") or "").strip().lower()
+    parsed_items: list[dict[str, int]] = []
+    parse_errors: list[str] = []
+    estimate_payload: dict[str, object] | None = None
+    unsupported_inputs: list[dict[str, int]] = []
+
+    if request.method == "POST":
+        if requester_character_rows and not selected_requester_row:
+            messages.error(request, _("Please choose one of your owned characters as requester."))
+            context = {
+                "profile": profile,
+                "profile_portrait_url": _avatar_url(int(profile.character_id), size=128),
+                "requester_character_rows": requester_character_rows,
+                "selected_requester_character_id": selected_requester_character_id,
+                "selected_requester_character_name": selected_requester_character_name,
+                "items_text": items_text,
+                "parsed_item_rows": [],
+                "parse_errors": [],
+                "estimate_payload": None,
+                "unsupported_rows": [],
+            }
+            context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+            return render(request, "indy_hub/reprocessing_services/request_create.html", context)
+
+        parsed_items, parse_errors = _parse_request_item_lines(items_text)
+        if not parsed_items:
+            messages.error(request, _("Enter at least one valid item line."))
+        elif parse_errors:
+            messages.error(
+                request,
+                _("Some item lines are invalid and could not be parsed: %(lines)s")
+                % {"lines": "; ".join(parse_errors[:5])},
+            )
+        else:
+            profile_skill_map = (
+                profile.skill_levels
+                if isinstance(profile.skill_levels, dict)
+                else {}
+            )
+            raw_skill_levels_by_id = profile_skill_map.get("skill_levels_by_id") or {}
+            skill_levels_by_id: dict[int, int] = {}
+            if isinstance(raw_skill_levels_by_id, dict):
+                for raw_skill_id, raw_level in raw_skill_levels_by_id.items():
+                    try:
+                        skill_id = int(raw_skill_id)
+                        level = int(raw_level or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if skill_id > 0 and level > 0:
+                        skill_levels_by_id[skill_id] = level
+
+            base_skill_snapshot = {
+                "reprocessing": int(profile.reprocessing_skill_level or 0),
+                "reprocessing_efficiency": int(profile.reprocessing_efficiency_level or 0),
+                "processing": int(profile.processing_skill_level or 0),
+            }
+            yield_percent_by_type: dict[int, Decimal] = {}
+            security_bonus_raw = profile_skill_map.get("security_bonus_percent")
+            if security_bonus_raw is not None:
+                security_bonus_percent = _to_decimal(security_bonus_raw)
+                for row in parsed_items:
+                    source_type_id = int(row.get("type_id") or 0)
+                    if source_type_id <= 0:
+                        continue
+                    processing_level = resolve_processing_skill_level_for_item(
+                        type_id=source_type_id,
+                        skill_levels_by_id=skill_levels_by_id,
+                        fallback_level=int(base_skill_snapshot.get("processing") or 0),
+                    )
+                    yield_percent_by_type[source_type_id] = compute_estimated_yield_percent(
+                        skill_snapshot={
+                            "reprocessing": int(base_skill_snapshot["reprocessing"]),
+                            "reprocessing_efficiency": int(
+                                base_skill_snapshot["reprocessing_efficiency"]
+                            ),
+                            "processing": int(processing_level),
+                        },
+                        implant_bonus_percent=_to_decimal(profile.beancounter_bonus_percent),
+                        structure_bonus_percent=_to_decimal(profile.structure_bonus_percent),
+                        rig_bonus_percent=_to_decimal(profile.rig_bonus_percent),
+                        security_bonus_percent=security_bonus_percent,
+                    )
+
+            estimate_payload = build_reprocessing_estimate(
+                input_items=parsed_items,
+                yield_percent=Decimal(str(profile.estimated_yield_percent or 0)),
+                margin_percent=Decimal(str(profile.margin_percent or 0)),
+                yield_percent_by_type=yield_percent_by_type,
+            )
+            unsupported_inputs = list(estimate_payload.get("unsupported_inputs") or [])
+            if unsupported_inputs:
+                unsupported_names = ", ".join(
+                    f"{get_type_name(int(row['type_id']))} x{int(row['quantity'])}"
+                    for row in unsupported_inputs[:8]
+                )
+                messages.error(
+                    request,
+                    _("Some items have no SDE reprocessing outputs and are unsupported: %(items)s")
+                    % {"items": unsupported_names},
+                )
+            elif not (estimate_payload.get("outputs") or []):
+                messages.error(request, _("No reprocessing outputs were produced from the submitted inputs."))
+
+        if (
+            action == "submit_request"
+            and parsed_items
+            and not parse_errors
+            and estimate_payload
+            and not unsupported_inputs
+        ):
+            with transaction.atomic():
+                service_request = ReprocessingServiceRequest.objects.create(
+                    requester=request.user,
+                    requester_character_id=(
+                        int(selected_requester_character_id) if selected_requester_character_id > 0 else None
+                    ),
+                    requester_character_name=selected_requester_character_name,
+                    processor_profile=profile,
+                    processor_user=profile.user,
+                    processor_character_id=int(profile.character_id),
+                    processor_character_name=profile.character_name,
+                    status=ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+                    structure_id=int(profile.structure_id or 0),
+                    structure_name=profile.structure_name,
+                    structure_type_name=profile.structure_type_name,
+                    structure_location_name=profile.structure_location_name,
+                    margin_percent_snapshot=Decimal(str(profile.margin_percent or 0)).quantize(Decimal("0.01")),
+                    estimated_yield_percent_snapshot=Decimal(str(profile.estimated_yield_percent or 0)).quantize(Decimal("0.001")),
+                    estimated_output_value=Decimal(str(estimate_payload.get("total_output_value") or 0)).quantize(Decimal("0.01")),
+                    reward_isk=Decimal(str(estimate_payload.get("reward_isk") or 0)).quantize(Decimal("0.01")),
+                    tolerance_percent=Decimal("1.00"),
+                )
+                ReprocessingServiceRequestItem.objects.bulk_create(
+                    [
+                        ReprocessingServiceRequestItem(
+                            request=service_request,
+                            type_id=int(row["type_id"]),
+                            type_name=get_type_name(int(row["type_id"])),
+                            quantity=int(row["quantity"]),
+                        )
+                        for row in parsed_items
+                    ]
+                )
+                ReprocessingServiceRequestOutput.objects.bulk_create(
+                    [
+                        ReprocessingServiceRequestOutput(
+                            request=service_request,
+                            type_id=int(output_row["type_id"]),
+                            type_name=str(output_row.get("type_name") or get_type_name(int(output_row["type_id"]))),
+                            expected_quantity=int(output_row["expected_quantity"]),
+                            estimated_unit_price=Decimal(str(output_row.get("unit_price") or 0)).quantize(Decimal("0.01")),
+                            estimated_total_value=Decimal(str(output_row.get("total_value") or 0)).quantize(Decimal("0.01")),
+                        )
+                        for output_row in (estimate_payload.get("outputs") or [])
+                    ]
+                )
+                service_request.status = ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT
+                service_request.save(update_fields=["status", "updated_at"])
+
+            detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+            notify_user(
+                request.user,
+                _("Reprocessing request submitted"),
+                _(
+                    "Your request %(reference)s has been submitted. Follow the inbound contract instructions on the detail page."
+                )
+                % {"reference": service_request.request_reference},
+                level="success",
+                link=detail_link,
+            )
+            notify_user(
+                profile.user,
+                _("Incoming reprocessing request"),
+                _(
+                    "%(character)s sent a new reprocessing request %(reference)s.\n"
+                    "Create guidance is now available on the request detail page."
+                )
+                % {
+                    "character": selected_requester_character_name,
+                    "reference": service_request.request_reference,
+                },
+                level="info",
+                link=detail_link,
+            )
+            messages.success(
+                request,
+                _(
+                    "Request submitted. Create an inbound Item Exchange contract to %(processor)s with 0 ISK reward and 14-day completion."
+                )
+                % {"processor": profile.character_name},
+            )
+            return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    parsed_item_rows = [
+        {
+            "type_id": int(row["type_id"]),
+            "type_name": get_type_name(int(row["type_id"])),
+            "quantity": int(row["quantity"]),
+        }
+        for row in parsed_items
+    ]
+    unsupported_rows = [
+        {
+            "type_id": int(row["type_id"]),
+            "type_name": get_type_name(int(row["type_id"])),
+            "quantity": int(row["quantity"]),
+        }
+        for row in unsupported_inputs
+    ]
+
+    context = {
+        "profile": profile,
+        "profile_portrait_url": _avatar_url(int(profile.character_id), size=128),
+        "requester_character_rows": requester_character_rows,
+        "selected_requester_character_id": selected_requester_character_id,
+        "selected_requester_character_name": selected_requester_character_name,
+        "items_text": items_text,
+        "parsed_item_rows": parsed_item_rows,
+        "parse_errors": parse_errors,
+        "estimate_payload": estimate_payload,
+        "unsupported_rows": unsupported_rows,
+    }
+    context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+    return render(request, "indy_hub/reprocessing_services/request_create.html", context)
+
+
+@indy_hub_access_required
+@login_required
+def reprocessing_request_detail(request, request_id: int):
+    emit_view_analytics_event(view_name="reprocessing_services.request_detail", request=request)
+    service_request = get_object_or_404(
+        ReprocessingServiceRequest.objects.select_related("requester", "processor_user", "processor_profile").prefetch_related("items", "expected_outputs"),
+        pk=int(request_id),
+    )
+    if not _user_can_access_request(request.user, service_request):
+        messages.error(request, _("You do not have access to this reprocessing request."))
+        return redirect("indy_hub:reprocessing_browse")
+
+    is_requester = request.user.id == service_request.requester_id
+    is_processor = request.user.id == service_request.processor_user_id
+    is_admin = request.user.has_perm("indy_hub.can_manage_material_hub")
+    status = service_request.status
+
+    can_submit_inbound = is_requester and status in {
+        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+    }
+    can_verify_inbound = (is_requester or is_processor or is_admin) and status == ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT
+    can_mark_processing = (is_processor or is_admin) and status == ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED
+    can_mark_awaiting_return = (is_processor or is_admin) and status == ReprocessingServiceRequest.Status.PROCESSING
+    can_submit_return = (is_processor or is_admin) and status in {
+        ReprocessingServiceRequest.Status.PROCESSING,
+        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+    }
+    can_verify_return = (is_requester or is_processor or is_admin) and status == ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT
+    can_cancel = (is_requester or is_admin) and not service_request.is_terminal
+    can_dispute = (is_requester or is_processor or is_admin) and not service_request.is_terminal
+
+    inbound_contract = (
+        ESIContract.objects.filter(contract_id=int(service_request.inbound_contract_id or 0))
+        .first()
+        if service_request.inbound_contract_id
+        else None
+    )
+    return_contract = (
+        ESIContract.objects.filter(contract_id=int(service_request.return_contract_id or 0))
+        .first()
+        if service_request.return_contract_id
+        else None
+    )
+
+    context = {
+        "service_request": service_request,
+        "timeline": _build_request_timeline(service_request),
+        "is_requester": is_requester,
+        "is_processor": is_processor,
+        "is_admin": is_admin,
+        "can_submit_inbound": can_submit_inbound,
+        "can_verify_inbound": can_verify_inbound,
+        "can_mark_processing": can_mark_processing,
+        "can_mark_awaiting_return": can_mark_awaiting_return,
+        "can_submit_return": can_submit_return,
+        "can_verify_return": can_verify_return,
+        "can_cancel": can_cancel,
+        "can_dispute": can_dispute,
+        "inbound_contract": inbound_contract,
+        "return_contract": return_contract,
+        "processor_portrait_url": _avatar_url(int(service_request.processor_character_id), size=128),
+    }
+    context.update(_build_nav_context(request.user, active_tab="reprocessing"))
+    return render(request, "indy_hub/reprocessing_services/request_detail.html", context)
+
+
+def _get_request_with_access_check(request, request_id: int) -> ReprocessingServiceRequest | None:
+    service_request = get_object_or_404(
+        ReprocessingServiceRequest.objects.select_related("requester", "processor_user", "processor_profile").prefetch_related("items", "expected_outputs"),
+        pk=int(request_id),
+    )
+    if not _user_can_access_request(request.user, service_request):
+        messages.error(request, _("You do not have access to this reprocessing request."))
+        return None
+    return service_request
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_submit_inbound(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_submit_inbound",
+        request=request,
+    )
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if request.user.id != service_request.requester_id and not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Only the requester can submit the inbound contract."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    try:
+        inbound_contract_id = int(request.POST.get("inbound_contract_id") or 0)
+    except (TypeError, ValueError):
+        inbound_contract_id = 0
+    if inbound_contract_id <= 0:
+        messages.error(request, _("Enter a valid inbound contract ID."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    if service_request.is_terminal:
+        messages.error(request, _("This request is already closed."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+    if service_request.status not in {
+        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+    }:
+        messages.error(request, _("Inbound contract cannot be changed in the current status."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    service_request.inbound_contract_id = inbound_contract_id
+    service_request.inbound_contract_verified_at = None
+    service_request.status = ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT
+    service_request.save(
+        update_fields=[
+            "inbound_contract_id",
+            "inbound_contract_verified_at",
+            "status",
+            "updated_at",
+        ]
+    )
+    messages.success(request, _("Inbound contract submitted. Run verification once the contract is cached."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_verify_inbound(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_verify_inbound",
+        request=request,
+    )
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if service_request.status != ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT:
+        messages.error(request, _("Inbound verification is not available in the current status."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    matches, reason = _verify_inbound_contract(service_request)
+    if not matches:
+        messages.error(request, reason)
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    service_request.status = ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED
+    service_request.inbound_contract_verified_at = timezone.now()
+    service_request.save(update_fields=["status", "inbound_contract_verified_at", "updated_at"])
+
+    detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+    notify_user(
+        service_request.processor_user,
+        _("Inbound contract verified"),
+        _(
+            "Inbound contract for request %(reference)s is verified. You can now start processing and prepare the return contract."
+        )
+        % {"reference": service_request.request_reference},
+        level="success",
+        link=detail_link,
+    )
+    notify_user(
+        service_request.requester,
+        _("Inbound contract verified"),
+        _(
+            "Inbound contract for request %(reference)s has been verified."
+        )
+        % {"reference": service_request.request_reference},
+        level="success",
+        link=detail_link,
+    )
+    messages.success(request, _("Inbound contract verified successfully."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_mark_processing(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_mark_processing",
+        request=request,
+    )
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if request.user.id != service_request.processor_user_id and not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Only the assigned reprocessor can start processing."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+    if service_request.status != ReprocessingServiceRequest.Status.INBOUND_CONTRACT_VERIFIED:
+        messages.error(request, _("Request must have a verified inbound contract before processing starts."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    service_request.status = ReprocessingServiceRequest.Status.PROCESSING
+    service_request.save(update_fields=["status", "updated_at"])
+    messages.success(request, _("Request moved to processing."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_mark_awaiting_return(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_mark_awaiting_return",
+        request=request,
+    )
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if request.user.id != service_request.processor_user_id and not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Only the assigned reprocessor can update this status."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+    if service_request.status != ReprocessingServiceRequest.Status.PROCESSING:
+        messages.error(request, _("Request must be in processing before awaiting return contract."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    service_request.status = ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT
+    service_request.save(update_fields=["status", "updated_at"])
+    messages.success(request, _("Request moved to awaiting return contract."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_submit_return(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_submit_return",
+        request=request,
+    )
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if request.user.id != service_request.processor_user_id and not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Only the assigned reprocessor can submit the return contract."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    if service_request.status not in {
+        ReprocessingServiceRequest.Status.PROCESSING,
+        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+    }:
+        messages.error(request, _("Return contract cannot be submitted in the current status."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    try:
+        return_contract_id = int(request.POST.get("return_contract_id") or 0)
+    except (TypeError, ValueError):
+        return_contract_id = 0
+    if return_contract_id <= 0:
+        messages.error(request, _("Enter a valid return contract ID."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    service_request.return_contract_id = return_contract_id
+    service_request.return_contract_verified_at = None
+    service_request.status = ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT
+    service_request.save(
+        update_fields=[
+            "return_contract_id",
+            "return_contract_verified_at",
+            "status",
+            "updated_at",
+        ]
+    )
+    messages.success(request, _("Return contract submitted. Run verification once cached."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_verify_return(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_verify_return",
+        request=request,
+    )
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if service_request.status != ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT:
+        messages.error(request, _("Return verification is not available in the current status."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    matches, reason = _verify_return_contract(service_request)
+    if not matches:
+        logger.error(
+            "Reprocessing return verification failed for request %s: %s",
+            service_request.request_reference,
+            reason,
+        )
+        messages.error(request, reason)
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    return_contract = ESIContract.objects.filter(
+        contract_id=int(service_request.return_contract_id or 0)
+    ).prefetch_related("items").first()
+    if return_contract:
+        actual_by_type = aggregate_contract_items_by_type(
+            return_contract.items.filter(is_included=True)
+        )
+        for output in service_request.expected_outputs.all():
+            output.actual_quantity = int(actual_by_type.get(int(output.type_id), 0))
+            output.save(update_fields=["actual_quantity"])
+
+    service_request.status = ReprocessingServiceRequest.Status.COMPLETED
+    service_request.return_contract_verified_at = timezone.now()
+    service_request.completed_at = timezone.now()
+    service_request.save(
+        update_fields=[
+            "status",
+            "return_contract_verified_at",
+            "completed_at",
+            "updated_at",
+        ]
+    )
+
+    detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+    notify_user(
+        service_request.requester,
+        _("Reprocessing request completed"),
+        _(
+            "Return contract for request %(reference)s has been verified and the request is complete."
+        )
+        % {"reference": service_request.request_reference},
+        level="success",
+        link=detail_link,
+    )
+    notify_user(
+        service_request.processor_user,
+        _("Reprocessing request completed"),
+        _(
+            "Request %(reference)s is now marked complete."
+        )
+        % {"reference": service_request.request_reference},
+        level="success",
+        link=detail_link,
+    )
+    messages.success(request, _("Return contract verified. Request completed."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_cancel(request, request_id: int):
+    emit_view_analytics_event(view_name="reprocessing_services.request_cancel", request=request)
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    if request.user.id != service_request.requester_id and not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Only the requester can cancel this request."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+    if service_request.is_terminal:
+        messages.error(request, _("This request is already closed."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    cancel_reason = str(request.POST.get("cancel_reason") or "").strip()
+    if cancel_reason:
+        service_request.notes = f"{service_request.notes}\n\nCancel reason: {cancel_reason}".strip()
+    service_request.status = ReprocessingServiceRequest.Status.CANCELLED
+    service_request.cancelled_at = timezone.now()
+    service_request.save(update_fields=["status", "cancelled_at", "notes", "updated_at"])
+
+    detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+    notify_user(
+        service_request.processor_user,
+        _("Reprocessing request cancelled"),
+        _(
+            "Request %(reference)s was cancelled by the requester."
+        )
+        % {"reference": service_request.request_reference},
+        level="warning",
+        link=detail_link,
+    )
+    messages.success(request, _("Request cancelled."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_dispute(request, request_id: int):
+    emit_view_analytics_event(view_name="reprocessing_services.request_dispute", request=request)
+    service_request = _get_request_with_access_check(request, request_id)
+    if service_request is None:
+        return redirect("indy_hub:reprocessing_browse")
+
+    is_party = request.user.id in {service_request.requester_id, service_request.processor_user_id}
+    if not is_party and not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Only request participants can dispute this request."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+    if service_request.is_terminal:
+        messages.error(request, _("This request is already closed."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    dispute_reason = str(request.POST.get("dispute_reason") or "").strip()
+    if not dispute_reason:
+        messages.error(request, _("Dispute reason is required."))
+        return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+
+    service_request.status = ReprocessingServiceRequest.Status.DISPUTED
+    service_request.dispute_reason = dispute_reason
+    service_request.save(update_fields=["status", "dispute_reason", "updated_at"])
+
+    detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+    notify_user(
+        service_request.requester,
+        _("Reprocessing request disputed"),
+        _(
+            "Request %(reference)s has been marked disputed."
+        )
+        % {"reference": service_request.request_reference},
+        level="warning",
+        link=detail_link,
+    )
+    notify_user(
+        service_request.processor_user,
+        _("Reprocessing request disputed"),
+        _(
+            "Request %(reference)s has been marked disputed."
+        )
+        % {"reference": service_request.request_reference},
+        level="warning",
+        link=detail_link,
+    )
+    _notify_material_exchange_admins(
+        title="Reprocessing request disputed",
+        message=(
+            f"Request {service_request.request_reference} was disputed.\n"
+            f"Reason: {dispute_reason}"
+        ),
+        level="warning",
+        link=detail_link,
+    )
+    messages.warning(request, _("Request marked as disputed. Material Exchange admins have been notified."))
+    return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)

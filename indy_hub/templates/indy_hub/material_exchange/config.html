@@ -1006,7 +1006,20 @@ document.addEventListener('DOMContentLoaded', function() {
         buyStructureSelect.disabled = true;
 
         fetch(`{% url 'indy_hub:material_exchange_get_structures' 0 %}`.replace('/0/', `/${corpId}/`))
-            .then(response => response.json())
+            .then(async response => {
+                const contentType = (response.headers.get('content-type') || '').toLowerCase();
+                if (!contentType.includes('application/json')) {
+                    const bodyText = await response.text();
+                    const snippet = (bodyText || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+                    throw new Error(`HTTP ${response.status} ${response.statusText}${snippet ? `: ${snippet}` : ''}`);
+                }
+                const payload = await response.json();
+                if (!response.ok) {
+                    const detail = (payload && (payload.detail || payload.error || payload.message)) || '';
+                    throw new Error(`HTTP ${response.status} ${response.statusText}${detail ? `: ${detail}` : ''}`);
+                }
+                return payload;
+            })
             .then(data => {
                 sellStructureSelect.innerHTML = '';
                 buyStructureSelect.innerHTML = '';
@@ -1034,7 +1047,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     assetsScopeMissingNotice.classList.add('d-none');
                 }
 
-                data.structures.forEach(structure => {
+                const structures = Array.isArray(data.structures) ? data.structures : [];
+                structures.forEach(structure => {
                     const sellOption = document.createElement('option');
                     sellOption.value = structure.id;
                     sellOption.textContent = structure.name;
@@ -1049,6 +1063,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     buyOption.setAttribute('data-flags', (structure.flags || []).join(','));
                     buyStructureSelect.appendChild(buyOption);
                 });
+
+                if (!structures.length) {
+                    sellStructureSelect.innerHTML = '<option value="">{% trans "No structures found. Refresh corp assets and retry." %}</option>';
+                    buyStructureSelect.innerHTML = '<option value="">{% trans "No structures found. Refresh corp assets and retry." %}</option>';
+                }
 
                 sellStructureSelect.disabled = false;
                 buyStructureSelect.disabled = false;

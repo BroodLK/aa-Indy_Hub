@@ -1,0 +1,224 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+{% load humanize %}
+
+{% block page_title %}{% trans "Reprocessing Request" %} - {{ service_request.request_reference }}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1"><i class="fas fa-file-contract me-2"></i>{{ service_request.request_reference }}</h2>
+                <p class="description mb-0">{{ service_request.get_status_display }} - {{ service_request.processor_character_name }}</p>
+            </div>
+            <a href="{% url 'indy_hub:reprocessing_browse' %}" class="btn btn-outline-light">
+                <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Listings" %}
+            </a>
+        </div>
+        <i class="fas fa-file-contract header-bg"></i>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card mb-4">
+                <div class="card-header bg-success bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Contract Instructions" %}</h5>
+                </div>
+                <div class="card-body">
+                    <h6 class="fw-semibold">{% trans "Inbound Contract (Requester -> Reprocessor)" %}</h6>
+                    <ol>
+                        <li>{% trans "Type" %}: <strong>{% trans "Item Exchange" %}</strong></li>
+                        <li>{% trans "Assign To" %}: <strong>{{ service_request.processor_character_name }}</strong></li>
+                        <li>{% trans "Price" %}: <strong>0 ISK</strong></li>
+                        <li>{% trans "Reward" %}: <strong>0 ISK</strong></li>
+                        <li>{% trans "Duration" %}: <strong>{% trans "14 days" %}</strong></li>
+                        <li>{% trans "Items" %}: {% trans "Must exactly match the submitted input list." %}</li>
+                    </ol>
+
+                    <h6 class="fw-semibold mt-4">{% trans "Return Contract (Reprocessor -> Requester)" %}</h6>
+                    <ol>
+                        <li>{% trans "Type" %}: <strong>{% trans "Item Exchange" %}</strong></li>
+                        <li>{% trans "Assign To" %}: <strong>{{ service_request.requester_character_name }}</strong></li>
+                        <li>{% trans "Price" %}: <strong>{{ service_request.reward_isk|floatformat:2|intcomma }} ISK</strong> ({% trans "processor reward" %})</li>
+                        <li>{% trans "Items" %}: {% trans "Send exact expected mineral types; quantities allow only 1% tolerance." %}</li>
+                    </ol>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header bg-primary bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Submitted Input Items" %}</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "Item" %}</th>
+                                    <th class="text-end">{% trans "Quantity" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in service_request.items.all %}
+                                <tr>
+                                    <td>{{ item.type_name }}</td>
+                                    <td class="text-end">{{ item.quantity|intcomma }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header bg-info bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Expected Refined Outputs" %}</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "Material" %}</th>
+                                    <th class="text-end">{% trans "Expected" %}</th>
+                                    <th class="text-end">{% trans "Actual" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for output in service_request.expected_outputs.all %}
+                                <tr>
+                                    <td>{{ output.type_name }}</td>
+                                    <td class="text-end">{{ output.expected_quantity|intcomma }}</td>
+                                    <td class="text-end">{% if output.actual_quantity %}{{ output.actual_quantity|intcomma }}{% else %}-{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="p-3 border-top">
+                        <div class="d-flex justify-content-between small">
+                            <span class="text-muted">{% trans "Estimated Output Value" %}</span>
+                            <span class="fw-semibold">{{ service_request.estimated_output_value|floatformat:2|intcomma }} ISK</span>
+                        </div>
+                        <div class="d-flex justify-content-between mt-1">
+                            <span class="fw-semibold">{% trans "Processor Reward" %}</span>
+                            <span class="fw-bold text-warning">{{ service_request.reward_isk|floatformat:2|intcomma }} ISK</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-warning bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Actions" %}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex flex-wrap gap-2">
+                        {% if can_submit_inbound %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_submit_inbound' service_request.id %}" class="d-flex gap-2">
+                            {% csrf_token %}
+                            <input type="number" name="inbound_contract_id" class="form-control form-control-sm" min="1" placeholder="{% trans 'Inbound contract ID' %}" required>
+                            <button type="submit" class="btn btn-sm btn-outline-primary">{% trans "Submit Inbound" %}</button>
+                        </form>
+                        {% endif %}
+
+                        {% if can_verify_inbound %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_verify_inbound' service_request.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-primary">{% trans "Verify Inbound" %}</button>
+                        </form>
+                        {% endif %}
+
+                        {% if can_mark_processing %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_mark_processing' service_request.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">{% trans "Mark Processing" %}</button>
+                        </form>
+                        {% endif %}
+
+                        {% if can_mark_awaiting_return %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_mark_awaiting_return' service_request.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">{% trans "Awaiting Return Contract" %}</button>
+                        </form>
+                        {% endif %}
+
+                        {% if can_submit_return %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_submit_return' service_request.id %}" class="d-flex gap-2">
+                            {% csrf_token %}
+                            <input type="number" name="return_contract_id" class="form-control form-control-sm" min="1" placeholder="{% trans 'Return contract ID' %}" required>
+                            <button type="submit" class="btn btn-sm btn-outline-primary">{% trans "Submit Return" %}</button>
+                        </form>
+                        {% endif %}
+
+                        {% if can_verify_return %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_verify_return' service_request.id %}">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-success">{% trans "Verify Return" %}</button>
+                        </form>
+                        {% endif %}
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2 mt-3">
+                        {% if can_cancel %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_cancel' service_request.id %}" class="d-flex gap-2">
+                            {% csrf_token %}
+                            <input type="text" name="cancel_reason" class="form-control form-control-sm" placeholder="{% trans 'Cancel reason (optional)' %}">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Cancel" %}</button>
+                        </form>
+                        {% endif %}
+
+                        {% if can_dispute %}
+                        <form method="post" action="{% url 'indy_hub:reprocessing_request_dispute' service_request.id %}" class="d-flex gap-2">
+                            {% csrf_token %}
+                            <input type="text" name="dispute_reason" class="form-control form-control-sm" placeholder="{% trans 'Dispute reason' %}" required>
+                            <button type="submit" class="btn btn-sm btn-danger">{% trans "Dispute" %}</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card mb-4">
+                <div class="card-header bg-primary bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Processor" %}</h5>
+                </div>
+                <div class="card-body text-center">
+                    <img src="{{ processor_portrait_url }}" alt="{{ service_request.processor_character_name }}" class="rounded mb-3" width="96" height="96">
+                    <div class="fw-semibold">{{ service_request.processor_character_name }}</div>
+                    <div class="small text-muted">{{ service_request.structure_name }}</div>
+                    <div class="small text-muted">{{ service_request.structure_type_name }}{% if service_request.structure_location_name %} - {{ service_request.structure_location_name }}{% endif %}</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header bg-secondary bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Timeline" %}</h5>
+                </div>
+                <div class="card-body">
+                    {% for step in timeline %}
+                    <div class="d-flex align-items-start gap-2 mb-3">
+                        <span class="badge {% if step.done %}bg-success{% else %}bg-secondary{% endif %}"><i class="fas {{ step.icon }}"></i></span>
+                        <div>
+                            <div class="fw-semibold">{{ step.label }}</div>
+                            {% if step.timestamp %}
+                            <div class="small text-muted">{{ step.timestamp|date:"Y-m-d H:i" }}</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}

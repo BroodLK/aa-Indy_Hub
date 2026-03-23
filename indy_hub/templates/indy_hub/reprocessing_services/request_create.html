@@ -1,0 +1,152 @@
+{% extends "indy_hub/base.html" %}
+{% load i18n %}
+{% load static %}
+{% load humanize %}
+
+{% block page_title %}{% trans "Reprocessing Request" %} - {{ profile.character_name }}{% endblock page_title %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <div class="page-header mb-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+            <div>
+                <h2 class="h3 mb-1"><i class="fas fa-file-signature me-2"></i>{% trans "Create Reprocessing Request" %}</h2>
+                <p class="description mb-0">{% trans "Selected reprocessor" %}: {{ profile.character_name }} - {{ profile.structure_name }}</p>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'indy_hub:reprocessing_browse' %}" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Listings" %}
+                </a>
+            </div>
+        </div>
+        <i class="fas fa-file-signature header-bg"></i>
+    </div>
+
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header bg-info bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Input Items" %}</h5>
+                </div>
+                <div class="card-body">
+                    <form method="post">
+                        {% csrf_token %}
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">{% trans "Requester Character" %}</label>
+                            <select name="requester_character_id" class="form-select">
+                                {% for row in requester_character_rows %}
+                                <option value="{{ row.character_id }}" {% if selected_requester_character_id == row.character_id %}selected{% endif %}>{{ row.character_name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">{% trans "Items (one line each)" %}</label>
+                            <textarea name="items_text" class="form-control" rows="10" placeholder="34, 100000&#10;Arkonor x 5000">{{ items_text }}</textarea>
+                            <div class="form-text">{% trans "Formats supported" %}: <code>type_id, quantity</code> {% trans "or" %} <code>item name x quantity</code>.</div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="submit" name="action" value="estimate" class="btn btn-outline-primary">
+                                <i class="fas fa-calculator me-1"></i>{% trans "Estimate" %}
+                            </button>
+                            <button type="submit" name="action" value="submit_request" class="btn btn-success">
+                                <i class="fas fa-paper-plane me-1"></i>{% trans "Submit Request" %}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-5">
+            <div class="card mb-4">
+                <div class="card-header bg-primary bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Reprocessor Snapshot" %}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex gap-3 align-items-center mb-3">
+                        <img src="{{ profile_portrait_url }}" alt="{{ profile.character_name }}" class="rounded" width="72" height="72">
+                        <div>
+                            <div class="fw-semibold">{{ profile.character_name }}</div>
+                            <div class="small text-muted">{{ profile.structure_name }}{% if profile.structure_location_name %} - {{ profile.structure_location_name }}{% endif %}</div>
+                        </div>
+                    </div>
+                    <div class="small text-muted">{% trans "Estimated Yield" %}: <span class="fw-semibold">{{ profile.estimated_yield_percent }}%</span></div>
+                    <div class="small text-muted">{% trans "Processor Margin" %}: <span class="fw-semibold">{{ profile.margin_percent }}%</span></div>
+                </div>
+            </div>
+
+            {% if parsed_item_rows %}
+            <div class="card mb-4">
+                <div class="card-header bg-secondary bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Parsed Inputs" %}</h5>
+                </div>
+                <div class="card-body p-0">
+                    <ul class="list-group list-group-flush">
+                        {% for row in parsed_item_rows %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>{{ row.type_name }}</span>
+                            <span class="badge bg-secondary">{{ row.quantity|intcomma }}</span>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if estimate_payload %}
+            <div class="card">
+                <div class="card-header bg-success bg-opacity-10">
+                    <h5 class="mb-0">{% trans "Estimated Outputs" %}</h5>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "Material" %}</th>
+                                    <th class="text-end">{% trans "Quantity" %}</th>
+                                    <th class="text-end">{% trans "Value" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for output in estimate_payload.outputs %}
+                                <tr>
+                                    <td>{{ output.type_name }}</td>
+                                    <td class="text-end">{{ output.expected_quantity|intcomma }}</td>
+                                    <td class="text-end">{{ output.total_value|floatformat:2|intcomma }} ISK</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="p-3 border-top">
+                        <div class="d-flex justify-content-between small">
+                            <span class="text-muted">{% trans "Estimated Refined Value" %}</span>
+                            <span class="fw-semibold">{{ estimate_payload.total_output_value|floatformat:2|intcomma }} ISK</span>
+                        </div>
+                        <div class="d-flex justify-content-between mt-1">
+                            <span class="fw-semibold">{% trans "Processor Reward" %}</span>
+                            <span class="fw-bold text-warning">{{ estimate_payload.reward_isk|floatformat:2|intcomma }} ISK</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if unsupported_rows %}
+            <div class="alert alert-warning mt-3 mb-0">
+                <i class="fas fa-triangle-exclamation me-2"></i>
+                {% trans "Unsupported inputs" %}:
+                {% for row in unsupported_rows %}
+                    {{ row.type_name }} x{{ row.quantity }}{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock content %}
