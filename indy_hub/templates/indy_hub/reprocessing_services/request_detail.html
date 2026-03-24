@@ -41,7 +41,26 @@
                     <h5 class="mb-0">{% trans "Contract Instructions" %}</h5>
                 </div>
                 <div class="card-body">
-                    <h6 class="fw-semibold">{% trans "Inbound Contract (Requester -> Reprocessor)" %}</h6>
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h6 class="fw-semibold mb-0">{% trans "Inbound Contract (Requester -> Reprocessor)" %}</h6>
+                        {% if can_check_inbound_contract %}
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            title="{% trans 'Paste the in-game Copy All result to compare this inbound contract' %}"
+                            aria-label="{% trans 'Check inbound contract before creating' %}"
+                            data-contract-check-trigger="true"
+                            data-check-url="{% url 'indy_hub:reprocessing_request_check_inbound_contract' service_request.id %}"
+                            data-order-ref="{{ service_request.request_reference }}"
+                            data-recipient="{{ service_request.processor_character_name }}{% if processor_corporation_name %} / {{ processor_corporation_name }}{% endif %}"
+                            data-location="{{ service_request.structure_name }}"
+                            data-amount="0"
+                            data-amount-label="{% trans 'I will pay / receive' %}"
+                        >
+                            <i class="fas fa-paste me-1"></i>{% trans "Paste & Check" %}
+                        </button>
+                        {% endif %}
+                    </div>
                     <ol>
                         <li>{% trans "Type" %}: <strong>{% trans "Item Exchange" %}</strong></li>
                         <li>
@@ -70,7 +89,26 @@
                         <li>{% trans "Items" %}: {% trans "Must exactly match the submitted input list." %}</li>
                     </ol>
 
-                    <h6 class="fw-semibold mt-4">{% trans "Return Contract (Reprocessor -> Requester)" %}</h6>
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-4">
+                        <h6 class="fw-semibold mb-0">{% trans "Return Contract (Reprocessor -> Requester)" %}</h6>
+                        {% if can_check_return_contract %}
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary"
+                            title="{% trans 'Paste the in-game Copy All result to compare this return contract' %}"
+                            aria-label="{% trans 'Check return contract before creating' %}"
+                            data-contract-check-trigger="true"
+                            data-check-url="{% url 'indy_hub:reprocessing_request_check_return_contract' service_request.id %}"
+                            data-order-ref="{{ service_request.request_reference }}"
+                            data-recipient="{{ service_request.requester_character_name }}"
+                            data-location="{{ service_request.structure_name }}"
+                            data-amount="{{ service_request.reward_isk|floatformat:0|intcomma }}"
+                            data-amount-label="{% trans 'I will receive' %}"
+                        >
+                            <i class="fas fa-paste me-1"></i>{% trans "Paste & Check" %}
+                        </button>
+                        {% endif %}
+                    </div>
                     <ol>
                         <li>{% trans "Type" %}: <strong>{% trans "Item Exchange" %}</strong></li>
                         <li>
@@ -247,6 +285,8 @@
         </div>
     </div>
 </div>
+
+{% include "indy_hub/material_exchange/includes/contract_check_modal.html" %}
 {% endblock content %}
 
 {% block extra_javascript %}

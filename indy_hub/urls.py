@@ -115,6 +115,8 @@ from .views.reprocessing_services import (
     reprocessing_browse,
     reprocessing_my_requests,
     reprocessing_request_cancel,
+    reprocessing_request_check_inbound_contract,
+    reprocessing_request_check_return_contract,
     reprocessing_request_create,
     reprocessing_request_detail,
     reprocessing_request_dispute,
@@ -598,6 +600,11 @@ urlpatterns = [
         name="reprocessing_request_verify_inbound",
     ),
     path(
+        "reprocessing-services/requests/<int:request_id>/check-inbound-contract/",
+        reprocessing_request_check_inbound_contract,
+        name="reprocessing_request_check_inbound_contract",
+    ),
+    path(
         "reprocessing-services/requests/<int:request_id>/mark-processing/",
         reprocessing_request_mark_processing,
         name="reprocessing_request_mark_processing",
@@ -616,6 +623,11 @@ urlpatterns = [
         "reprocessing-services/requests/<int:request_id>/verify-return/",
         reprocessing_request_verify_return,
         name="reprocessing_request_verify_return",
+    ),
+    path(
+        "reprocessing-services/requests/<int:request_id>/check-return-contract/",
+        reprocessing_request_check_return_contract,
+        name="reprocessing_request_check_return_contract",
     ),
     path(
         "reprocessing-services/requests/<int:request_id>/cancel/",

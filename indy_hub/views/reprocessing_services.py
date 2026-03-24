@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 # Standard Library
+from collections.abc import Iterable
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 import hashlib
+import math
 import re
+from types import SimpleNamespace
 import unicodedata
 
 # Django
@@ -15,6 +18,7 @@ from django.contrib.auth.models import Permission, User
 from django.core.cache import cache
 from django.db import connection, transaction
 from django.db.models import Q
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -63,6 +67,13 @@ from ..services.reprocessing import (
 )
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_character_name, get_corporation_name, get_type_name
+from ..utils.material_exchange_contract_check import (
+    collapse_whitespace,
+    normalize_text,
+    parse_contract_export,
+    parse_contract_items,
+    parse_isk_amount,
+)
 from .navigation import build_nav_context
 
 logger = get_extension_logger(__name__)
@@ -798,6 +809,467 @@ def _build_expected_output_map(service_request: ReprocessingServiceRequest) -> d
     return {
         int(output.type_id): int(output.expected_quantity)
         for output in service_request.expected_outputs.all()
+    }
+
+
+def _dedupe_labels(values: Iterable[str | None]) -> list[str]:
+    seen: set[str] = set()
+    labels: list[str] = []
+    for raw_value in values:
+        value = collapse_whitespace(raw_value)
+        if not value:
+            continue
+        value_key = normalize_text(value)
+        if not value_key or value_key in seen:
+            continue
+        seen.add(value_key)
+        labels.append(value)
+    return labels
+
+
+def _format_isk_value(value: int | None) -> str:
+    if value is None:
+        return ""
+    return f"{int(value):,.0f} ISK"
+
+
+def _summarize_type_quantity_map(
+    quantity_by_type: dict[int, int],
+    labels_by_type: dict[int, str] | None = None,
+) -> list[str]:
+    labels_by_type = labels_by_type or {}
+    summary: list[str] = []
+    for type_id in sorted(int(key) for key in quantity_by_type.keys() if int(key) > 0):
+        quantity = int(quantity_by_type.get(type_id, 0) or 0)
+        if quantity <= 0:
+            continue
+        type_name = str(labels_by_type.get(type_id) or get_type_name(type_id) or f"Type {type_id}")
+        summary.append(f"{type_name} x {quantity:,}")
+    return summary
+
+
+def _resolve_contract_item_map_from_export(
+    raw_items: str,
+) -> tuple[dict[int, int], dict[int, str], list[str]]:
+    parsed_items, parsed_item_labels = parse_contract_items(raw_items)
+    actual_by_type: dict[int, int] = {}
+    actual_labels_by_type: dict[int, str] = {}
+    unresolved_entries: list[str] = []
+
+    for item_key, quantity in parsed_items.items():
+        item_name = str(parsed_item_labels.get(item_key) or item_key or "").strip()
+        qty = int(quantity or 0)
+        if not item_name or qty <= 0:
+            continue
+        type_id = _resolve_type_id_from_text(item_name)
+        if not type_id or int(type_id) <= 0:
+            unresolved_entries.append(f"{item_name} x {qty:,}")
+            continue
+        type_id_int = int(type_id)
+        actual_by_type[type_id_int] = actual_by_type.get(type_id_int, 0) + qty
+        actual_labels_by_type.setdefault(type_id_int, item_name)
+
+    return actual_by_type, actual_labels_by_type, unresolved_entries
+
+
+def _build_item_difference_sections(
+    *,
+    expected_by_type: dict[int, int],
+    actual_by_type: dict[int, int],
+    labels_by_type: dict[int, str],
+    tolerance_percent: Decimal | None = None,
+    unresolved_entries: list[str] | None = None,
+) -> list[dict[str, object]]:
+    expected = {int(k): int(v) for k, v in (expected_by_type or {}).items() if int(v) > 0}
+    actual = {int(k): int(v) for k, v in (actual_by_type or {}).items() if int(v) > 0}
+
+    missing_entries: list[str] = []
+    surplus_entries: list[str] = []
+    quantity_entries: list[str] = []
+
+    expected_types = set(expected.keys())
+    actual_types = set(actual.keys())
+
+    for type_id in sorted(expected_types - actual_types):
+        type_name = str(labels_by_type.get(type_id) or get_type_name(type_id) or f"Type {type_id}")
+        missing_entries.append(f"{type_name} x {int(expected[type_id]):,}")
+
+    for type_id in sorted(actual_types - expected_types):
+        type_name = str(labels_by_type.get(type_id) or get_type_name(type_id) or f"Type {type_id}")
+        surplus_entries.append(f"{type_name} x {int(actual[type_id]):,}")
+
+    shared_types = sorted(expected_types & actual_types)
+    if tolerance_percent is None:
+        for type_id in shared_types:
+            expected_qty = int(expected.get(type_id, 0))
+            actual_qty = int(actual.get(type_id, 0))
+            if expected_qty == actual_qty:
+                continue
+            type_name = str(labels_by_type.get(type_id) or get_type_name(type_id) or f"Type {type_id}")
+            quantity_entries.append(
+                _(
+                    "%(type_name)s: expected %(expected)s, actual %(actual)s."
+                )
+                % {
+                    "type_name": type_name,
+                    "expected": f"{expected_qty:,}",
+                    "actual": f"{actual_qty:,}",
+                }
+            )
+    else:
+        tolerance_ratio = _to_decimal(tolerance_percent) / Decimal("100")
+        for type_id in shared_types:
+            expected_qty = int(expected.get(type_id, 0))
+            actual_qty = int(actual.get(type_id, 0))
+            max_delta = max(
+                1,
+                int(math.ceil(float(_to_decimal(expected_qty) * tolerance_ratio))),
+            )
+            delta = abs(actual_qty - expected_qty)
+            if delta <= max_delta:
+                continue
+            type_name = str(labels_by_type.get(type_id) or get_type_name(type_id) or f"Type {type_id}")
+            quantity_entries.append(
+                _(
+                    "%(type_name)s: expected %(expected)s, actual %(actual)s (allowed +/- %(allowed)s)."
+                )
+                % {
+                    "type_name": type_name,
+                    "expected": f"{expected_qty:,}",
+                    "actual": f"{actual_qty:,}",
+                    "allowed": f"{max_delta:,}",
+                }
+            )
+
+    sections: list[dict[str, object]] = []
+    if missing_entries:
+        sections.append(
+            {
+                "key": "missing",
+                "label": _("Missing from pasted contract"),
+                "items": missing_entries,
+            }
+        )
+    if surplus_entries:
+        sections.append(
+            {
+                "key": "surplus",
+                "label": _("Unexpected in pasted contract"),
+                "items": surplus_entries,
+            }
+        )
+    if quantity_entries:
+        sections.append(
+            {
+                "key": "quantity",
+                "label": _("Quantity mismatches"),
+                "items": quantity_entries,
+            }
+        )
+    if unresolved_entries:
+        sections.append(
+            {
+                "key": "unresolved",
+                "label": _("Unrecognized pasted items"),
+                "items": list(unresolved_entries),
+            }
+        )
+    return sections
+
+
+def _availability_matches_candidates(
+    *,
+    actual_availability: str,
+    candidate_names: list[str],
+) -> bool:
+    normalized_candidates = [
+        normalize_text(candidate)
+        for candidate in (candidate_names or [])
+        if normalize_text(candidate)
+    ]
+    if not normalized_candidates:
+        return True
+    normalized_actual = normalize_text(actual_availability)
+    if not normalized_actual:
+        return False
+    return any(
+        candidate in normalized_actual or normalized_actual in candidate
+        for candidate in normalized_candidates
+    )
+
+
+def _build_reprocessing_contract_check_payload(
+    *,
+    service_request: ReprocessingServiceRequest,
+    contract_kind: str,
+    raw_text: str,
+) -> dict[str, object]:
+    fields = parse_contract_export(raw_text)
+    actual_contract_type = str(fields.get("Contract Type", "") or "")
+    actual_description = str(fields.get("Description", "") or "")
+    actual_availability = str(fields.get("Availability", "") or "")
+    actual_will_pay = parse_isk_amount(fields.get("I will pay", ""))
+    actual_will_receive = parse_isk_amount(fields.get("I will receive", ""))
+    actual_by_type, actual_labels_by_type, unresolved_entries = _resolve_contract_item_map_from_export(
+        fields.get("Items For Sale", "")
+    )
+
+    expected_reference = str(service_request.request_reference or f"REPROCESSING-{service_request.id}")
+    contract_type_ok = normalize_text(actual_contract_type) == normalize_text("Item Exchange")
+    description_ok = _contract_title_contains_request_reference(
+        contract_title=actual_description,
+        request_reference=expected_reference,
+    )
+
+    checks: list[dict[str, object]] = [
+        {
+            "key": "contract_type",
+            "label": _("Contract type"),
+            "passed": contract_type_ok,
+            "expected": "Item Exchange",
+            "actual": actual_contract_type,
+            "reminder": _("Use Item Exchange on the contract creation screen."),
+            "copy_value": "Item Exchange",
+            "copy_label": _("Copy contract type"),
+            "message": (
+                _("Contract type is correct.")
+                if contract_type_ok
+                else _("Contract type must be Item Exchange.")
+            ),
+        },
+        {
+            "key": "description",
+            "label": _("Description"),
+            "passed": description_ok,
+            "expected": expected_reference,
+            "actual": actual_description,
+            "reminder": _(
+                "Description must include the reprocessing request reference."
+            ),
+            "copy_value": expected_reference,
+            "copy_label": _("Copy request reference"),
+            "message": (
+                _("Description includes the request reference.")
+                if description_ok
+                else _("Description must include the request reference.")
+            ),
+        },
+    ]
+
+    if str(contract_kind).lower() == "inbound":
+        expected_by_type = _build_expected_item_map(service_request)
+        expected_labels_by_type = {
+            int(item.type_id): str(item.type_name or get_type_name(int(item.type_id)) or f"Type {int(item.type_id)}")
+            for item in service_request.items.all()
+        }
+        recipient_candidates = _dedupe_labels(
+            [
+                str(service_request.processor_character_name or ""),
+                str(get_corporation_name(getattr(service_request.processor_profile, "corporation_id", None)) or ""),
+            ]
+        )
+        synthetic_contract_items = [
+            SimpleNamespace(type_id=type_id, quantity=quantity, is_included=True)
+            for type_id, quantity in actual_by_type.items()
+        ]
+        items_ok = contract_items_match_exact(
+            contract_items=synthetic_contract_items,
+            expected_by_type=expected_by_type,
+        ) and not unresolved_entries
+        item_sections = _build_item_difference_sections(
+            expected_by_type=expected_by_type,
+            actual_by_type=actual_by_type,
+            labels_by_type={**expected_labels_by_type, **actual_labels_by_type},
+            unresolved_entries=unresolved_entries,
+        )
+
+        availability_ok = _availability_matches_candidates(
+            actual_availability=actual_availability,
+            candidate_names=recipient_candidates,
+        )
+        amount_ok = (
+            int(actual_will_pay or -1) == 0
+            and int(actual_will_receive or -1) == 0
+        )
+
+        checks.extend(
+            [
+                {
+                    "key": "availability",
+                    "label": _("Availability"),
+                    "passed": availability_ok,
+                    "expected": (
+                        recipient_candidates
+                        if len(recipient_candidates) > 1
+                        else (recipient_candidates[0] if recipient_candidates else "")
+                    ),
+                    "actual": actual_availability,
+                    "reminder": _(
+                        "Set Availability to the selected reprocessor character (or processor corporation)."
+                    ),
+                    "copy_value": recipient_candidates[0] if recipient_candidates else "",
+                    "copy_label": _("Copy assignee"),
+                    "message": (
+                        _("Availability points to the selected reprocessor.")
+                        if availability_ok
+                        else _("Availability does not match the selected reprocessor.")
+                    ),
+                },
+                {
+                    "key": "amount",
+                    "label": _("ISK amounts"),
+                    "passed": amount_ok,
+                    "expected": [_("I will pay: 0 ISK"), _("I will receive: 0 ISK")],
+                    "actual": [
+                        _("I will pay: %(amount)s")
+                        % {"amount": _format_isk_value(actual_will_pay) or _("(missing)")},
+                        _("I will receive: %(amount)s")
+                        % {"amount": _format_isk_value(actual_will_receive) or _("(missing)")},
+                    ],
+                    "reminder": _("Inbound contract must be 0 ISK price and 0 reward."),
+                    "copy_value": "0",
+                    "copy_label": _("Copy amount"),
+                    "message": (
+                        _("ISK amounts are correct.")
+                        if amount_ok
+                        else _("Inbound contract must use 0 ISK for both fields.")
+                    ),
+                },
+                {
+                    "key": "items",
+                    "label": _("Items"),
+                    "passed": items_ok,
+                    "expected": _summarize_type_quantity_map(expected_by_type, expected_labels_by_type),
+                    "actual": _summarize_type_quantity_map(
+                        actual_by_type,
+                        {**expected_labels_by_type, **actual_labels_by_type},
+                    ),
+                    "reminder": _("Items For Sale must exactly match the submitted input list."),
+                    "detail_sections": item_sections,
+                    "copy_value": "\n".join(_summarize_type_quantity_map(expected_by_type, expected_labels_by_type)),
+                    "copy_label": _("Copy expected items"),
+                    "message": (
+                        _("Items match the submitted input list.")
+                        if items_ok
+                        else _("Items do not exactly match the submitted input list.")
+                    ),
+                },
+            ]
+        )
+
+        ok = all(bool(check.get("passed")) for check in checks)
+        return {
+            "ok": ok,
+            "summary": (
+                _("Inbound contract looks valid.")
+                if ok
+                else _("Inbound contract has mismatches. Fix them before submitting.")
+            ),
+            "checks": checks,
+        }
+
+    expected_by_type = _build_expected_output_map(service_request)
+    expected_labels_by_type = {
+        int(output.type_id): str(output.type_name or get_type_name(int(output.type_id)) or f"Type {int(output.type_id)}")
+        for output in service_request.expected_outputs.all()
+    }
+    recipient_candidates = _dedupe_labels([str(service_request.requester_character_name or "")])
+    tolerance_percent = _to_decimal(service_request.tolerance_percent or Decimal("1.00"))
+    expected_reward = int(_floor_isk_amount(service_request.reward_isk))
+    synthetic_contract_items = [
+        SimpleNamespace(type_id=type_id, quantity=quantity, is_included=True)
+        for type_id, quantity in actual_by_type.items()
+    ]
+    items_ok, _item_errors = contract_items_match_with_tolerance(
+        contract_items=synthetic_contract_items,
+        expected_by_type=expected_by_type,
+        tolerance_percent=tolerance_percent,
+    )
+    if unresolved_entries:
+        items_ok = False
+
+    item_sections = _build_item_difference_sections(
+        expected_by_type=expected_by_type,
+        actual_by_type=actual_by_type,
+        labels_by_type={**expected_labels_by_type, **actual_labels_by_type},
+        tolerance_percent=tolerance_percent,
+        unresolved_entries=unresolved_entries,
+    )
+
+    availability_ok = _availability_matches_candidates(
+        actual_availability=actual_availability,
+        candidate_names=recipient_candidates,
+    )
+    amount_ok = int(actual_will_receive or -1) == int(expected_reward)
+
+    checks.extend(
+        [
+            {
+                "key": "availability",
+                "label": _("Availability"),
+                "passed": availability_ok,
+                "expected": recipient_candidates[0] if recipient_candidates else "",
+                "actual": actual_availability,
+                "reminder": _("Set Availability to the requester character."),
+                "copy_value": recipient_candidates[0] if recipient_candidates else "",
+                "copy_label": _("Copy assignee"),
+                "message": (
+                    _("Availability points to the requester.")
+                    if availability_ok
+                    else _("Availability does not match the requester character.")
+                ),
+            },
+            {
+                "key": "amount",
+                "label": _("I will receive"),
+                "passed": amount_ok,
+                "expected": _format_isk_value(expected_reward),
+                "actual": _format_isk_value(actual_will_receive),
+                "reminder": _(
+                    "I will receive must match the processor reward for this request."
+                ),
+                "copy_value": str(expected_reward),
+                "copy_label": _("Copy amount"),
+                "message": (
+                    _("Reward amount is correct.")
+                    if amount_ok
+                    else _("Reward amount does not match the expected processor reward.")
+                ),
+            },
+            {
+                "key": "items",
+                "label": _("Items"),
+                "passed": items_ok,
+                "expected": _summarize_type_quantity_map(expected_by_type, expected_labels_by_type),
+                "actual": _summarize_type_quantity_map(
+                    actual_by_type,
+                    {**expected_labels_by_type, **actual_labels_by_type},
+                ),
+                "reminder": _(
+                    "Items must match expected outputs with no substitutions and within tolerance (%(tolerance)s%%)."
+                )
+                % {"tolerance": f"{tolerance_percent:,.2f}"},
+                "detail_sections": item_sections,
+                "copy_value": "\n".join(_summarize_type_quantity_map(expected_by_type, expected_labels_by_type)),
+                "copy_label": _("Copy expected outputs"),
+                "message": (
+                    _("Items match expected outputs within tolerance.")
+                    if items_ok
+                    else _("Items do not match expected outputs within tolerance.")
+                ),
+            },
+        ]
+    )
+
+    ok = all(bool(check.get("passed")) for check in checks)
+    return {
+        "ok": ok,
+        "summary": (
+            _("Return contract looks valid.")
+            if ok
+            else _("Return contract has mismatches. Fix them before submitting.")
+        ),
+        "checks": checks,
     }
 
 
@@ -2438,6 +2910,18 @@ def reprocessing_request_detail(request, request_id: int):
     can_cancel = (is_requester or is_admin) and status != ReprocessingServiceRequest.Status.COMPLETED
     can_admin_delete = is_admin and status != ReprocessingServiceRequest.Status.COMPLETED
     can_dispute = (is_requester or is_processor or is_admin) and not service_request.is_terminal
+    can_check_inbound_contract = (is_requester or is_admin) and status in {
+        ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+        ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+    }
+    can_check_return_contract = (is_processor or is_admin) and status in {
+        ReprocessingServiceRequest.Status.PROCESSING,
+        ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
+    }
+    processor_corporation_name = str(
+        get_corporation_name(getattr(service_request.processor_profile, "corporation_id", None))
+        or ""
+    )
 
     inbound_contract = (
         ESIContract.objects.filter(contract_id=int(service_request.inbound_contract_id or 0))
@@ -2468,8 +2952,11 @@ def reprocessing_request_detail(request, request_id: int):
         "can_cancel": can_cancel,
         "can_admin_delete": can_admin_delete,
         "can_dispute": can_dispute,
+        "can_check_inbound_contract": can_check_inbound_contract,
+        "can_check_return_contract": can_check_return_contract,
         "inbound_contract": inbound_contract,
         "return_contract": return_contract,
+        "processor_corporation_name": processor_corporation_name,
         "processor_portrait_url": _avatar_url(int(service_request.processor_character_id), size=128),
     }
     context.update(_build_nav_context(request.user, active_tab="reprocessing"))
@@ -2485,6 +2972,84 @@ def _get_request_with_access_check(request, request_id: int) -> ReprocessingServ
         messages.error(request, _("You do not have access to this reprocessing request."))
         return None
     return service_request
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_check_inbound_contract(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_check_inbound_contract",
+        request=request,
+    )
+    service_request = get_object_or_404(
+        ReprocessingServiceRequest.objects.select_related("requester", "processor_user", "processor_profile").prefetch_related("items", "expected_outputs"),
+        pk=int(request_id),
+    )
+    if not _user_can_access_request(request.user, service_request):
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _("You do not have access to this reprocessing request."),
+            },
+            status=403,
+        )
+
+    raw_text = str(request.POST.get("contract_text", "") or "")
+    if not collapse_whitespace(raw_text):
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _("Please paste the in-game contract export first."),
+            },
+            status=400,
+        )
+
+    payload = _build_reprocessing_contract_check_payload(
+        service_request=service_request,
+        contract_kind="inbound",
+        raw_text=raw_text,
+    )
+    return JsonResponse(payload)
+
+
+@indy_hub_access_required
+@login_required
+@require_http_methods(["POST"])
+def reprocessing_request_check_return_contract(request, request_id: int):
+    emit_view_analytics_event(
+        view_name="reprocessing_services.request_check_return_contract",
+        request=request,
+    )
+    service_request = get_object_or_404(
+        ReprocessingServiceRequest.objects.select_related("requester", "processor_user", "processor_profile").prefetch_related("items", "expected_outputs"),
+        pk=int(request_id),
+    )
+    if not _user_can_access_request(request.user, service_request):
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _("You do not have access to this reprocessing request."),
+            },
+            status=403,
+        )
+
+    raw_text = str(request.POST.get("contract_text", "") or "")
+    if not collapse_whitespace(raw_text):
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _("Please paste the in-game contract export first."),
+            },
+            status=400,
+        )
+
+    payload = _build_reprocessing_contract_check_payload(
+        service_request=service_request,
+        contract_kind="return",
+        raw_text=raw_text,
+    )
+    return JsonResponse(payload)
 
 
 @indy_hub_access_required
