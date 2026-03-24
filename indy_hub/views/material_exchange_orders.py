@@ -14,7 +14,7 @@ from django.utils.translation import gettext as _
 from django.views.decorators.http import require_POST
 
 # Alliance Auth
-from allianceauth.authentication.models import UserProfile
+from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.services.hooks import get_extension_logger
 
 from ..decorators import indy_hub_permission_required
@@ -79,6 +79,7 @@ def my_orders(request):
         corporation_name = get_corporation_name(
             getattr(order.config, "corporation_id", None)
         )
+        order_location_label = _resolve_sell_order_location_label(order)
         all_orders.append(
             {
                 "type": "sell",
@@ -95,8 +96,7 @@ def my_orders(request):
                 "progress_width": _calc_progress_width(timeline),
                 "contract_check_enabled": not is_closed,
                 "contract_check_recipient": corporation_name,
-                "contract_check_location": getattr(order.config, "structure_name", "")
-                or "",
+                "contract_check_location": order_location_label,
                 "contract_check_amount": str(order.total_price),
                 "contract_check_amount_label": _("I will receive"),
             }
@@ -106,6 +106,11 @@ def my_orders(request):
         timeline = _build_timeline_breadcrumb(order, "buy")
         is_closed = order.status in {"completed", "rejected", "cancelled"}
         buyer_main_character = _resolve_main_character_name(order.buyer)
+        buyer_recipients = _resolve_linked_character_names(order.buyer)
+        recipient_label = _format_recipients_for_display(
+            buyer_recipients, fallback=buyer_main_character
+        )
+        order_location_label = _resolve_buy_order_location_label(order)
         all_orders.append(
             {
                 "type": "buy",
@@ -121,9 +126,8 @@ def my_orders(request):
                 "timeline_breadcrumb": timeline,
                 "progress_width": _calc_progress_width(timeline),
                 "contract_check_enabled": not is_closed,
-                "contract_check_recipient": buyer_main_character,
-                "contract_check_location": getattr(order.config, "structure_name", "")
-                or "",
+                "contract_check_recipient": recipient_label,
+                "contract_check_location": order_location_label,
                 "contract_check_amount": str(order.total_price),
                 "contract_check_amount_label": _("I will pay"),
             }
@@ -268,6 +272,10 @@ def buy_order_detail(request, order_id):
     timeline_breadcrumb = _build_timeline_breadcrumb(order, "buy")
 
     buyer_main_character = _resolve_main_character_name(order.buyer)
+    buyer_recipients = _resolve_linked_character_names(order.buyer)
+    contract_check_recipient_label = _format_recipients_for_display(
+        buyer_recipients, fallback=buyer_main_character
+    )
     order_location_label = _resolve_buy_order_location_label(order)
 
     context = {
@@ -277,6 +285,7 @@ def buy_order_detail(request, order_id):
         "timeline": timeline,
         "timeline_breadcrumb": timeline_breadcrumb,
         "buyer_main_character": buyer_main_character,
+        "contract_check_recipient_label": contract_check_recipient_label,
         "order_location_label": order_location_label,
         "can_cancel": order.status not in ["completed", "rejected", "cancelled"],
     }
@@ -291,8 +300,9 @@ def _build_contract_check_payload(
     order,
     order_type: str,
     raw_text: str,
-    recipient_name: str,
-    location_name: str,
+    recipient_names: list[str],
+    location_candidates: list[str],
+    location_label: str,
 ):
     fields = parse_contract_export(raw_text)
     expected_items, expected_item_labels = build_expected_items(order.items.all())
@@ -314,6 +324,20 @@ def _build_contract_check_payload(
     actual_description = fields.get("Description", "")
     actual_availability = fields.get("Availability", "")
     actual_location = fields.get("Location", "")
+    recipient_names = _dedupe_labels(recipient_names)
+    if not recipient_names:
+        recipient_names = [""]
+    recipient_label = recipient_names[0]
+    if len(recipient_names) > 1:
+        recipient_label = _format_recipients_for_display(recipient_names)
+
+    location_candidates = _dedupe_labels(location_candidates)
+    if not location_candidates and location_label:
+        location_candidates = _dedupe_labels([location_label])
+    if not location_candidates:
+        location_candidates = [""]
+    if not location_label:
+        location_label = location_candidates[0]
     expected_reference = order.order_reference or f"INDY-{order.id}"
     expected_amount_display = f"{expected_amount:,.0f} ISK"
     actual_amount_display = (
@@ -366,51 +390,86 @@ def _build_contract_check_payload(
         }
     )
 
-    normalized_recipient = normalize_text(recipient_name)
-    availability_ok = bool(
-        normalized_recipient
-    ) and normalized_recipient in normalize_text(actual_availability)
+    normalized_recipients = {
+        normalize_text(name) for name in recipient_names if normalize_text(name)
+    }
+    normalized_availability = normalize_text(actual_availability)
+    availability_ok = bool(normalized_recipients) and any(
+        expected_name in normalized_availability for expected_name in normalized_recipients
+    )
+    availability_expected = recipient_names if len(recipient_names) > 1 else recipient_label
+    availability_reminder = (
+        _("Availability must target one of the linked buyer characters.")
+        if order_type == "buy" and len(recipient_names) > 1
+        else _("Availability must target the recipient shown for this order.")
+    )
+    availability_fail_message = (
+        _("Availability must target one of the linked buyer characters.")
+        if order_type == "buy" and len(recipient_names) > 1
+        else _("Availability must target the expected recipient.")
+    )
     checks.append(
         {
             "key": "availability",
             "label": _("Availability"),
             "passed": availability_ok,
-            "expected": recipient_name,
+            "expected": availability_expected,
             "actual": actual_availability,
-            "reminder": _(
-                "Availability must target the recipient shown for this order."
-            ),
-            "copy_value": recipient_name,
+            "reminder": availability_reminder,
+            "copy_value": recipient_names[0] if recipient_names else "",
             "copy_label": _("Copy recipient"),
             "message": (
                 _("Availability points to the expected recipient.")
                 if availability_ok
-                else _("Availability must target the expected recipient.")
+                else availability_fail_message
             ),
         }
     )
 
-    normalized_location = normalize_text(location_name)
+    normalized_location_candidates = {
+        normalize_text(candidate)
+        for candidate in location_candidates
+        if normalize_text(candidate)
+    }
     actual_location_normalized = normalize_text(actual_location)
-    location_ok = bool(normalized_location) and (
-        actual_location_normalized == normalized_location
-        or normalized_location in actual_location_normalized
-        or actual_location_normalized in normalized_location
+    location_ok = bool(normalized_location_candidates) and any(
+        actual_location_normalized == expected_location
+        or expected_location in actual_location_normalized
+        or actual_location_normalized in expected_location
+        for expected_location in normalized_location_candidates
+    )
+    location_expected = (
+        location_candidates if len(location_candidates) > 1 else location_label
+    )
+    location_reminder = (
+        _("Location must match one of the accepted locations for this order.")
+        if len(location_candidates) > 1
+        else _("Location must be the configured structure for this order.")
+    )
+    location_fail_message = (
+        _("Location must match one of the accepted locations.")
+        if len(location_candidates) > 1
+        else _("Location must match the configured structure.")
+    )
+    location_pass_message = (
+        _("Location matches one accepted location.")
+        if len(location_candidates) > 1
+        else _("Location matches the configured structure.")
     )
     checks.append(
         {
             "key": "location",
             "label": _("Location"),
             "passed": location_ok,
-            "expected": location_name,
+            "expected": location_expected,
             "actual": actual_location,
-            "reminder": _("Location must be the configured structure for this order."),
-            "copy_value": location_name,
+            "reminder": location_reminder,
+            "copy_value": location_label or location_candidates[0],
             "copy_label": _("Copy location"),
             "message": (
-                _("Location matches the configured structure.")
+                location_pass_message
                 if location_ok
-                else _("Location must match the configured structure.")
+                else location_fail_message
             ),
         }
     )
@@ -490,8 +549,8 @@ def _build_contract_check_payload(
         "checks": checks,
         "expected": {
             "reference": expected_reference,
-            "recipient": recipient_name,
-            "location": location_name,
+            "recipient": availability_expected,
+            "location": location_expected,
             "contract_type": "Item Exchange",
             "amount_label": amount_label,
             "amount": expected_amount,
@@ -543,12 +602,14 @@ def sell_order_check_contract(request, order_id):
     corporation_name = get_corporation_name(
         getattr(order.config, "corporation_id", None)
     )
+    location_candidates, location_label = _get_sell_contract_check_locations(order)
     payload = _build_contract_check_payload(
         order=order,
         order_type="sell",
         raw_text=request.POST.get("contract_text", ""),
-        recipient_name=corporation_name,
-        location_name=getattr(order.config, "structure_name", "") or "",
+        recipient_names=[corporation_name],
+        location_candidates=location_candidates,
+        location_label=location_label,
     )
     return JsonResponse(payload)
 
@@ -568,12 +629,18 @@ def buy_order_check_contract(request, order_id):
             status=400,
         )
 
+    buyer_recipients = _resolve_linked_character_names(order.buyer)
+    if not buyer_recipients:
+        fallback_buyer = _resolve_main_character_name(order.buyer)
+        buyer_recipients = [fallback_buyer] if fallback_buyer else []
+    location_candidates, location_label = _get_buy_contract_check_locations(order)
     payload = _build_contract_check_payload(
         order=order,
         order_type="buy",
         raw_text=request.POST.get("contract_text", ""),
-        recipient_name=_resolve_main_character_name(order.buyer),
-        location_name=getattr(order.config, "structure_name", "") or "",
+        recipient_names=buyer_recipients,
+        location_candidates=location_candidates,
+        location_label=location_label,
     )
     return JsonResponse(payload)
 
@@ -593,41 +660,64 @@ def _get_status_class(status):
     return status_classes.get(status, "secondary")
 
 
-def _resolve_sell_order_location_label(order: MaterialExchangeSellOrder) -> str:
-    source_name = str(getattr(order, "source_location_name", "") or "").strip()
-    if source_name:
-        return source_name
+def _dedupe_labels(values: Iterable[str | None]) -> list[str]:
+    seen: set[str] = set()
+    labels: list[str] = []
+    for raw_value in values:
+        value = collapse_whitespace(raw_value)
+        if not value:
+            continue
+        value_key = normalize_text(value)
+        if not value_key or value_key in seen:
+            continue
+        seen.add(value_key)
+        labels.append(value)
+    return labels
 
+
+def _get_sell_contract_check_locations(order: MaterialExchangeSellOrder) -> tuple[list[str], str]:
+    source_name = str(getattr(order, "source_location_name", "") or "").strip()
     source_id = getattr(order, "source_location_id", None)
     try:
         source_id_int = int(source_id or 0)
     except (TypeError, ValueError):
         source_id_int = 0
+
     if source_id_int > 0:
-        return f"Structure {source_id_int}"
+        source_id_label = f"Structure {source_id_int}"
+        candidates = _dedupe_labels([source_name, source_id_label])
+        return candidates, (source_name or source_id_label)
 
     config = getattr(order, "config", None)
     if not config:
-        return ""
-
-    if str(config.structure_name or "").strip():
-        return str(config.structure_name).strip()
+        fallback = _dedupe_labels([source_name])
+        return fallback, (fallback[0] if fallback else "")
 
     name_map = config.get_sell_structure_name_map() or {}
     location_ids = config.get_sell_structure_ids()
-    if location_ids:
+    candidates: list[str] = []
+    for raw_location_id in location_ids or []:
         try:
-            first_id = int(location_ids[0])
+            location_id = int(raw_location_id or 0)
         except (TypeError, ValueError):
-            first_id = 0
-        if first_id <= 0:
-            return f"Structure {config.structure_id}"
-        fallback_name = str(name_map.get(first_id, "") or "").strip()
-        if fallback_name:
-            return fallback_name
-        return f"Structure {first_id}"
+            continue
+        if location_id <= 0:
+            continue
+        candidates.append(str(name_map.get(location_id, "") or "").strip())
+        candidates.append(f"Structure {location_id}")
 
-    return f"Structure {config.structure_id}"
+    if not candidates:
+        candidates = [
+            str(config.structure_name or "").strip(),
+            f"Structure {config.structure_id}",
+        ]
+    candidates = _dedupe_labels(candidates)
+    return candidates, (candidates[0] if candidates else "")
+
+
+def _resolve_sell_order_location_label(order: MaterialExchangeSellOrder) -> str:
+    _, label = _get_sell_contract_check_locations(order)
+    return label
 
 
 def _infer_buy_order_location_from_stock(order: MaterialExchangeBuyOrder) -> tuple[int | None, str]:
@@ -693,11 +783,8 @@ def _infer_buy_order_location_from_stock(order: MaterialExchangeBuyOrder) -> tup
     return selected_location_id, selected_location_name
 
 
-def _resolve_buy_order_location_label(order: MaterialExchangeBuyOrder) -> str:
+def _get_buy_contract_check_locations(order: MaterialExchangeBuyOrder) -> tuple[list[str], str]:
     source_name = str(getattr(order, "source_location_name", "") or "").strip()
-    if source_name:
-        return source_name
-
     source_id = getattr(order, "source_location_id", None)
     try:
         source_id_int = int(source_id or 0)
@@ -706,40 +793,53 @@ def _resolve_buy_order_location_label(order: MaterialExchangeBuyOrder) -> str:
 
     config = getattr(order, "config", None)
     if source_id_int > 0:
+        mapped_name = ""
         if config:
             name_map = config.get_buy_structure_name_map() or {}
             mapped_name = str(name_map.get(source_id_int, "") or "").strip()
-            if mapped_name:
-                return mapped_name
-        return f"Structure {source_id_int}"
+        source_id_label = f"Structure {source_id_int}"
+        candidates = _dedupe_labels([source_name, mapped_name, source_id_label])
+        label = source_name or mapped_name or source_id_label
+        return candidates, label
 
     if not config:
-        return ""
+        fallback = _dedupe_labels([source_name])
+        return fallback, (fallback[0] if fallback else "")
 
     inferred_location_id, inferred_location_name = _infer_buy_order_location_from_stock(
         order
     )
     if inferred_location_id and inferred_location_id > 0:
-        return str(inferred_location_name or "").strip() or (
-            f"Structure {inferred_location_id}"
-        )
+        inferred_id_label = f"Structure {inferred_location_id}"
+        candidates = _dedupe_labels([inferred_location_name, inferred_id_label])
+        label = str(inferred_location_name or "").strip() or inferred_id_label
+        return candidates, label
 
     name_map = config.get_buy_structure_name_map() or {}
     location_ids = config.get_buy_structure_ids()
-    if location_ids:
+    candidates: list[str] = []
+    for raw_location_id in location_ids or []:
         try:
-            first_id = int(location_ids[0])
+            location_id = int(raw_location_id or 0)
         except (TypeError, ValueError):
-            first_id = 0
-        if first_id > 0:
-            fallback_name = str(name_map.get(first_id, "") or "").strip()
-            if fallback_name:
-                return fallback_name
-            return f"Structure {first_id}"
+            continue
+        if location_id <= 0:
+            continue
+        candidates.append(str(name_map.get(location_id, "") or "").strip())
+        candidates.append(f"Structure {location_id}")
 
-    if str(config.structure_name or "").strip():
-        return str(config.structure_name).strip()
-    return f"Structure {config.structure_id}"
+    if not candidates:
+        candidates = [
+            str(config.structure_name or "").strip(),
+            f"Structure {config.structure_id}",
+        ]
+    candidates = _dedupe_labels(candidates)
+    return candidates, (candidates[0] if candidates else "")
+
+
+def _resolve_buy_order_location_label(order: MaterialExchangeBuyOrder) -> str:
+    _, label = _get_buy_contract_check_locations(order)
+    return label
 
 
 def _resolve_main_character_name(user) -> str:
@@ -758,6 +858,46 @@ def _resolve_main_character_name(user) -> str:
         pass
 
     return str(getattr(user, "username", ""))
+
+
+def _resolve_linked_character_names(user) -> list[str]:
+    """Return all linked character names for a user, main character first."""
+    if not user:
+        return []
+
+    linked_names: list[str] = []
+    try:
+        for ownership in (
+            CharacterOwnership.objects.select_related("character")
+            .filter(user=user)
+            .order_by("character__character_name")
+        ):
+            linked_names.append(
+                str(getattr(ownership.character, "character_name", "") or "").strip()
+            )
+    except Exception:
+        linked_names = []
+
+    linked_names = _dedupe_labels(linked_names)
+    main_character_name = _resolve_main_character_name(user)
+    if not main_character_name:
+        return linked_names
+
+    normalized_main = normalize_text(main_character_name)
+    ordered_names = [main_character_name]
+    ordered_names.extend(
+        name for name in linked_names if normalize_text(name) != normalized_main
+    )
+    return _dedupe_labels(ordered_names)
+
+
+def _format_recipients_for_display(
+    recipient_names: list[str], *, fallback: str = ""
+) -> str:
+    names = _dedupe_labels(recipient_names)
+    if not names:
+        return fallback
+    return ", ".join(names)
 
 
 def _build_timeline_breadcrumb(order, order_type):
