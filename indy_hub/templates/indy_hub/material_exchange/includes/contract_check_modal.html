@@ -105,6 +105,10 @@ html[data-theme="darkly"] .contract-check-modal {
     gap: 0.8rem;
 }
 
+.contract-check-results-block {
+    margin-top: 0.95rem;
+}
+
 .contract-check-failures {
     display: flex;
     flex-direction: column;
@@ -164,23 +168,23 @@ html[data-theme="darkly"] .contract-check-modal {
     background: var(--cc-ko-soft);
 }
 
-.contract-check-ok-list {
+.contract-check-checks-panel {
     background: var(--cc-elevated);
-    border: 1px solid rgba(34, 197, 94, 0.4);
+    border: 1px solid var(--cc-border);
     border-radius: 0.85rem;
     box-shadow: 0 0.3rem 1rem var(--cc-shadow);
     padding: 0.75rem;
     align-self: start;
 }
 
-.contract-check-ok-list-title {
+.contract-check-checks-title {
     font-size: 0.82rem;
     font-weight: 700;
     margin-bottom: 0.5rem;
     color: var(--cc-text);
 }
 
-.contract-check-ok-items {
+.contract-check-checks-items {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -189,19 +193,30 @@ html[data-theme="darkly"] .contract-check-modal {
     gap: 0.45rem;
 }
 
-.contract-check-ok-item {
+.contract-check-checks-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
     padding: 0.45rem 0.55rem;
     border-radius: 0.65rem;
-    background: var(--cc-ok-soft);
+    background: rgba(127, 127, 127, 0.08);
     color: var(--cc-text);
     font-size: 0.8rem;
+    border: 1px solid transparent;
 }
 
-.contract-check-ok-item-label {
+.contract-check-checks-item.is-ok {
+    background: var(--cc-ok-soft);
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.contract-check-checks-item.is-ko {
+    background: var(--cc-ko-soft);
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+.contract-check-checks-item-label {
     font-weight: 600;
     line-height: 1.2;
 }
@@ -457,14 +472,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderResult(payload) {
         const summaryClass = payload.ok ? 'contract-check-summary-ok' : 'contract-check-summary-ko';
         const checks = payload.checks || [];
-        const okChecks = checks.filter((check) => check.passed);
         const failedChecks = checks.filter((check) => !check.passed);
         const failedHtml = failedChecks.map((check) => {
             const isItemDiff = check.key === 'items' && Array.isArray(check.detail_sections) && check.detail_sections.length;
             const statusLine = `
                 <div class="contract-check-tile-header">
                     <div class="contract-check-tile-label">${escapeHtml(check.label)}</div>
-                    <span class="contract-check-status is-ko">KO</span>
+                    <span class="contract-check-status is-ko">Fail</span>
                 </div>`;
 
             const copyButtonHtml = !isItemDiff && check.copy_value
@@ -489,15 +503,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>`;
         }).join('');
 
-        const okHtml = okChecks.length
+        const checksPanelHtml = checks.length
             ? `
-                <aside class="contract-check-ok-list">
-                    <div class="contract-check-ok-list-title">{% trans "OK checks" %}</div>
-                    <ul class="contract-check-ok-items">
-                        ${okChecks.map((check) => `
-                            <li class="contract-check-ok-item">
-                                <span class="contract-check-ok-item-label">${escapeHtml(check.label)}</span>
-                                <span class="contract-check-status is-ok">OK</span>
+                <aside class="contract-check-checks-panel">
+                    <div class="contract-check-checks-title">{% trans "Checks" %}</div>
+                    <ul class="contract-check-checks-items">
+                        ${checks.map((check) => `
+                            <li class="contract-check-checks-item ${check.passed ? 'is-ok' : 'is-ko'}">
+                                <span class="contract-check-checks-item-label">${escapeHtml(check.label)}</span>
+                                <span class="contract-check-status ${check.passed ? 'is-ok' : 'is-ko'}">${check.passed ? 'PASS' : 'FAIL'}</span>
                             </li>`).join('')}
                     </ul>
                 </aside>`
@@ -510,12 +524,12 @@ document.addEventListener('DOMContentLoaded', () => {
         resultEl.classList.remove('d-none');
         resultEl.innerHTML = `
             <div class="contract-check-summary ${summaryClass} small" role="alert">
-                <div class="fw-semibold mb-1">${payload.ok ? 'Contract OK' : 'Contract check failed'}</div>
+                <div class="fw-semibold mb-1">${payload.ok ? 'Contract Check Passed' : 'Contract Check Failed'}</div>
                 <div class="mb-0">${escapeHtml(payload.summary || '')}</div>
             </div>
-            <div class="contract-check-results-layout">
+            <div class="contract-check-results-layout contract-check-results-block">
                 ${failuresWrapper || '<div></div>'}
-                ${okHtml}
+                ${checksPanelHtml}
             </div>`;
 
         resultEl.querySelectorAll('[data-copy-check-value]').forEach((button) => {
