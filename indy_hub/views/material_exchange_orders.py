@@ -3,6 +3,9 @@ Material Exchange - User Order Management Views.
 Handles user-facing order tracking, details, and history.
 """
 
+# Standard Library
+from collections.abc import Iterable
+
 # Django
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
