@@ -80,9 +80,9 @@
                     {% if can_cancel %}
                         <button
                             type="button"
-                            class="btn btn-outline-dark btn-sm"
+                            class="btn btn-outline-light btn-sm"
                             title="{% trans 'Paste the in-game Copy All result to compare the contract with this order' %}"
-                            aria-label="{% trans 'Paste and check contract' %}"
+                            aria-label="{% trans 'Check Contract Before Creating' %}"
                             data-contract-check-trigger="true"
                             data-check-url="{% url 'indy_hub:buy_order_check_contract' order.id %}"
                             data-order-ref="{{ order.order_reference }}"

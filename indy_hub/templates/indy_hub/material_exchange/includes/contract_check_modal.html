@@ -1,13 +1,63 @@
 {% load i18n %}
 
 <style>
+.contract-check-modal {
+    --cc-surface: var(--bs-body-bg);
+    --cc-elevated: var(--bs-tertiary-bg);
+    --cc-border: var(--bs-border-color);
+    --cc-text: var(--bs-body-color);
+    --cc-muted: var(--bs-secondary-color);
+    --cc-ok: #22c55e;
+    --cc-ok-soft: rgba(34, 197, 94, 0.12);
+    --cc-ko: #ef4444;
+    --cc-ko-soft: rgba(239, 68, 68, 0.12);
+    --cc-shadow: rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme="darkly"] .contract-check-modal {
+    --cc-surface: #141b22;
+    --cc-elevated: #0b1117;
+    --cc-border: #2f3b48;
+    --cc-text: #e5edf6;
+    --cc-muted: #9daec2;
+    --cc-shadow: rgba(0, 0, 0, 0.45);
+}
+
+.contract-check-modal .modal-dialog {
+    max-width: 1020px;
+    margin: 0.75rem auto;
+}
+
 .contract-check-modal .modal-content {
-    border: 0;
-    border-radius: 1rem;
+    border: 1px solid var(--cc-border);
+    border-radius: 0.95rem;
+    background: var(--cc-surface);
+    box-shadow: 0 1rem 2rem var(--cc-shadow);
+    max-height: calc(100vh - 1.5rem);
+    overflow: hidden;
+}
+
+.contract-check-modal .modal-header {
+    border-bottom: 1px solid var(--cc-border);
+    background: linear-gradient(
+        180deg,
+        rgba(127, 127, 127, 0.12),
+        rgba(127, 127, 127, 0.04)
+    );
+    padding-bottom: 0.75rem;
+}
+
+.contract-check-modal .modal-title {
+    color: var(--cc-text);
 }
 
 .contract-check-modal .modal-body {
     padding-top: 0.75rem;
+    padding-bottom: 1rem;
+    max-height: calc(100vh - 8.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable both-edges;
 }
 
 .contract-check-modal textarea {
@@ -19,42 +69,106 @@
 .contract-check-help,
 .contract-check-summary,
 .contract-check-tile {
-    border-radius: 0.9rem;
+    border-radius: 0.85rem;
 }
 
 .contract-check-help {
-    background: linear-gradient(135deg, rgba(13, 110, 253, 0.08), rgba(13, 110, 253, 0.03));
+    border: 1px solid var(--cc-border);
+    background: var(--cc-elevated);
 }
 
 .contract-check-summary {
-    border: 0;
+    border: 1px solid var(--cc-border);
+    background: var(--cc-elevated);
+    color: var(--cc-text);
+    padding: 0.65rem 0.85rem;
+}
+
+.contract-check-summary.contract-check-summary-pending {
+    border-color: rgba(59, 130, 246, 0.45);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.contract-check-summary.contract-check-summary-ok {
+    border-color: rgba(34, 197, 94, 0.5);
+    background: var(--cc-ok-soft);
+}
+
+.contract-check-summary.contract-check-summary-ko {
+    border-color: rgba(239, 68, 68, 0.55);
+    background: var(--cc-ko-soft);
 }
 
 .contract-check-results-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 0.75rem;
-}
-
-.contract-check-tile {
-    background: var(--bs-body-bg);
-    border: 1px solid var(--bs-border-color);
-    border-top: 4px solid var(--bs-border-color);
-    box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.05);
-    height: 100%;
+    gap: 0.8rem;
 }
 
 .contract-check-failures {
     display: flex;
     flex-direction: column;
+    gap: 0.8rem;
+}
+
+.contract-check-tile {
+    background: var(--cc-elevated);
+    border: 1px solid var(--cc-border);
+    border-top: 4px solid var(--cc-border);
+    box-shadow: 0 0.3rem 1rem var(--cc-shadow);
+    color: var(--cc-text);
+    height: 100%;
+}
+
+.contract-check-tile.is-ok {
+    border-top-color: var(--cc-ok);
+}
+
+.contract-check-tile.is-ko {
+    border-top-color: var(--cc-ko);
+}
+
+.contract-check-tile-body {
+    padding: 0.75rem;
+}
+
+.contract-check-tile-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
     gap: 0.75rem;
+    margin-bottom: 0.35rem;
+}
+
+.contract-check-tile-label {
+    font-size: 0.92rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.contract-check-status {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+}
+
+.contract-check-status.is-ok {
+    color: var(--cc-ok);
+    background: var(--cc-ok-soft);
+}
+
+.contract-check-status.is-ko {
+    color: var(--cc-ko);
+    background: var(--cc-ko-soft);
 }
 
 .contract-check-ok-list {
-    background: var(--bs-body-bg);
-    border: 1px solid var(--bs-border-color);
-    border-radius: 0.9rem;
-    box-shadow: 0 0.35rem 1rem rgba(0, 0, 0, 0.05);
+    background: var(--cc-elevated);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    border-radius: 0.85rem;
+    box-shadow: 0 0.3rem 1rem var(--cc-shadow);
     padding: 0.75rem;
     align-self: start;
 }
@@ -63,6 +177,7 @@
     font-size: 0.82rem;
     font-weight: 700;
     margin-bottom: 0.5rem;
+    color: var(--cc-text);
 }
 
 .contract-check-ok-items {
@@ -80,9 +195,9 @@
     justify-content: space-between;
     gap: 0.5rem;
     padding: 0.45rem 0.55rem;
-    border-radius: 0.7rem;
-    background: var(--bs-success-bg-subtle);
-    color: var(--bs-success-text-emphasis);
+    border-radius: 0.65rem;
+    background: var(--cc-ok-soft);
+    color: var(--cc-text);
     font-size: 0.8rem;
 }
 
@@ -91,56 +206,20 @@
     line-height: 1.2;
 }
 
-.contract-check-tile.is-ok {
-    border-top-color: var(--bs-success);
-}
-
-.contract-check-tile.is-ko {
-    border-top-color: var(--bs-danger);
-}
-
-.contract-check-tile-body {
-    padding: 0.75rem;
-}
-
-.contract-check-tile-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 0.35rem;
-}
-
-.contract-check-tile-label {
-    font-size: 0.92rem;
-    font-weight: 600;
-    line-height: 1.2;
-}
-
-.contract-check-status {
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    padding: 0.25rem 0.55rem;
-    border-radius: 999px;
-}
-
-.contract-check-status.is-ok {
-    color: var(--bs-success-text-emphasis);
-    background: var(--bs-success-bg-subtle);
-}
-
-.contract-check-status.is-ko {
-    color: var(--bs-danger-text-emphasis);
-    background: var(--bs-danger-bg-subtle);
-}
-
 .contract-check-tile-copy {
     white-space: nowrap;
 }
 
-.contract-check-tile-copy + .contract-check-tile-copy {
-    margin-left: 0.35rem;
+.contract-check-tile-copy.btn {
+    border-color: rgba(99, 179, 255, 0.55);
+    color: #6dc0ff;
+}
+
+.contract-check-tile-copy.btn:hover,
+.contract-check-tile-copy.btn:focus {
+    border-color: #7ec9ff;
+    color: #a9ddff;
+    background: rgba(67, 143, 197, 0.2);
 }
 
 .contract-check-detail {
@@ -149,27 +228,26 @@
 }
 
 .contract-check-detail strong {
-    color: var(--bs-emphasis-color);
+    color: var(--cc-text);
 }
 
-.contract-check-detail ul {
-    margin-bottom: 0;
-    padding-left: 1rem;
+.contract-check-detail.text-muted {
+    color: var(--cc-muted) !important;
 }
 
 .contract-check-listbox {
     margin-top: 0.2rem;
     padding: 0.45rem 0.55rem;
-    border: 1px solid var(--bs-border-color);
+    border: 1px solid var(--cc-border);
     border-radius: 0.65rem;
-    background: rgba(127, 127, 127, 0.04);
+    background: rgba(127, 127, 127, 0.08);
 }
 
 .contract-check-listbox-meta {
     display: block;
     margin-bottom: 0.35rem;
     font-size: 0.72rem;
-    color: var(--bs-secondary-color);
+    color: var(--cc-muted);
 }
 
 .contract-check-listbox-items {
@@ -186,9 +264,9 @@
 
 .contract-check-diff-section {
     padding: 0.65rem 0.75rem;
-    border: 1px solid var(--bs-border-color);
+    border: 1px solid var(--cc-border);
     border-radius: 0.75rem;
-    background: rgba(127, 127, 127, 0.04);
+    background: rgba(127, 127, 127, 0.08);
 }
 
 .contract-check-diff-title {
@@ -247,7 +325,7 @@
                     <div class="mb-3">
                         <div class="small text-muted mb-2" id="contractCheckOrderMeta"></div>
                         <label class="form-label small fw-semibold" for="contractCheckTextarea">{% trans "Paste the full in-game contract export" %}</label>
-                        <textarea class="form-control" id="contractCheckTextarea" name="contract_text" rows="7" placeholder="{% trans 'Paste the copied contract data here…' %}" required></textarea>
+                        <textarea class="form-control" id="contractCheckTextarea" name="contract_text" rows="7" placeholder="{% trans 'Paste the copied contract data here...' %}" required></textarea>
                     </div>
 
                     <div id="contractCheckResult" class="d-none"></div>
@@ -285,7 +363,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderValue(value) {
         if (Array.isArray(value)) {
             if (!value.length) {
-                return '<span class="text-muted">—</span>';
+                return '<span class="text-muted">&mdash;</span>';
             }
             return `
                 <div class="contract-check-listbox">
@@ -296,7 +374,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>`;
         }
         if (value === null || value === undefined || value === '') {
-            return '<span class="text-muted">—</span>';
+            return '<span class="text-muted">&mdash;</span>';
         }
         return escapeHtml(value);
     }
@@ -347,8 +425,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         resultEl.classList.remove('d-none');
         resultEl.innerHTML = `
-            <div class="alert alert-info py-2 px-3 small contract-check-summary" role="alert">
-                <div class="fw-semibold mb-1">{% trans "Checking contract…" %}</div>
+            <div class="contract-check-summary contract-check-summary-pending small" role="alert">
+                <div class="fw-semibold mb-1">{% trans "Checking contract..." %}</div>
                 <div class="mb-0">{% trans "Comparing the pasted contract with this order." %}</div>
             </div>`;
 
@@ -366,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
             resultEl.classList.remove('d-none');
             resultEl.innerHTML = `
-                <div class="alert alert-danger" role="alert">
+                <div class="contract-check-summary contract-check-summary-ko" role="alert">
                     <div class="fw-semibold mb-1">{% trans "Check failed" %}</div>
                     <div>${escapeHtml(error && error.message ? error.message : 'Unknown error')}</div>
                 </div>`;
@@ -377,7 +455,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderResult(payload) {
-        const summaryClass = payload.ok ? 'alert-success' : 'alert-warning';
+        const summaryClass = payload.ok ? 'contract-check-summary-ok' : 'contract-check-summary-ko';
         const checks = payload.checks || [];
         const okChecks = checks.filter((check) => check.passed);
         const failedChecks = checks.filter((check) => !check.passed);
@@ -390,7 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>`;
 
             const copyButtonHtml = !isItemDiff && check.copy_value
-                ? `<button type="button" class="btn btn-sm btn-outline-primary contract-check-tile-copy mt-2" data-copy-check-value="${escapeHtml(check.copy_value)}"><i class="fas fa-copy me-1"></i>${escapeHtml(check.copy_label || '{% trans "Copy" %}')}</button>`
+                ? `<button type="button" class="btn btn-sm contract-check-tile-copy mt-2" data-copy-check-value="${escapeHtml(check.copy_value)}"><i class="fas fa-copy me-1"></i>${escapeHtml(check.copy_label || '{% trans "Copy" %}')}</button>`
                 : '';
 
             const detailsHtml = isItemDiff
@@ -431,7 +509,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         resultEl.classList.remove('d-none');
         resultEl.innerHTML = `
-            <div class="alert ${summaryClass} py-2 px-3 small contract-check-summary" role="alert">
+            <div class="contract-check-summary ${summaryClass} small" role="alert">
                 <div class="fw-semibold mb-1">${payload.ok ? 'Contract OK' : 'Contract check failed'}</div>
                 <div class="mb-0">${escapeHtml(payload.summary || '')}</div>
             </div>
@@ -455,7 +533,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 button.dataset.recipient ? `Recipient: ${button.dataset.recipient}` : '',
                 button.dataset.location ? `Location: ${button.dataset.location}` : '',
                 button.dataset.amountLabel && button.dataset.amount ? `${button.dataset.amountLabel}: ${button.dataset.amount} ISK` : ''
-            ].filter(Boolean).join(' • ');
+            ].filter(Boolean).join(' - ');
             textarea.value = '';
             resultEl.innerHTML = '';
             resultEl.classList.add('d-none');
@@ -479,3 +557,4 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 </script>
+
