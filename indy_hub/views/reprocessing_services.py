@@ -778,7 +778,13 @@ def _user_can_access_request(user, service_request: ReprocessingServiceRequest) 
         return True
     if user.id == service_request.processor_user_id:
         return True
-    return bool(user.has_perm("indy_hub.can_manage_material_hub"))
+    return _is_material_hub_admin(user)
+
+
+def _is_material_hub_admin(user) -> bool:
+    if not getattr(user, "is_authenticated", False):
+        return False
+    return bool(user.is_superuser or user.has_perm("indy_hub.can_manage_material_hub"))
 
 
 def _build_expected_item_map(service_request: ReprocessingServiceRequest) -> dict[int, int]:
@@ -2414,7 +2420,7 @@ def reprocessing_request_detail(request, request_id: int):
 
     is_requester = request.user.id == service_request.requester_id
     is_processor = request.user.id == service_request.processor_user_id
-    is_admin = request.user.has_perm("indy_hub.can_manage_material_hub")
+    is_admin = _is_material_hub_admin(request.user)
     status = service_request.status
 
     can_submit_inbound = is_requester and status in {
@@ -2430,6 +2436,7 @@ def reprocessing_request_detail(request, request_id: int):
     }
     can_verify_return = (is_requester or is_processor or is_admin) and status == ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT
     can_cancel = (is_requester or is_admin) and status != ReprocessingServiceRequest.Status.COMPLETED
+    can_admin_delete = is_admin and status != ReprocessingServiceRequest.Status.COMPLETED
     can_dispute = (is_requester or is_processor or is_admin) and not service_request.is_terminal
 
     inbound_contract = (
@@ -2459,6 +2466,7 @@ def reprocessing_request_detail(request, request_id: int):
         "can_submit_return": can_submit_return,
         "can_verify_return": can_verify_return,
         "can_cancel": can_cancel,
+        "can_admin_delete": can_admin_delete,
         "can_dispute": can_dispute,
         "inbound_contract": inbound_contract,
         "return_contract": return_contract,
@@ -2503,7 +2511,7 @@ def reprocessing_request_submit_inbound(request, request_id: int):
         messages.error(request, _("Enter a valid inbound contract ID."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
 
-    if service_request.status == ReprocessingServiceRequest.Status.COMPLETED:
+    if service_request.is_terminal:
         messages.error(request, _("This request is already closed."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
     if service_request.status not in {
@@ -2756,10 +2764,10 @@ def reprocessing_request_cancel(request, request_id: int):
     if service_request is None:
         return redirect("indy_hub:reprocessing_browse")
 
-    if request.user.id != service_request.requester_id and not request.user.has_perm("indy_hub.can_manage_material_hub"):
-        messages.error(request, _("Only the requester can cancel this request."))
+    if request.user.id != service_request.requester_id and not _is_material_hub_admin(request.user):
+        messages.error(request, _("Only the requester or a Material Exchange admin can delete this request."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
-    if service_request.is_terminal:
+    if service_request.status == ReprocessingServiceRequest.Status.COMPLETED:
         messages.error(request, _("This request is already closed."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
 

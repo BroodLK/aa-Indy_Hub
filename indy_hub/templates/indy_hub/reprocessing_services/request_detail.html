@@ -199,7 +199,13 @@
                         {% if can_cancel %}
                         <form method="post" action="{% url 'indy_hub:reprocessing_request_cancel' service_request.id %}" class="d-flex gap-2" onsubmit="return confirm('{% trans 'Cancel and remove this request?' %}');">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-danger">{% trans "Cancel & Remove" %}</button>
+                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                {% if can_admin_delete and not is_requester %}
+                                    {% trans "Admin Delete Request" %}
+                                {% else %}
+                                    {% trans "Cancel & Remove" %}
+                                {% endif %}
+                            </button>
                         </form>
                         {% endif %}
                     </div>

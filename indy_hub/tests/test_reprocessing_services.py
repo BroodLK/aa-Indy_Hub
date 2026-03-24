@@ -281,12 +281,19 @@ class ReprocessingCancelRequestTests(TestCase):
     def setUp(self):
         self.requester = User.objects.create_user("cancel_requester", password="secret")
         self.processor = User.objects.create_user("cancel_processor", password="secret")
-        permission = Permission.objects.get(
+        access_permission = Permission.objects.get(
             content_type__app_label="indy_hub",
             codename="can_access_indy_hub",
         )
-        self.requester.user_permissions.add(permission)
-        self.processor.user_permissions.add(permission)
+        manage_permission = Permission.objects.get(
+            content_type__app_label="indy_hub",
+            codename="can_manage_material_hub",
+        )
+        self.requester.user_permissions.add(access_permission)
+        self.processor.user_permissions.add(access_permission)
+        self.admin = User.objects.create_user("cancel_admin", password="secret")
+        self.admin.user_permissions.add(access_permission)
+        self.admin.user_permissions.add(manage_permission)
         self.profile = ReprocessingServiceProfile.objects.create(
             user=self.processor,
             character_id=95000001,
@@ -340,6 +347,39 @@ class ReprocessingCancelRequestTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["can_cancel"])
+
+    @patch("indy_hub.views.reprocessing_services.notify_user")
+    def test_admin_can_delete_disputed_request_as_non_participant(self, _mock_notify):
+        service_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            requester_character_id=95010004,
+            requester_character_name="Cancel Client 4",
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.DISPUTED,
+            dispute_reason="auto anomaly",
+        )
+
+        self.client.force_login(self.admin)
+        detail_response = self.client.get(
+            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertTrue(detail_response.context["is_admin"])
+        self.assertTrue(detail_response.context["can_cancel"])
+        self.assertTrue(detail_response.context["can_admin_delete"])
+        self.assertContains(detail_response, "Admin Delete Request")
+
+        delete_response = self.client.post(
+            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
+        )
+        self.assertEqual(delete_response.status_code, 302)
+        self.assertEqual(delete_response.url, reverse("indy_hub:index"))
+        self.assertFalse(
+            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
+        )
 
     @patch("indy_hub.views.reprocessing_services.notify_user")
     def test_requester_cannot_cancel_completed_request(self, _mock_notify):
