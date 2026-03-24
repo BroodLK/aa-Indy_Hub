@@ -1885,16 +1885,41 @@ def reprocessing_become(request):
     corporation_rows = _get_user_corporation_rows(request.user)
     profile_qs = ReprocessingServiceProfile.objects.filter(user=request.user).order_by("character_name")
     existing_profiles = list(profile_qs)
+    profile_by_id = {int(profile.id): profile for profile in existing_profiles}
     profile_by_character = {int(profile.character_id): profile for profile in existing_profiles}
 
+    selected_profile_id_raw = request.POST.get("edit_profile_id") or request.GET.get("edit_profile_id")
+    try:
+        selected_profile_id = int(selected_profile_id_raw or 0)
+    except (TypeError, ValueError):
+        selected_profile_id = 0
+    selected_profile = profile_by_id.get(int(selected_profile_id or 0))
+    is_edit_mode = bool(selected_profile)
+
+    def _become_redirect_with_profile(profile_id: int | None = None) -> str:
+        base_url = reverse("indy_hub:reprocessing_become")
+        try:
+            profile_id_int = int(profile_id or 0)
+        except (TypeError, ValueError):
+            profile_id_int = 0
+        if profile_id_int > 0:
+            return f"{base_url}?edit_profile_id={profile_id_int}"
+        return base_url
+
     main_character_id, _main_character_name = _get_user_main_character(request.user)
-    selected_character_id_raw = request.POST.get("character_id") or request.GET.get("character_id")
+    selected_character_id_raw = (
+        request.POST.get("character_id")
+        or request.GET.get("character_id")
+        or (getattr(selected_profile, "character_id", None) if selected_profile else None)
+    )
     selected_character_id: int | None = None
     try:
         selected_character_id = int(selected_character_id_raw or 0)
     except (TypeError, ValueError):
         selected_character_id = None
-    if not selected_character_id:
+    if selected_profile:
+        selected_character_id = int(selected_profile.character_id)
+    elif not selected_character_id:
         if main_character_id:
             selected_character_id = int(main_character_id)
         elif character_rows:
@@ -1908,7 +1933,8 @@ def reprocessing_become(request):
         ),
         None,
     )
-    selected_profile = profile_by_character.get(int(selected_character_id or 0))
+    if selected_profile is None:
+        selected_profile = profile_by_character.get(int(selected_character_id or 0))
 
     selected_corporation_id_raw = (
         request.POST.get("selected_corporation_id")
@@ -2053,16 +2079,58 @@ def reprocessing_become(request):
 
     if request.method == "POST":
         action = str(request.POST.get("action") or "save_profile").strip().lower()
-        if action in {"save_profile", "submit_application"}:
+        if action == "toggle_availability":
+            try:
+                target_profile_id = int(request.POST.get("profile_id") or 0)
+            except (TypeError, ValueError):
+                target_profile_id = 0
+            target_profile = profile_by_id.get(int(target_profile_id or 0))
+            if not target_profile:
+                messages.error(request, _("Reprocessing profile not found."))
+                return redirect("indy_hub:reprocessing_become")
+            if target_profile.approval_status != ReprocessingServiceProfile.ApprovalStatus.APPROVED:
+                messages.error(
+                    request,
+                    _("Only approved profiles can toggle availability."),
+                )
+                return redirect(_become_redirect_with_profile(target_profile.id))
+            if target_profile.admin_force_unavailable:
+                target_profile.is_available = False
+                target_profile.save(update_fields=["is_available", "updated_at"])
+                messages.warning(
+                    request,
+                    _(
+                        "Availability is currently disabled by a Material Exchange admin and cannot be self-enabled."
+                    ),
+                )
+                return redirect(_become_redirect_with_profile(target_profile.id))
+            target_profile.is_available = not bool(target_profile.is_available)
+            target_profile.save(update_fields=["is_available", "updated_at"])
+            messages.success(
+                request,
+                _(
+                    "Profile availability updated: %(state)s."
+                )
+                % {
+                    "state": (
+                        _("available")
+                        if target_profile.is_available
+                        else _("unavailable")
+                    )
+                },
+            )
+            return redirect(_become_redirect_with_profile(target_profile.id))
+
+        if action in {"save_profile", "submit_application", "refresh_profile_data"}:
             if not selected_character_row:
                 messages.error(request, _("Please select one of your characters."))
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(getattr(selected_profile, "id", None)))
             if not clone_options:
                 messages.error(request, _("No clone information available for this character."))
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(getattr(selected_profile, "id", None)))
             if not selected_corporation_id:
                 messages.error(request, _("Please choose a corporation context for structure discovery."))
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(getattr(selected_profile, "id", None)))
             if not structure_options:
                 messages.error(
                     request,
@@ -2070,10 +2138,16 @@ def reprocessing_become(request):
                         "No Athanor/Tatara structures were found in corptools/cached assets for that corporation/alliance scope."
                     ),
                 )
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(getattr(selected_profile, "id", None)))
 
-            selected_clone_id = int(request.POST.get("selected_clone_id") or 0)
-            selected_structure_id = int(request.POST.get("structure_id") or 0)
+            try:
+                selected_clone_id = int(request.POST.get("selected_clone_id") or 0)
+            except (TypeError, ValueError):
+                selected_clone_id = 0
+            try:
+                selected_structure_id = int(request.POST.get("structure_id") or 0)
+            except (TypeError, ValueError):
+                selected_structure_id = 0
             margin_percent = _parse_margin_percent(request.POST.get("margin_percent"))
             requested_available = request.POST.get("is_available") == "on"
 
@@ -2098,7 +2172,7 @@ def reprocessing_become(request):
             )
             if not structure_row:
                 messages.error(request, _("Please choose a valid structure."))
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(getattr(selected_profile, "id", None)))
             rig_profile = _get_rig_profile(
                 str(structure_row.get("suggested_rig_profile_key") or "none")
             )
@@ -2113,7 +2187,7 @@ def reprocessing_become(request):
                         "Ensure corptools has synced this character."
                     ),
                 )
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(getattr(selected_profile, "id", None)))
             skill_snapshot = build_reprocessing_skill_snapshot(skill_levels)
             reprocessing_skill_rows = _build_reprocessing_skill_rows(skill_levels)
             character_proficiency = _compute_character_proficiency(reprocessing_skill_rows)
@@ -2229,7 +2303,21 @@ def reprocessing_become(request):
                         link=reverse("indy_hub:reprocessing_become"),
                     )
 
-                if profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED:
+                if action == "refresh_profile_data":
+                    if requested_available and profile.admin_force_unavailable:
+                        messages.warning(
+                            request,
+                            _(
+                                "Availability is currently disabled by a Material Exchange admin and cannot be self-enabled."
+                            ),
+                        )
+                    messages.success(
+                        request,
+                        _(
+                            "Profile refreshed from latest corptools cache (skills, clone data, structure bonuses, and estimated yield)."
+                        ),
+                    )
+                elif profile.approval_status == ReprocessingServiceProfile.ApprovalStatus.APPROVED:
                     if requested_available and profile.admin_force_unavailable:
                         messages.warning(
                             request,
@@ -2240,7 +2328,7 @@ def reprocessing_become(request):
                     messages.success(request, _("Reprocessing profile updated."))
                 else:
                     messages.success(request, _("Reprocessing profile saved and queued for approval."))
-                return redirect("indy_hub:reprocessing_become")
+                return redirect(_become_redirect_with_profile(profile.id))
 
     for profile in existing_profiles:
         profile.portrait_url = _avatar_url(int(profile.character_id), size=64)
@@ -2255,7 +2343,9 @@ def reprocessing_become(request):
         "corporation_rows": corporation_rows,
         "existing_profiles": existing_profiles,
         "selected_profile": selected_profile,
+        "is_edit_mode": is_edit_mode,
         "selected_character_id": int(selected_character_id or 0),
+        "selected_profile_id": int(getattr(selected_profile, "id", 0) or 0),
         "selected_corporation_id": int(selected_corporation_id or 0),
         "selected_clone_id": int(selected_clone_id or 0),
         "selected_structure_id": int(selected_structure_id or 0),

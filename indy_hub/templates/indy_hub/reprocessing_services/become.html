@@ -49,9 +49,33 @@
         <div class="col-xl-7">
             <div class="card h-100">
                 <div class="card-header bg-info bg-opacity-10">
-                    <h5 class="mb-0"><i class="fas fa-sliders me-2"></i>{% trans "Profile Configuration" %}</h5>
+                    <h5 class="mb-0">
+                        <i class="fas fa-sliders me-2"></i>
+                        {% if is_edit_mode and selected_profile %}
+                            {% trans "Edit Reprocessor Profile" %} - {{ selected_profile.character_name }}
+                        {% else %}
+                            {% trans "Profile Configuration" %}
+                        {% endif %}
+                    </h5>
                 </div>
                 <div class="card-body">
+                    {% if is_edit_mode and selected_profile %}
+                    <div class="alert alert-secondary">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div>
+                                <div class="fw-semibold">
+                                    <i class="fas fa-pen-to-square me-2"></i>{% trans "Editing existing profile" %}
+                                </div>
+                                <div class="small text-muted">
+                                    {% trans "Character is locked while editing this profile. You can update structure, clone setup, margin, availability, and refresh skill/yield data." %}
+                                </div>
+                            </div>
+                            <a href="{% url 'indy_hub:reprocessing_become' %}" class="btn btn-sm btn-outline-secondary">
+                                <i class="fas fa-plus me-1"></i>{% trans "New / Switch Profile" %}
+                            </a>
+                        </div>
+                    </div>
+                    {% endif %}
                     {% if not has_required_scopes %}
                     <div class="alert alert-warning">
                         <i class="fas fa-key me-2"></i>
@@ -75,17 +99,24 @@
                     <form method="post" id="reprocessingBecomeForm">
                         {% csrf_token %}
                         <input type="hidden" name="action" value="save_profile">
+                        {% if is_edit_mode and selected_profile %}
+                        <input type="hidden" name="edit_profile_id" value="{{ selected_profile.id }}">
+                        {% endif %}
 
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Character" %}</label>
-                                <select name="character_id" class="form-select" data-refresh-trigger="true">
+                                <select name="character_id" class="form-select" data-refresh-trigger="true" {% if is_edit_mode and selected_profile %}disabled{% endif %}>
                                     {% for row in character_rows %}
                                     <option value="{{ row.character_id }}" {% if selected_character_id == row.character_id %}selected{% endif %}>
                                         {{ row.character_name }}{% if row.corporation_name %} ({{ row.corporation_name }}){% endif %}
                                     </option>
                                     {% endfor %}
                                 </select>
+                                {% if is_edit_mode and selected_profile %}
+                                <input type="hidden" name="character_id" value="{{ selected_character_id }}">
+                                <div class="form-text">{% trans "Character cannot be changed for an existing profile." %}</div>
+                                {% endif %}
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">{% trans "Structure Discovery Corporation" %}</label>
@@ -182,6 +213,12 @@
                             {% else %}
                             <div class="small text-muted mt-2">{% trans "No reprocessing skills were found for this character in corptools cache." %}</div>
                             {% endif %}
+                            <div class="small text-muted mt-2">
+                                {% if selected_profile %}
+                                    {% trans "Last profile refresh" %}: {{ selected_profile.updated_at|date:"Y-m-d H:i" }}.
+                                {% endif %}
+                                {% trans "Data comes from corptools cache. Save Profile or Refresh Skills & Yield to pull the latest cached values." %}
+                            </div>
                         </div>
 
                         <div class="border rounded p-3 mt-3">
@@ -211,8 +248,11 @@
                         {% endif %}
 
                         <div class="d-flex flex-wrap gap-2 mt-4">
-                            <button type="submit" class="btn btn-primary">
+                            <button type="submit" class="btn btn-primary" onclick="this.form.querySelector('input[name=action]').value='save_profile';">
                                 <i class="fas fa-save me-1"></i>{% trans "Save Profile" %}
+                            </button>
+                            <button type="submit" class="btn btn-outline-info" onclick="this.form.querySelector('input[name=action]').value='refresh_profile_data';">
+                                <i class="fas fa-arrows-rotate me-1"></i>{% trans "Refresh Skills & Yield" %}
                             </button>
                             <button type="submit" class="btn btn-outline-success" onclick="this.form.querySelector('input[name=action]').value='submit_application';">
                                 <i class="fas fa-paper-plane me-1"></i>{% trans "Submit for Approval" %}
@@ -267,7 +307,30 @@
                                     {% if profile.admin_force_unavailable %}
                                         <div class="mt-1"><span class="badge bg-danger">{% trans "Admin Disabled" %}</span></div>
                                     {% endif %}
+                                    {% if is_edit_mode and selected_profile_id == profile.id %}
+                                        <div class="mt-1"><span class="badge bg-primary">{% trans "Editing" %}</span></div>
+                                    {% endif %}
                                 </div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                <a href="{% url 'indy_hub:reprocessing_become' %}?edit_profile_id={{ profile.id }}" class="btn btn-sm btn-outline-primary">
+                                    <i class="fas fa-pen-to-square me-1"></i>{% trans "Edit Profile" %}
+                                </a>
+                                {% if profile.approval_status == 'approved' %}
+                                <form method="post" action="{% url 'indy_hub:reprocessing_become' %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="action" value="toggle_availability">
+                                    <input type="hidden" name="profile_id" value="{{ profile.id }}">
+                                    <button type="submit" class="btn btn-sm {% if profile.is_available %}btn-outline-warning{% else %}btn-outline-success{% endif %}" {% if profile.admin_force_unavailable %}disabled{% endif %}>
+                                        <i class="fas {% if profile.is_available %}fa-toggle-off{% else %}fa-toggle-on{% endif %} me-1"></i>
+                                        {% if profile.is_available %}
+                                            {% trans "Set Unavailable" %}
+                                        {% else %}
+                                            {% trans "Set Available" %}
+                                        {% endif %}
+                                    </button>
+                                </form>
+                                {% endif %}
                             </div>
                             {% if profile.review_notes %}
                             <div class="small text-muted mt-2">
@@ -305,6 +368,8 @@
             let label = "Loading...";
             if (normalizedAction === "refresh") {
                 label = "Loading character/structure data...";
+            } else if (normalizedAction === "refresh_profile_data") {
+                label = "Refreshing skills and yield...";
             } else if (normalizedAction === "submit_application") {
                 label = "Submitting application...";
             } else {
