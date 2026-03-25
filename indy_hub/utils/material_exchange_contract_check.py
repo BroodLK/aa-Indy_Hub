@@ -21,11 +21,9 @@ CONTRACT_EXPORT_LABELS = [
 ]
 
 MULTILINE_LABELS = {"Items For Sale", "Items Required"}
-ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:,|;|\|)\s*")
+ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:;|\|)\s*")
 ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
-ITEM_QTY_FALLBACK_RE = re.compile(
-    r"\s+[xX*]\s+([0-9][0-9,.\s']*)(?=(?:\s|$))"
-)
+NEXT_NUMERIC_ITEM_START_RE = re.compile(r"^[1-9]\d*(?:MN|mm|K)\b", re.IGNORECASE)
 
 
 def collapse_whitespace(value: str | None) -> str:
@@ -60,6 +58,72 @@ def parse_positive_quantity(raw_value: str | int | None) -> int | None:
         return parsed if parsed > 0 else None
 
     return None
+
+
+def looks_like_item_start(value: str) -> bool:
+    """Best-effort detector for compact item boundaries in pasted exports."""
+
+    text = str(value or "")
+    if not text:
+        return False
+
+    head = text[0]
+    if head.isalpha() or head == "'":
+        return True
+    if NEXT_NUMERIC_ITEM_START_RE.match(text):
+        return True
+    return False
+
+
+def split_quantity_and_remainder(raw_tail: str) -> tuple[int | None, str]:
+    """Split `x <qty><next item...>` text into quantity and remaining stream."""
+
+    tail = str(raw_tail or "")
+    stripped_tail = tail.lstrip()
+    if not stripped_tail or not stripped_tail[0].isdigit():
+        return None, tail
+
+    index = 1
+    while index < len(stripped_tail):
+        char = stripped_tail[index]
+        if char.isdigit():
+            index += 1
+            continue
+        if char in ",.' " and index + 1 < len(stripped_tail):
+            if stripped_tail[index + 1].isdigit():
+                index += 1
+                continue
+        break
+
+    qty_token = stripped_tail[:index]
+    remainder = stripped_tail[index:]
+    full_quantity = parse_positive_quantity(qty_token)
+    if full_quantity is None:
+        return None, tail
+
+    if not remainder:
+        return full_quantity, ""
+
+    if remainder[0].isspace() or remainder[0] in ",;|":
+        return full_quantity, remainder
+
+    # Grouped quantities such as `1,640` are explicit; keep as-is.
+    if any(char in qty_token for char in ",. "):
+        return full_quantity, remainder
+
+    digits_only = re.sub(r"[^0-9]", "", qty_token)
+    if not digits_only:
+        return full_quantity, remainder
+
+    for split_index in range(1, len(digits_only) + 1):
+        candidate_qty = parse_positive_quantity(digits_only[:split_index])
+        if candidate_qty is None:
+            continue
+        candidate_remainder = f"{digits_only[split_index:]}{remainder}"
+        if not candidate_remainder or looks_like_item_start(candidate_remainder):
+            return candidate_qty, candidate_remainder
+
+    return full_quantity, remainder
 
 
 def parse_contract_export(raw_text: str) -> dict[str, str]:
@@ -161,6 +225,8 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
             segment_match = ITEM_QTY_RE.match(collapse_whitespace(segment))
             if not segment_match:
                 continue
+            if re.search(r"\s+[xX*]\s+[0-9]", segment_match.group(1)):
+                continue
             if _record_item(
                 segment_match.group(1),
                 parse_positive_quantity(segment_match.group(2)),
@@ -173,14 +239,13 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
 
     remaining = collapse_whitespace(" ".join(fallback_segments))
     while remaining:
-        match = ITEM_QTY_FALLBACK_RE.search(remaining)
+        match = re.search(r"\s+[xX*]\s+", remaining)
         if not match:
             break
-        if not _record_item(
-            remaining[: match.start()], parse_positive_quantity(match.group(1))
-        ):
+        quantity, remainder = split_quantity_and_remainder(remaining[match.end() :])
+        if not _record_item(remaining[: match.start()], quantity):
             break
-        remaining = remaining[match.end() :].lstrip(" ,;|")
+        remaining = remainder.lstrip(" ,;|")
 
     return items, labels
 
