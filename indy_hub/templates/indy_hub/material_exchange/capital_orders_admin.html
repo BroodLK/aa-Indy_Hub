@@ -98,15 +98,26 @@
                                 </span>
                             </td>
                             <td>
+                                {% if order.revision_required %}
+                                    <div class="text-warning-emphasis small fw-semibold mb-1">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>{% trans "Revision Needed" %}
+                                    </div>
+                                {% endif %}
                                 {% if order.agreed_price_isk %}
                                     <strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2|intcomma }} ISK
                                 {% elif order.offer_price_isk %}
                                     <strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2|intcomma }} ISK
                                     <div class="cap-muted-mini">{% trans "Awaiting requester confirmation" %}</div>
                                 {% elif order.guideline_price_isk %}
-                                    <span class="text-muted">{% trans "Guideline" %}: {{ order.guideline_price_isk|floatformat:2|intcomma }} ISK</span>
+                                    <span class="text-muted">{% trans "Estimated" %}: {{ order.guideline_price_isk|floatformat:2|intcomma }} ISK</span>
                                 {% else %}
                                     <span class="text-muted">-</span>
+                                {% endif %}
+                                {% if order.revision_required and order.last_declined_offer_details %}
+                                    <div class="cap-muted-mini mt-1">{{ order.last_declined_offer_details }}</div>
+                                {% endif %}
+                                {% if order.revision_required and order.last_declined_offer_notes %}
+                                    <div class="cap-muted-mini">{% trans "Decline note" %}: {{ order.last_declined_offer_notes }}</div>
                                 {% endif %}
                             </td>
                             <td>
@@ -180,6 +191,8 @@
                                     data-lead-time="{{ order.lead_time_days|default_if_none:'0' }}"
                                     data-definitive-eta-min="{{ order.definitive_eta_min_days|default_if_none:'' }}"
                                     data-definitive-eta-max="{{ order.definitive_eta_max_days|default_if_none:'' }}"
+                                    data-last-declined-details="{% if order.revision_required %}{{ order.last_declined_offer_details|default_if_none:''|escapejs }}{% endif %}"
+                                    data-last-declined-notes="{% if order.revision_required %}{{ order.last_declined_offer_notes|default_if_none:''|escapejs }}{% endif %}"
                                     data-action-refresh="{% url 'indy_hub:capital_ship_order_refresh_guideline' order.id %}"
                                     data-action-gathering="{% url 'indy_hub:capital_ship_order_set_gathering_materials' order.id %}"
                                     data-action-production="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}"
@@ -218,6 +231,13 @@
                     <div><strong>{% trans "Hull" %}:</strong> <span data-cap-modal-hull>-</span></div>
                     <div><strong>{% trans "Status" %}:</strong> <span data-cap-modal-status>-</span></div>
                 </div>
+                <div class="alert alert-warning d-none mb-3" data-cap-last-declined-section>
+                    <div class="fw-semibold mb-1">{% trans "Previous Offer Was Declined" %}</div>
+                    <div data-cap-last-declined-details></div>
+                    <div class="small mt-1 d-none" data-cap-last-declined-notes-row>
+                        <strong>{% trans "Decline note" %}:</strong> <span data-cap-last-declined-notes></span>
+                    </div>
+                </div>
 
                 <div class="alert alert-secondary d-none mb-3" data-cap-terminal-note>
                     {% trans "This order is already closed. Workflow updates are disabled." %}
@@ -230,7 +250,7 @@
                                 <form method="post" data-cap-action-form="refresh" class="d-inline">
                                     {% csrf_token %}
                                     <button type="submit" class="btn btn-sm btn-outline-primary">
-                                        <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh Guideline" %}
+                                        <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh Estimate" %}
                                     </button>
                                 </form>
                                 <form method="post" data-cap-action-form="gathering" class="d-inline d-none">
@@ -374,6 +394,10 @@
             const summaryRequester = modalEl.querySelector('[data-cap-modal-requester]');
             const summaryHull = modalEl.querySelector('[data-cap-modal-hull]');
             const summaryStatus = modalEl.querySelector('[data-cap-modal-status]');
+            const declinedSection = modalEl.querySelector('[data-cap-last-declined-section]');
+            const declinedDetails = modalEl.querySelector('[data-cap-last-declined-details]');
+            const declinedNotes = modalEl.querySelector('[data-cap-last-declined-notes]');
+            const declinedNotesRow = modalEl.querySelector('[data-cap-last-declined-notes-row]');
             const terminalNote = modalEl.querySelector('[data-cap-terminal-note]');
             const definitiveSection = modalEl.querySelector('[data-cap-definitive-section]');
             const closeActionsSection = modalEl.querySelector('[data-cap-close-actions]');
@@ -436,6 +460,16 @@
                     if (summaryStatus) {
                         summaryStatus.textContent = triggerEl.dataset.orderStatusDisplay || status || '-';
                     }
+                    const declinedDetailsText = String(triggerEl.dataset.lastDeclinedDetails || '').trim();
+                    const declinedNotesText = String(triggerEl.dataset.lastDeclinedNotes || '').trim();
+                    setVisible(declinedSection, Boolean(declinedDetailsText));
+                    if (declinedDetails) {
+                        declinedDetails.textContent = declinedDetailsText || '';
+                    }
+                    if (declinedNotes) {
+                        declinedNotes.textContent = declinedNotesText || '';
+                    }
+                    setVisible(declinedNotesRow, Boolean(declinedDetailsText && declinedNotesText));
 
                     if (offerPriceInput) {
                         offerPriceInput.value = triggerEl.dataset.offerPrice || '';

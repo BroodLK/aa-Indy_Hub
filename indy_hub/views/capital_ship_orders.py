@@ -406,8 +406,11 @@ def _resolve_main_character_name(user) -> str:
 def _quantize_isk(value: Decimal | str | int | float | None) -> Decimal | None:
     if value is None:
         return None
+    normalized = str(value).strip().replace(",", "")
+    if not normalized:
+        return None
     try:
-        parsed = Decimal(str(value))
+        parsed = Decimal(normalized)
     except (InvalidOperation, TypeError, ValueError):
         return None
     if parsed <= 0:
@@ -975,7 +978,41 @@ def _attach_user_display_fields(order: CapitalShipOrder) -> None:
     else:
         order.display_eta_min_days = order.guideline_eta_min_days
         order.display_eta_max_days = order.guideline_eta_max_days
-        order.display_eta_label = _("Guideline ETA")
+        order.display_eta_label = _("Estimated ETA")
+
+
+def _load_latest_declined_offer_by_order(
+    order_ids: list[int],
+) -> dict[int, dict[str, object]]:
+    if not order_ids:
+        return {}
+
+    latest_by_order: dict[int, dict[str, object]] = {}
+    rejected_events = (
+        CapitalShipOrderEvent.objects.filter(
+            order_id__in=order_ids,
+            event_type=CapitalShipOrderEvent.EventType.OFFER_REJECTED_BY_USER,
+        )
+        .order_by("order_id", "-created_at")
+        .only("order_id", "payload", "created_at")
+    )
+    for event in rejected_events:
+        order_id = int(getattr(event, "order_id", 0) or 0)
+        if order_id <= 0 or order_id in latest_by_order:
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        price_isk = _quantize_isk(payload.get("offer_price_isk"))
+        eta_min_days = _parse_positive_int(payload.get("offer_eta_min_days"), minimum=1)
+        eta_max_days = _parse_positive_int(payload.get("offer_eta_max_days"), minimum=1)
+        notes = str(payload.get("offer_notes") or "").strip()
+        latest_by_order[order_id] = {
+            "price_isk": price_isk,
+            "eta_min_days": eta_min_days,
+            "eta_max_days": eta_max_days,
+            "notes": notes,
+            "declined_at": getattr(event, "created_at", None),
+        }
+    return latest_by_order
 
 
 @login_required
@@ -1138,11 +1175,62 @@ def capital_ship_orders_admin(request):
     if not include_completed:
         orders_qs = orders_qs.exclude(status__in=list(_CAPITAL_TERMINAL_STATUSES))
     orders = list(orders_qs.order_by("-created_at"))
+    last_declined_by_order = _load_latest_declined_offer_by_order(
+        [int(order.id) for order in orders]
+    )
     for order in orders:
         order.requester_main_character = _resolve_main_character_name(order.requester)
         order.chat_trigger = _build_order_chat_trigger(order, viewer_role_public="seller")
         order.can_access_chat_as_admin = _can_access_chat(order, request.user)
         _attach_user_display_fields(order)
+        declined_offer = last_declined_by_order.get(int(order.id))
+        order.last_declined_offer = declined_offer
+        order.last_declined_offer_details = ""
+        order.last_declined_offer_notes = ""
+        order.last_declined_offer_price_display = ""
+        order.last_declined_offer_eta_display = ""
+        order.last_declined_offer_declined_at_display = ""
+        order.revision_required = False
+        if declined_offer:
+            declined_price = declined_offer.get("price_isk")
+            declined_eta_min = declined_offer.get("eta_min_days")
+            declined_eta_max = declined_offer.get("eta_max_days")
+            declined_at = declined_offer.get("declined_at")
+            declined_price_display = (
+                f"{declined_price:,.2f} ISK"
+                if isinstance(declined_price, Decimal)
+                else "-"
+            )
+            declined_eta_display = (
+                f"{int(declined_eta_min)}-{int(declined_eta_max)} days"
+                if declined_eta_min is not None and declined_eta_max is not None
+                else "-"
+            )
+            declined_at_display = (
+                timezone.localtime(declined_at).strftime("%Y-%m-%d %H:%M")
+                if declined_at
+                else ""
+            )
+            detail_parts = [
+                _("Last declined offer"),
+                f"{declined_price_display}",
+                f"{declined_eta_display}",
+            ]
+            if declined_at_display:
+                detail_parts.append(_("declined at %(when)s") % {"when": declined_at_display})
+            order.last_declined_offer_details = " | ".join(
+                [str(part).strip() for part in detail_parts if str(part).strip()]
+            )
+            order.last_declined_offer_price_display = declined_price_display
+            order.last_declined_offer_eta_display = declined_eta_display
+            order.last_declined_offer_declined_at_display = declined_at_display
+            order.last_declined_offer_notes = str(declined_offer.get("notes") or "").strip()
+            order.revision_required = bool(
+                not order.is_terminal
+                and order.offer_price_isk is None
+                and order.offer_eta_min_days is None
+                and order.offer_eta_max_days is None
+            )
 
     auto_open_chat_id: str | None = None
     requested_chat = request.GET.get("open_chat")
@@ -1668,7 +1756,7 @@ def capital_ship_order_refresh_guideline(request, order_id: int):
     _refresh_guideline(order)
     messages.success(
         request,
-        f"Guideline refreshed for order {order.order_reference}.",
+        f"Estimate refreshed for order {order.order_reference}.",
     )
     return redirect("indy_hub:capital_ship_orders_admin")
 
@@ -2248,7 +2336,10 @@ def capital_ship_order_chat_send(request, order_id: int):
 @indy_hub_permission_required("can_access_indy_hub")
 @require_POST
 def capital_ship_order_chat_decide(request, order_id: int):
-    order = get_object_or_404(CapitalShipOrder.objects.select_related("requester"), id=order_id)
+    order = get_object_or_404(
+        CapitalShipOrder.objects.select_related("requester", "offer_updated_by"),
+        id=order_id,
+    )
     if int(request.user.id) != int(order.requester_id):
         return JsonResponse({"error": _("Unauthorized")}, status=403)
 
@@ -2328,6 +2419,24 @@ def capital_ship_order_chat_decide(request, order_id: int):
         )
         return JsonResponse({"status": "accepted"})
 
+    declined_offer_payload = {
+        "offer_price_isk": (
+            str(order.offer_price_isk) if order.offer_price_isk is not None else ""
+        ),
+        "offer_eta_min_days": order.offer_eta_min_days,
+        "offer_eta_max_days": order.offer_eta_max_days,
+        "lead_time_days": order.lead_time_days,
+        "offer_notes": str(order.offer_notes or "").strip(),
+        "offer_updated_by_id": int(order.offer_updated_by_id or 0) or None,
+        "offer_updated_by_username": (
+            str(order.offer_updated_by.username)
+            if getattr(order, "offer_updated_by", None)
+            else ""
+        ),
+        "offer_updated_at": (
+            order.offer_updated_at.isoformat() if order.offer_updated_at else ""
+        ),
+    }
     order.user_offer_confirmed_at = None
     order.user_offer_confirmed_by = None
     order.agreed_price_isk = None
@@ -2335,6 +2444,12 @@ def capital_ship_order_chat_decide(request, order_id: int):
     order.likely_eta_max_days = None
     order.agreement_locked_at = None
     order.agreement_locked_by = None
+    order.offer_price_isk = None
+    order.offer_eta_min_days = None
+    order.offer_eta_max_days = None
+    order.offer_notes = ""
+    order.offer_updated_by = None
+    order.offer_updated_at = None
     order.save(
         update_fields=[
             "user_offer_confirmed_at",
@@ -2344,6 +2459,12 @@ def capital_ship_order_chat_decide(request, order_id: int):
             "likely_eta_max_days",
             "agreement_locked_at",
             "agreement_locked_by",
+            "offer_price_isk",
+            "offer_eta_min_days",
+            "offer_eta_max_days",
+            "offer_notes",
+            "offer_updated_by",
+            "offer_updated_at",
             "updated_at",
         ]
     )
@@ -2351,20 +2472,36 @@ def capital_ship_order_chat_decide(request, order_id: int):
         order=order,
         event_type=CapitalShipOrderEvent.EventType.OFFER_REJECTED_BY_USER,
         actor=request.user,
-        payload={},
+        payload=declined_offer_payload,
     )
     _create_chat_system_message(
         order,
         _("Requester declined the current offer and asked for revisions."),
     )
+    declined_price_text = (
+        f"{Decimal(str(declined_offer_payload.get('offer_price_isk') or 0)):,.2f}"
+        if str(declined_offer_payload.get("offer_price_isk") or "").strip()
+        else "-"
+    )
+    declined_eta_min = declined_offer_payload.get("offer_eta_min_days")
+    declined_eta_max = declined_offer_payload.get("offer_eta_max_days")
+    declined_eta_text = (
+        f"{int(declined_eta_min)}-{int(declined_eta_max)}"
+        if declined_eta_min is not None and declined_eta_max is not None
+        else "-"
+    )
     _notify_capital_managers(
         title=_("Capital Offer Declined"),
         body=_(
-            "%(user)s declined the offer for %(ref)s. Review chat and update proposal."
+            "%(user)s declined the offer for %(ref)s.\n"
+            "Declined proposal: %(price)s ISK, %(eta)s days.\n"
+            "Review chat and update proposal."
         )
         % {
             "user": order.requester.username,
             "ref": order.order_reference,
+            "price": declined_price_text,
+            "eta": declined_eta_text,
         },
         order=order,
         level="warning",

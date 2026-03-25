@@ -44,7 +44,7 @@
                     <li>{% trans "One cap per order. If you need multiple, submit multiple orders." %}</li>
                     <li>{% trans "Required: choose exactly one hull and one reason." %}</li>
                     <li>{% trans "Contract reference code format: INDY-CAP-###." %}</li>
-                    <li>{% trans "Displayed guideline price/ETA are non-binding until you confirm an admin offer in chat." %}</li>
+                    <li>{% trans "Displayed estimated price/ETA are non-binding until you confirm an admin offer in chat." %}</li>
                 </ul>
             </div>
 
@@ -65,7 +65,7 @@
                                         <span>
                                             {{ option.type_name }}
                                             {% if option.guideline_price %}
-                                            <small class="d-block text-muted">{% trans "Guideline" %}: {{ option.guideline_price|floatformat:2 }} ISK</small>
+                                            <small class="d-block text-muted">{% trans "Estimated" %}: {{ option.guideline_price|floatformat:2|intcomma }} ISK</small>
                                             {% endif %}
                                         </span>
                                     </label>
@@ -142,12 +142,12 @@
                             </td>
                             <td>
                                 {% if order.agreed_price_isk %}
-                                    <strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2 }} ISK
+                                    <strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2|intcomma }} ISK
                                 {% elif order.offer_price_isk %}
-                                    <strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2 }} ISK
+                                    <strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2|intcomma }} ISK
                                     <div class="cap-muted-mini">{% trans "Awaiting your confirmation" %}</div>
                                 {% elif order.guideline_price_isk %}
-                                    <span class="text-muted">{% trans "Guideline" %}: {{ order.guideline_price_isk|floatformat:2 }} ISK</span>
+                                    <span class="text-muted">{% trans "Estimated" %}: {{ order.guideline_price_isk|floatformat:2|intcomma }} ISK</span>
                                 {% else %}
                                     <span class="text-muted">-</span>
                                 {% endif %}
