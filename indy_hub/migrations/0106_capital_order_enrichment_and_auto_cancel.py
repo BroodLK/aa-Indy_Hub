@@ -92,30 +92,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="materialexchangeconfig",
-            name="capital_disabled_ship_groups",
-            field=models.JSONField(
-                blank=True,
-                default=list,
-                help_text=(
-                    "Ship-group keys hidden from the capital order menu (for example "
-                    "dread, carrier, fax)."
-                ),
-            ),
-        ),
-        migrations.AddField(
-            model_name="materialexchangeconfig",
-            name="capital_ship_estimated_price_overrides",
-            field=models.JSONField(
-                blank=True,
-                default=list,
-                help_text=(
-                    "Per-ship estimated price overrides. Each row should define "
-                    "type_id and price_isk."
-                ),
-            ),
-        ),
-        migrations.AddField(
-            model_name="materialexchangeconfig",
             name="capital_default_eta_max_days_carrier",
             field=models.PositiveSmallIntegerField(default=28),
         ),
