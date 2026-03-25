@@ -1590,7 +1590,7 @@ def capital_ship_orders_config(request):
             getattr(config, "capital_auto_cancel_on_state_change", False)
         ),
         "capital_auto_cancel_preapproved_state_names_text": ", ".join(
-            config.get_capital_auto_cancel_preapproved_state_names()
+            config.get_capital_preapproved_state_names()
         ),
         "capital_auto_cancel_eligible_statuses": set(
             config.get_capital_auto_cancel_eligible_statuses()

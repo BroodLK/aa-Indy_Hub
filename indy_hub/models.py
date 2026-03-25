@@ -2252,6 +2252,10 @@ class MaterialExchangeConfig(models.Model):
             return normalized
         return ["Pre-Approved", "Preapproved"]
 
+    def get_capital_auto_cancel_preapproved_state_names(self) -> list[str]:
+        """Backwards-compatible alias for legacy call sites."""
+        return self.get_capital_preapproved_state_names()
+
     def get_capital_auto_cancel_eligible_statuses(self) -> list[str]:
         raw = list(getattr(self, "capital_auto_cancel_eligible_statuses", []) or [])
         normalized: list[str] = []

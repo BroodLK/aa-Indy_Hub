@@ -2916,7 +2916,7 @@ def _handle_config_save(request, existing_config):
             )
             if existing_config:
                 capital_auto_cancel_preapproved_state_names = (
-                    existing_config.get_capital_auto_cancel_preapproved_state_names()
+                    existing_config.get_capital_preapproved_state_names()
                 )
                 capital_auto_cancel_eligible_statuses = (
                     existing_config.get_capital_auto_cancel_eligible_statuses()
