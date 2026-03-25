@@ -23,6 +23,8 @@ from indy_hub.models import (
     BlueprintCopyChat,
     BlueprintCopyOffer,
     BlueprintCopyRequest,
+    CapitalShipOrder,
+    CapitalShipOrderEvent,
     CachedCharacterAsset,
     CachedStructureName,
     CharacterSettings,
@@ -2999,3 +3001,87 @@ class OnboardingViewsTests(TestCase):
         self.assertRedirects(response, reverse("indy_hub:index"))
         progress.refresh_from_db()
         self.assertFalse(progress.dismissed)
+
+
+class CapitalOrderAdminActionsTests(TestCase):
+    def setUp(self) -> None:
+        self.manager = User.objects.create_user("capmanager", password="secret123")
+        assign_main_character(self.manager, character_id=2025001)
+        grant_indy_permissions(self.manager, "can_manage_capital_orders")
+        self.client.force_login(self.manager)
+
+        self.requester = User.objects.create_user("caprequester", password="secret123")
+        assign_main_character(self.requester, character_id=2025002)
+        grant_indy_permissions(self.requester)
+
+        self.config = MaterialExchangeConfig.objects.create(
+            corporation_id=1234,
+            structure_id=60003760,
+            is_active=True,
+        )
+
+    def _create_order(
+        self, *, status: str = CapitalShipOrder.Status.WAITING
+    ) -> CapitalShipOrder:
+        return CapitalShipOrder.objects.create(
+            config=self.config,
+            requester=self.requester,
+            ship_type_id=19720,
+            ship_type_name="Revelation",
+            ship_class=CapitalShipOrder.ShipClass.DREAD,
+            reason=CapitalShipOrder.Reason.NO_CAP,
+            status=status,
+        )
+
+    def test_admin_modal_shows_clear_cancel_wording_and_uncancel_route(self) -> None:
+        order = self._create_order()
+        response = self.client.get(reverse("indy_hub:capital_ship_orders_admin"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Close as Cancelled")
+        self.assertContains(response, "Are You Sure?")
+        self.assertContains(response, "Yes, Close as Cancelled")
+        self.assertContains(
+            response,
+            "remove it from the active queue",
+        )
+        self.assertContains(response, "Reopen Cancelled Order")
+        self.assertContains(
+            response,
+            reverse("indy_hub:capital_ship_order_uncancel", args=[order.id]),
+        )
+        self.assertNotContains(response, 'data-cap-action-form="reject"')
+
+    def test_manager_can_uncancel_and_restore_previous_status(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.GATHERING_MATERIALS)
+        cancel_url = reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
+        uncancel_url = reverse("indy_hub:capital_ship_order_uncancel", args=[order.id])
+
+        response = self.client.post(cancel_url)
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
+
+        response = self.client.post(uncancel_url)
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.GATHERING_MATERIALS)
+
+        restore_events = [
+            event
+            for event in order.events.filter(
+                event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED
+            )
+            if isinstance(event.payload, dict)
+            and bool(event.payload.get("restored_from_cancelled"))
+        ]
+        self.assertTrue(restore_events)
+
+    def test_uncancel_rejected_when_order_is_not_cancelled(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        uncancel_url = reverse("indy_hub:capital_ship_order_uncancel", args=[order.id])
+
+        response = self.client.post(uncancel_url)
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)

@@ -2153,6 +2153,36 @@ def _close_capital_order(
     return redirect("indy_hub:capital_ship_orders_admin")
 
 
+def _resolve_restore_status_for_cancelled_order(order: CapitalShipOrder) -> str:
+    valid_statuses = {
+        str(choice[0]).strip().lower() for choice in CapitalShipOrder.Status.choices
+    }
+    fallback_status = CapitalShipOrder.Status.WAITING
+    try:
+        status_events = order.events.filter(
+            event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED
+        ).order_by("-created_at", "-id")
+    except Exception:
+        return fallback_status
+
+    for event in status_events[:30]:
+        payload = event.payload or {}
+        if not isinstance(payload, dict):
+            continue
+        new_status = str(payload.get("new_status") or "").strip().lower()
+        if new_status != CapitalShipOrder.Status.CANCELLED:
+            continue
+        previous_status = str(payload.get("previous_status") or "").strip().lower()
+        if not previous_status:
+            continue
+        if previous_status in _CAPITAL_TERMINAL_STATUSES:
+            continue
+        if previous_status not in valid_statuses:
+            continue
+        return previous_status
+    return fallback_status
+
+
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
 @indy_hub_permission_required("can_manage_capital_orders")
@@ -2187,6 +2217,104 @@ def capital_ship_order_cancel(request, order_id: int):
         action_label="Cancelled",
         task_name="cancel",
     )
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
+@require_POST
+def capital_ship_order_uncancel(request, order_id: int):
+    emit_view_analytics_event(
+        view_name="capital_ship_orders.uncancel",
+        request=request,
+    )
+    order = get_object_or_404(CapitalShipOrder, id=order_id)
+    current_status = str(order.status or "").strip().lower()
+    if current_status != CapitalShipOrder.Status.CANCELLED:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is not cancelled.",
+        )
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    restored_status = _resolve_restore_status_for_cancelled_order(order)
+    manager_name = str(getattr(request.user, "username", "") or "Manager").strip()
+    status_note = (
+        f"Reopened from cancelled by manager {manager_name} at "
+        f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}; "
+        f"restored to {restored_status}"
+    )
+    order.status = restored_status
+    order.anomaly_reason = ""
+    order.requester_preapproved_mismatch_since = None
+    _append_order_note(order, status_note)
+    order.save(
+        update_fields=[
+            "status",
+            "anomaly_reason",
+            "requester_preapproved_mismatch_since",
+            "notes",
+            "updated_at",
+        ]
+    )
+    _record_capital_event(
+        order=order,
+        event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED,
+        actor=request.user,
+        payload={
+            "new_status": restored_status,
+            "previous_status": CapitalShipOrder.Status.CANCELLED,
+            "restored_from_cancelled": True,
+        },
+    )
+    _create_chat_system_message(
+        order,
+        _(
+            "Order reopened by admin. Status restored from Cancelled to %(status)s."
+        )
+        % {"status": order.get_status_display()},
+    )
+
+    notify_user(
+        order.requester,
+        _("Capital Order Reopened"),
+        _(
+            "Order %(ref)s (%(hull)s) was reopened by %(manager)s and is now %(status)s."
+        )
+        % {
+            "ref": order.order_reference,
+            "hull": order.ship_type_name,
+            "manager": manager_name,
+            "status": order.get_status_display(),
+        },
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/",
+    )
+    _notify_capital_managers(
+        title=_("Capital Order Reopened"),
+        body=_(
+            "%(manager)s reopened capital order %(ref)s.\n"
+            "User: %(user)s\n"
+            "Hull: %(hull)s\n"
+            "Status: %(status)s"
+        )
+        % {
+            "manager": manager_name,
+            "ref": order.order_reference,
+            "user": order.requester.username,
+            "hull": order.ship_type_name,
+            "status": order.get_status_display(),
+        },
+        order=order,
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+
+    messages.success(
+        request,
+        f"Order {order.order_reference} reopened to {order.get_status_display()}.",
+    )
+    return redirect("indy_hub:capital_ship_orders_admin")
 
 
 @login_required

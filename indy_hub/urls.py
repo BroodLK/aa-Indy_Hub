@@ -47,6 +47,7 @@ from .views.industry import (
 try:
     from .views.capital_ship_orders import (
         capital_ship_order_cancel,
+        capital_ship_order_uncancel,
         capital_ship_order_chat_decide,
         capital_ship_order_chat_history,
         capital_ship_order_chat_send,
@@ -78,6 +79,7 @@ except ModuleNotFoundError:
     capital_ship_order_set_definitive_eta = _capital_orders_module_missing
     capital_ship_order_reject = _capital_orders_module_missing
     capital_ship_order_cancel = _capital_orders_module_missing
+    capital_ship_order_uncancel = _capital_orders_module_missing
     capital_ship_order_chat_history = _capital_orders_module_missing
     capital_ship_order_chat_send = _capital_orders_module_missing
     capital_ship_order_chat_decide = _capital_orders_module_missing
@@ -512,6 +514,11 @@ urlpatterns = [
         "material-exchange/capital-orders/<int:order_id>/cancel/",
         capital_ship_order_cancel,
         name="capital_ship_order_cancel",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/uncancel/",
+        capital_ship_order_uncancel,
+        name="capital_ship_order_uncancel",
     ),
     path(
         "material-exchange/capital-orders/<int:order_id>/chat/",
