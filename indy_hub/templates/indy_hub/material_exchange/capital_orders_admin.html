@@ -8,32 +8,8 @@
 <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
 <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
 <link rel="stylesheet" href="{% static 'indy_hub/css/capital_orders.css' %}">
+<link rel="stylesheet" href="{% static 'indy_hub/css/chat.css' %}?v=20260118-2040">
 {% endblock extra_css %}
-
-{% block extra_javascript %}
-    {{ block.super }}
-    <script>
-        function copyCapitalOrderReference(btn, reference) {
-            if (!reference) {
-                return;
-            }
-            navigator.clipboard.writeText(reference).then(() => {
-                const icon = btn.querySelector('i');
-                if (!icon) {
-                    return;
-                }
-                icon.classList.remove('fa-copy');
-                icon.classList.add('fa-check', 'text-success');
-                setTimeout(() => {
-                    icon.classList.remove('fa-check', 'text-success');
-                    icon.classList.add('fa-copy');
-                }, 1400);
-            }).catch(() => {
-                alert('{% trans "Failed to copy to clipboard" %}');
-            });
-        }
-    </script>
-{% endblock extra_javascript %}
 
 {% block content %}
 <div class="container-fluid py-4">
@@ -83,8 +59,11 @@
                             <th>{% trans "Hull" %}</th>
                             <th>{% trans "Reason" %}</th>
                             <th>{% trans "Status" %}</th>
+                            <th>{% trans "Price" %}</th>
+                            <th>{% trans "ETA" %}</th>
                             <th>{% trans "Contract" %}</th>
                             <th>{% trans "Production By" %}</th>
+                            <th>{% trans "Chat" %}</th>
                             <th>{% trans "Updated" %}</th>
                             <th class="text-end">{% trans "Actions" %}</th>
                         </tr>
@@ -115,6 +94,26 @@
                                 </span>
                             </td>
                             <td>
+                                {% if order.agreed_price_isk %}
+                                    <strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2 }} ISK
+                                {% elif order.offer_price_isk %}
+                                    <strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2 }} ISK
+                                    <div class="cap-muted-mini">{% trans "Awaiting requester confirmation" %}</div>
+                                {% elif order.guideline_price_isk %}
+                                    <span class="text-muted">{% trans "Guideline" %}: {{ order.guideline_price_isk|floatformat:2 }} ISK</span>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if order.display_eta_min_days and order.display_eta_max_days %}
+                                    {{ order.display_eta_min_days }}-{{ order.display_eta_max_days }} {% trans "days" %}
+                                    <div class="cap-muted-mini">{{ order.display_eta_label }}</div>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
                                 {% if order.esi_contract_id %}
                                     #{{ order.esi_contract_id }}
                                 {% else %}
@@ -129,17 +128,76 @@
                                 {% endif %}
                             </td>
                             <td>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-info bp-chat-trigger"
+                                    data-chat-fetch-url="{{ order.chat_trigger.fetch_url }}"
+                                    data-chat-send-url="{{ order.chat_trigger.send_url }}"
+                                    data-chat-role="seller"
+                                    data-chat-type-name="{{ order.ship_type_name }}"
+                                    data-chat-type-id="{{ order.ship_type_id }}"
+                                    data-chat-id="{{ order.chat_trigger.id }}"
+                                >
+                                    <i class="fas fa-comments me-1"></i>{% trans "Open" %}
+                                </button>
+                                {% if order.chat_trigger.has_unread %}
+                                <span class="badge bg-warning text-dark ms-1">{% trans "New" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>
                                 {{ order.updated_at|date:"Y-m-d H:i" }}
                                 <div class="cap-muted-mini">{{ order.updated_at|timesince }} {% trans "ago" %}</div>
                             </td>
                             <td class="text-end">
                                 {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
                                 <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_refresh_guideline' order.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh Guideline" %}
+                                        </button>
+                                    </form>
+                                    {% if order.status == 'waiting' %}
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_gathering_materials' order.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-warning">
+                                            <i class="fas fa-boxes-stacked me-1"></i>{% trans "Gathering Materials" %}
+                                        </button>
+                                    </form>
+                                    {% endif %}
                                     {% if order.status == 'waiting' %}
                                     <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
                                         {% csrf_token %}
                                         <button type="submit" class="btn btn-sm btn-warning">
                                             <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
+                                        </button>
+                                    </form>
+                                    {% elif order.status == 'gathering_materials' %}
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-warning">
+                                            <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_update_offer' order.id %}" class="d-inline-flex gap-1 align-items-center">
+                                        {% csrf_token %}
+                                        <input type="number" step="0.01" min="0.01" name="offer_price_isk" class="form-control form-control-sm" style="width: 120px;" placeholder="{% trans 'Price ISK' %}" value="{{ order.offer_price_isk|default_if_none:'' }}" required>
+                                        <input type="number" min="1" name="offer_eta_min_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'ETA min' %}" value="{{ order.offer_eta_min_days|default_if_none:'' }}" required>
+                                        <input type="number" min="1" name="offer_eta_max_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'ETA max' %}" value="{{ order.offer_eta_max_days|default_if_none:'' }}" required>
+                                        <input type="number" min="0" name="lead_time_days" class="form-control form-control-sm" style="width: 88px;" placeholder="{% trans 'Lead' %}" value="{{ order.lead_time_days|default_if_none:'0' }}">
+                                        <input type="text" maxlength="300" name="offer_notes" class="form-control form-control-sm" style="width: 160px;" placeholder="{% trans 'Offer note (optional)' %}">
+                                        <button type="submit" class="btn btn-sm btn-outline-success">
+                                            <i class="fas fa-handshake me-1"></i>{% trans "Update Offer" %}
+                                        </button>
+                                    </form>
+                                    {% if order.status == 'gathering_materials' or order.status == 'in_production' or order.status == 'contract_created' %}
+                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_definitive_eta' order.id %}" class="d-inline-flex gap-1 align-items-center">
+                                        {% csrf_token %}
+                                        <input type="number" min="1" name="definitive_eta_min_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'Def min' %}" value="{{ order.definitive_eta_min_days|default_if_none:'' }}" required>
+                                        <input type="number" min="1" name="definitive_eta_max_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'Def max' %}" value="{{ order.definitive_eta_max_days|default_if_none:'' }}" required>
+                                        <button type="submit" class="btn btn-sm btn-outline-info">
+                                            <i class="fas fa-clock me-1"></i>{% trans "Set Definitive ETA" %}
                                         </button>
                                     </form>
                                     {% endif %}
@@ -171,4 +229,41 @@
         </div>
     </div>
 </div>
+<div data-auto-open-chat="{{ auto_open_chat_id|default:'' }}"></div>
+{% include "indy_hub/includes/capital_order_chat_modal.html" %}
 {% endblock content %}
+
+{% block extra_javascript %}
+    {{ block.super }}
+    <script>
+        function copyCapitalOrderReference(btn, reference) {
+            if (!reference) {
+                return;
+            }
+            navigator.clipboard.writeText(reference).then(() => {
+                const icon = btn.querySelector('i');
+                if (!icon) {
+                    return;
+                }
+                icon.classList.remove('fa-copy');
+                icon.classList.add('fa-check', 'text-success');
+                setTimeout(() => {
+                    icon.classList.remove('fa-check', 'text-success');
+                    icon.classList.add('fa-copy');
+                }, 1400);
+            }).catch(() => {
+                alert('{% trans "Failed to copy to clipboard" %}');
+            });
+        }
+        window.indyChatDefaults = Object.assign({}, window.indyChatDefaults || {}, {
+            viewerRole: "seller",
+            labels: {
+                buyer: "{% trans 'Requester' %}",
+                seller: "{% trans 'Builder' %}",
+                system: "{% trans 'System' %}",
+                you: "{% trans 'You' %}"
+            }
+        });
+    </script>
+    <script src="{% static 'indy_hub/js/bp_copy_chat.js' %}?v=20260118-2230"></script>
+{% endblock extra_javascript %}

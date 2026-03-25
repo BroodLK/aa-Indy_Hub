@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
 <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
 <link rel="stylesheet" href="{% static 'indy_hub/css/capital_orders.css' %}">
+<link rel="stylesheet" href="{% static 'indy_hub/css/chat.css' %}?v=20260118-2040">
 {% endblock extra_css %}
 
 {% block content %}
@@ -43,10 +44,11 @@
                     <li>{% trans "One cap per order. If you need multiple, submit multiple orders." %}</li>
                     <li>{% trans "Required: choose exactly one hull and one reason." %}</li>
                     <li>{% trans "Contract reference code format: INDY-CAP-###." %}</li>
+                    <li>{% trans "Displayed guideline price/ETA are non-binding until you confirm an admin offer in chat." %}</li>
                 </ul>
             </div>
 
-            {% if ship_options_by_class.dread or ship_options_by_class.carrier or ship_options_by_class.fax %}
+            {% if ship_option_sections %}
             <form method="post">
                 {% csrf_token %}
                 <div class="row g-4">
@@ -54,41 +56,22 @@
                         <div class="cap-form-card">
                             <h5 class="cap-form-title">{% trans "Choose Hull (one only)" %}</h5>
                             <div class="cap-option-grid">
-                                {% if ship_options_by_class.dread %}
-                                <h6 class="cap-option-group-title">{% trans "Dreadnought" %}</h6>
-                                {% for option in ship_options_by_class.dread %}
+                                {% for section in ship_option_sections %}
+                                <h6 class="cap-option-group-title">{{ section.label }}</h6>
+                                {% for option in section.options %}
                                 <div class="cap-radio-card">
                                     <input class="form-check-input" type="radio" name="ship_type_id" id="ship_{{ option.type_id }}" value="{{ option.type_id }}" required>
                                     <label for="ship_{{ option.type_id }}">
-                                        <span>{{ option.type_name }}</span>
+                                        <span>
+                                            {{ option.type_name }}
+                                            {% if section.guideline.price %}
+                                            <small class="d-block text-muted">{% trans "Guideline" %}: {{ section.guideline.price|floatformat:2 }} ISK</small>
+                                            {% endif %}
+                                        </span>
                                     </label>
                                 </div>
                                 {% endfor %}
-                                {% endif %}
-
-                                {% if ship_options_by_class.carrier %}
-                                <h6 class="cap-option-group-title">{% trans "Carrier" %}</h6>
-                                {% for option in ship_options_by_class.carrier %}
-                                <div class="cap-radio-card">
-                                    <input class="form-check-input" type="radio" name="ship_type_id" id="ship_{{ option.type_id }}" value="{{ option.type_id }}" required>
-                                    <label for="ship_{{ option.type_id }}">
-                                        <span>{{ option.type_name }}</span>
-                                    </label>
-                                </div>
                                 {% endfor %}
-                                {% endif %}
-
-                                {% if ship_options_by_class.fax %}
-                                <h6 class="cap-option-group-title">{% trans "FAX" %}</h6>
-                                {% for option in ship_options_by_class.fax %}
-                                <div class="cap-radio-card">
-                                    <input class="form-check-input" type="radio" name="ship_type_id" id="ship_{{ option.type_id }}" value="{{ option.type_id }}" required>
-                                    <label for="ship_{{ option.type_id }}">
-                                        <span>{{ option.type_name }}</span>
-                                    </label>
-                                </div>
-                                {% endfor %}
-                                {% endif %}
                             </div>
                         </div>
                     </div>
@@ -140,7 +123,9 @@
                             <th>{% trans "Hull" %}</th>
                             <th>{% trans "Reason" %}</th>
                             <th>{% trans "Status" %}</th>
-                            <th>{% trans "Contract" %}</th>
+                            <th>{% trans "Price" %}</th>
+                            <th>{% trans "ETA" %}</th>
+                            <th>{% trans "Chat" %}</th>
                             <th class="text-end">{% trans "Updated" %}</th>
                         </tr>
                     </thead>
@@ -156,10 +141,40 @@
                                 </span>
                             </td>
                             <td>
-                                {% if order.esi_contract_id %}
-                                    #{{ order.esi_contract_id }}
+                                {% if order.agreed_price_isk %}
+                                    <strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2 }} ISK
+                                {% elif order.offer_price_isk %}
+                                    <strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2 }} ISK
+                                    <div class="cap-muted-mini">{% trans "Awaiting your confirmation" %}</div>
+                                {% elif order.guideline_price_isk %}
+                                    <span class="text-muted">{% trans "Guideline" %}: {{ order.guideline_price_isk|floatformat:2 }} ISK</span>
                                 {% else %}
                                     <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if order.display_eta_min_days and order.display_eta_max_days %}
+                                    {{ order.display_eta_min_days }}-{{ order.display_eta_max_days }} {% trans "days" %}
+                                    <div class="cap-muted-mini">{{ order.display_eta_label }}</div>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-info bp-chat-trigger"
+                                    data-chat-fetch-url="{{ order.chat_trigger.fetch_url }}"
+                                    data-chat-send-url="{{ order.chat_trigger.send_url }}"
+                                    data-chat-role="buyer"
+                                    data-chat-type-name="{{ order.ship_type_name }}"
+                                    data-chat-type-id="{{ order.ship_type_id }}"
+                                    data-chat-id="{{ order.chat_trigger.id }}"
+                                >
+                                    <i class="fas fa-comments me-1"></i>{% trans "Open" %}
+                                </button>
+                                {% if order.chat_trigger.has_unread %}
+                                <span class="badge bg-warning text-dark ms-1">{% trans "New" %}</span>
                                 {% endif %}
                             </td>
                             <td class="text-end">
@@ -177,4 +192,22 @@
         </div>
     </div>
 </div>
+<div data-auto-open-chat="{{ auto_open_chat_id|default:'' }}"></div>
+{% include "indy_hub/includes/capital_order_chat_modal.html" %}
 {% endblock content %}
+
+{% block extra_javascript %}
+{{ block.super }}
+<script>
+    window.indyChatDefaults = Object.assign({}, window.indyChatDefaults || {}, {
+        viewerRole: "buyer",
+        labels: {
+            buyer: "{% trans 'Requester' %}",
+            seller: "{% trans 'Builder' %}",
+            system: "{% trans 'System' %}",
+            you: "{% trans 'You' %}"
+        }
+    });
+</script>
+<script src="{% static 'indy_hub/js/bp_copy_chat.js' %}?v=20260118-2230"></script>
+{% endblock extra_javascript %}

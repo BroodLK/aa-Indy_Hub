@@ -664,6 +664,37 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <hr class="my-3">
+
+                                <h6 class="fw-semibold mb-2">
+                                    <i class="fas fa-list me-1"></i>{% trans "Capital Order Menu Overrides" %}
+                                </h6>
+                                <p class="small text-muted mb-2">
+                                    {% trans "Disable specific hulls by type ID and optionally define custom category/hull entries for the capital order menu." %}
+                                </p>
+                                <div class="row g-2">
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Disabled Ship Type IDs" %}</label>
+                                        <input
+                                            type="text"
+                                            name="capital_disabled_ship_type_ids"
+                                            class="form-control form-control-sm"
+                                            value="{{ capital_disabled_ship_type_ids_text|default:'' }}"
+                                            placeholder="{% trans 'Comma-separated type IDs' %}">
+                                        <div class="form-text">{% trans "Example: 19720, 19722" %}</div>
+                                    </div>
+                                    <div class="col-lg-8">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Custom Ship Options (JSON)" %}</label>
+                                        <textarea
+                                            name="capital_custom_ship_options"
+                                            class="form-control form-control-sm font-monospace"
+                                            rows="7"
+                                            spellcheck="false"
+                                            placeholder='[{"type_id": 123, "type_name": "Example Hull", "ship_class": "super", "ship_class_label": "Supercapital", "enabled": true}]'>{{ capital_custom_ship_options_text|default:'[]' }}</textarea>
+                                        <div class="form-text">{% trans "Each entry requires type_id, type_name, and ship_class. ship_class_label and enabled are optional." %}</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -769,6 +800,144 @@
                                 </div>
                                 <div class="small text-muted">
                                     {% trans "If disabled, users must submit fully compliant contracts. Admin anomaly review notifications will not be sent automatically." %}
+                                </div>
+
+                                <hr class="my-3">
+
+                                <h6 class="fw-semibold mb-2">
+                                    <i class="fas fa-ship me-1"></i>{% trans "Capital Order Guideline Defaults" %}
+                                </h6>
+                                <p class="small text-muted mb-2">
+                                    {% trans "Used for internal auto-generated guidance only. Not binding until requester confirms an offer." %}
+                                </p>
+                                <div class="row g-2">
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Dread Price (ISK)" %}</label>
+                                        <input
+                                            type="number"
+                                            name="capital_default_price_dread"
+                                            class="form-control form-control-sm text-end"
+                                            min="0"
+                                            step="0.01"
+                                            inputmode="decimal"
+                                            value="{{ capital_default_price_dread|default_if_none:'' }}"
+                                            placeholder="{% trans 'Optional' %}">
+                                        <div class="input-group input-group-sm mt-1">
+                                            <input type="number" name="capital_default_eta_min_days_dread" class="form-control text-end" min="1" value="{{ capital_default_eta_min_days_dread|default:14 }}" required>
+                                            <span class="input-group-text">{% trans "to" %}</span>
+                                            <input type="number" name="capital_default_eta_max_days_dread" class="form-control text-end" min="1" value="{{ capital_default_eta_max_days_dread|default:28 }}" required>
+                                            <span class="input-group-text">{% trans "days" %}</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Carrier Price (ISK)" %}</label>
+                                        <input
+                                            type="number"
+                                            name="capital_default_price_carrier"
+                                            class="form-control form-control-sm text-end"
+                                            min="0"
+                                            step="0.01"
+                                            inputmode="decimal"
+                                            value="{{ capital_default_price_carrier|default_if_none:'' }}"
+                                            placeholder="{% trans 'Optional' %}">
+                                        <div class="input-group input-group-sm mt-1">
+                                            <input type="number" name="capital_default_eta_min_days_carrier" class="form-control text-end" min="1" value="{{ capital_default_eta_min_days_carrier|default:14 }}" required>
+                                            <span class="input-group-text">{% trans "to" %}</span>
+                                            <input type="number" name="capital_default_eta_max_days_carrier" class="form-control text-end" min="1" value="{{ capital_default_eta_max_days_carrier|default:28 }}" required>
+                                            <span class="input-group-text">{% trans "days" %}</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "FAX Price (ISK)" %}</label>
+                                        <input
+                                            type="number"
+                                            name="capital_default_price_fax"
+                                            class="form-control form-control-sm text-end"
+                                            min="0"
+                                            step="0.01"
+                                            inputmode="decimal"
+                                            value="{{ capital_default_price_fax|default_if_none:'' }}"
+                                            placeholder="{% trans 'Optional' %}">
+                                        <div class="input-group input-group-sm mt-1">
+                                            <input type="number" name="capital_default_eta_min_days_fax" class="form-control text-end" min="1" value="{{ capital_default_eta_min_days_fax|default:14 }}" required>
+                                            <span class="input-group-text">{% trans "to" %}</span>
+                                            <input type="number" name="capital_default_eta_max_days_fax" class="form-control text-end" min="1" value="{{ capital_default_eta_max_days_fax|default:28 }}" required>
+                                            <span class="input-group-text">{% trans "days" %}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row g-2 mt-1">
+                                    <div class="col-lg-3">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Lead Time Days" %}</label>
+                                        <input
+                                            type="number"
+                                            name="capital_default_lead_time_days"
+                                            class="form-control form-control-sm text-end"
+                                            min="0"
+                                            step="1"
+                                            value="{{ capital_default_lead_time_days|default:0 }}">
+                                    </div>
+                                </div>
+
+                                <hr class="my-3">
+
+                                <h6 class="fw-semibold mb-2">
+                                    <i class="fas fa-user-shield me-1"></i>{% trans "Capital Auto-Cancel on State Change" %}
+                                </h6>
+                                <div class="form-check form-switch mb-2">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        name="capital_auto_cancel_on_state_change"
+                                        id="capitalAutoCancelOnStateChange"
+                                        {% if capital_auto_cancel_on_state_change %}checked{% endif %}>
+                                    <label class="form-check-label fw-semibold" for="capitalAutoCancelOnStateChange">
+                                        {% trans "Automatically cancel eligible capital orders when requester leaves preapproved state" %}
+                                    </label>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Preapproved State Names" %}</label>
+                                        <input
+                                            type="text"
+                                            name="capital_auto_cancel_preapproved_state_names"
+                                            class="form-control form-control-sm"
+                                            value="{{ capital_auto_cancel_preapproved_state_names_text|default:'Pre-Approved, Preapproved' }}"
+                                            placeholder="{% trans 'Comma-separated' %}">
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Eligible Capital Statuses" %}</label>
+                                        <select
+                                            name="capital_auto_cancel_eligible_statuses"
+                                            class="form-select form-select-sm"
+                                            multiple
+                                            size="5">
+                                            {% for value, label in capital_auto_cancel_status_choices %}
+                                            <option value="{{ value }}" {% if value in capital_auto_cancel_eligible_statuses %}selected{% endif %}>
+                                                {{ label }}
+                                            </option>
+                                            {% endfor %}
+                                        </select>
+                                        <div class="form-text">{% trans "Hold Ctrl/Cmd to select multiple." %}</div>
+                                    </div>
+                                    <div class="col-lg-4">
+                                        <label class="form-label fw-semibold mb-1">{% trans "Cancel Delay" %}</label>
+                                        <div class="input-group input-group-sm">
+                                            <input
+                                                type="number"
+                                                name="capital_auto_cancel_delay_value"
+                                                class="form-control text-end"
+                                                min="0"
+                                                step="1"
+                                                value="{{ capital_auto_cancel_delay_value|default:0 }}">
+                                            <select name="capital_auto_cancel_delay_unit" class="form-select">
+                                                {% for value, label in capital_auto_cancel_delay_unit_choices %}
+                                                <option value="{{ value }}" {% if value == capital_auto_cancel_delay_unit %}selected{% endif %}>{{ label }}</option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+                                        <div class="form-text">{% trans "0 = cancel immediately once requester is outside preapproved state." %}</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>

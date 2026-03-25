@@ -47,8 +47,15 @@ from .views.industry import (
 try:
     from .views.capital_ship_orders import (
         capital_ship_order_cancel,
+        capital_ship_order_chat_decide,
+        capital_ship_order_chat_history,
+        capital_ship_order_chat_send,
+        capital_ship_order_refresh_guideline,
         capital_ship_order_reject,
+        capital_ship_order_set_definitive_eta,
+        capital_ship_order_set_gathering_materials,
         capital_ship_order_set_in_production,
+        capital_ship_order_update_offer,
         capital_ship_orders,
         capital_ship_orders_admin,
     )
@@ -63,8 +70,15 @@ except ModuleNotFoundError:
     capital_ship_orders = _capital_orders_module_missing
     capital_ship_orders_admin = _capital_orders_module_missing
     capital_ship_order_set_in_production = _capital_orders_module_missing
+    capital_ship_order_set_gathering_materials = _capital_orders_module_missing
+    capital_ship_order_refresh_guideline = _capital_orders_module_missing
+    capital_ship_order_update_offer = _capital_orders_module_missing
+    capital_ship_order_set_definitive_eta = _capital_orders_module_missing
     capital_ship_order_reject = _capital_orders_module_missing
     capital_ship_order_cancel = _capital_orders_module_missing
+    capital_ship_order_chat_history = _capital_orders_module_missing
+    capital_ship_order_chat_send = _capital_orders_module_missing
+    capital_ship_order_chat_decide = _capital_orders_module_missing
 from .views.material_exchange import (
     material_exchange_approve_buy,
     material_exchange_approve_sell,
@@ -458,9 +472,29 @@ urlpatterns = [
         name="capital_ship_orders_admin",
     ),
     path(
+        "material-exchange/capital-orders/<int:order_id>/refresh-guideline/",
+        capital_ship_order_refresh_guideline,
+        name="capital_ship_order_refresh_guideline",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/set-gathering-materials/",
+        capital_ship_order_set_gathering_materials,
+        name="capital_ship_order_set_gathering_materials",
+    ),
+    path(
         "material-exchange/capital-orders/<int:order_id>/set-in-production/",
         capital_ship_order_set_in_production,
         name="capital_ship_order_set_in_production",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/update-offer/",
+        capital_ship_order_update_offer,
+        name="capital_ship_order_update_offer",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/set-definitive-eta/",
+        capital_ship_order_set_definitive_eta,
+        name="capital_ship_order_set_definitive_eta",
     ),
     path(
         "material-exchange/capital-orders/<int:order_id>/reject/",
@@ -471,6 +505,21 @@ urlpatterns = [
         "material-exchange/capital-orders/<int:order_id>/cancel/",
         capital_ship_order_cancel,
         name="capital_ship_order_cancel",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/chat/",
+        capital_ship_order_chat_history,
+        name="capital_ship_order_chat_history",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/chat/send/",
+        capital_ship_order_chat_send,
+        name="capital_ship_order_chat_send",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/chat/decision/",
+        capital_ship_order_chat_decide,
+        name="capital_ship_order_chat_decide",
     ),
     # Stock & Prices
     path(

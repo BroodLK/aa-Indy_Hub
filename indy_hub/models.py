@@ -1970,6 +1970,91 @@ class MaterialExchangeConfig(models.Model):
         ),
     )
 
+    # Capital order defaults and safeguards
+    capital_default_price_dread = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Default internal guideline price for dread orders."),
+    )
+    capital_default_price_carrier = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Default internal guideline price for carrier orders."),
+    )
+    capital_default_price_fax = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text=_("Default internal guideline price for FAX orders."),
+    )
+    capital_default_eta_min_days_dread = models.PositiveSmallIntegerField(default=14)
+    capital_default_eta_max_days_dread = models.PositiveSmallIntegerField(default=28)
+    capital_default_eta_min_days_carrier = models.PositiveSmallIntegerField(default=14)
+    capital_default_eta_max_days_carrier = models.PositiveSmallIntegerField(default=28)
+    capital_default_eta_min_days_fax = models.PositiveSmallIntegerField(default=14)
+    capital_default_eta_max_days_fax = models.PositiveSmallIntegerField(default=28)
+    capital_default_lead_time_days = models.PositiveSmallIntegerField(
+        default=0,
+        help_text=_("Default lead-time days added to generated ETA guidance."),
+    )
+    capital_auto_cancel_on_state_change = models.BooleanField(
+        default=False,
+        help_text=_(
+            "Automatically cancel eligible capital orders when requester leaves the configured preapproved state."
+        ),
+    )
+    capital_auto_cancel_preapproved_state_names = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "State names treated as preapproved for capital-order auto-cancel checks."
+        ),
+    )
+    capital_auto_cancel_eligible_statuses = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "Capital order statuses eligible for auto-cancel when requester leaves preapproved state."
+        ),
+    )
+    CAPITAL_AUTO_CANCEL_DELAY_HOURS = "hours"
+    CAPITAL_AUTO_CANCEL_DELAY_DAYS = "days"
+    CAPITAL_AUTO_CANCEL_DELAY_UNIT_CHOICES = [
+        (CAPITAL_AUTO_CANCEL_DELAY_HOURS, _("Hours")),
+        (CAPITAL_AUTO_CANCEL_DELAY_DAYS, _("Days")),
+    ]
+    capital_auto_cancel_delay_value = models.PositiveIntegerField(
+        default=0,
+        help_text=_(
+            "Grace period before auto-cancel once requester is in the wrong state. 0 means immediate."
+        ),
+    )
+    capital_auto_cancel_delay_unit = models.CharField(
+        max_length=8,
+        choices=CAPITAL_AUTO_CANCEL_DELAY_UNIT_CHOICES,
+        default=CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+    )
+    capital_disabled_ship_type_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "Ship type IDs hidden from the capital order menu for this configuration."
+        ),
+    )
+    capital_custom_ship_options = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "Custom capital menu entries. Each row should define type_id, type_name, "
+            "ship_class, optional ship_class_label, and optional enabled."
+        ),
+    )
+
     # Market group filters
     allowed_market_groups_buy = models.JSONField(
         blank=True,
@@ -2135,6 +2220,114 @@ class MaterialExchangeConfig(models.Model):
             normalized[sid] = groups
 
         return normalized
+
+    def get_capital_preapproved_state_names(self) -> list[str]:
+        raw = list(getattr(self, "capital_auto_cancel_preapproved_state_names", []) or [])
+        normalized: list[str] = []
+        for value in raw:
+            name = str(value or "").strip()
+            if not name:
+                continue
+            if name not in normalized:
+                normalized.append(name)
+        if normalized:
+            return normalized
+        return ["Pre-Approved", "Preapproved"]
+
+    def get_capital_auto_cancel_eligible_statuses(self) -> list[str]:
+        raw = list(getattr(self, "capital_auto_cancel_eligible_statuses", []) or [])
+        normalized: list[str] = []
+        for value in raw:
+            status = str(value or "").strip().lower()
+            if not status:
+                continue
+            if status not in normalized:
+                normalized.append(status)
+        if normalized:
+            return normalized
+        return [
+            "waiting",
+            "gathering_materials",
+            "in_production",
+            "contract_created",
+            "anomaly",
+        ]
+
+    def get_capital_auto_cancel_grace_delta(self) -> timedelta:
+        try:
+            value = int(getattr(self, "capital_auto_cancel_delay_value", 0) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        value = max(0, value)
+        unit = str(getattr(self, "capital_auto_cancel_delay_unit", "") or "").strip().lower()
+        if unit == self.CAPITAL_AUTO_CANCEL_DELAY_DAYS:
+            return timedelta(days=value)
+        return timedelta(hours=value)
+
+    def get_capital_disabled_ship_type_ids(self) -> list[int]:
+        raw_ids = list(getattr(self, "capital_disabled_ship_type_ids", []) or [])
+        normalized: list[int] = []
+        for raw_id in raw_ids:
+            try:
+                type_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0:
+                continue
+            if type_id not in normalized:
+                normalized.append(type_id)
+        return normalized
+
+    def get_capital_custom_ship_options(self) -> list[dict[str, object]]:
+        raw_entries = list(getattr(self, "capital_custom_ship_options", []) or [])
+        normalized_by_type: dict[int, dict[str, object]] = {}
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                type_id = int(entry.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0:
+                continue
+
+            type_name = str(entry.get("type_name") or "").strip()
+            if not type_name:
+                continue
+
+            ship_class = str(entry.get("ship_class") or "").strip().lower()
+            if not ship_class:
+                continue
+            ship_class = "".join(
+                char if (char.isalnum() or char == "_") else "_"
+                for char in ship_class.replace("-", "_").replace(" ", "_")
+            ).strip("_")
+            if not ship_class:
+                continue
+
+            ship_class_label = str(entry.get("ship_class_label") or "").strip()
+            if not ship_class_label:
+                ship_class_label = ship_class.replace("_", " ").title()
+
+            enabled_raw = entry.get("enabled", True)
+            if isinstance(enabled_raw, str):
+                enabled = str(enabled_raw).strip().lower() not in {
+                    "0",
+                    "false",
+                    "no",
+                    "off",
+                }
+            else:
+                enabled = bool(enabled_raw)
+            normalized_by_type[type_id] = {
+                "type_id": type_id,
+                "type_name": type_name,
+                "ship_class": ship_class,
+                "ship_class_label": ship_class_label,
+                "enabled": enabled,
+            }
+
+        return list(normalized_by_type.values())
 
 
 class MaterialExchangeItemPriceOverride(models.Model):
@@ -2903,6 +3096,7 @@ class CapitalShipOrder(models.Model):
 
     class Status(models.TextChoices):
         WAITING = "waiting", _("Waiting")
+        GATHERING_MATERIALS = "gathering_materials", _("Gathering Materials")
         IN_PRODUCTION = "in_production", _("In Production")
         CONTRACT_CREATED = "contract_created", _("Contract Created")
         COMPLETED = "completed", _("Contract Completed")
@@ -2963,8 +3157,84 @@ class CapitalShipOrder(models.Model):
         related_name="capital_orders_set_in_production",
     )
     in_production_at = models.DateTimeField(null=True, blank=True)
+    gathering_materials_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_orders_set_gathering_materials",
+    )
+    gathering_materials_at = models.DateTimeField(null=True, blank=True)
     contract_created_at = models.DateTimeField(null=True, blank=True)
     contract_completed_at = models.DateTimeField(null=True, blank=True)
+    # Internal-only guideline snapshot (auto-generated; non-binding).
+    guideline_price_isk = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    guideline_price_source = models.CharField(max_length=32, blank=True)
+    guideline_eta_min_days = models.PositiveIntegerField(null=True, blank=True)
+    guideline_eta_max_days = models.PositiveIntegerField(null=True, blank=True)
+    guideline_generated_at = models.DateTimeField(null=True, blank=True)
+    lead_time_days = models.PositiveSmallIntegerField(default=0)
+    # Admin proposal (non-binding until user confirms).
+    offer_price_isk = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    offer_eta_min_days = models.PositiveIntegerField(null=True, blank=True)
+    offer_eta_max_days = models.PositiveIntegerField(null=True, blank=True)
+    offer_notes = models.TextField(blank=True)
+    offer_updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_orders_offer_updates",
+    )
+    offer_updated_at = models.DateTimeField(null=True, blank=True)
+    # Binding agreement snapshot after user confirmation.
+    user_offer_confirmed_at = models.DateTimeField(null=True, blank=True)
+    user_offer_confirmed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_orders_user_offer_confirmations",
+    )
+    agreed_price_isk = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    likely_eta_min_days = models.PositiveIntegerField(null=True, blank=True)
+    likely_eta_max_days = models.PositiveIntegerField(null=True, blank=True)
+    agreement_locked_at = models.DateTimeField(null=True, blank=True)
+    agreement_locked_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_orders_locked_agreements",
+    )
+    # Optional tighter ETA after production starts.
+    definitive_eta_min_days = models.PositiveIntegerField(null=True, blank=True)
+    definitive_eta_max_days = models.PositiveIntegerField(null=True, blank=True)
+    definitive_eta_updated_at = models.DateTimeField(null=True, blank=True)
+    definitive_eta_updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_orders_definitive_eta_updates",
+    )
+    # Tracks how long requester has been outside preapproved state.
+    requester_preapproved_mismatch_since = models.DateTimeField(null=True, blank=True)
     anomaly_reason = models.TextField(blank=True)
     notes = models.TextField(blank=True)
 
@@ -3003,6 +3273,221 @@ class CapitalShipOrder(models.Model):
         if creating_without_reference:
             self.order_reference = f"INDY-CAP-{int(self.id):03d}"
             super().save(update_fields=["order_reference", "updated_at"])
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            self.Status.COMPLETED,
+            self.Status.REJECTED,
+            self.Status.CANCELLED,
+        }
+
+    @property
+    def has_pending_offer_confirmation(self) -> bool:
+        if self.offer_price_isk is None:
+            return False
+        if self.offer_eta_min_days is None or self.offer_eta_max_days is None:
+            return False
+        return self.user_offer_confirmed_at is None
+
+    def ensure_chat(self):
+        chat, _created = CapitalShipOrderChat.objects.get_or_create(
+            order=self,
+            defaults={"requester": self.requester},
+        )
+        return chat
+
+
+class CapitalShipOrderChat(models.Model):
+    class SenderRole(models.TextChoices):
+        REQUESTER = "requester", _("Requester")
+        ADMIN = "admin", _("Material Exchange Admin")
+        SYSTEM = "system", _("System")
+
+    order = models.OneToOneField(
+        CapitalShipOrder,
+        on_delete=models.CASCADE,
+        related_name="chat",
+    )
+    requester = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="capital_order_chats_as_requester",
+    )
+    is_open = models.BooleanField(default=True)
+    closed_reason = models.CharField(max_length=64, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+    last_message_role = models.CharField(max_length=16, blank=True, null=True)
+    requester_last_seen_at = models.DateTimeField(null=True, blank=True)
+    admin_last_seen_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Capital Order Chat")
+        verbose_name_plural = _("Capital Order Chats")
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["order_id"], name="cap_chat_order_idx"),
+            models.Index(fields=["requester_id"], name="cap_chat_req_idx"),
+            models.Index(fields=["is_open", "updated_at"], name="cap_chat_state_idx"),
+        ]
+
+    def __str__(self):
+        return f"Capital chat for order {self.order_id}"
+
+    def role_for(self, user: User) -> str | None:
+        if not user:
+            return None
+        if int(getattr(user, "id", 0) or 0) == int(self.requester_id):
+            return self.SenderRole.REQUESTER
+        if user.has_perm("indy_hub.can_manage_material_hub"):
+            return self.SenderRole.ADMIN
+        return None
+
+    def register_message(self, *, sender_role: str | None = None) -> None:
+        now = timezone.now()
+        updates = {"last_message_at": now, "updated_at": now}
+        self.last_message_at = now
+        self.updated_at = now
+
+        if sender_role:
+            updates["last_message_role"] = sender_role
+            self.last_message_role = sender_role
+            if sender_role == self.SenderRole.REQUESTER:
+                self.requester_last_seen_at = now
+                updates["requester_last_seen_at"] = now
+            elif sender_role == self.SenderRole.ADMIN:
+                self.admin_last_seen_at = now
+                updates["admin_last_seen_at"] = now
+
+        self.save(update_fields=list(updates.keys()))
+
+    def mark_seen(self, role: str, *, force: bool = False) -> None:
+        if role not in {self.SenderRole.REQUESTER, self.SenderRole.ADMIN}:
+            return
+
+        field = (
+            "requester_last_seen_at"
+            if role == self.SenderRole.REQUESTER
+            else "admin_last_seen_at"
+        )
+        now = timezone.now()
+        if force or not self.last_message_at:
+            setattr(self, field, now)
+            self.save(update_fields=[field, "updated_at"])
+            return
+
+        if self.last_message_role in {None, "", role, self.SenderRole.SYSTEM}:
+            if getattr(self, field) is None:
+                setattr(self, field, now)
+                self.save(update_fields=[field, "updated_at"])
+            return
+
+        last_seen = getattr(self, field)
+        if last_seen and last_seen >= self.last_message_at:
+            return
+        setattr(self, field, now)
+        self.save(update_fields=[field, "updated_at"])
+
+    def has_unread_for(self, role: str) -> bool:
+        if role not in {self.SenderRole.REQUESTER, self.SenderRole.ADMIN}:
+            return False
+        if not self.last_message_at:
+            return False
+        if self.last_message_role in {None, "", role, self.SenderRole.SYSTEM}:
+            return False
+        last_seen = (
+            self.requester_last_seen_at
+            if role == self.SenderRole.REQUESTER
+            else self.admin_last_seen_at
+        )
+        if not last_seen:
+            return True
+        return last_seen < self.last_message_at
+
+
+class CapitalShipOrderMessage(models.Model):
+    chat = models.ForeignKey(
+        CapitalShipOrderChat,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_order_messages",
+    )
+    sender_role = models.CharField(
+        max_length=16,
+        choices=CapitalShipOrderChat.SenderRole.choices,
+    )
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Capital Order Message")
+        verbose_name_plural = _("Capital Order Messages")
+        default_permissions = ()
+        ordering = ["created_at", "id"]
+        indexes = [
+            models.Index(fields=["chat_id", "created_at"], name="cap_msg_chat_idx"),
+        ]
+
+    def __str__(self):
+        return f"Capital message {self.id} in chat {self.chat_id}"
+
+    def clean(self):
+        super().clean()
+        content = str(self.content or "").strip()
+        if not content:
+            raise ValidationError(_("Message content cannot be empty."))
+        if len(content) > 2000:
+            raise ValidationError(_("Message content cannot exceed 2000 characters."))
+        self.content = content
+
+
+class CapitalShipOrderEvent(models.Model):
+    class EventType(models.TextChoices):
+        OFFER_UPDATED = "offer_updated", _("Offer updated")
+        OFFER_CONFIRMED_BY_USER = "offer_confirmed_by_user", _("Offer confirmed by user")
+        OFFER_REJECTED_BY_USER = "offer_rejected_by_user", _("Offer rejected by user")
+        STATUS_CHANGED = "status_changed", _("Status changed")
+        AUTO_CANCELLED_STATE_MISMATCH = "auto_cancelled_state_mismatch", _(
+            "Auto-cancelled due to requester state mismatch"
+        )
+
+    order = models.ForeignKey(
+        CapitalShipOrder,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    event_type = models.CharField(max_length=64, choices=EventType.choices)
+    actor = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="capital_order_events",
+    )
+    payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Capital Order Event")
+        verbose_name_plural = _("Capital Order Events")
+        default_permissions = ()
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["order_id", "created_at"], name="cap_evt_order_idx"),
+            models.Index(fields=["event_type", "created_at"], name="cap_evt_type_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} for order {self.order_id}"
 
 
 class MaterialExchangeTransaction(models.Model):

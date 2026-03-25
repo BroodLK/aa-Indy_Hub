@@ -48,12 +48,14 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Alliance Auth
+from allianceauth.authentication.models import UserProfile
 from allianceauth.services.hooks import get_extension_logger
 
 # AA Example App
 # Local
 from indy_hub.models import (
     CapitalShipOrder,
+    CapitalShipOrderEvent,
     CachedStructureName,
     ESIContract,
     ESIContractItem,
@@ -4132,6 +4134,152 @@ def _set_capital_order_anomaly(
     )
 
 
+def _get_user_state_name(user: User | None) -> str:
+    if not user:
+        return ""
+    try:
+        profile = UserProfile.objects.select_related("state").get(user=user)
+        state = getattr(profile, "state", None)
+        return str(getattr(state, "name", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def _normalize_state_name_set(raw_names: list[str] | tuple[str, ...] | set[str]) -> set[str]:
+    normalized: set[str] = set()
+    for raw_name in raw_names or []:
+        name = str(raw_name or "").strip().casefold()
+        if not name:
+            continue
+        normalized.add(name)
+    return normalized
+
+
+def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfig) -> None:
+    if not bool(getattr(config, "capital_auto_cancel_on_state_change", False)):
+        return
+
+    eligible_statuses = {
+        str(status).strip().lower()
+        for status in config.get_capital_auto_cancel_eligible_statuses()
+        if str(status).strip()
+    }
+    if not eligible_statuses:
+        eligible_statuses = {
+            CapitalShipOrder.Status.WAITING,
+            CapitalShipOrder.Status.GATHERING_MATERIALS,
+            CapitalShipOrder.Status.IN_PRODUCTION,
+            CapitalShipOrder.Status.CONTRACT_CREATED,
+            CapitalShipOrder.Status.ANOMALY,
+        }
+
+    preapproved_state_names = _normalize_state_name_set(
+        config.get_capital_preapproved_state_names()
+    )
+    if not preapproved_state_names:
+        preapproved_state_names = {"pre-approved", "preapproved"}
+
+    grace_delta = config.get_capital_auto_cancel_grace_delta()
+    now = timezone.now()
+    should_wait_for_grace = bool(grace_delta and grace_delta.total_seconds() > 0)
+
+    candidate_orders = CapitalShipOrder.objects.filter(
+        config=config,
+        status__in=list(eligible_statuses),
+    ).select_related("requester")
+    for order in candidate_orders:
+        if order.status in {
+            CapitalShipOrder.Status.COMPLETED,
+            CapitalShipOrder.Status.REJECTED,
+            CapitalShipOrder.Status.CANCELLED,
+        }:
+            continue
+
+        current_state_name = _get_user_state_name(order.requester)
+        in_preapproved_state = (
+            str(current_state_name).strip().casefold() in preapproved_state_names
+            if current_state_name
+            else False
+        )
+        if in_preapproved_state:
+            if order.requester_preapproved_mismatch_since:
+                order.requester_preapproved_mismatch_since = None
+                order.save(
+                    update_fields=["requester_preapproved_mismatch_since", "updated_at"]
+                )
+            continue
+
+        if not order.requester_preapproved_mismatch_since:
+            order.requester_preapproved_mismatch_since = now
+            order.save(
+                update_fields=["requester_preapproved_mismatch_since", "updated_at"]
+            )
+            if should_wait_for_grace:
+                continue
+
+        mismatch_since = order.requester_preapproved_mismatch_since or now
+        if should_wait_for_grace and now - mismatch_since < grace_delta:
+            continue
+
+        previous_status = str(order.status or "")
+        state_label = current_state_name or "unknown"
+        order.status = CapitalShipOrder.Status.CANCELLED
+        order.anomaly_reason = ""
+        previous_notes = str(order.notes or "").strip()
+        cancel_note = (
+            f"Auto-cancelled at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}: "
+            f"requester left preapproved state (current state: {state_label})."
+        )
+        order.notes = f"{previous_notes}\n{cancel_note}".strip()
+        order.save(
+            update_fields=[
+                "status",
+                "anomaly_reason",
+                "notes",
+                "requester_preapproved_mismatch_since",
+                "updated_at",
+            ]
+        )
+
+        try:
+            CapitalShipOrderEvent.objects.create(
+                order=order,
+                event_type=CapitalShipOrderEvent.EventType.AUTO_CANCELLED_STATE_MISMATCH,
+                actor=None,
+                payload={
+                    "previous_status": previous_status,
+                    "requester_state_name": state_label,
+                    "mismatch_since": mismatch_since.isoformat(),
+                    "grace_seconds": int(grace_delta.total_seconds()),
+                },
+            )
+        except Exception:
+            pass
+
+        notify_user(
+            order.requester,
+            _("Capital Order Cancelled"),
+            _(
+                f"Order {order.order_reference} ({order.ship_type_name}) was automatically cancelled "
+                "because your account is no longer in the required preapproved state."
+            ),
+            level="warning",
+            link="/indy_hub/material-exchange/capital-orders/",
+        )
+        _notify_material_exchange_admins(
+            order.config,
+            _("Capital Order Auto-Cancelled"),
+            _(
+                f"Order {order.order_reference} auto-cancelled due to requester state mismatch.\n"
+                f"User: {order.requester.username}\n"
+                f"Previous status: {previous_status}\n"
+                f"Current state: {state_label}"
+            ),
+            level="warning",
+            link="/indy_hub/material-exchange/capital-orders/admin/",
+        )
+
+
 @shared_task(
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 10},
@@ -4153,10 +4301,20 @@ def process_capital_ship_orders():
     if not config:
         return
 
+    try:
+        _auto_cancel_capital_orders_for_state_mismatch(config)
+    except Exception as exc:
+        logger.warning(
+            "Failed capital auto-cancel pass for state mismatch: %s",
+            exc,
+            exc_info=True,
+        )
+
     active_orders = CapitalShipOrder.objects.filter(
         config=config,
         status__in=[
             CapitalShipOrder.Status.WAITING,
+            CapitalShipOrder.Status.GATHERING_MATERIALS,
             CapitalShipOrder.Status.IN_PRODUCTION,
             CapitalShipOrder.Status.CONTRACT_CREATED,
         ],
@@ -4186,6 +4344,7 @@ def process_capital_ship_orders():
 
         if order.status in {
             CapitalShipOrder.Status.WAITING,
+            CapitalShipOrder.Status.GATHERING_MATERIALS,
             CapitalShipOrder.Status.IN_PRODUCTION,
         }:
             if not matching_by_title:

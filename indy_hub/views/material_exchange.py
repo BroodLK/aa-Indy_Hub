@@ -3506,7 +3506,11 @@ def material_exchange_index(request):
     capital_orders_active_count = CapitalShipOrder.objects.filter(
         config=config,
     ).exclude(
-        status=CapitalShipOrder.Status.COMPLETED
+        status__in=[
+            CapitalShipOrder.Status.COMPLETED,
+            CapitalShipOrder.Status.REJECTED,
+            CapitalShipOrder.Status.CANCELLED,
+        ]
     ).count()
 
     # User's active orders
