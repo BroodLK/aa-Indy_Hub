@@ -114,6 +114,10 @@ class Blueprint(models.Model):
                 "can_manage_material_hub",
                 "can admin MatExchange",
             ),
+            (
+                "can_manage_capital_orders",
+                "can admin CapitalOrders",
+            ),
         ]
         default_permissions = ()  # Disable Django's add/change/delete/view permissions
 
@@ -2054,6 +2058,20 @@ class MaterialExchangeConfig(models.Model):
             "ship_class, optional ship_class_label, and optional enabled."
         ),
     )
+    capital_disabled_ship_groups = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "Ship-group keys hidden from the capital order menu (for example dread, carrier, fax)."
+        ),
+    )
+    capital_ship_estimated_price_overrides = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "Per-ship estimated price overrides. Each row should define type_id and price_isk."
+        ),
+    )
 
     # Market group filters
     allowed_market_groups_buy = models.JSONField(
@@ -2278,6 +2296,24 @@ class MaterialExchangeConfig(models.Model):
                 normalized.append(type_id)
         return normalized
 
+    def get_capital_disabled_ship_groups(self) -> list[str]:
+        raw_groups = list(getattr(self, "capital_disabled_ship_groups", []) or [])
+        normalized: list[str] = []
+        for raw_group in raw_groups:
+            group_value = str(raw_group or "").strip().lower()
+            if not group_value:
+                continue
+            group_value = group_value.replace("-", "_").replace(" ", "_")
+            group_value = "".join(
+                char if (char.isalnum() or char == "_") else "_"
+                for char in group_value
+            ).strip("_")
+            if not group_value:
+                continue
+            if group_value not in normalized:
+                normalized.append(group_value)
+        return normalized
+
     def get_capital_custom_ship_options(self) -> list[dict[str, object]]:
         raw_entries = list(getattr(self, "capital_custom_ship_options", []) or [])
         normalized_by_type: dict[int, dict[str, object]] = {}
@@ -2328,6 +2364,31 @@ class MaterialExchangeConfig(models.Model):
             }
 
         return list(normalized_by_type.values())
+
+    def get_capital_ship_estimated_price_map(self) -> dict[int, Decimal]:
+        raw_rows = list(
+            getattr(self, "capital_ship_estimated_price_overrides", []) or []
+        )
+        normalized: dict[int, Decimal] = {}
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                type_id = int(row.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0:
+                continue
+            try:
+                price_value = Decimal(str(row.get("price_isk") or "0")).quantize(
+                    Decimal("0.01")
+                )
+            except Exception:
+                continue
+            if price_value <= 0:
+                continue
+            normalized[type_id] = price_value
+        return normalized
 
 
 class MaterialExchangeItemPriceOverride(models.Model):
@@ -3342,7 +3403,7 @@ class CapitalShipOrderChat(models.Model):
             return None
         if int(getattr(user, "id", 0) or 0) == int(self.requester_id):
             return self.SenderRole.REQUESTER
-        if user.has_perm("indy_hub.can_manage_material_hub"):
+        if user.has_perm("indy_hub.can_manage_capital_orders"):
             return self.SenderRole.ADMIN
         return None
 

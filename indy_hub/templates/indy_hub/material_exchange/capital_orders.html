@@ -24,7 +24,7 @@
                 <p class="description mb-0">{% trans "Order one dread, carrier, or fax per request." %}</p>
             </div>
             <div class="d-flex gap-2">
-                {% if can_manage_material_hub %}
+                {% if can_manage_capital_orders %}
                 <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-warning">
                     <i class="fas fa-list-check me-1"></i>{% trans "Manager Queue" %}
                 </a>
@@ -64,8 +64,8 @@
                                     <label for="ship_{{ option.type_id }}">
                                         <span>
                                             {{ option.type_name }}
-                                            {% if section.guideline.price %}
-                                            <small class="d-block text-muted">{% trans "Guideline" %}: {{ section.guideline.price|floatformat:2 }} ISK</small>
+                                            {% if option.guideline_price %}
+                                            <small class="d-block text-muted">{% trans "Guideline" %}: {{ option.guideline_price|floatformat:2 }} ISK</small>
                                             {% endif %}
                                         </span>
                                     </label>

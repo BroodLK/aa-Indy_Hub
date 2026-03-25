@@ -32,7 +32,7 @@
                     <i class="fas fa-filter me-1"></i>{% trans "Show Closed" %}
                 </a>
                 {% endif %}
-                <a href="{% url 'indy_hub:material_exchange_config' %}" class="btn btn-outline-info">
+                <a href="{% url 'indy_hub:capital_ship_orders_config' %}" class="btn btn-outline-info">
                     <i class="fas fa-sliders-h me-1"></i>{% trans "Capital Order Settings" %}
                 </a>
                 <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-warning">
@@ -131,6 +131,7 @@
                                 {% endif %}
                             </td>
                             <td>
+                                {% if order.can_access_chat_as_admin %}
                                 <button
                                     type="button"
                                     class="btn btn-sm btn-outline-info bp-chat-trigger"
@@ -143,7 +144,17 @@
                                 >
                                     <i class="fas fa-comments me-1"></i>{% trans "Open" %}
                                 </button>
-                                {% if order.chat_trigger.has_unread %}
+                                {% else %}
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-secondary"
+                                    disabled
+                                    title="{% trans 'Chat is locked to the assigned producer once the order is in production.' %}"
+                                >
+                                    <i class="fas fa-lock me-1"></i>{% trans "Locked" %}
+                                </button>
+                                {% endif %}
+                                {% if order.can_access_chat_as_admin and order.chat_trigger.has_unread %}
                                 <span class="badge bg-warning text-dark ms-1">{% trans "New" %}</span>
                                 {% endif %}
                             </td>

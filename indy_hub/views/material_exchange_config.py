@@ -2184,6 +2184,12 @@ def _handle_config_save(request, existing_config):
     capital_custom_ship_options_raw = (
         request.POST.get("capital_custom_ship_options", "") or ""
     ).strip()
+    capital_disabled_ship_groups_raw = (
+        request.POST.get("capital_disabled_ship_groups", "") or ""
+    ).strip()
+    capital_ship_estimated_price_overrides_raw = (
+        request.POST.get("capital_ship_estimated_price_overrides", "") or ""
+    ).strip()
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
@@ -2202,6 +2208,31 @@ def _handle_config_save(request, existing_config):
         is_active = existing_config.is_active
     else:
         is_active = raw_is_active == "on"
+
+    capital_field_names = {
+        "capital_default_price_dread",
+        "capital_default_price_carrier",
+        "capital_default_price_fax",
+        "capital_default_eta_min_days_dread",
+        "capital_default_eta_max_days_dread",
+        "capital_default_eta_min_days_carrier",
+        "capital_default_eta_max_days_carrier",
+        "capital_default_eta_min_days_fax",
+        "capital_default_eta_max_days_fax",
+        "capital_default_lead_time_days",
+        "capital_auto_cancel_on_state_change",
+        "capital_auto_cancel_preapproved_state_names",
+        "capital_auto_cancel_delay_value",
+        "capital_auto_cancel_delay_unit",
+        "capital_disabled_ship_type_ids",
+        "capital_custom_ship_options",
+        "capital_disabled_ship_groups",
+        "capital_ship_estimated_price_overrides",
+    }
+    capital_fields_submitted = (
+        bool(capital_field_names.intersection(set(request.POST.keys())))
+        or bool(request.POST.getlist("capital_auto_cancel_eligible_statuses"))
+    )
 
     def _parse_decimal(raw_value: str, fallback: str) -> Decimal:
         normalized = (raw_value or "").strip().replace(",", ".")
@@ -2367,6 +2398,56 @@ def _handle_config_save(request, existing_config):
             }
 
         return list(parsed_by_type_id.values())
+
+    def _parse_ship_group_key_list(raw_value: str) -> list[str]:
+        normalized_groups: list[str] = []
+        for token in str(raw_value or "").replace("\n", ",").split(","):
+            key = _normalize_ship_class(token)
+            if not key:
+                continue
+            if key not in normalized_groups:
+                normalized_groups.append(key)
+        return normalized_groups
+
+    def _parse_capital_ship_estimated_price_overrides(
+        raw_value: str,
+    ) -> list[dict[str, object]]:
+        if not raw_value:
+            return []
+        try:
+            payload = json.loads(raw_value)
+        except json.JSONDecodeError:
+            raise ValueError(
+                "Capital ship estimated price overrides must be valid JSON (list of objects)."
+            )
+        if not isinstance(payload, list):
+            raise ValueError(
+                "Capital ship estimated price overrides must be a JSON list."
+            )
+
+        parsed_by_type: dict[int, str] = {}
+        for row in payload:
+            if not isinstance(row, dict):
+                continue
+            try:
+                type_id = int(row.get("type_id") or 0)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "Each ship estimated-price entry needs a valid integer type_id."
+                )
+            if type_id <= 0:
+                raise ValueError(
+                    "Ship estimated-price type_id values must be positive integers."
+                )
+            parsed_price = _parse_optional_price(row.get("price_isk"))
+            if parsed_price is None:
+                continue
+            parsed_by_type[type_id] = _decimal_for_json(parsed_price)
+
+        return [
+            {"type_id": type_id, "price_isk": price_isk}
+            for type_id, price_isk in sorted(parsed_by_type.items(), key=lambda item: int(item[0]))
+        ]
 
     def _decimal_for_json(value: Decimal | None) -> str | None:
         if value is None:
@@ -2659,131 +2740,243 @@ def _handle_config_save(request, existing_config):
             all_groups=all_groups,
         )
         container_price_overrides = _parse_container_price_overrides()
-        capital_default_price_dread = _parse_optional_price(
-            capital_default_price_dread_raw
-        )
-        capital_default_price_carrier = _parse_optional_price(
-            capital_default_price_carrier_raw
-        )
-        capital_default_price_fax = _parse_optional_price(
-            capital_default_price_fax_raw
-        )
-        capital_default_eta_min_days_dread = _parse_positive_int(
-            capital_default_eta_min_days_dread_raw,
-            label="Dread ETA min days",
-            minimum=1,
-            fallback=14,
-        )
-        capital_default_eta_max_days_dread = _parse_positive_int(
-            capital_default_eta_max_days_dread_raw,
-            label="Dread ETA max days",
-            minimum=1,
-            fallback=28,
-        )
-        capital_default_eta_min_days_carrier = _parse_positive_int(
-            capital_default_eta_min_days_carrier_raw,
-            label="Carrier ETA min days",
-            minimum=1,
-            fallback=14,
-        )
-        capital_default_eta_max_days_carrier = _parse_positive_int(
-            capital_default_eta_max_days_carrier_raw,
-            label="Carrier ETA max days",
-            minimum=1,
-            fallback=28,
-        )
-        capital_default_eta_min_days_fax = _parse_positive_int(
-            capital_default_eta_min_days_fax_raw,
-            label="FAX ETA min days",
-            minimum=1,
-            fallback=14,
-        )
-        capital_default_eta_max_days_fax = _parse_positive_int(
-            capital_default_eta_max_days_fax_raw,
-            label="FAX ETA max days",
-            minimum=1,
-            fallback=28,
-        )
-        capital_default_lead_time_days = _parse_positive_int(
-            capital_default_lead_time_days_raw,
-            label="Capital lead time days",
-            minimum=0,
-            fallback=0,
-        )
-        if capital_default_eta_max_days_dread < capital_default_eta_min_days_dread:
-            raise ValueError("Dread ETA max days must be >= min days.")
-        if (
-            capital_default_eta_max_days_carrier
-            < capital_default_eta_min_days_carrier
-        ):
-            raise ValueError("Carrier ETA max days must be >= min days.")
-        if capital_default_eta_max_days_fax < capital_default_eta_min_days_fax:
-            raise ValueError("FAX ETA max days must be >= min days.")
-
-        valid_capital_statuses = set(CapitalShipOrder.Status.values)
-        capital_auto_cancel_eligible_statuses = []
-        for raw_status in capital_auto_cancel_eligible_statuses_raw:
-            status_value = str(raw_status or "").strip().lower()
-            if status_value not in valid_capital_statuses:
-                continue
-            if status_value in {
-                CapitalShipOrder.Status.COMPLETED,
-                CapitalShipOrder.Status.REJECTED,
-                CapitalShipOrder.Status.CANCELLED,
-            }:
-                continue
-            if status_value not in capital_auto_cancel_eligible_statuses:
-                capital_auto_cancel_eligible_statuses.append(status_value)
-        if (
-            capital_auto_cancel_on_state_change
-            and not capital_auto_cancel_eligible_statuses
-        ):
-            capital_auto_cancel_eligible_statuses = [
-                CapitalShipOrder.Status.WAITING,
-                CapitalShipOrder.Status.GATHERING_MATERIALS,
-                CapitalShipOrder.Status.IN_PRODUCTION,
-                CapitalShipOrder.Status.CONTRACT_CREATED,
-                CapitalShipOrder.Status.ANOMALY,
-            ]
-        capital_auto_cancel_preapproved_state_names = _parse_state_name_list(
-            capital_auto_cancel_preapproved_state_names_raw
-        )
-        if not capital_auto_cancel_preapproved_state_names:
-            capital_auto_cancel_preapproved_state_names = [
-                "Pre-Approved",
-                "Preapproved",
-            ]
-        capital_auto_cancel_delay_value = _parse_positive_int(
-            capital_auto_cancel_delay_value_raw,
-            label="Capital auto-cancel delay",
-            minimum=0,
-            fallback=0,
-        )
-        valid_delay_units = {
-            MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
-            MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
-        }
-        capital_auto_cancel_delay_unit = str(
-            capital_auto_cancel_delay_unit_raw
-            or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
-        ).strip().lower()
-        if capital_auto_cancel_delay_unit not in valid_delay_units:
-            capital_auto_cancel_delay_unit = (
-                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+        if capital_fields_submitted:
+            capital_default_price_dread = _parse_optional_price(
+                capital_default_price_dread_raw
             )
-        capital_disabled_ship_type_ids = _parse_type_id_list(
-            capital_disabled_ship_type_ids_raw
-        )
-        capital_custom_ship_options = _parse_capital_custom_ship_options(
-            capital_custom_ship_options_raw
-        )
-        if capital_disabled_ship_type_ids:
-            disabled_set = set(capital_disabled_ship_type_ids)
-            capital_custom_ship_options = [
-                row
-                for row in capital_custom_ship_options
-                if int(row.get("type_id") or 0) not in disabled_set
-            ]
+            capital_default_price_carrier = _parse_optional_price(
+                capital_default_price_carrier_raw
+            )
+            capital_default_price_fax = _parse_optional_price(
+                capital_default_price_fax_raw
+            )
+            capital_default_eta_min_days_dread = _parse_positive_int(
+                capital_default_eta_min_days_dread_raw,
+                label="Dread ETA min days",
+                minimum=1,
+                fallback=14,
+            )
+            capital_default_eta_max_days_dread = _parse_positive_int(
+                capital_default_eta_max_days_dread_raw,
+                label="Dread ETA max days",
+                minimum=1,
+                fallback=28,
+            )
+            capital_default_eta_min_days_carrier = _parse_positive_int(
+                capital_default_eta_min_days_carrier_raw,
+                label="Carrier ETA min days",
+                minimum=1,
+                fallback=14,
+            )
+            capital_default_eta_max_days_carrier = _parse_positive_int(
+                capital_default_eta_max_days_carrier_raw,
+                label="Carrier ETA max days",
+                minimum=1,
+                fallback=28,
+            )
+            capital_default_eta_min_days_fax = _parse_positive_int(
+                capital_default_eta_min_days_fax_raw,
+                label="FAX ETA min days",
+                minimum=1,
+                fallback=14,
+            )
+            capital_default_eta_max_days_fax = _parse_positive_int(
+                capital_default_eta_max_days_fax_raw,
+                label="FAX ETA max days",
+                minimum=1,
+                fallback=28,
+            )
+            capital_default_lead_time_days = _parse_positive_int(
+                capital_default_lead_time_days_raw,
+                label="Capital lead time days",
+                minimum=0,
+                fallback=0,
+            )
+            if capital_default_eta_max_days_dread < capital_default_eta_min_days_dread:
+                raise ValueError("Dread ETA max days must be >= min days.")
+            if (
+                capital_default_eta_max_days_carrier
+                < capital_default_eta_min_days_carrier
+            ):
+                raise ValueError("Carrier ETA max days must be >= min days.")
+            if capital_default_eta_max_days_fax < capital_default_eta_min_days_fax:
+                raise ValueError("FAX ETA max days must be >= min days.")
+
+            valid_capital_statuses = set(CapitalShipOrder.Status.values)
+            capital_auto_cancel_eligible_statuses = []
+            for raw_status in capital_auto_cancel_eligible_statuses_raw:
+                status_value = str(raw_status or "").strip().lower()
+                if status_value not in valid_capital_statuses:
+                    continue
+                if status_value in {
+                    CapitalShipOrder.Status.COMPLETED,
+                    CapitalShipOrder.Status.REJECTED,
+                    CapitalShipOrder.Status.CANCELLED,
+                }:
+                    continue
+                if status_value not in capital_auto_cancel_eligible_statuses:
+                    capital_auto_cancel_eligible_statuses.append(status_value)
+            if (
+                capital_auto_cancel_on_state_change
+                and not capital_auto_cancel_eligible_statuses
+            ):
+                capital_auto_cancel_eligible_statuses = [
+                    CapitalShipOrder.Status.WAITING,
+                    CapitalShipOrder.Status.GATHERING_MATERIALS,
+                    CapitalShipOrder.Status.IN_PRODUCTION,
+                    CapitalShipOrder.Status.CONTRACT_CREATED,
+                    CapitalShipOrder.Status.ANOMALY,
+                ]
+            capital_auto_cancel_preapproved_state_names = _parse_state_name_list(
+                capital_auto_cancel_preapproved_state_names_raw
+            )
+            if not capital_auto_cancel_preapproved_state_names:
+                capital_auto_cancel_preapproved_state_names = [
+                    "Pre-Approved",
+                    "Preapproved",
+                ]
+            capital_auto_cancel_delay_value = _parse_positive_int(
+                capital_auto_cancel_delay_value_raw,
+                label="Capital auto-cancel delay",
+                minimum=0,
+                fallback=0,
+            )
+            valid_delay_units = {
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
+            }
+            capital_auto_cancel_delay_unit = str(
+                capital_auto_cancel_delay_unit_raw
+                or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+            ).strip().lower()
+            if capital_auto_cancel_delay_unit not in valid_delay_units:
+                capital_auto_cancel_delay_unit = (
+                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+                )
+            capital_disabled_ship_type_ids = _parse_type_id_list(
+                capital_disabled_ship_type_ids_raw
+            )
+            capital_custom_ship_options = _parse_capital_custom_ship_options(
+                capital_custom_ship_options_raw
+            )
+            if capital_disabled_ship_type_ids:
+                disabled_set = set(capital_disabled_ship_type_ids)
+                capital_custom_ship_options = [
+                    row
+                    for row in capital_custom_ship_options
+                    if int(row.get("type_id") or 0) not in disabled_set
+                ]
+            capital_disabled_ship_groups = _parse_ship_group_key_list(
+                capital_disabled_ship_groups_raw
+            )
+            capital_ship_estimated_price_overrides = (
+                _parse_capital_ship_estimated_price_overrides(
+                    capital_ship_estimated_price_overrides_raw
+                )
+            )
+        else:
+            capital_default_price_dread = (
+                existing_config.capital_default_price_dread
+                if existing_config
+                else None
+            )
+            capital_default_price_carrier = (
+                existing_config.capital_default_price_carrier
+                if existing_config
+                else None
+            )
+            capital_default_price_fax = (
+                existing_config.capital_default_price_fax if existing_config else None
+            )
+            capital_default_eta_min_days_dread = int(
+                getattr(existing_config, "capital_default_eta_min_days_dread", 14) or 14
+            )
+            capital_default_eta_max_days_dread = int(
+                getattr(existing_config, "capital_default_eta_max_days_dread", 28) or 28
+            )
+            capital_default_eta_min_days_carrier = int(
+                getattr(existing_config, "capital_default_eta_min_days_carrier", 14)
+                or 14
+            )
+            capital_default_eta_max_days_carrier = int(
+                getattr(existing_config, "capital_default_eta_max_days_carrier", 28)
+                or 28
+            )
+            capital_default_eta_min_days_fax = int(
+                getattr(existing_config, "capital_default_eta_min_days_fax", 14) or 14
+            )
+            capital_default_eta_max_days_fax = int(
+                getattr(existing_config, "capital_default_eta_max_days_fax", 28) or 28
+            )
+            capital_default_lead_time_days = int(
+                getattr(existing_config, "capital_default_lead_time_days", 0) or 0
+            )
+            capital_auto_cancel_on_state_change = bool(
+                getattr(existing_config, "capital_auto_cancel_on_state_change", False)
+            )
+            if existing_config:
+                capital_auto_cancel_preapproved_state_names = (
+                    existing_config.get_capital_auto_cancel_preapproved_state_names()
+                )
+                capital_auto_cancel_eligible_statuses = (
+                    existing_config.get_capital_auto_cancel_eligible_statuses()
+                )
+            else:
+                capital_auto_cancel_preapproved_state_names = [
+                    "Pre-Approved",
+                    "Preapproved",
+                ]
+                capital_auto_cancel_eligible_statuses = [
+                    CapitalShipOrder.Status.WAITING,
+                    CapitalShipOrder.Status.GATHERING_MATERIALS,
+                    CapitalShipOrder.Status.IN_PRODUCTION,
+                    CapitalShipOrder.Status.CONTRACT_CREATED,
+                    CapitalShipOrder.Status.ANOMALY,
+                ]
+            capital_auto_cancel_delay_value = int(
+                getattr(existing_config, "capital_auto_cancel_delay_value", 0) or 0
+            )
+            capital_auto_cancel_delay_unit = str(
+                getattr(
+                    existing_config,
+                    "capital_auto_cancel_delay_unit",
+                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+                )
+                or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+            ).strip().lower()
+            if capital_auto_cancel_delay_unit not in {
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
+            }:
+                capital_auto_cancel_delay_unit = (
+                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+                )
+            capital_disabled_ship_type_ids = (
+                existing_config.get_capital_disabled_ship_type_ids()
+                if existing_config
+                else []
+            )
+            capital_custom_ship_options = (
+                existing_config.get_capital_custom_ship_options()
+                if existing_config
+                else []
+            )
+            capital_disabled_ship_groups = (
+                existing_config.get_capital_disabled_ship_groups()
+                if existing_config
+                else []
+            )
+            capital_ship_estimated_price_overrides = []
+            if existing_config:
+                for type_id, price_value in (
+                    existing_config.get_capital_ship_estimated_price_map().items()
+                ):
+                    price_json = _decimal_for_json(price_value)
+                    if price_json is None:
+                        continue
+                    capital_ship_estimated_price_overrides.append(
+                        {"type_id": int(type_id), "price_isk": price_json}
+                    )
 
         def _parse_group_ids(raw_list: list[str]) -> list[int]:
             parsed: set[int] = set()
@@ -3076,6 +3269,12 @@ def _handle_config_save(request, existing_config):
             existing_config.capital_custom_ship_options = (
                 capital_custom_ship_options
             )
+            existing_config.capital_disabled_ship_groups = (
+                capital_disabled_ship_groups
+            )
+            existing_config.capital_ship_estimated_price_overrides = (
+                capital_ship_estimated_price_overrides
+            )
             existing_config.allowed_market_groups_buy = allowed_market_groups_buy
             existing_config.allowed_market_groups_sell = allowed_market_groups_sell
             existing_config.allowed_market_groups_sell_by_structure = (
@@ -3125,6 +3324,8 @@ def _handle_config_save(request, existing_config):
                 capital_auto_cancel_delay_unit=capital_auto_cancel_delay_unit,
                 capital_disabled_ship_type_ids=capital_disabled_ship_type_ids,
                 capital_custom_ship_options=capital_custom_ship_options,
+                capital_disabled_ship_groups=capital_disabled_ship_groups,
+                capital_ship_estimated_price_overrides=capital_ship_estimated_price_overrides,
                 allowed_market_groups_buy=allowed_market_groups_buy,
                 allowed_market_groups_sell=allowed_market_groups_sell,
                 allowed_market_groups_sell_by_structure=allowed_market_groups_sell_by_structure,

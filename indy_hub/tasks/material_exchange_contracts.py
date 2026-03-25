@@ -118,6 +118,10 @@ _REPROCESSING_ACCEPTED_STATUSES = {
     "finished_issuer",
     "finished_contractor",
 }
+_CAPITAL_ORDER_PRE_PRODUCTION_STATUSES = {
+    CapitalShipOrder.Status.WAITING,
+    CapitalShipOrder.Status.GATHERING_MATERIALS,
+}
 _REPROCESSING_FAILED_STATUSES = {
     "cancelled",
     "rejected",
@@ -3876,6 +3880,58 @@ def handle_material_exchange_sell_order_created(order_id):
     )
 
 
+def _get_capital_manager_users() -> list[User]:
+    return list(
+        User.objects.filter(is_active=True)
+        .filter(
+            Q(
+                user_permissions__codename="can_manage_capital_orders",
+                user_permissions__content_type__app_label="indy_hub",
+            )
+            | Q(
+                groups__permissions__codename="can_manage_capital_orders",
+                groups__permissions__content_type__app_label="indy_hub",
+            )
+        )
+        .distinct()
+    )
+
+
+def _is_capital_order_locked_to_producer(order: CapitalShipOrder) -> bool:
+    try:
+        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
+    except (TypeError, ValueError):
+        producer_id = 0
+    if producer_id <= 0:
+        return False
+    return (
+        str(getattr(order, "status", "") or "")
+        not in _CAPITAL_ORDER_PRE_PRODUCTION_STATUSES
+    )
+
+
+def _notify_capital_order_managers(
+    order: CapitalShipOrder,
+    title: str,
+    message: str,
+    *,
+    level: str = "info",
+    link: str | None = None,
+) -> None:
+    recipients: list[User] = []
+    if _is_capital_order_locked_to_producer(order):
+        producer = getattr(order, "in_production_by", None)
+        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
+        if producer is None and producer_id > 0:
+            producer = User.objects.filter(id=producer_id).first()
+        if producer and bool(getattr(producer, "is_active", False)):
+            recipients = [producer]
+
+    if not recipients:
+        recipients = _get_capital_manager_users()
+    notify_multi(recipients, title, message, level=level, link=link)
+
+
 @shared_task(
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 5},
@@ -3900,8 +3956,8 @@ def handle_capital_ship_order_created(order_id):
         f"Reason: {order.get_reason_display()}\n"
         f"Status: {order.get_status_display()}"
     )
-    _notify_material_exchange_admins(
-        order.config,
+    _notify_capital_order_managers(
+        order,
         title,
         message,
         level="info",
@@ -3950,8 +4006,8 @@ def handle_capital_ship_order_marked_in_production(order_id):
         level="info",
         link="/indy_hub/material-exchange/capital-orders/",
     )
-    _notify_material_exchange_admins(
-        order.config,
+    _notify_capital_order_managers(
+        order,
         _("Capital Order In Production"),
         _(
             f"{manager_name} moved capital order {order.order_reference} to in production.\n"
@@ -4039,8 +4095,8 @@ def handle_capital_ship_order_closed_by_manager(
         level=level,
         link="/indy_hub/material-exchange/capital-orders/",
     )
-    _notify_material_exchange_admins(
-        order.config,
+    _notify_capital_order_managers(
+        order,
         admin_title,
         admin_message,
         level=level,
@@ -4120,8 +4176,8 @@ def _set_capital_order_anomaly(
         level="warning",
         link="/indy_hub/material-exchange/capital-orders/",
     )
-    _notify_material_exchange_admins(
-        order.config,
+    _notify_capital_order_managers(
+        order,
         _("Capital Order Anomaly"),
         _(
             f"Order {order.order_reference} requires intervention.\n"
@@ -4266,8 +4322,8 @@ def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfi
             level="warning",
             link="/indy_hub/material-exchange/capital-orders/",
         )
-        _notify_material_exchange_admins(
-            order.config,
+        _notify_capital_order_managers(
+            order,
             _("Capital Order Auto-Cancelled"),
             _(
                 f"Order {order.order_reference} auto-cancelled due to requester state mismatch.\n"
@@ -4443,8 +4499,8 @@ def process_capital_ship_orders():
                     level="success",
                     link="/indy_hub/material-exchange/capital-orders/",
                 )
-                _notify_material_exchange_admins(
-                    order.config,
+                _notify_capital_order_managers(
+                    order,
                     _("Capital Contract Completed"),
                     _(
                         f"Capital order {order.order_reference} completed.\n"
@@ -4495,8 +4551,8 @@ def process_capital_ship_orders():
                     level="success",
                     link="/indy_hub/material-exchange/capital-orders/",
                 )
-                _notify_material_exchange_admins(
-                    order.config,
+                _notify_capital_order_managers(
+                    order,
                     _("Capital Contract Created"),
                     _(
                         f"Capital contract created for order {order.order_reference}.\n"
@@ -4547,8 +4603,8 @@ def process_capital_ship_orders():
                 level="success",
                 link="/indy_hub/material-exchange/capital-orders/",
             )
-            _notify_material_exchange_admins(
-                order.config,
+            _notify_capital_order_managers(
+                order,
                 _("Capital Contract Completed"),
                 _(
                     f"Capital order {order.order_reference} completed.\n"

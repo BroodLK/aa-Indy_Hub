@@ -56,6 +56,7 @@ try:
         capital_ship_order_set_gathering_materials,
         capital_ship_order_set_in_production,
         capital_ship_order_update_offer,
+        capital_ship_orders_config,
         capital_ship_orders,
         capital_ship_orders_admin,
     )
@@ -73,6 +74,7 @@ except ModuleNotFoundError:
     capital_ship_order_set_gathering_materials = _capital_orders_module_missing
     capital_ship_order_refresh_guideline = _capital_orders_module_missing
     capital_ship_order_update_offer = _capital_orders_module_missing
+    capital_ship_orders_config = _capital_orders_module_missing
     capital_ship_order_set_definitive_eta = _capital_orders_module_missing
     capital_ship_order_reject = _capital_orders_module_missing
     capital_ship_order_cancel = _capital_orders_module_missing
@@ -470,6 +472,11 @@ urlpatterns = [
         "material-exchange/capital-orders/admin/",
         capital_ship_orders_admin,
         name="capital_ship_orders_admin",
+    ),
+    path(
+        "material-exchange/capital-orders/config/",
+        capital_ship_orders_config,
+        name="capital_ship_orders_config",
     ),
     path(
         "material-exchange/capital-orders/<int:order_id>/refresh-guideline/",

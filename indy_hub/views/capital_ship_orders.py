@@ -72,6 +72,11 @@ _VIEWER_TO_ROLE = {
     "buyer": CapitalShipOrderChat.SenderRole.REQUESTER,
     "seller": CapitalShipOrderChat.SenderRole.ADMIN,
 }
+_CAPITAL_MANAGER_PERMISSION = "indy_hub.can_manage_capital_orders"
+_PRE_PRODUCTION_STATUSES = {
+    CapitalShipOrder.Status.WAITING,
+    CapitalShipOrder.Status.GATHERING_MATERIALS,
+}
 
 
 def _normalize_ship_class_key(raw_value: str) -> str:
@@ -277,11 +282,20 @@ def _load_capital_ship_options(
     }
 
     disabled_type_ids: set[int] = set()
+    disabled_groups: set[str] = set()
     custom_options: list[dict[str, object]] = []
     try:
         disabled_type_ids = set(config.get_capital_disabled_ship_type_ids())
     except Exception:
         disabled_type_ids = set()
+    try:
+        disabled_groups = {
+            _normalize_ship_class_key(group_value)
+            for group_value in config.get_capital_disabled_ship_groups()
+        }
+        disabled_groups.discard("")
+    except Exception:
+        disabled_groups = set()
     try:
         custom_options = config.get_capital_custom_ship_options()
     except Exception:
@@ -305,6 +319,9 @@ def _load_capital_ship_options(
         ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
         if not type_name or not ship_class:
             continue
+        if ship_class in disabled_groups:
+            options_by_type_id.pop(type_id, None)
+            continue
         ship_class_label = str(custom_entry.get("ship_class_label") or "").strip()
         if not ship_class_label:
             ship_class_label = _default_ship_class_label(ship_class)
@@ -315,6 +332,58 @@ def _load_capital_ship_options(
             "ship_class": ship_class,
             "ship_class_label": ship_class_label,
         }
+
+    if disabled_groups:
+        options_by_type_id = {
+            type_id: row
+            for type_id, row in options_by_type_id.items()
+            if _normalize_ship_class_key(row.get("ship_class")) not in disabled_groups
+        }
+
+    return _sort_capital_ship_options(list(options_by_type_id.values()))
+
+
+def _load_capital_ship_options_for_editor(
+    *, config: MaterialExchangeConfig | None = None
+) -> list[dict[str, object]]:
+    options_by_type_id: dict[int, dict[str, object]] = {
+        int(row["type_id"]): {
+            "type_id": int(row["type_id"]),
+            "type_name": str(row["type_name"]),
+            "ship_class": _normalize_ship_class_key(row.get("ship_class")),
+            "ship_class_label": str(
+                row.get("ship_class_label")
+                or _default_ship_class_label(str(row.get("ship_class") or ""))
+            ),
+            "enabled": True,
+        }
+        for row in _load_base_capital_ship_options()
+    }
+    if config:
+        try:
+            for custom_entry in config.get_capital_custom_ship_options():
+                try:
+                    type_id = int(custom_entry.get("type_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if type_id <= 0:
+                    continue
+                ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
+                type_name = str(custom_entry.get("type_name") or "").strip()
+                if not ship_class or not type_name:
+                    continue
+                ship_class_label = str(custom_entry.get("ship_class_label") or "").strip()
+                if not ship_class_label:
+                    ship_class_label = _default_ship_class_label(ship_class)
+                options_by_type_id[type_id] = {
+                    "type_id": type_id,
+                    "type_name": type_name,
+                    "ship_class": ship_class,
+                    "ship_class_label": ship_class_label,
+                    "enabled": bool(custom_entry.get("enabled", True)),
+                }
+        except Exception:
+            pass
 
     return _sort_capital_ship_options(list(options_by_type_id.values()))
 
@@ -356,6 +425,78 @@ def _parse_positive_int(raw_value, *, minimum: int = 0) -> int | None:
     return parsed
 
 
+def _parse_positive_int_or_raise(
+    raw_value,
+    *,
+    label: str,
+    minimum: int = 0,
+    fallback: int | None = None,
+) -> int:
+    normalized = str(raw_value or "").strip()
+    if not normalized and fallback is not None:
+        return int(fallback)
+    try:
+        parsed = int(normalized)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a whole number.")
+    if parsed < minimum:
+        raise ValueError(f"{label} must be at least {minimum}.")
+    return int(parsed)
+
+
+def _normalize_ship_group_list(raw_values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw_value in raw_values:
+        key = _normalize_ship_class_key(raw_value)
+        if not key:
+            continue
+        if key not in normalized:
+            normalized.append(key)
+    return normalized
+
+
+def _parse_positive_type_ids(raw_values: list[str]) -> list[int]:
+    parsed: list[int] = []
+    for raw_value in raw_values:
+        try:
+            type_id = int(str(raw_value).strip())
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if type_id <= 0:
+            continue
+        if type_id not in parsed:
+            parsed.append(type_id)
+    return parsed
+
+
+def _parse_state_name_list(raw_value: str) -> list[str]:
+    normalized: list[str] = []
+    for token in str(raw_value or "").replace("\n", ",").split(","):
+        state_name = str(token or "").strip()
+        if not state_name:
+            continue
+        if state_name not in normalized:
+            normalized.append(state_name)
+    return normalized
+
+
+def _decimal_to_json_string(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return format(value, "f")
+
+
+def _parse_bool_like(raw_value, *, default: bool = True) -> bool:
+    if raw_value is None:
+        return bool(default)
+    if isinstance(raw_value, bool):
+        return bool(raw_value)
+    normalized = str(raw_value).strip().lower()
+    if not normalized:
+        return bool(default)
+    return normalized not in {"0", "false", "no", "off"}
+
+
 def _median_decimal(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
@@ -376,6 +517,29 @@ def _get_class_default_price(config: MaterialExchangeConfig, ship_class: str) ->
     if ship_class == CapitalShipOrder.ShipClass.FAX:
         return _quantize_isk(getattr(config, "capital_default_price_fax", None))
     return None
+
+
+def _get_ship_default_price(
+    config: MaterialExchangeConfig, *, ship_type_id: int | str, ship_class: str
+) -> tuple[Decimal | None, str]:
+    try:
+        type_id = int(ship_type_id)
+    except (TypeError, ValueError):
+        type_id = 0
+
+    if type_id > 0:
+        try:
+            override_map = config.get_capital_ship_estimated_price_map()
+        except Exception:
+            override_map = {}
+        price_override = _quantize_isk(override_map.get(type_id))
+        if price_override is not None:
+            return price_override, "ship_config_default"
+
+    class_price = _get_class_default_price(config, ship_class)
+    if class_price is not None:
+        return class_price, "class_config_default"
+    return None, ""
 
 
 def _get_class_default_eta_window(config: MaterialExchangeConfig, ship_class: str) -> tuple[int | None, int | None]:
@@ -417,9 +581,13 @@ def _estimate_guideline_price(order: CapitalShipOrder) -> tuple[Decimal | None, 
     if historical_decimals:
         return _quantize_isk(_median_decimal(historical_decimals)), "historical_orders"
 
-    default_price = _get_class_default_price(order.config, order.ship_class)
+    default_price, price_source = _get_ship_default_price(
+        order.config,
+        ship_type_id=order.ship_type_id,
+        ship_class=order.ship_class,
+    )
     if default_price is not None:
-        return default_price, "config_default"
+        return default_price, price_source or "config_default"
     return None, ""
 
 
@@ -496,24 +664,61 @@ def _refresh_guideline(order: CapitalShipOrder) -> None:
     )
 
 
-def _notify_material_exchange_admins(
+def _can_manage_capital_orders(user: User | None) -> bool:
+    return bool(user and user.has_perm(_CAPITAL_MANAGER_PERMISSION))
+
+
+def _is_chat_locked_to_in_producer(order: CapitalShipOrder) -> bool:
+    try:
+        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
+    except (TypeError, ValueError):
+        producer_id = 0
+    if producer_id <= 0:
+        return False
+    return str(getattr(order, "status", "") or "") not in _PRE_PRODUCTION_STATUSES
+
+
+def _can_act_as_capital_manager_for_order(order: CapitalShipOrder, user: User) -> bool:
+    if not _can_manage_capital_orders(user):
+        return False
+    if not _is_chat_locked_to_in_producer(order):
+        return True
+    try:
+        return int(getattr(order, "in_production_by_id", 0) or 0) == int(
+            getattr(user, "id", 0) or 0
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _notify_capital_managers(
     *,
     title: str,
     body: str,
+    order: CapitalShipOrder | None = None,
     level: str = "info",
     link: str = "/indy_hub/material-exchange/capital-orders/admin/",
 ) -> None:
-    admins = User.objects.filter(is_active=True).filter(
+    if order and _is_chat_locked_to_in_producer(order):
+        producer = getattr(order, "in_production_by", None)
+        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
+        if producer is None and producer_id > 0:
+            producer = User.objects.filter(id=producer_id).first()
+        if producer and bool(getattr(producer, "is_active", False)):
+            notify_user(producer, title, body, level=level, link=link)
+            return
+
+    managers = User.objects.filter(is_active=True).filter(
         Q(
-            user_permissions__codename="can_manage_material_hub",
+            user_permissions__codename="can_manage_capital_orders",
             user_permissions__content_type__app_label="indy_hub",
         )
         | Q(
-            groups__permissions__codename="can_manage_material_hub",
+            groups__permissions__codename="can_manage_capital_orders",
             groups__permissions__content_type__app_label="indy_hub",
         )
-    )
-    notify_multi(admins, title, body, level=level, link=link)
+    ).distinct()
+    notify_multi(managers, title, body, level=level, link=link)
 
 
 def _record_capital_event(
@@ -550,7 +755,7 @@ def _append_order_note(order: CapitalShipOrder, note: str) -> None:
 def _can_access_chat(order: CapitalShipOrder, user: User) -> bool:
     if int(getattr(user, "id", 0) or 0) == int(order.requester_id):
         return True
-    return bool(user.has_perm("indy_hub.can_manage_material_hub"))
+    return _can_act_as_capital_manager_for_order(order, user)
 
 
 def _resolve_chat_internal_role(
@@ -572,7 +777,7 @@ def _resolve_chat_internal_role(
         return viewer_role
     if (
         int(chat.requester_id) == int(getattr(user, "id", 0) or 0)
-        and user.has_perm("indy_hub.can_manage_material_hub")
+        and _can_act_as_capital_manager_for_order(chat.order, user)
     ):
         return mapped_candidate
     return viewer_role
@@ -815,6 +1020,12 @@ def capital_ship_orders(request):
         ship_class = _normalize_ship_class_key(option.get("ship_class"))
         if not ship_class:
             continue
+        default_price, _price_source = _get_ship_default_price(
+            config,
+            ship_type_id=option.get("type_id"),
+            ship_class=ship_class,
+        )
+        option["guideline_price"] = default_price
         ship_options_by_class.setdefault(ship_class, []).append(option)
         label = str(option.get("ship_class_label") or "").strip()
         ship_class_labels[ship_class] = label or _default_ship_class_label(ship_class)
@@ -864,8 +1075,8 @@ def capital_ship_orders(request):
         "ship_option_sections": ship_option_sections,
         "reason_choices": CapitalShipOrder.Reason.choices,
         "my_orders": my_orders,
-        "can_manage_material_hub": request.user.has_perm(
-            "indy_hub.can_manage_material_hub"
+        "can_manage_capital_orders": request.user.has_perm(
+            "indy_hub.can_manage_capital_orders"
         ),
     }
     if auto_open_chat_id:
@@ -876,7 +1087,7 @@ def capital_ship_orders(request):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 def capital_ship_orders_admin(request):
     emit_view_analytics_event(view_name="capital_ship_orders.admin", request=request)
 
@@ -900,6 +1111,7 @@ def capital_ship_orders_admin(request):
     for order in orders:
         order.requester_main_character = _resolve_main_character_name(order.requester)
         order.chat_trigger = _build_order_chat_trigger(order, viewer_role_public="seller")
+        order.can_access_chat_as_admin = _can_access_chat(order, request.user)
         _attach_user_display_fields(order)
 
     auto_open_chat_id: str | None = None
@@ -930,7 +1142,484 @@ def capital_ship_orders_admin(request):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
+def capital_ship_orders_config(request):
+    emit_view_analytics_event(view_name="capital_ship_orders.config", request=request)
+
+    config = _get_material_exchange_config()
+    if not config:
+        messages.warning(
+            request,
+            "Material Exchange must be configured before capital order settings can be edited.",
+        )
+        return redirect("indy_hub:material_exchange_config")
+
+    editor_options = _load_capital_ship_options_for_editor(config=config)
+
+    if request.method == "POST":
+        try:
+            capital_default_price_dread = _quantize_isk(
+                request.POST.get("capital_default_price_dread")
+            )
+            capital_default_price_carrier = _quantize_isk(
+                request.POST.get("capital_default_price_carrier")
+            )
+            capital_default_price_fax = _quantize_isk(
+                request.POST.get("capital_default_price_fax")
+            )
+            capital_default_eta_min_days_dread = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_eta_min_days_dread"),
+                label="Dread ETA min days",
+                minimum=1,
+                fallback=14,
+            )
+            capital_default_eta_max_days_dread = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_eta_max_days_dread"),
+                label="Dread ETA max days",
+                minimum=1,
+                fallback=28,
+            )
+            capital_default_eta_min_days_carrier = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_eta_min_days_carrier"),
+                label="Carrier ETA min days",
+                minimum=1,
+                fallback=14,
+            )
+            capital_default_eta_max_days_carrier = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_eta_max_days_carrier"),
+                label="Carrier ETA max days",
+                minimum=1,
+                fallback=28,
+            )
+            capital_default_eta_min_days_fax = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_eta_min_days_fax"),
+                label="FAX ETA min days",
+                minimum=1,
+                fallback=14,
+            )
+            capital_default_eta_max_days_fax = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_eta_max_days_fax"),
+                label="FAX ETA max days",
+                minimum=1,
+                fallback=28,
+            )
+            capital_default_lead_time_days = _parse_positive_int_or_raise(
+                request.POST.get("capital_default_lead_time_days"),
+                label="Default lead time days",
+                minimum=0,
+                fallback=0,
+            )
+            if capital_default_eta_max_days_dread < capital_default_eta_min_days_dread:
+                raise ValueError("Dread ETA max days must be greater than or equal to min days.")
+            if capital_default_eta_max_days_carrier < capital_default_eta_min_days_carrier:
+                raise ValueError("Carrier ETA max days must be greater than or equal to min days.")
+            if capital_default_eta_max_days_fax < capital_default_eta_min_days_fax:
+                raise ValueError("FAX ETA max days must be greater than or equal to min days.")
+
+            capital_auto_cancel_on_state_change = (
+                request.POST.get("capital_auto_cancel_on_state_change") == "on"
+            )
+            valid_capital_statuses = set(CapitalShipOrder.Status.values)
+            capital_auto_cancel_eligible_statuses: list[str] = []
+            for raw_status in request.POST.getlist("capital_auto_cancel_eligible_statuses"):
+                status_value = str(raw_status or "").strip().lower()
+                if status_value not in valid_capital_statuses:
+                    continue
+                if status_value in {
+                    CapitalShipOrder.Status.COMPLETED,
+                    CapitalShipOrder.Status.REJECTED,
+                    CapitalShipOrder.Status.CANCELLED,
+                }:
+                    continue
+                if status_value not in capital_auto_cancel_eligible_statuses:
+                    capital_auto_cancel_eligible_statuses.append(status_value)
+            if (
+                capital_auto_cancel_on_state_change
+                and not capital_auto_cancel_eligible_statuses
+            ):
+                capital_auto_cancel_eligible_statuses = [
+                    CapitalShipOrder.Status.WAITING,
+                    CapitalShipOrder.Status.GATHERING_MATERIALS,
+                    CapitalShipOrder.Status.IN_PRODUCTION,
+                    CapitalShipOrder.Status.CONTRACT_CREATED,
+                    CapitalShipOrder.Status.ANOMALY,
+                ]
+
+            capital_auto_cancel_preapproved_state_names = _parse_state_name_list(
+                request.POST.get("capital_auto_cancel_preapproved_state_names", "")
+            )
+            if not capital_auto_cancel_preapproved_state_names:
+                capital_auto_cancel_preapproved_state_names = ["Pre-Approved", "Preapproved"]
+            capital_auto_cancel_delay_value = _parse_positive_int_or_raise(
+                request.POST.get("capital_auto_cancel_delay_value"),
+                label="Auto-cancel delay value",
+                minimum=0,
+                fallback=0,
+            )
+            valid_delay_units = {
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
+            }
+            capital_auto_cancel_delay_unit = str(
+                request.POST.get("capital_auto_cancel_delay_unit")
+                or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+            ).strip().lower()
+            if capital_auto_cancel_delay_unit not in valid_delay_units:
+                capital_auto_cancel_delay_unit = (
+                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+                )
+
+            capital_disabled_ship_groups = _normalize_ship_group_list(
+                request.POST.getlist("capital_disabled_ship_groups")
+            )
+            capital_disabled_ship_type_ids = _parse_positive_type_ids(
+                request.POST.getlist("capital_disabled_ship_type_ids")
+            )
+
+            estimated_price_overrides_by_type: dict[int, str] = {}
+            for form_key, form_value in request.POST.items():
+                if not str(form_key).startswith("estimated_price_"):
+                    continue
+                type_suffix = str(form_key).replace("estimated_price_", "", 1).strip()
+                try:
+                    type_id = int(type_suffix)
+                except (TypeError, ValueError):
+                    continue
+                if type_id <= 0:
+                    continue
+                parsed_price = _quantize_isk(form_value)
+                if parsed_price is None:
+                    continue
+                estimated_price_overrides_by_type[type_id] = _decimal_to_json_string(
+                    parsed_price
+                )
+
+            custom_ship_type_ids = request.POST.getlist("custom_ship_type_id")
+            custom_ship_names = request.POST.getlist("custom_ship_type_name")
+            custom_ship_classes = request.POST.getlist("custom_ship_class")
+            custom_ship_class_labels = request.POST.getlist("custom_ship_class_label")
+            custom_ship_enabled_values = request.POST.getlist("custom_ship_enabled")
+            custom_ship_estimated_prices = request.POST.getlist("custom_ship_estimated_price")
+            custom_count = max(
+                len(custom_ship_type_ids),
+                len(custom_ship_names),
+                len(custom_ship_classes),
+                len(custom_ship_class_labels),
+                len(custom_ship_enabled_values),
+                len(custom_ship_estimated_prices),
+            )
+            custom_rows_by_type: dict[int, dict[str, object]] = {}
+            for idx in range(custom_count):
+                type_id_raw = (
+                    custom_ship_type_ids[idx] if idx < len(custom_ship_type_ids) else ""
+                )
+                type_name_raw = (
+                    custom_ship_names[idx] if idx < len(custom_ship_names) else ""
+                )
+                ship_class_raw = (
+                    custom_ship_classes[idx] if idx < len(custom_ship_classes) else ""
+                )
+                ship_class_label_raw = (
+                    custom_ship_class_labels[idx]
+                    if idx < len(custom_ship_class_labels)
+                    else ""
+                )
+                enabled_raw = (
+                    custom_ship_enabled_values[idx]
+                    if idx < len(custom_ship_enabled_values)
+                    else "true"
+                )
+                estimated_price_raw = (
+                    custom_ship_estimated_prices[idx]
+                    if idx < len(custom_ship_estimated_prices)
+                    else ""
+                )
+
+                if (
+                    not str(type_id_raw).strip()
+                    and not str(type_name_raw).strip()
+                    and not str(ship_class_raw).strip()
+                ):
+                    continue
+                try:
+                    type_id_value = int(str(type_id_raw).strip())
+                except (TypeError, ValueError):
+                    raise ValueError("Custom ship type IDs must be integers.")
+                if type_id_value <= 0:
+                    raise ValueError("Custom ship type IDs must be positive integers.")
+
+                type_name_value = str(type_name_raw or "").strip()
+                if not type_name_value:
+                    raise ValueError(
+                        f"Custom ship {type_id_value} is missing a ship name."
+                    )
+
+                ship_class_value = _normalize_ship_class_key(ship_class_raw)
+                if not ship_class_value:
+                    raise ValueError(
+                        f"Custom ship {type_id_value} is missing a ship group key."
+                    )
+                ship_class_label_value = str(ship_class_label_raw or "").strip()
+                if not ship_class_label_value:
+                    ship_class_label_value = _default_ship_class_label(ship_class_value)
+
+                custom_rows_by_type[type_id_value] = {
+                    "type_id": type_id_value,
+                    "type_name": type_name_value,
+                    "ship_class": ship_class_value,
+                    "ship_class_label": ship_class_label_value,
+                    "enabled": _parse_bool_like(enabled_raw, default=True),
+                }
+
+                custom_estimated_price = _quantize_isk(estimated_price_raw)
+                if custom_estimated_price is not None:
+                    estimated_price_overrides_by_type[type_id_value] = (
+                        _decimal_to_json_string(custom_estimated_price)
+                    )
+
+            capital_custom_ship_options = list(custom_rows_by_type.values())
+            if capital_disabled_ship_type_ids:
+                disabled_type_id_set = set(capital_disabled_ship_type_ids)
+                capital_custom_ship_options = [
+                    row
+                    for row in capital_custom_ship_options
+                    if int(row.get("type_id") or 0) not in disabled_type_id_set
+                ]
+
+            capital_ship_estimated_price_overrides = [
+                {"type_id": type_id, "price_isk": price_isk}
+                for type_id, price_isk in sorted(
+                    estimated_price_overrides_by_type.items(),
+                    key=lambda row: int(row[0]),
+                )
+                if int(type_id) > 0 and price_isk is not None
+            ]
+
+        except (ValueError, InvalidOperation) as exc:
+            messages.error(request, str(exc))
+            return redirect("indy_hub:capital_ship_orders_config")
+
+        config.capital_default_price_dread = capital_default_price_dread
+        config.capital_default_price_carrier = capital_default_price_carrier
+        config.capital_default_price_fax = capital_default_price_fax
+        config.capital_default_eta_min_days_dread = capital_default_eta_min_days_dread
+        config.capital_default_eta_max_days_dread = capital_default_eta_max_days_dread
+        config.capital_default_eta_min_days_carrier = (
+            capital_default_eta_min_days_carrier
+        )
+        config.capital_default_eta_max_days_carrier = (
+            capital_default_eta_max_days_carrier
+        )
+        config.capital_default_eta_min_days_fax = capital_default_eta_min_days_fax
+        config.capital_default_eta_max_days_fax = capital_default_eta_max_days_fax
+        config.capital_default_lead_time_days = capital_default_lead_time_days
+        config.capital_auto_cancel_on_state_change = (
+            capital_auto_cancel_on_state_change
+        )
+        config.capital_auto_cancel_preapproved_state_names = (
+            capital_auto_cancel_preapproved_state_names
+        )
+        config.capital_auto_cancel_eligible_statuses = (
+            capital_auto_cancel_eligible_statuses
+        )
+        config.capital_auto_cancel_delay_value = capital_auto_cancel_delay_value
+        config.capital_auto_cancel_delay_unit = capital_auto_cancel_delay_unit
+        config.capital_disabled_ship_groups = capital_disabled_ship_groups
+        config.capital_disabled_ship_type_ids = capital_disabled_ship_type_ids
+        config.capital_custom_ship_options = capital_custom_ship_options
+        config.capital_ship_estimated_price_overrides = (
+            capital_ship_estimated_price_overrides
+        )
+        config.save(
+            update_fields=[
+                "capital_default_price_dread",
+                "capital_default_price_carrier",
+                "capital_default_price_fax",
+                "capital_default_eta_min_days_dread",
+                "capital_default_eta_max_days_dread",
+                "capital_default_eta_min_days_carrier",
+                "capital_default_eta_max_days_carrier",
+                "capital_default_eta_min_days_fax",
+                "capital_default_eta_max_days_fax",
+                "capital_default_lead_time_days",
+                "capital_auto_cancel_on_state_change",
+                "capital_auto_cancel_preapproved_state_names",
+                "capital_auto_cancel_eligible_statuses",
+                "capital_auto_cancel_delay_value",
+                "capital_auto_cancel_delay_unit",
+                "capital_disabled_ship_groups",
+                "capital_disabled_ship_type_ids",
+                "capital_custom_ship_options",
+                "capital_ship_estimated_price_overrides",
+            ]
+        )
+        messages.success(request, "Capital order settings updated.")
+        return redirect("indy_hub:capital_ship_orders_config")
+
+    disabled_groups = set(config.get_capital_disabled_ship_groups())
+    disabled_ship_type_ids = set(config.get_capital_disabled_ship_type_ids())
+    estimated_price_map = config.get_capital_ship_estimated_price_map()
+    custom_ship_map: dict[int, dict[str, object]] = {
+        int(row.get("type_id")): row
+        for row in config.get_capital_custom_ship_options()
+        if int(row.get("type_id") or 0) > 0
+    }
+
+    group_labels: dict[str, str] = {}
+    for option in editor_options:
+        ship_class = _normalize_ship_class_key(option.get("ship_class"))
+        if not ship_class:
+            continue
+        label = str(option.get("ship_class_label") or "").strip()
+        group_labels[ship_class] = label or _default_ship_class_label(ship_class)
+    for group_key in disabled_groups:
+        if group_key not in group_labels:
+            group_labels[group_key] = _default_ship_class_label(group_key)
+
+    group_choices = sorted(
+        [
+            {"key": group_key, "label": group_labels[group_key]}
+            for group_key in group_labels.keys()
+        ],
+        key=lambda row: (
+            _SHIP_CLASS_ORDER.get(_normalize_ship_class_key(row.get("key")), 99),
+            str(row.get("label") or "").lower(),
+        ),
+    )
+
+    ship_rows: list[dict[str, object]] = []
+    for option in editor_options:
+        type_id = int(option.get("type_id") or 0)
+        if type_id <= 0:
+            continue
+        ship_class = _normalize_ship_class_key(option.get("ship_class"))
+        custom_entry = custom_ship_map.get(type_id)
+        ship_rows.append(
+            {
+                "type_id": type_id,
+                "type_name": str(option.get("type_name") or "").strip(),
+                "ship_class": ship_class,
+                "ship_class_label": str(
+                    option.get("ship_class_label")
+                    or _default_ship_class_label(ship_class)
+                ),
+                "is_custom": custom_entry is not None,
+                "custom_enabled": (
+                    bool(custom_entry.get("enabled", True)) if custom_entry else True
+                ),
+                "is_disabled_type": type_id in disabled_ship_type_ids,
+                "is_disabled_group": ship_class in disabled_groups,
+                "estimated_price": estimated_price_map.get(type_id),
+            }
+        )
+
+    custom_ship_rows: list[dict[str, object]] = []
+    for custom_entry in config.get_capital_custom_ship_options():
+        type_id = int(custom_entry.get("type_id") or 0)
+        if type_id <= 0:
+            continue
+        ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
+        custom_ship_rows.append(
+            {
+                "type_id": type_id,
+                "type_name": str(custom_entry.get("type_name") or "").strip(),
+                "ship_class": ship_class,
+                "ship_class_label": str(
+                    custom_entry.get("ship_class_label")
+                    or _default_ship_class_label(ship_class)
+                ),
+                "enabled": bool(custom_entry.get("enabled", True)),
+                "estimated_price": estimated_price_map.get(type_id),
+            }
+        )
+    custom_ship_rows = sorted(
+        custom_ship_rows,
+        key=lambda row: (
+            _SHIP_CLASS_ORDER.get(_normalize_ship_class_key(row.get("ship_class")), 99),
+            str(row.get("ship_class_label") or "").lower(),
+            str(row.get("type_name") or "").lower(),
+        ),
+    )
+
+    valid_statuses = [
+        status
+        for status in CapitalShipOrder.Status.choices
+        if status[0]
+        not in {
+            CapitalShipOrder.Status.COMPLETED,
+            CapitalShipOrder.Status.REJECTED,
+            CapitalShipOrder.Status.CANCELLED,
+        }
+    ]
+
+    context = {
+        "config": config,
+        "group_choices": group_choices,
+        "disabled_group_keys": disabled_groups,
+        "ship_rows": ship_rows,
+        "custom_ship_rows": custom_ship_rows,
+        "capital_default_price_dread": getattr(config, "capital_default_price_dread", None),
+        "capital_default_price_carrier": getattr(
+            config,
+            "capital_default_price_carrier",
+            None,
+        ),
+        "capital_default_price_fax": getattr(config, "capital_default_price_fax", None),
+        "capital_default_eta_min_days_dread": int(
+            getattr(config, "capital_default_eta_min_days_dread", 14) or 14
+        ),
+        "capital_default_eta_max_days_dread": int(
+            getattr(config, "capital_default_eta_max_days_dread", 28) or 28
+        ),
+        "capital_default_eta_min_days_carrier": int(
+            getattr(config, "capital_default_eta_min_days_carrier", 14) or 14
+        ),
+        "capital_default_eta_max_days_carrier": int(
+            getattr(config, "capital_default_eta_max_days_carrier", 28) or 28
+        ),
+        "capital_default_eta_min_days_fax": int(
+            getattr(config, "capital_default_eta_min_days_fax", 14) or 14
+        ),
+        "capital_default_eta_max_days_fax": int(
+            getattr(config, "capital_default_eta_max_days_fax", 28) or 28
+        ),
+        "capital_default_lead_time_days": int(
+            getattr(config, "capital_default_lead_time_days", 0) or 0
+        ),
+        "capital_auto_cancel_on_state_change": bool(
+            getattr(config, "capital_auto_cancel_on_state_change", False)
+        ),
+        "capital_auto_cancel_preapproved_state_names_text": ", ".join(
+            config.get_capital_auto_cancel_preapproved_state_names()
+        ),
+        "capital_auto_cancel_eligible_statuses": set(
+            config.get_capital_auto_cancel_eligible_statuses()
+        ),
+        "capital_auto_cancel_delay_value": int(
+            getattr(config, "capital_auto_cancel_delay_value", 0) or 0
+        ),
+        "capital_auto_cancel_delay_unit": str(
+            getattr(
+                config,
+                "capital_auto_cancel_delay_unit",
+                MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+            )
+            or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+        ),
+        "capital_auto_cancel_delay_unit_choices": MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_UNIT_CHOICES,
+        "capital_auto_cancel_status_choices": valid_statuses,
+    }
+    context.update(build_nav_context(request.user, active_tab="capital_orders"))
+    return render(
+        request,
+        "indy_hub/material_exchange/capital_orders_config.html",
+        context,
+    )
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_refresh_guideline(request, order_id: int):
     emit_view_analytics_event(
@@ -954,7 +1643,7 @@ def capital_ship_order_refresh_guideline(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_set_gathering_materials(request, order_id: int):
     emit_view_analytics_event(
@@ -1017,7 +1706,7 @@ def capital_ship_order_set_gathering_materials(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_set_in_production(request, order_id: int):
     emit_view_analytics_event(
@@ -1090,7 +1779,7 @@ def capital_ship_order_set_in_production(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_update_offer(request, order_id: int):
     emit_view_analytics_event(
@@ -1212,7 +1901,7 @@ def capital_ship_order_update_offer(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_set_definitive_eta(request, order_id: int):
     emit_view_analytics_event(
@@ -1346,7 +2035,7 @@ def _close_capital_order(
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_reject(request, order_id: int):
     emit_view_analytics_event(
@@ -1364,7 +2053,7 @@ def capital_ship_order_reject(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_material_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_cancel(request, order_id: int):
     emit_view_analytics_event(
@@ -1482,7 +2171,7 @@ def capital_ship_order_chat_send(request, order_id: int):
     chat.register_message(sender_role=viewer_role_internal)
 
     if viewer_role_internal == CapitalShipOrderChat.SenderRole.REQUESTER:
-        _notify_material_exchange_admins(
+        _notify_capital_managers(
             title=_("Capital Order Chat Message"),
             body=_(
                 "%(user)s sent a new message for %(ref)s (%(hull)s)."
@@ -1492,6 +2181,7 @@ def capital_ship_order_chat_send(request, order_id: int):
                 "ref": order.order_reference,
                 "hull": order.ship_type_name,
             },
+            order=order,
             level="info",
             link=f"/indy_hub/material-exchange/capital-orders/admin/?open_chat={chat.id}",
         )
@@ -1586,7 +2276,7 @@ def capital_ship_order_chat_decide(request, order_id: int):
                 "eta_max": int(order.likely_eta_max_days or 0),
             },
         )
-        _notify_material_exchange_admins(
+        _notify_capital_managers(
             title=_("Capital Offer Confirmed"),
             body=_(
                 "%(user)s confirmed offer for %(ref)s.\n"
@@ -1600,6 +2290,7 @@ def capital_ship_order_chat_decide(request, order_id: int):
                 "eta_min": int(order.likely_eta_min_days or 0),
                 "eta_max": int(order.likely_eta_max_days or 0),
             },
+            order=order,
             level="success",
             link=f"/indy_hub/material-exchange/capital-orders/admin/?open_chat={chat.id}",
         )
@@ -1634,7 +2325,7 @@ def capital_ship_order_chat_decide(request, order_id: int):
         order,
         _("Requester declined the current offer and asked for revisions."),
     )
-    _notify_material_exchange_admins(
+    _notify_capital_managers(
         title=_("Capital Offer Declined"),
         body=_(
             "%(user)s declined the offer for %(ref)s. Review chat and update proposal."
@@ -1643,6 +2334,7 @@ def capital_ship_order_chat_decide(request, order_id: int):
             "user": order.requester.username,
             "ref": order.order_reference,
         },
+        order=order,
         level="warning",
         link=f"/indy_hub/material-exchange/capital-orders/admin/?open_chat={chat.id}",
     )
