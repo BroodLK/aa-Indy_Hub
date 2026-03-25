@@ -355,6 +355,7 @@
             var te = payload.chat.time_efficiency;
             var runs = payload.chat.runs_requested;
             var copies = payload.chat.copies_requested;
+            var requesterName = payload.chat.requester_name || payload.chat.requester_username || '';
             var detailParts = [];
             if (typeof me === 'number') {
                 detailParts.push('ME ' + me);
@@ -371,6 +372,15 @@
             if (detailParts.length) {
                 var detailRow = createEl('div', 'bp-chat-summary__meta text-muted small', detailParts.join(' · '));
                 panel.appendChild(detailRow);
+            }
+
+            if (requesterName) {
+                var requesterRow = createEl(
+                    'div',
+                    'bp-chat-summary__meta text-muted small',
+                    __('Requester') + ': ' + requesterName
+                );
+                panel.appendChild(requesterRow);
             }
 
             if (typeId) {

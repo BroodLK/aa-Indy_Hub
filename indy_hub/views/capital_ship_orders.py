@@ -672,6 +672,7 @@ def _build_chat_payload(
     decision_payload = _build_decision_payload(
         order, viewer_role_public=viewer_public
     )
+    requester_main_character = _resolve_main_character_name(order.requester)
     return {
         "chat": {
             "id": chat.id,
@@ -690,6 +691,8 @@ def _build_chat_payload(
             "time_efficiency": None,
             "runs_requested": None,
             "copies_requested": None,
+            "requester_name": requester_main_character,
+            "requester_username": str(order.requester.username),
             "can_send": bool(chat.is_open),
             "decision": decision_payload,
         },

@@ -32,6 +32,9 @@
                     <i class="fas fa-filter me-1"></i>{% trans "Show Closed" %}
                 </a>
                 {% endif %}
+                <a href="{% url 'indy_hub:material_exchange_config' %}" class="btn btn-outline-info">
+                    <i class="fas fa-sliders-h me-1"></i>{% trans "Capital Order Settings" %}
+                </a>
                 <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-warning">
                     <i class="fas fa-ship me-1"></i>{% trans "User Order Page" %}
                 </a>
@@ -149,74 +152,32 @@
                                 <div class="cap-muted-mini">{{ order.updated_at|timesince }} {% trans "ago" %}</div>
                             </td>
                             <td class="text-end">
-                                {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
-                                <div class="d-inline-flex flex-wrap justify-content-end gap-1">
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_refresh_guideline' order.id %}" class="d-inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-outline-primary">
-                                            <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh Guideline" %}
-                                        </button>
-                                    </form>
-                                    {% if order.status == 'waiting' %}
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_gathering_materials' order.id %}" class="d-inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-outline-warning">
-                                            <i class="fas fa-boxes-stacked me-1"></i>{% trans "Gathering Materials" %}
-                                        </button>
-                                    </form>
-                                    {% endif %}
-                                    {% if order.status == 'waiting' %}
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-warning">
-                                            <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
-                                        </button>
-                                    </form>
-                                    {% elif order.status == 'gathering_materials' %}
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}" class="d-inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-warning">
-                                            <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
-                                        </button>
-                                    </form>
-                                    {% endif %}
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_update_offer' order.id %}" class="d-inline-flex gap-1 align-items-center">
-                                        {% csrf_token %}
-                                        <input type="number" step="0.01" min="0.01" name="offer_price_isk" class="form-control form-control-sm" style="width: 120px;" placeholder="{% trans 'Price ISK' %}" value="{{ order.offer_price_isk|default_if_none:'' }}" required>
-                                        <input type="number" min="1" name="offer_eta_min_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'ETA min' %}" value="{{ order.offer_eta_min_days|default_if_none:'' }}" required>
-                                        <input type="number" min="1" name="offer_eta_max_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'ETA max' %}" value="{{ order.offer_eta_max_days|default_if_none:'' }}" required>
-                                        <input type="number" min="0" name="lead_time_days" class="form-control form-control-sm" style="width: 88px;" placeholder="{% trans 'Lead' %}" value="{{ order.lead_time_days|default_if_none:'0' }}">
-                                        <input type="text" maxlength="300" name="offer_notes" class="form-control form-control-sm" style="width: 160px;" placeholder="{% trans 'Offer note (optional)' %}">
-                                        <button type="submit" class="btn btn-sm btn-outline-success">
-                                            <i class="fas fa-handshake me-1"></i>{% trans "Update Offer" %}
-                                        </button>
-                                    </form>
-                                    {% if order.status == 'gathering_materials' or order.status == 'in_production' or order.status == 'contract_created' %}
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_set_definitive_eta' order.id %}" class="d-inline-flex gap-1 align-items-center">
-                                        {% csrf_token %}
-                                        <input type="number" min="1" name="definitive_eta_min_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'Def min' %}" value="{{ order.definitive_eta_min_days|default_if_none:'' }}" required>
-                                        <input type="number" min="1" name="definitive_eta_max_days" class="form-control form-control-sm" style="width: 78px;" placeholder="{% trans 'Def max' %}" value="{{ order.definitive_eta_max_days|default_if_none:'' }}" required>
-                                        <button type="submit" class="btn btn-sm btn-outline-info">
-                                            <i class="fas fa-clock me-1"></i>{% trans "Set Definitive ETA" %}
-                                        </button>
-                                    </form>
-                                    {% endif %}
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_reject' order.id %}" class="d-inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('{% trans "Reject this capital order?" %}');">
-                                            <i class="fas fa-times me-1"></i>{% trans "Reject" %}
-                                        </button>
-                                    </form>
-                                    <form method="post" action="{% url 'indy_hub:capital_ship_order_cancel' order.id %}" class="d-inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-sm btn-outline-secondary" onclick="return confirm('{% trans "Cancel this capital order?" %}');">
-                                            <i class="fas fa-ban me-1"></i>{% trans "Cancel" %}
-                                        </button>
-                                    </form>
-                                </div>
-                                {% else %}
-                                <span class="text-muted">-</span>
-                                {% endif %}
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-primary cap-update-order-trigger"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#capitalOrderUpdateModal"
+                                    data-order-reference="{{ order.order_reference }}"
+                                    data-order-status="{{ order.status }}"
+                                    data-order-status-display="{{ order.get_status_display }}"
+                                    data-order-hull="{{ order.ship_type_name }}"
+                                    data-order-requester="{{ order.requester_main_character|default:order.requester.username }}"
+                                    data-offer-price="{{ order.offer_price_isk|default_if_none:'' }}"
+                                    data-offer-eta-min="{{ order.offer_eta_min_days|default_if_none:'' }}"
+                                    data-offer-eta-max="{{ order.offer_eta_max_days|default_if_none:'' }}"
+                                    data-lead-time="{{ order.lead_time_days|default_if_none:'0' }}"
+                                    data-definitive-eta-min="{{ order.definitive_eta_min_days|default_if_none:'' }}"
+                                    data-definitive-eta-max="{{ order.definitive_eta_max_days|default_if_none:'' }}"
+                                    data-action-refresh="{% url 'indy_hub:capital_ship_order_refresh_guideline' order.id %}"
+                                    data-action-gathering="{% url 'indy_hub:capital_ship_order_set_gathering_materials' order.id %}"
+                                    data-action-production="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}"
+                                    data-action-offer="{% url 'indy_hub:capital_ship_order_update_offer' order.id %}"
+                                    data-action-definitive="{% url 'indy_hub:capital_ship_order_set_definitive_eta' order.id %}"
+                                    data-action-reject="{% url 'indy_hub:capital_ship_order_reject' order.id %}"
+                                    data-action-cancel="{% url 'indy_hub:capital_ship_order_cancel' order.id %}"
+                                >
+                                    <i class="fas fa-sliders me-1"></i>{% trans "Update Order" %}
+                                </button>
                             </td>
                         </tr>
                         {% endfor %}
@@ -226,6 +187,136 @@
             {% else %}
             <p class="text-muted p-3 mb-0">{% trans "No capital orders in this view." %}</p>
             {% endif %}
+        </div>
+    </div>
+</div>
+<div class="modal fade" id="capitalOrderUpdateModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-sliders me-2"></i>{% trans "Update Capital Order" %}
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+            </div>
+            <div class="modal-body">
+                <div class="cap-update-summary mb-3">
+                    <div><strong>{% trans "Reference" %}:</strong> <span data-cap-modal-reference>-</span></div>
+                    <div><strong>{% trans "Requester" %}:</strong> <span data-cap-modal-requester>-</span></div>
+                    <div><strong>{% trans "Hull" %}:</strong> <span data-cap-modal-hull>-</span></div>
+                    <div><strong>{% trans "Status" %}:</strong> <span data-cap-modal-status>-</span></div>
+                </div>
+
+                <div class="alert alert-secondary d-none mb-3" data-cap-terminal-note>
+                    {% trans "This order is already closed. Workflow updates are disabled." %}
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-body p-3 d-flex flex-wrap gap-2">
+                                <form method="post" data-cap-action-form="refresh" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">
+                                        <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh Guideline" %}
+                                    </button>
+                                </form>
+                                <form method="post" data-cap-action-form="gathering" class="d-inline d-none">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-warning">
+                                        <i class="fas fa-boxes-stacked me-1"></i>{% trans "Gathering Materials" %}
+                                    </button>
+                                </form>
+                                <form method="post" data-cap-action-form="production" class="d-inline d-none">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-warning">
+                                        <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-body p-3">
+                                <h6 class="fw-semibold mb-2">{% trans "Offer" %}</h6>
+                                <form method="post" data-cap-action-form="offer" class="row g-2 align-items-end">
+                                    {% csrf_token %}
+                                    <div class="col-md-3">
+                                        <label class="form-label small mb-1">{% trans "Price (ISK)" %}</label>
+                                        <input type="number" step="0.01" min="0.01" name="offer_price_isk" class="form-control form-control-sm" required data-cap-offer-price>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small mb-1">{% trans "ETA Min" %}</label>
+                                        <input type="number" min="1" name="offer_eta_min_days" class="form-control form-control-sm" required data-cap-offer-eta-min>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small mb-1">{% trans "ETA Max" %}</label>
+                                        <input type="number" min="1" name="offer_eta_max_days" class="form-control form-control-sm" required data-cap-offer-eta-max>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label small mb-1">{% trans "Lead Days" %}</label>
+                                        <input type="number" min="0" name="lead_time_days" class="form-control form-control-sm" data-cap-offer-lead>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small mb-1">{% trans "Offer Note" %}</label>
+                                        <input type="text" maxlength="300" name="offer_notes" class="form-control form-control-sm" placeholder="{% trans 'Optional' %}">
+                                    </div>
+                                    <div class="col-12 text-end">
+                                        <button type="submit" class="btn btn-sm btn-outline-success">
+                                            <i class="fas fa-handshake me-1"></i>{% trans "Update Offer" %}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12 d-none" data-cap-definitive-section>
+                        <div class="card">
+                            <div class="card-body p-3">
+                                <h6 class="fw-semibold mb-2">{% trans "Definitive ETA" %}</h6>
+                                <form method="post" data-cap-action-form="definitive" class="row g-2 align-items-end">
+                                    {% csrf_token %}
+                                    <div class="col-md-3">
+                                        <label class="form-label small mb-1">{% trans "Min Days" %}</label>
+                                        <input type="number" min="1" name="definitive_eta_min_days" class="form-control form-control-sm" required data-cap-definitive-min>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label small mb-1">{% trans "Max Days" %}</label>
+                                        <input type="number" min="1" name="definitive_eta_max_days" class="form-control form-control-sm" required data-cap-definitive-max>
+                                    </div>
+                                    <div class="col-md-6 text-end">
+                                        <button type="submit" class="btn btn-sm btn-outline-info">
+                                            <i class="fas fa-clock me-1"></i>{% trans "Set Definitive ETA" %}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12" data-cap-close-actions>
+                        <div class="card border-danger-subtle">
+                            <div class="card-body p-3 d-flex flex-wrap justify-content-end gap-2">
+                                <form method="post" data-cap-action-form="reject" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('{% trans "Reject this capital order?" %}');">
+                                        <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                                    </button>
+                                </form>
+                                <form method="post" data-cap-action-form="cancel" class="d-inline">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary" onclick="return confirm('{% trans "Cancel this capital order?" %}');">
+                                        <i class="fas fa-ban me-1"></i>{% trans "Cancel" %}
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -255,6 +346,131 @@
                 alert('{% trans "Failed to copy to clipboard" %}');
             });
         }
+
+        (function initCapitalOrderUpdateModal() {
+            const modalEl = document.getElementById('capitalOrderUpdateModal');
+            if (!modalEl) {
+                return;
+            }
+
+            const terminalStatuses = new Set(['completed', 'rejected', 'cancelled']);
+            const gatherStatuses = new Set(['waiting']);
+            const productionStatuses = new Set(['waiting', 'gathering_materials']);
+            const definitiveStatuses = new Set(['gathering_materials', 'in_production', 'contract_created']);
+
+            const summaryReference = modalEl.querySelector('[data-cap-modal-reference]');
+            const summaryRequester = modalEl.querySelector('[data-cap-modal-requester]');
+            const summaryHull = modalEl.querySelector('[data-cap-modal-hull]');
+            const summaryStatus = modalEl.querySelector('[data-cap-modal-status]');
+            const terminalNote = modalEl.querySelector('[data-cap-terminal-note]');
+            const definitiveSection = modalEl.querySelector('[data-cap-definitive-section]');
+            const closeActionsSection = modalEl.querySelector('[data-cap-close-actions]');
+
+            const formRefresh = modalEl.querySelector('[data-cap-action-form="refresh"]');
+            const formGathering = modalEl.querySelector('[data-cap-action-form="gathering"]');
+            const formProduction = modalEl.querySelector('[data-cap-action-form="production"]');
+            const formOffer = modalEl.querySelector('[data-cap-action-form="offer"]');
+            const formDefinitive = modalEl.querySelector('[data-cap-action-form="definitive"]');
+            const formReject = modalEl.querySelector('[data-cap-action-form="reject"]');
+            const formCancel = modalEl.querySelector('[data-cap-action-form="cancel"]');
+
+            const offerPriceInput = modalEl.querySelector('[data-cap-offer-price]');
+            const offerEtaMinInput = modalEl.querySelector('[data-cap-offer-eta-min]');
+            const offerEtaMaxInput = modalEl.querySelector('[data-cap-offer-eta-max]');
+            const offerLeadInput = modalEl.querySelector('[data-cap-offer-lead]');
+            const definitiveMinInput = modalEl.querySelector('[data-cap-definitive-min]');
+            const definitiveMaxInput = modalEl.querySelector('[data-cap-definitive-max]');
+
+            function setVisible(element, visible) {
+                if (!element) {
+                    return;
+                }
+                element.classList.toggle('d-none', !visible);
+            }
+
+            function setFormAction(formEl, actionUrl) {
+                if (!formEl || !actionUrl) {
+                    return;
+                }
+                formEl.setAttribute('action', actionUrl);
+            }
+
+            function setFormDisabled(formEl, disabled) {
+                if (!formEl) {
+                    return;
+                }
+                Array.from(formEl.elements).forEach((field) => {
+                    if (!field || field.name === 'csrfmiddlewaretoken') {
+                        return;
+                    }
+                    field.disabled = Boolean(disabled);
+                });
+            }
+
+            function bindTrigger(triggerEl) {
+                triggerEl.addEventListener('click', function () {
+                    const status = String(triggerEl.dataset.orderStatus || '').trim();
+                    const isTerminal = terminalStatuses.has(status);
+
+                    if (summaryReference) {
+                        summaryReference.textContent = triggerEl.dataset.orderReference || '-';
+                    }
+                    if (summaryRequester) {
+                        summaryRequester.textContent = triggerEl.dataset.orderRequester || '-';
+                    }
+                    if (summaryHull) {
+                        summaryHull.textContent = triggerEl.dataset.orderHull || '-';
+                    }
+                    if (summaryStatus) {
+                        summaryStatus.textContent = triggerEl.dataset.orderStatusDisplay || status || '-';
+                    }
+
+                    if (offerPriceInput) {
+                        offerPriceInput.value = triggerEl.dataset.offerPrice || '';
+                    }
+                    if (offerEtaMinInput) {
+                        offerEtaMinInput.value = triggerEl.dataset.offerEtaMin || '';
+                    }
+                    if (offerEtaMaxInput) {
+                        offerEtaMaxInput.value = triggerEl.dataset.offerEtaMax || '';
+                    }
+                    if (offerLeadInput) {
+                        offerLeadInput.value = triggerEl.dataset.leadTime || '0';
+                    }
+                    if (definitiveMinInput) {
+                        definitiveMinInput.value = triggerEl.dataset.definitiveEtaMin || '';
+                    }
+                    if (definitiveMaxInput) {
+                        definitiveMaxInput.value = triggerEl.dataset.definitiveEtaMax || '';
+                    }
+
+                    setFormAction(formRefresh, triggerEl.dataset.actionRefresh);
+                    setFormAction(formGathering, triggerEl.dataset.actionGathering);
+                    setFormAction(formProduction, triggerEl.dataset.actionProduction);
+                    setFormAction(formOffer, triggerEl.dataset.actionOffer);
+                    setFormAction(formDefinitive, triggerEl.dataset.actionDefinitive);
+                    setFormAction(formReject, triggerEl.dataset.actionReject);
+                    setFormAction(formCancel, triggerEl.dataset.actionCancel);
+
+                    setVisible(terminalNote, isTerminal);
+                    setVisible(formGathering, !isTerminal && gatherStatuses.has(status));
+                    setVisible(formProduction, !isTerminal && productionStatuses.has(status));
+                    setVisible(definitiveSection, !isTerminal && definitiveStatuses.has(status));
+                    setVisible(closeActionsSection, !isTerminal);
+
+                    setFormDisabled(formRefresh, isTerminal);
+                    setFormDisabled(formGathering, isTerminal || !gatherStatuses.has(status));
+                    setFormDisabled(formProduction, isTerminal || !productionStatuses.has(status));
+                    setFormDisabled(formOffer, isTerminal);
+                    setFormDisabled(formDefinitive, isTerminal || !definitiveStatuses.has(status));
+                    setFormDisabled(formReject, isTerminal);
+                    setFormDisabled(formCancel, isTerminal);
+                });
+            }
+
+            document.querySelectorAll('.cap-update-order-trigger').forEach(bindTrigger);
+        })();
+
         window.indyChatDefaults = Object.assign({}, window.indyChatDefaults || {}, {
             viewerRole: "seller",
             labels: {

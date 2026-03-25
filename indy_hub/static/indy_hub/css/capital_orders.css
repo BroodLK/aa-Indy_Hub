@@ -125,6 +125,13 @@
     justify-content: center;
 }
 
+.cap-update-summary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.9rem;
+    font-size: 0.9rem;
+}
+
 @media (max-width: 992px) {
     .cap-submit-wrap {
         justify-content: stretch;
@@ -132,6 +139,10 @@
 
     .cap-submit-wrap .btn {
         width: 100%;
+    }
+
+    .cap-update-summary {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -159,4 +170,3 @@ html[data-theme="darkly"] .cap-radio-card input[type="radio"]:checked + label {
     background: rgba(37, 99, 235, 0.3);
     box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.45);
 }
-
