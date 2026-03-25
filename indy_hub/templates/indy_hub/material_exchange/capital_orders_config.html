@@ -131,13 +131,22 @@
                         <div class="row g-3">
                             <div class="col-lg-5">
                                 <label class="form-label fw-semibold">{% trans "Preapproved State Names" %}</label>
-                                <input
-                                    type="text"
+                                <select
                                     name="capital_auto_cancel_preapproved_state_names"
-                                    class="form-control"
-                                    value="{{ capital_auto_cancel_preapproved_state_names_text|default:'' }}"
-                                    placeholder="{% trans 'Pre-Approved, Preapproved' %}">
-                                <div class="form-text">{% trans "Comma-separated names from your auth state system." %}</div>
+                                    class="form-select"
+                                    multiple
+                                    size="6"
+                                >
+                                    {% for state_name in capital_auto_cancel_state_name_choices %}
+                                    <option
+                                        value="{{ state_name }}"
+                                        {% if state_name in capital_auto_cancel_preapproved_state_names %}selected{% endif %}
+                                    >
+                                        {{ state_name }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">{% trans "Select one or more AllianceAuth states that are treated as preapproved." %}</div>
                             </div>
                             <div class="col-lg-4">
                                 <label class="form-label fw-semibold">{% trans "Delay Before Cancel" %}</label>

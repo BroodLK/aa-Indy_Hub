@@ -122,6 +122,13 @@ _CAPITAL_ORDER_PRE_PRODUCTION_STATUSES = {
     CapitalShipOrder.Status.WAITING,
     CapitalShipOrder.Status.GATHERING_MATERIALS,
 }
+_CAPITAL_ORDER_ACTIVE_STATUSES = {
+    CapitalShipOrder.Status.WAITING,
+    CapitalShipOrder.Status.GATHERING_MATERIALS,
+    CapitalShipOrder.Status.IN_PRODUCTION,
+    CapitalShipOrder.Status.CONTRACT_CREATED,
+    CapitalShipOrder.Status.ANOMALY,
+}
 _REPROCESSING_FAILED_STATUSES = {
     "cancelled",
     "rejected",
@@ -4215,19 +4222,21 @@ def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfi
     if not bool(getattr(config, "capital_auto_cancel_on_state_change", False)):
         return
 
-    eligible_statuses = {
+    configured_statuses = {
         str(status).strip().lower()
         for status in config.get_capital_auto_cancel_eligible_statuses()
         if str(status).strip()
     }
-    if not eligible_statuses:
+    if configured_statuses:
         eligible_statuses = {
-            CapitalShipOrder.Status.WAITING,
-            CapitalShipOrder.Status.GATHERING_MATERIALS,
-            CapitalShipOrder.Status.IN_PRODUCTION,
-            CapitalShipOrder.Status.CONTRACT_CREATED,
-            CapitalShipOrder.Status.ANOMALY,
+            status
+            for status in _CAPITAL_ORDER_ACTIVE_STATUSES
+            if status in configured_statuses
         }
+    else:
+        eligible_statuses = set(_CAPITAL_ORDER_ACTIVE_STATUSES)
+    if not eligible_statuses:
+        return
 
     preapproved_state_names = _normalize_state_name_set(
         config.get_capital_preapproved_state_names()

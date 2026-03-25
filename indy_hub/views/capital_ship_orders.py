@@ -21,7 +21,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_GET, require_POST
 
 # Alliance Auth
-from allianceauth.authentication.models import UserProfile
+from allianceauth.authentication.models import State, UserProfile
 from allianceauth.services.hooks import get_extension_logger
 from eve_sde.models import ItemType
 
@@ -469,15 +469,45 @@ def _parse_positive_type_ids(raw_values: list[str]) -> list[int]:
     return parsed
 
 
-def _parse_state_name_list(raw_value: str) -> list[str]:
+def _parse_state_name_list(raw_value: str | list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    if isinstance(raw_value, (list, tuple, set)):
+        tokens = [str(token or "").strip() for token in raw_value]
+    else:
+        tokens = [
+            str(token or "").strip()
+            for token in str(raw_value or "").replace("\n", ",").split(",")
+        ]
+
     normalized: list[str] = []
-    for token in str(raw_value or "").replace("\n", ",").split(","):
+    for token in tokens:
         state_name = str(token or "").strip()
         if not state_name:
             continue
         if state_name not in normalized:
             normalized.append(state_name)
     return normalized
+
+
+def _load_allianceauth_state_name_choices(
+    *, selected_names: list[str] | None = None
+) -> list[str]:
+    selected_names = list(selected_names or [])
+    state_names: list[str] = []
+    try:
+        state_names = list(
+            State.objects.order_by("-priority", "name").values_list("name", flat=True)
+        )
+    except Exception:
+        state_names = []
+
+    combined_names: list[str] = []
+    for raw_name in [*state_names, *selected_names]:
+        name = str(raw_name or "").strip()
+        if not name:
+            continue
+        if name not in combined_names:
+            combined_names.append(name)
+    return combined_names
 
 
 def _decimal_to_json_string(value: Decimal | None) -> str | None:
@@ -1246,7 +1276,7 @@ def capital_ship_orders_config(request):
                 ]
 
             capital_auto_cancel_preapproved_state_names = _parse_state_name_list(
-                request.POST.get("capital_auto_cancel_preapproved_state_names", "")
+                request.POST.getlist("capital_auto_cancel_preapproved_state_names")
             )
             if not capital_auto_cancel_preapproved_state_names:
                 capital_auto_cancel_preapproved_state_names = ["Pre-Approved", "Preapproved"]
@@ -1551,6 +1581,7 @@ def capital_ship_orders_config(request):
             CapitalShipOrder.Status.CANCELLED,
         }
     ]
+    selected_preapproved_state_names = config.get_capital_preapproved_state_names()
 
     context = {
         "config": config,
@@ -1589,8 +1620,9 @@ def capital_ship_orders_config(request):
         "capital_auto_cancel_on_state_change": bool(
             getattr(config, "capital_auto_cancel_on_state_change", False)
         ),
-        "capital_auto_cancel_preapproved_state_names_text": ", ".join(
-            config.get_capital_preapproved_state_names()
+        "capital_auto_cancel_preapproved_state_names": selected_preapproved_state_names,
+        "capital_auto_cancel_state_name_choices": _load_allianceauth_state_name_choices(
+            selected_names=selected_preapproved_state_names
         ),
         "capital_auto_cancel_eligible_statuses": set(
             config.get_capital_auto_cancel_eligible_statuses()
