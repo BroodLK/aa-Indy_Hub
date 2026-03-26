@@ -961,12 +961,68 @@ def _build_order_chat_trigger(order: CapitalShipOrder, *, viewer_role_public: st
     }
 
 
+def _remaining_eta_days_from_anchor(
+    days_value: int | None,
+    *,
+    anchor_at,
+    clamp_min_zero: bool = True,
+) -> int | None:
+    parsed_days = _parse_positive_int(days_value, minimum=0)
+    if parsed_days is None:
+        return None
+    if anchor_at is None:
+        return int(parsed_days)
+    try:
+        today = timezone.localdate(timezone.now())
+        anchored_day = timezone.localdate(anchor_at)
+        elapsed_days = max(0, int((today - anchored_day).days))
+    except Exception:
+        elapsed_days = 0
+    remaining_days = int(parsed_days) - elapsed_days
+    if clamp_min_zero:
+        return max(0, remaining_days)
+    return remaining_days
+
+
 def _attach_user_display_fields(order: CapitalShipOrder) -> None:
     order.display_price_isk = order.agreed_price_isk or order.offer_price_isk
+    order.display_eta_is_countdown = False
+    order.display_eta_is_overdue = False
     if order.definitive_eta_min_days is not None and order.definitive_eta_max_days is not None:
-        order.display_eta_min_days = order.definitive_eta_min_days
-        order.display_eta_max_days = order.definitive_eta_max_days
-        order.display_eta_label = _("Definitive ETA")
+        remaining_min_days_raw = _remaining_eta_days_from_anchor(
+            order.definitive_eta_min_days,
+            anchor_at=order.definitive_eta_updated_at,
+            clamp_min_zero=False,
+        )
+        remaining_max_days_raw = _remaining_eta_days_from_anchor(
+            order.definitive_eta_max_days,
+            anchor_at=order.definitive_eta_updated_at,
+            clamp_min_zero=False,
+        )
+        order.display_eta_min_days = (
+            max(0, int(remaining_min_days_raw))
+            if remaining_min_days_raw is not None
+            else None
+        )
+        order.display_eta_max_days = (
+            max(0, int(remaining_max_days_raw))
+            if remaining_max_days_raw is not None
+            else None
+        )
+        if (
+            remaining_min_days_raw is not None
+            and remaining_max_days_raw is not None
+            and int(remaining_min_days_raw) < 0
+            and int(remaining_max_days_raw) < 0
+        ):
+            order.display_eta_is_overdue = True
+            order.display_eta_label = _("Definitive ETA (overdue)")
+            return
+        if order.definitive_eta_updated_at is not None:
+            order.display_eta_is_countdown = True
+            order.display_eta_label = _("Definitive ETA (remaining)")
+        else:
+            order.display_eta_label = _("Definitive ETA")
     elif order.likely_eta_min_days is not None and order.likely_eta_max_days is not None:
         order.display_eta_min_days = order.likely_eta_min_days
         order.display_eta_max_days = order.likely_eta_max_days

@@ -3085,3 +3085,148 @@ class CapitalOrderAdminActionsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
+
+    def test_admin_view_counts_down_definitive_eta(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        order.definitive_eta_min_days = 7
+        order.definitive_eta_max_days = 7
+        order.definitive_eta_updated_at = timezone.now() - timedelta(days=1)
+        order.save(
+            update_fields=[
+                "definitive_eta_min_days",
+                "definitive_eta_max_days",
+                "definitive_eta_updated_at",
+                "updated_at",
+            ]
+        )
+
+        response = self.client.get(reverse("indy_hub:capital_ship_orders_admin"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "~6-6 days")
+        self.assertContains(response, "Definitive ETA (remaining)")
+
+    def test_requester_view_counts_down_definitive_eta(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        order.definitive_eta_min_days = 7
+        order.definitive_eta_max_days = 7
+        order.definitive_eta_updated_at = timezone.now() - timedelta(days=1)
+        order.save(
+            update_fields=[
+                "definitive_eta_min_days",
+                "definitive_eta_max_days",
+                "definitive_eta_updated_at",
+                "updated_at",
+            ]
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.get(reverse("indy_hub:capital_ship_orders"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "~6-6 days")
+        self.assertContains(response, "Definitive ETA (remaining)")
+
+    def test_admin_view_marks_definitive_eta_overdue_when_both_bounds_negative(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        order.definitive_eta_min_days = 1
+        order.definitive_eta_max_days = 2
+        order.definitive_eta_updated_at = timezone.now() - timedelta(days=3)
+        order.save(
+            update_fields=[
+                "definitive_eta_min_days",
+                "definitive_eta_max_days",
+                "definitive_eta_updated_at",
+                "updated_at",
+            ]
+        )
+
+        response = self.client.get(reverse("indy_hub:capital_ship_orders_admin"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Overdue")
+        self.assertContains(response, "Definitive ETA (overdue)")
+        self.assertNotContains(response, "~0-0 days")
+
+    def test_requester_view_marks_definitive_eta_overdue_when_both_bounds_negative(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        order.definitive_eta_min_days = 1
+        order.definitive_eta_max_days = 2
+        order.definitive_eta_updated_at = timezone.now() - timedelta(days=3)
+        order.save(
+            update_fields=[
+                "definitive_eta_min_days",
+                "definitive_eta_max_days",
+                "definitive_eta_updated_at",
+                "updated_at",
+            ]
+        )
+
+        self.client.force_login(self.requester)
+        response = self.client.get(reverse("indy_hub:capital_ship_orders"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Overdue")
+        self.assertContains(response, "Definitive ETA (overdue)")
+        self.assertNotContains(response, "~0-0 days")
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    def test_process_notifies_in_production_manager_once_when_definitive_eta_overdue(
+        self,
+        mock_notify_user,
+    ) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        order.in_production_by = self.manager
+        order.in_production_at = timezone.now() - timedelta(days=8)
+        order.definitive_eta_min_days = 7
+        order.definitive_eta_max_days = 7
+        order.definitive_eta_updated_at = timezone.now() - timedelta(days=8)
+        order.save(
+            update_fields=[
+                "in_production_by",
+                "in_production_at",
+                "definitive_eta_min_days",
+                "definitive_eta_max_days",
+                "definitive_eta_updated_at",
+                "updated_at",
+            ]
+        )
+
+        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+
+        process_capital_ship_orders()
+        process_capital_ship_orders()
+
+        self.assertEqual(mock_notify_user.call_count, 1)
+        call_args = mock_notify_user.call_args.args
+        self.assertEqual(call_args[0], self.manager)
+        self.assertIn("Capital Order ETA Overdue", str(call_args[1]))
+        self.assertIn(order.order_reference, str(call_args[2]))
+        order.refresh_from_db()
+        self.assertIn("[CAPITAL_ETA_OVERDUE_NOTIFIED:", str(order.notes or ""))
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    def test_process_requires_both_definitive_eta_bounds_negative_before_overdue_notify(
+        self,
+        mock_notify_user,
+    ) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        order.in_production_by = self.manager
+        order.in_production_at = timezone.now() - timedelta(days=3)
+        order.definitive_eta_min_days = 2
+        order.definitive_eta_max_days = 3
+        order.definitive_eta_updated_at = timezone.now() - timedelta(days=3)
+        order.save(
+            update_fields=[
+                "in_production_by",
+                "in_production_at",
+                "definitive_eta_min_days",
+                "definitive_eta_max_days",
+                "definitive_eta_updated_at",
+                "updated_at",
+            ]
+        )
+
+        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+
+        process_capital_ship_orders()
+
+        mock_notify_user.assert_not_called()
+        order.refresh_from_db()
+        self.assertNotIn("[CAPITAL_ETA_OVERDUE_NOTIFIED:", str(order.notes or ""))

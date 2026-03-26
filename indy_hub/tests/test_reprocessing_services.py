@@ -930,6 +930,62 @@ class ReprocessingCharacterContractSyncTests(TestCase):
         self.assertIn(self.request.request_reference, contract.title)
         self.assertEqual(ESIContractItem.objects.filter(contract=contract).count(), 1)
 
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contract_items")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contracts")
+    def test_syncs_items_for_finished_reprocessing_contracts(
+        self,
+        mock_fetch_contracts,
+        mock_fetch_contract_items,
+    ):
+        now = timezone.now()
+
+        def _contracts_for_character(character_id: int):
+            if int(character_id) != int(self.request.requester_character_id):
+                return []
+            return [
+                {
+                    "contract_id": 710010002,
+                    "issuer_id": int(self.request.requester_character_id),
+                    "issuer_corporation_id": 98000001,
+                    "assignee_id": int(self.request.processor_character_id),
+                    "acceptor_id": int(self.request.processor_character_id),
+                    "type": "item_exchange",
+                    "status": "finished_contractor",
+                    "title": f"Inbound {self.request.request_reference}",
+                    "start_location_id": 60003760,
+                    "end_location_id": 60003760,
+                    "price": "0",
+                    "reward": "0",
+                    "collateral": "0",
+                    "date_issued": now - timedelta(minutes=10),
+                    "date_expired": now + timedelta(days=6),
+                    "date_accepted": now - timedelta(minutes=8),
+                    "date_completed": now - timedelta(minutes=7),
+                }
+            ]
+
+        mock_fetch_contracts.side_effect = _contracts_for_character
+        mock_fetch_contract_items.return_value = [
+            {
+                "record_id": 11,
+                "type_id": 12345,
+                "quantity": 100,
+                "raw_quantity": None,
+                "is_included": True,
+                "is_singleton": False,
+            }
+        ]
+
+        sync_reprocessing_character_contracts()
+
+        contract = ESIContract.objects.get(contract_id=710010002)
+        self.assertEqual(str(contract.status).lower(), "finished_contractor")
+        self.assertEqual(ESIContractItem.objects.filter(contract=contract).count(), 1)
+        mock_fetch_contract_items.assert_called_once_with(
+            character_id=int(self.request.requester_character_id),
+            contract_id=710010002,
+        )
+
 
 class ReprocessingCycleExecutionTests(TestCase):
     def test_reprocessing_steps_run_when_material_exchange_disabled_or_unconfigured(self):

@@ -121,8 +121,11 @@
                                 {% endif %}
                             </td>
                             <td>
-                                {% if order.display_eta_min_days and order.display_eta_max_days %}
-                                    {{ order.display_eta_min_days|intcomma }}-{{ order.display_eta_max_days|intcomma }} {% trans "days" %}
+                                {% if order.display_eta_is_overdue %}
+                                    <span class="text-danger fw-semibold">{% trans "Overdue" %}</span>
+                                    <div class="cap-muted-mini">{{ order.display_eta_label }}</div>
+                                {% elif order.display_eta_min_days is not None and order.display_eta_max_days is not None %}
+                                    {% if order.display_eta_is_countdown %}~{% endif %}{{ order.display_eta_min_days|intcomma }}-{{ order.display_eta_max_days|intcomma }} {% trans "days" %}
                                     <div class="cap-muted-mini">{{ order.display_eta_label }}</div>
                                 {% else %}
                                     <span class="text-muted">-</span>

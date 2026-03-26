@@ -130,6 +130,7 @@
                                 <label class="form-label fw-semibold">{% trans "Preapproved State Names" %}</label>
                                 <select
                                     name="capital_auto_cancel_preapproved_state_names"
+                                    id="capitalAutoCancelPreapprovedStates"
                                     class="form-select"
                                     multiple
                                     size="6"
@@ -143,6 +144,16 @@
                                     </option>
                                     {% endfor %}
                                 </select>
+                                <div class="mt-2 small">
+                                    <span class="text-muted fw-semibold">{% trans "Saved selections:" %}</span>
+                                    {% if capital_auto_cancel_preapproved_state_names %}
+                                        {% for state_name in capital_auto_cancel_preapproved_state_names %}
+                                        <span class="badge text-bg-secondary me-1 mb-1">{{ state_name }}</span>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">{% trans "None" %}</span>
+                                    {% endif %}
+                                </div>
                                 <div class="form-text">{% trans "Select one or more AllianceAuth states that are treated as preapproved." %}</div>
                             </div>
                             <div class="col-lg-4">

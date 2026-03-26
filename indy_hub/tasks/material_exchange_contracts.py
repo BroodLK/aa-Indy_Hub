@@ -137,10 +137,9 @@ _REPROCESSING_FAILED_STATUSES = {
     "deleted",
     "reversed",
 }
-_REPROCESSING_CONTRACT_ITEM_SYNC_STATUSES = {
-    "outstanding",
-    "in_progress",
-}
+# Keep item sync aligned with statuses where we may still validate contract contents.
+# Fast contract turnarounds can reach finished* before the next sync cycle.
+_REPROCESSING_CONTRACT_ITEM_SYNC_STATUSES = set(_REPROCESSING_SENT_STATUSES)
 _ACTIVE_REPROCESSING_STATUSES = [
     ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
     ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
@@ -3939,6 +3938,106 @@ def _notify_capital_order_managers(
     notify_multi(recipients, title, message, level=level, link=link)
 
 
+def _capital_eta_remaining_days(days_value: int | None, *, anchor_at) -> int | None:
+    try:
+        parsed_days = int(days_value)
+    except (TypeError, ValueError):
+        return None
+    if parsed_days < 0:
+        return None
+    if anchor_at is None:
+        return parsed_days
+    try:
+        today = timezone.localdate(timezone.now())
+        anchored_day = timezone.localdate(anchor_at)
+        elapsed_days = max(0, int((today - anchored_day).days))
+    except Exception:
+        elapsed_days = 0
+    return parsed_days - elapsed_days
+
+
+def _capital_overdue_marker_for_anchor(anchor_at) -> str:
+    if anchor_at is None:
+        return "[CAPITAL_ETA_OVERDUE_NOTIFIED:unknown-anchor]"
+    try:
+        anchor_key = timezone.localtime(anchor_at).isoformat()
+    except Exception:
+        anchor_key = str(anchor_at)
+    return f"[CAPITAL_ETA_OVERDUE_NOTIFIED:{anchor_key}]"
+
+
+def _capital_order_has_note_marker(order: CapitalShipOrder, marker: str) -> bool:
+    notes = str(order.notes or "")
+    return str(marker or "") in notes
+
+
+def _capital_order_add_note_marker(order: CapitalShipOrder, marker: str) -> bool:
+    marker_text = str(marker or "").strip()
+    if not marker_text:
+        return False
+    if _capital_order_has_note_marker(order, marker_text):
+        return False
+    notes = str(order.notes or "").strip()
+    order.notes = f"{notes}\n{marker_text}" if notes else marker_text
+    return True
+
+
+def _notify_capital_eta_overdue_manager_once(order: CapitalShipOrder) -> None:
+    if str(order.status or "") != CapitalShipOrder.Status.IN_PRODUCTION:
+        return
+    anchor_at = getattr(order, "definitive_eta_updated_at", None)
+    if anchor_at is None:
+        return
+    min_remaining_days = _capital_eta_remaining_days(
+        getattr(order, "definitive_eta_min_days", None),
+        anchor_at=anchor_at,
+    )
+    max_remaining_days = _capital_eta_remaining_days(
+        getattr(order, "definitive_eta_max_days", None),
+        anchor_at=anchor_at,
+    )
+    if (
+        min_remaining_days is None
+        or max_remaining_days is None
+        or min_remaining_days >= 0
+        or max_remaining_days >= 0
+    ):
+        return
+
+    marker = _capital_overdue_marker_for_anchor(anchor_at)
+    if _capital_order_has_note_marker(order, marker):
+        return
+
+    manager = getattr(order, "in_production_by", None)
+    manager_id = int(getattr(order, "in_production_by_id", 0) or 0)
+    if manager is None and manager_id > 0:
+        manager = User.objects.filter(id=manager_id).first()
+    if manager is None or not bool(getattr(manager, "is_active", False)):
+        return
+
+    overdue_min_days = abs(int(max_remaining_days))
+    overdue_max_days = abs(int(min_remaining_days))
+    if overdue_min_days == overdue_max_days:
+        overdue_text = f"{overdue_min_days} day(s)"
+    else:
+        overdue_text = f"{overdue_min_days}-{overdue_max_days} day(s)"
+
+    notify_user(
+        manager,
+        _("Capital Order ETA Overdue"),
+        _(
+            f"Order {order.order_reference} ({order.ship_type_name}) is overdue by definitive ETA.\n"
+            f"User: {order.requester.username}\n"
+            f"Overdue by: {overdue_text}\n"
+            "Please review and update the order timeline."
+        ),
+        level="warning",
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+    if _capital_order_add_note_marker(order, marker):
+        order.save(update_fields=["notes", "updated_at"])
+
+
 @shared_task(
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 5},
@@ -4383,7 +4482,7 @@ def process_capital_ship_orders():
             CapitalShipOrder.Status.IN_PRODUCTION,
             CapitalShipOrder.Status.CONTRACT_CREATED,
         ],
-    ).select_related("requester")
+    ).select_related("requester", "in_production_by")
     if not active_orders.exists():
         return
 
@@ -4400,6 +4499,7 @@ def process_capital_ship_orders():
     failed_statuses = {"cancelled", "rejected", "failed", "expired", "deleted", "reversed"}
 
     for order in active_orders:
+        _notify_capital_eta_overdue_manager_once(order)
         order_ref_lower = str(order.order_reference or "").strip().lower()
         matching_by_title = [
             contract
