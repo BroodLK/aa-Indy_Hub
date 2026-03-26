@@ -140,6 +140,7 @@ _REPROCESSING_FAILED_STATUSES = {
 # Keep item sync aligned with statuses where we may still validate contract contents.
 # Fast contract turnarounds can reach finished* before the next sync cycle.
 _REPROCESSING_CONTRACT_ITEM_SYNC_STATUSES = set(_REPROCESSING_SENT_STATUSES)
+_CAPITAL_CONTRACT_ITEM_SYNC_STATUSES = set(_REPROCESSING_SENT_STATUSES)
 _ACTIVE_REPROCESSING_STATUSES = [
     ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
     ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
@@ -4026,10 +4027,10 @@ def _notify_capital_eta_overdue_manager_once(order: CapitalShipOrder) -> None:
         manager,
         _("Capital Order ETA Overdue"),
         _(
-            f"Order {order.order_reference} ({order.ship_type_name}) is overdue by definitive ETA.\n"
+            f"Order {order.order_reference} ({order.ship_type_name}) is overdue.\n"
             f"User: {order.requester.username}\n"
-            f"Overdue by: {overdue_text}\n"
-            "Please review and update the order timeline."
+            f"Overdue by: {overdue_text}\n\n"
+            "**Please review and update the order timeline via update order and the client via chat.**"
         ),
         level="warning",
         link="/indy_hub/material-exchange/capital-orders/admin/",
@@ -4317,6 +4318,222 @@ def _normalize_state_name_set(raw_names: list[str] | tuple[str, ...] | set[str])
     return normalized
 
 
+def _collect_capital_requester_character_id_map(
+    orders: list[CapitalShipOrder],
+) -> dict[int, list[int]]:
+    """Map requester user_id -> linked character ids (including main character)."""
+    by_user_id: dict[int, list[int]] = {}
+    for order in orders:
+        user_id = int(getattr(order, "requester_id", 0) or 0)
+        if user_id <= 0 or user_id in by_user_id:
+            continue
+        character_ids = {int(cid) for cid in _get_user_character_ids(order.requester) if int(cid) > 0}
+        main_character_id = _get_user_main_character_id(order.requester)
+        if int(main_character_id or 0) > 0:
+            character_ids.add(int(main_character_id))
+        by_user_id[user_id] = sorted(character_ids)
+    return by_user_id
+
+
+def _is_capital_contract_relevant(
+    *,
+    contract_title: str | None,
+    active_references_upper: set[str],
+) -> bool:
+    title_upper = str(contract_title or "").strip().upper()
+    if not title_upper:
+        return False
+    if any(reference in title_upper for reference in active_references_upper):
+        return True
+    return "INDY-CAP" in title_upper
+
+
+def _sync_capital_character_contracts(
+    *,
+    orders: list[CapitalShipOrder],
+    requester_character_ids_by_user_id: dict[int, list[int]],
+) -> None:
+    """Cache personal character contracts relevant to active capital orders."""
+    if not orders:
+        return
+
+    active_references_upper = {
+        str(order.order_reference or "").strip().upper()
+        for order in orders
+        if str(order.order_reference or "").strip()
+    }
+    if not active_references_upper:
+        return
+
+    participant_character_ids = sorted(
+        {
+            int(character_id)
+            for character_ids in requester_character_ids_by_user_id.values()
+            for character_id in character_ids
+            if int(character_id) > 0
+        }
+    )
+    if not participant_character_ids:
+        return
+
+    synced_contract_count = 0
+    synced_item_count = 0
+    synced_items_contract_ids: set[int] = set()
+
+    for character_id in participant_character_ids:
+        try:
+            contracts = shared_client.fetch_character_contracts(character_id=character_id)
+        except ESIUnmodifiedError:
+            continue
+        except ESIRateLimitError as exc:
+            logger.warning(
+                "ESI rate limit during capital character contract sync for %s: %s",
+                character_id,
+                exc,
+            )
+            continue
+        except (ESITokenError, ESIForbiddenError) as exc:
+            logger.debug(
+                "Skipping capital character contract sync for %s: %s",
+                character_id,
+                exc,
+            )
+            continue
+        except Exception as exc:
+            logger.warning(
+                "Failed fetching character contracts for capital character %s: %s",
+                character_id,
+                exc,
+            )
+            continue
+
+        if not isinstance(contracts, list):
+            logger.warning(
+                "Unexpected payload type for capital character contracts (%s): %s",
+                character_id,
+                type(contracts).__name__,
+            )
+            continue
+
+        for contract_data in contracts:
+            contract_payload = _normalize_esi_mapping(
+                contract_data,
+                context=f"capital character contract ({character_id})",
+            )
+            if not contract_payload:
+                continue
+
+            contract_id = int(contract_payload.get("contract_id") or 0)
+            if contract_id <= 0:
+                continue
+
+            contract_title = str(contract_payload.get("title") or "")
+            if not _is_capital_contract_relevant(
+                contract_title=contract_title,
+                active_references_upper=active_references_upper,
+            ):
+                continue
+
+            issuer_corporation_id = int(contract_payload.get("issuer_corporation_id") or 0)
+            contract, _created = ESIContract.objects.update_or_create(
+                contract_id=contract_id,
+                defaults={
+                    "issuer_id": int(contract_payload.get("issuer_id") or 0),
+                    "issuer_corporation_id": issuer_corporation_id,
+                    "assignee_id": int(contract_payload.get("assignee_id") or 0),
+                    "acceptor_id": int(contract_payload.get("acceptor_id") or 0),
+                    "contract_type": str(contract_payload.get("type") or "unknown"),
+                    "status": str(contract_payload.get("status") or "unknown"),
+                    "title": contract_title,
+                    "start_location_id": contract_payload.get("start_location_id"),
+                    "end_location_id": contract_payload.get("end_location_id"),
+                    "price": Decimal(str(contract_payload.get("price") or 0)),
+                    "reward": Decimal(str(contract_payload.get("reward") or 0)),
+                    "collateral": Decimal(str(contract_payload.get("collateral") or 0)),
+                    "date_issued": contract_payload.get("date_issued") or timezone.now(),
+                    "date_expired": contract_payload.get("date_expired")
+                    or (timezone.now() + timedelta(days=7)),
+                    "date_accepted": contract_payload.get("date_accepted"),
+                    "date_completed": contract_payload.get("date_completed"),
+                    # Character contracts are not owned by a specific corp cache scope.
+                    "corporation_id": 0,
+                },
+            )
+            synced_contract_count += 1
+
+            contract_status = str(contract_payload.get("status") or "").strip().lower()
+            if (
+                str(contract_payload.get("type") or "").strip().lower() != "item_exchange"
+                or contract_status not in _CAPITAL_CONTRACT_ITEM_SYNC_STATUSES
+                or contract_id in synced_items_contract_ids
+            ):
+                continue
+
+            try:
+                contract_items = shared_client.fetch_character_contract_items(
+                    character_id=character_id,
+                    contract_id=contract_id,
+                )
+            except ESIUnmodifiedError:
+                synced_items_contract_ids.add(contract_id)
+                continue
+            except ESIClientError as exc:
+                if "404" in str(exc):
+                    logger.debug(
+                        "No character contract items available for capital contract %s (404).",
+                        contract_id,
+                    )
+                else:
+                    logger.warning(
+                        "Failed fetching character contract items for capital contract %s: %s",
+                        contract_id,
+                        exc,
+                    )
+                continue
+            except Exception as exc:
+                logger.warning(
+                    "Failed fetching character contract items for capital contract %s: %s",
+                    contract_id,
+                    exc,
+                )
+                continue
+
+            if not isinstance(contract_items, list):
+                logger.warning(
+                    "Unexpected payload type for capital character contract items (%s): %s",
+                    contract_id,
+                    type(contract_items).__name__,
+                )
+                continue
+
+            ESIContractItem.objects.filter(contract=contract).delete()
+            for item_data in contract_items:
+                item_payload = _normalize_esi_mapping(
+                    item_data,
+                    context=f"capital character contract item ({contract_id})",
+                )
+                if not item_payload:
+                    continue
+                ESIContractItem.objects.create(
+                    contract=contract,
+                    record_id=int(item_payload.get("record_id") or 0),
+                    type_id=int(item_payload.get("type_id") or 0),
+                    quantity=int(item_payload.get("quantity") or 0),
+                    raw_quantity=item_payload.get("raw_quantity"),
+                    is_included=bool(item_payload.get("is_included", False)),
+                    is_singleton=bool(item_payload.get("is_singleton", False)),
+                )
+                synced_item_count += 1
+            synced_items_contract_ids.add(contract_id)
+
+    if synced_contract_count or synced_item_count:
+        logger.info(
+            "Capital character contract sync completed: %s contracts, %s items.",
+            synced_contract_count,
+            synced_item_count,
+        )
+
+
 def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfig) -> None:
     if not bool(getattr(config, "capital_auto_cancel_on_state_change", False)):
         return
@@ -4474,24 +4691,49 @@ def process_capital_ship_orders():
             exc_info=True,
         )
 
-    active_orders = CapitalShipOrder.objects.filter(
-        config=config,
-        status__in=[
-            CapitalShipOrder.Status.WAITING,
-            CapitalShipOrder.Status.GATHERING_MATERIALS,
-            CapitalShipOrder.Status.IN_PRODUCTION,
-            CapitalShipOrder.Status.CONTRACT_CREATED,
-        ],
-    ).select_related("requester", "in_production_by")
-    if not active_orders.exists():
+    active_orders = list(
+        CapitalShipOrder.objects.filter(
+            config=config,
+            status__in=[
+                CapitalShipOrder.Status.WAITING,
+                CapitalShipOrder.Status.GATHERING_MATERIALS,
+                CapitalShipOrder.Status.IN_PRODUCTION,
+                CapitalShipOrder.Status.CONTRACT_CREATED,
+            ],
+        ).select_related("requester", "in_production_by")
+    )
+    if not active_orders:
         return
+
+    requester_character_ids_by_user_id = _collect_capital_requester_character_id_map(active_orders)
+    try:
+        _sync_capital_character_contracts(
+            orders=active_orders,
+            requester_character_ids_by_user_id=requester_character_ids_by_user_id,
+        )
+    except Exception as exc:
+        logger.warning("Failed capital personal-contract sync pass: %s", exc, exc_info=True)
+
+    requester_character_ids = sorted(
+        {
+            int(character_id)
+            for character_ids in requester_character_ids_by_user_id.values()
+            for character_id in character_ids
+            if int(character_id) > 0
+        }
+    )
+
+    contract_filter = Q(corporation_id=config.corporation_id)
+    if requester_character_ids:
+        contract_filter |= Q(corporation_id=0, assignee_id__in=requester_character_ids)
 
     contracts = list(
         ESIContract.objects.filter(
-            corporation_id=config.corporation_id,
             contract_type="item_exchange",
             title__icontains="INDY-CAP",
-        ).prefetch_related("items")
+        )
+        .filter(contract_filter)
+        .prefetch_related("items")
     )
     contracts_by_id = {int(contract.contract_id): contract for contract in contracts}
 
@@ -4515,16 +4757,19 @@ def process_capital_ship_orders():
             if not matching_by_title:
                 continue
 
-            expected_assignee_id = _get_user_main_character_id(order.requester)
-            if not expected_assignee_id:
-                character_ids = _get_user_character_ids(order.requester)
-                expected_assignee_id = character_ids[0] if character_ids else None
-            if not expected_assignee_id:
+            expected_assignee_ids = [
+                int(character_id)
+                for character_id in requester_character_ids_by_user_id.get(int(order.requester_id or 0), [])
+                if int(character_id) > 0
+            ]
+            if not expected_assignee_ids:
                 _set_capital_order_anomaly(
                     order,
-                    reason="User has no linked/main character for contract assignment.",
+                    reason="User has no linked character for contract assignment.",
                 )
                 continue
+            expected_assignee_id_set = set(expected_assignee_ids)
+            expected_assignee_id_labels = ", ".join(str(cid) for cid in sorted(expected_assignee_id_set))
 
             candidate_contract = None
             mismatch_reason = None
@@ -4535,17 +4780,23 @@ def process_capital_ship_orders():
             )
             for contract in sorted_matches:
                 assignee_id = int(getattr(contract, "assignee_id", 0) or 0)
-                if assignee_id != int(expected_assignee_id):
+                if assignee_id not in expected_assignee_id_set:
                     mismatch_reason = (
                         f"Contract #{contract.contract_id} assignee mismatch "
-                        f"(expected main character ID {int(expected_assignee_id)}, got {assignee_id})."
+                        f"(expected one of {expected_assignee_id_labels}, got {assignee_id})."
                     )
                     continue
 
+                contract_status = str(getattr(contract, "status", "") or "").strip().lower()
                 if not _capital_contract_has_requested_hull(
                     contract,
                     int(order.ship_type_id),
                 ):
+                    # Finished contracts can become inaccessible for item-level reads.
+                    # If title+assignee match, accept them and let status drive completion.
+                    if contract_status in finished_statuses:
+                        candidate_contract = contract
+                        break
                     mismatch_reason = (
                         f"Contract #{contract.contract_id} does not contain the requested hull "
                         f"{order.ship_type_name}."
@@ -4654,7 +4905,7 @@ def process_capital_ship_orders():
                     order.requester,
                     _("Capital Contract Created"),
                     _(
-                        f"The corporation created your contract for {order.order_reference}.\n"
+                        f"A contract has been created for {order.order_reference}.\n"
                         f"Contract #{candidate_contract.contract_id} is now available."
                     ),
                     level="success",

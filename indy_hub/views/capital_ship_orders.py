@@ -2057,7 +2057,9 @@ def capital_ship_order_update_offer(request, order_id: int):
         _(
             "A new offer is available for order %(ref)s.\n"
             "Proposed price: %(price)s ISK\n"
-            "Likely delivery: %(eta_min)s-%(eta_max)s days"
+            "Likely delivery: %(eta_min)s-%(eta_max)s days\n\n"
+            "**You must click the link below and accept or decline the offer to confirm delivery.**\n"
+            "If you decline the offer, please inform us via the chat *(also in the link)* of why."
         )
         % {
             "ref": order.order_reference,
@@ -2678,8 +2680,8 @@ def capital_ship_order_chat_decide(request, order_id: int):
         title=_("Capital Offer Declined"),
         body=_(
             "%(user)s declined the offer for %(ref)s.\n"
-            "Declined proposal: %(price)s ISK, %(eta)s days.\n"
-            "Review chat and update proposal."
+            "Declined proposal: %(price)s ISK, %(eta)s days.\n\n"
+            "**You must review chat and update the proposal or cancel the order**."
         )
         % {
             "user": order.requester.username,

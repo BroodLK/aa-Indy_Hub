@@ -28,6 +28,8 @@ from indy_hub.models import (
     CachedCharacterAsset,
     CachedStructureName,
     CharacterSettings,
+    ESIContract,
+    ESIContractItem,
     CorporationSharingSetting,
     IndustryJob,
     JobNotificationDigestEntry,
@@ -3230,3 +3232,85 @@ class CapitalOrderAdminActionsTests(TestCase):
         mock_notify_user.assert_not_called()
         order.refresh_from_db()
         self.assertNotIn("[CAPITAL_ETA_OVERDUE_NOTIFIED:", str(order.notes or ""))
+
+    def test_process_matches_personal_contract_assigned_to_any_linked_character(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        alt_character = EveCharacter.objects.create(
+            character_id=2025999,
+            character_name="Alt Pilot",
+            corporation_id=2_000_000,
+            corporation_name="Test Corp",
+            corporation_ticker="TEST",
+        )
+        CharacterOwnership.objects.create(
+            user=self.requester,
+            character=alt_character,
+            owner_hash=f"hash-{alt_character.character_id}-{self.requester.id}",
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=991_000_001,
+            issuer_id=8_888_001,
+            issuer_corporation_id=3_333_333,
+            assignee_id=alt_character.character_id,
+            contract_type="item_exchange",
+            status="outstanding",
+            title=order.order_reference,
+            date_issued=timezone.now() - timedelta(minutes=5),
+            date_expired=timezone.now() + timedelta(days=7),
+            corporation_id=0,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=77_000_001,
+            type_id=order.ship_type_id,
+            quantity=1,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+
+        process_capital_ship_orders()
+        order.refresh_from_db()
+
+        self.assertEqual(order.status, CapitalShipOrder.Status.CONTRACT_CREATED)
+        self.assertEqual(int(order.esi_contract_id or 0), int(contract.contract_id))
+
+    def test_process_can_complete_finished_personal_contract_without_cached_items(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        alt_character = EveCharacter.objects.create(
+            character_id=2026000,
+            character_name="Second Alt",
+            corporation_id=2_000_000,
+            corporation_name="Test Corp",
+            corporation_ticker="TEST",
+        )
+        CharacterOwnership.objects.create(
+            user=self.requester,
+            character=alt_character,
+            owner_hash=f"hash-{alt_character.character_id}-{self.requester.id}",
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=991_000_002,
+            issuer_id=8_888_002,
+            issuer_corporation_id=3_333_333,
+            assignee_id=alt_character.character_id,
+            contract_type="item_exchange",
+            status="finished",
+            title=order.order_reference,
+            date_issued=timezone.now() - timedelta(minutes=30),
+            date_expired=timezone.now() + timedelta(days=7),
+            date_completed=timezone.now() - timedelta(minutes=1),
+            corporation_id=0,
+        )
+
+        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+
+        process_capital_ship_orders()
+        order.refresh_from_db()
+
+        self.assertEqual(order.status, CapitalShipOrder.Status.COMPLETED)
+        self.assertEqual(int(order.esi_contract_id or 0), int(contract.contract_id))
+        self.assertIsNotNone(order.contract_completed_at)
