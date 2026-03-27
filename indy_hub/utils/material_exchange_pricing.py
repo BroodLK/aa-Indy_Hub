@@ -1,8 +1,8 @@
-"""Helpers for consistent Material Exchange pricing.
+"""Helpers for consistent Buyback pricing.
 
 The goal is to keep pricing logic identical across:
 - MaterialExchangeStock computed properties
-- Material Exchange buy/sell views (when using live Fuzzwork prices)
+- Buyback buy/sell views (when using live Fuzzwork prices)
 
 Prices are based on Jita buy/sell plus a configurable markup, with an optional
 "bounds" mode that clamps prices inside the Jita buy/sell spread.
@@ -82,3 +82,4 @@ def compute_buy_price_from_member(
         percent=getattr(config, "sell_markup_percent", Decimal("0")),
         enforce_bounds=bool(getattr(config, "enforce_jita_price_bounds", False)),
     )
+

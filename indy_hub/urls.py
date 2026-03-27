@@ -353,7 +353,7 @@ urlpatterns = [
         onboarding_set_visibility,
         name="onboarding_set_visibility",
     ),
-    # Material Exchange
+    # Buyback
     path(
         "material-exchange/",
         material_exchange_index,
@@ -703,3 +703,4 @@ urlpatterns = [
         name="reprocessing_request_dispute",
     ),
 ]
+

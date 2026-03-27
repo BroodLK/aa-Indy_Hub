@@ -121,8 +121,9 @@
 }
 
 .cap-status-cell .status-badge {
-    min-width: 128px;
+    min-width: 150px;
     justify-content: center;
+    white-space: nowrap;
 }
 
 .cap-update-summary {

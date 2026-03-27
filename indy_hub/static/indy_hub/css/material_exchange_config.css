@@ -1,4 +1,4 @@
-/* Material Exchange Configuration Styles */
+/* Buyback Configuration Styles */
 
 /* --- Page theming (reduce “too white”) --- */
 
@@ -726,4 +726,5 @@ html[data-theme="darkly"] .me-config .me-pill-success {
     border-color: rgba(255, 255, 255, 0.12);
     color: rgba(255, 255, 255, 0.85);
 }
+
 

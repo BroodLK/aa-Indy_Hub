@@ -2433,7 +2433,7 @@ def token_management(request):
         _("Blueprints"),
         _("Industry"),
         _("Assets"),
-        _("Material Exchange"),
+        _("Buyback"),
     ]
 
     enhanced_corp_scope_status: list[dict[str, Any]] = []
@@ -2715,7 +2715,7 @@ def authorize_material_exchange(request):
     next_url = _resolve_next_url(request)
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(
-            request, "You do not have permission to manage Material Exchange."
+            request, "You do not have permission to manage the Buyback."
         )
         return redirect(next_url) if next_url else redirect("indy_hub:token_management")
     if not CallbackRedirect:
@@ -2730,9 +2730,9 @@ def authorize_material_exchange(request):
             return_to="indy_hub:token_management",
         )
     except Exception as e:
-        logger.error(f"Error creating Material Exchange authorization: {e}")
+        logger.error(f"Error creating Buyback authorization: {e}")
         messages.error(
-            request, f"Error setting up Material Exchange authorization: {e}"
+            request, f"Error setting up Buyback authorization: {e}"
         )
         return redirect(next_url) if next_url else redirect("indy_hub:token_management")
 
@@ -3642,3 +3642,4 @@ def rename_production_simulation(request, simulation_id):
     context.update(build_nav_context(request.user, active_tab="industry"))
 
     return render(request, "indy_hub/industry/rename_simulation.html", context)
+

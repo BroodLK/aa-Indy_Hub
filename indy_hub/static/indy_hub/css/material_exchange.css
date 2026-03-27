@@ -1,4 +1,4 @@
-/* Material Exchange Styles */
+/* Buyback Styles */
 
 /* Override blueprint variables to remove borders */
 :root {
@@ -1946,3 +1946,4 @@ html[data-theme="darkly"] .me-transactions-table .me-order-item-row td {
     position: relative;
     min-height: 320px;
 }
+

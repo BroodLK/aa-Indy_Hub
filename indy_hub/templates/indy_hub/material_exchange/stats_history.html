@@ -3,7 +3,7 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "Material Exchange Stats" %}{% endblock page_title %}
+{% block page_title %}{% trans "Buyback Stats" %}{% endblock page_title %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
@@ -18,7 +18,7 @@
             <div>
                 <h2 class="h3 mb-1">
                     <i class="fas fa-chart-line me-2"></i>
-                    {% trans "Material Exchange Stats" %}
+                    {% trans "Buyback Stats" %}
                 </h2>
                 <p class="description mb-0">{% trans "Simple totals from wallet activity and contract-backed buy/sell orders." %}</p>
             </div>
@@ -358,3 +358,4 @@
     </div>
 </div>
 {% endblock content %}
+

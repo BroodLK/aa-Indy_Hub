@@ -36,7 +36,10 @@ from indy_hub.services.reprocessing import (
     fetch_character_skill_levels,
     resolve_processing_skill_level_for_item,
 )
-from indy_hub.views.reprocessing_services import _parse_request_item_lines
+from indy_hub.views.reprocessing_services import (
+    _infer_supported_structure_type,
+    _parse_request_item_lines,
+)
 
 
 class ReprocessingReferenceTests(TestCase):
@@ -637,6 +640,27 @@ class ReprocessingCorptoolsFallbackTests(TestCase):
         clones = fetch_character_clone_options(9000001)
         self.assertEqual(len(clones), 1)
         self.assertEqual(clones[0]["clone_id"], 11)
+
+
+class ReprocessingStructureInferenceTests(TestCase):
+    def test_does_not_infer_structure_from_moon_drill_name(self):
+        inferred = _infer_supported_structure_type(
+            structure_type_id=None,
+            structure_name="Standup Moon Drill I",
+            structure_type_name="",
+            structure_flags={"MoonMaterialBay"},
+        )
+        self.assertIsNone(inferred)
+
+    def test_still_infers_athanor_from_moon_material_bay_when_name_is_generic(self):
+        inferred = _infer_supported_structure_type(
+            structure_type_id=None,
+            structure_name="Refinery Alpha",
+            structure_type_name="",
+            structure_flags={"MoonMaterialBay"},
+        )
+        self.assertIsNotNone(inferred)
+        self.assertEqual(inferred[0], 35835)
 
 
 class ReprocessingRequestLineParsingTests(TestCase):

@@ -19,7 +19,7 @@
                     <i class="fas fa-gear me-2"></i>
                     {% trans "Settings" %}
                 </h2>
-                <p class="description mb-0">{% trans "Configure notifications, sharing scopes, and material exchange access." %}</p>
+                <p class="description mb-0">{% trans "Configure notifications, sharing scopes, and buyback access." %}</p>
             </div>
             <div class="d-flex gap-2">
                 <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
@@ -358,8 +358,8 @@
             <section class="dashboard-section">
                 <header class="section-heading">
                     <div>
-                        <h3>{% trans "Material Exchange" %}</h3>
-                        <p class="text-muted small mb-0">{% trans "Configure and manage material exchange hubs across your corporations." %}</p>
+                        <h3>{% trans "Buyback" %}</h3>
+                        <p class="text-muted small mb-0">{% trans "Configure and manage buyback hubs across your corporations." %}</p>
                     </div>
                 </header>
                 <div class="card focus-card">
@@ -492,3 +492,4 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 <script src="{% static 'indy_hub/js/index.js' %}"></script>
 {% endblock extra_javascript %}
+

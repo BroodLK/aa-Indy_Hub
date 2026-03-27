@@ -42,7 +42,7 @@ def settings_hub(request):
         }
     )
 
-    # Material Exchange counters
+    # Buyback counters
     context["material_exchange_config_total"] = MaterialExchangeConfig.objects.count()
     context["material_exchange_enabled"] = (
         MaterialExchangeSettings.get_solo().is_enabled
@@ -80,3 +80,4 @@ def test_darkly_theme(request):
     emit_view_analytics_event(view_name="test_darkly_theme", request=request)
     logger.debug("Darkly theme test page accessed (user_id=%s)", request.user.id)
     return render(request, "indy_hub/test_darkly_theme.html")
+

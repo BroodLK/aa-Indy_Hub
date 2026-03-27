@@ -986,8 +986,13 @@ def _remaining_eta_days_from_anchor(
 
 def _attach_user_display_fields(order: CapitalShipOrder) -> None:
     order.display_price_isk = order.agreed_price_isk or order.offer_price_isk
+    order.display_eta_min_days = None
+    order.display_eta_max_days = None
+    order.display_eta_label = ""
     order.display_eta_is_countdown = False
     order.display_eta_is_overdue = False
+    if order.status == CapitalShipOrder.Status.COMPLETED:
+        return
     if order.definitive_eta_min_days is not None and order.definitive_eta_max_days is not None:
         remaining_min_days_raw = _remaining_eta_days_from_anchor(
             order.definitive_eta_min_days,
@@ -1077,12 +1082,12 @@ def capital_ship_orders(request):
     emit_view_analytics_event(view_name="capital_ship_orders.index", request=request)
 
     if not _is_material_exchange_enabled():
-        messages.warning(request, "Material Exchange is disabled.")
+        messages.warning(request, "Buyback is disabled.")
         return redirect("indy_hub:material_exchange_index")
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, "Material Exchange is not configured.")
+        messages.warning(request, "Buyback is not configured.")
         return redirect("indy_hub:material_exchange_index")
 
     ship_options = _load_capital_ship_options(config=config)
@@ -1218,7 +1223,7 @@ def capital_ship_orders_admin(request):
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, "Material Exchange is not configured.")
+        messages.warning(request, "Buyback is not configured.")
         return redirect("indy_hub:material_exchange_index")
 
     orders_qs = CapitalShipOrder.objects.filter(config=config).select_related(
@@ -1324,7 +1329,7 @@ def capital_ship_orders_config(request):
     if not config:
         messages.warning(
             request,
-            "Material Exchange must be configured before capital order settings can be edited.",
+            "Buyback must be configured before capital order settings can be edited.",
         )
         return redirect("indy_hub:material_exchange_config")
 
@@ -2496,7 +2501,7 @@ def capital_ship_order_chat_send(request, order_id: int):
             order.requester,
             _("Capital Order Chat Message"),
             _(
-                "A material exchange admin sent a new message for order %(ref)s."
+                "An admin sent a new message for order %(ref)s."
             )
             % {"ref": order.order_reference},
             level="info",
@@ -2694,3 +2699,4 @@ def capital_ship_order_chat_decide(request, order_id: int):
         link=f"/indy_hub/material-exchange/capital-orders/admin/?open_chat={chat.id}",
     )
     return JsonResponse({"status": "rejected"})
+

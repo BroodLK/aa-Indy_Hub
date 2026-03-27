@@ -92,7 +92,7 @@ _TOKEN_SCOPE_GROUPS = {
             "esi-markets.read_corporation_orders.v1",
             "esi-universe.read_structures.v1",
         ],
-        "label": "Material Exchange",
+        "label": "Buyback",
     },
 }
 
@@ -327,7 +327,7 @@ def detect_config_change(sender, instance, **kwargs):
 @receiver(post_save, sender=MaterialExchangeConfig)
 def auto_sync_stock_on_config_change(sender, instance, created, **kwargs):
     """
-    When Material Exchange configuration is created or key fields change,
+    When Buyback configuration is created or key fields change,
     immediately refresh stock (and prices) so pages reflect the new structure.
     """
     needs_sync = created or getattr(instance, "_needs_exchange_sync", False)
@@ -586,3 +586,4 @@ def notify_admins_on_capital_order_created(sender, instance, created, **kwargs):
             )
 
     transaction.on_commit(_enqueue_notification_task)
+

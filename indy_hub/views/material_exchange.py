@@ -1,4 +1,4 @@
-"""Material Exchange views for Indy Hub."""
+"""Buyback views for Indy Hub."""
 
 # Standard Library
 from datetime import datetime, time
@@ -617,7 +617,7 @@ def _find_sell_locations_for_type(
 
 
 def _get_material_exchange_admins() -> list[User]:
-    """Return active admins for Material Exchange (explicit permission holders only)."""
+    """Return active admins for Buyback (explicit permission holders only)."""
 
     try:
         perm = Permission.objects.get(
@@ -3378,7 +3378,7 @@ def _selected_buy_stock_items_share_source_location(
 @indy_hub_permission_required("can_access_indy_hub")
 def material_exchange_index(request):
     """
-    Material Exchange hub landing page.
+    Buyback hub landing page.
     Shows overview, recent transactions, and quick stats.
     """
     emit_view_analytics_event(view_name="material_exchange.index", request=request)
@@ -3635,12 +3635,12 @@ def material_exchange_history(request):
         return redirect("indy_hub:material_exchange_index")
 
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
     closed_statuses = ["completed", "rejected", "cancelled"]
 
@@ -3685,12 +3685,12 @@ def material_exchange_sell(request, tokens):
     """
     emit_view_analytics_event(view_name="material_exchange.sell", request=request)
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
     sell_structure_ids = config.get_sell_structure_ids()
     if not sell_structure_ids:
@@ -4573,12 +4573,12 @@ def material_exchange_buy(request, tokens):
     """
     emit_view_analytics_event(view_name="material_exchange.buy", request=request)
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
     if not bool(getattr(config, "buy_enabled", True)):
         messages.info(request, _("Buy orders are currently disabled for this hub."))
@@ -5290,11 +5290,11 @@ def material_exchange_sync_stock(request, tokens):
     """
     emit_view_analytics_event(view_name="material_exchange.sync_stock", request=request)
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     if not _get_material_exchange_config():
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
 
     try:
@@ -5331,11 +5331,11 @@ def material_exchange_sync_prices(request):
         view_name="material_exchange.sync_prices", request=request
     )
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     if not _get_material_exchange_config():
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
 
     try:
@@ -5717,12 +5717,12 @@ def material_exchange_transactions(request):
     Shows all completed transactions with filters and monthly aggregates.
     """
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
 
     # Filters
@@ -5960,14 +5960,14 @@ def material_exchange_stats_history(request):
     emit_view_analytics_event(
         view_name="material_exchange.stats_history", request=request
     )
-    """Material Exchange stats based on all non-capital orders."""
+    """Buyback stats based on all non-capital orders."""
     if not _is_material_exchange_enabled():
-        messages.warning(request, _("Material Exchange is disabled."))
+        messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
 
     config = _get_material_exchange_config()
     if not config:
-        messages.warning(request, _("Material Exchange is not configured."))
+        messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
 
     settings_obj = MaterialExchangeSettings.get_solo()
@@ -6203,7 +6203,7 @@ def material_exchange_stats_history(request):
     if not selected_config_ids:
         stats_scope_mode = "empty"
         stats_scope_note = _(
-            "No Material Exchange configs found for this corporation yet."
+            "No Buyback configs found for this corporation yet."
         )
     buy_orders_qs = MaterialExchangeBuyOrder.objects.filter(
         config_id__in=selected_config_ids
@@ -7555,7 +7555,7 @@ def material_exchange_stats_history(request):
         "most_bought_users": most_bought_users,
         "donation_stats": donation_stats,
         "data_limitations": _(
-            "Actual bought/sold totals prefer matched ESI contract prices and fall back to Material Exchange transaction totals when a contract price is missing. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window. Wallet supplemental adjustments are only applied to net profit when contract-backed activity exists in the selected range."
+            "Actual bought/sold totals prefer matched ESI contract prices and fall back to Buyback transaction totals when a contract price is missing. Wallet activity (donations, withdrawals, fees, market refs) is supplemental. Forecast fields are run-rate estimates from the selected date window. Wallet supplemental adjustments are only applied to net profit when contract-backed activity exists in the selected range."
         ),
         "nav_context": _build_nav_context(request.user),
     }
@@ -7630,7 +7630,7 @@ def material_exchange_assign_contract(request, order_id):
 
 
 def _build_nav_context(user):
-    """Helper to build navigation context for Material Exchange."""
+    """Helper to build navigation context for Buyback."""
     return {
         "can_manage": user.has_perm("indy_hub.can_manage_material_hub"),
     }
@@ -7648,3 +7648,4 @@ def _get_corp_name_for_hub(corporation_id: int) -> str:
     except Exception:
         pass
     return f"Corp {corporation_id}"
+

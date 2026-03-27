@@ -1,4 +1,4 @@
-/* Shared list styling for Blueprint Copy pages (modeled after material exchange lists) */
+/* Shared list styling for Blueprint Copy pages (modeled after buyback lists) */
 
 .metric-tile-link {
     text-decoration: none;
@@ -1283,3 +1283,4 @@ html[data-theme="darkly"] .requests-panel {
         padding: 0.35rem 0.5rem;
     }
 }
+

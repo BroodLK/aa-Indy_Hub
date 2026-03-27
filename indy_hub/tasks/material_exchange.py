@@ -1,5 +1,5 @@
 """
-Material Exchange Celery tasks for stock sync, pricing, and payment verification.
+Buyback Celery tasks for stock sync, pricing, and payment verification.
 """
 
 # Standard Library
@@ -601,7 +601,7 @@ def _me_buy_stock_refresh_progress_key(corporation_id: int) -> str:
     soft_time_limit=280,
 )
 def refresh_material_exchange_buy_stock(corporation_id: int) -> None:
-    """Refresh corporation assets and update Material Exchange stock for buy page.
+    """Refresh corporation assets and update Buyback stock for buy page.
 
     Progress is stored in the Django cache and consumed by the buy page.
     """
@@ -615,8 +615,8 @@ def refresh_material_exchange_buy_stock(corporation_id: int) -> None:
         logger.info("Fetching corporation assets from ESI for %s", corporation_id)
         force_refresh_corp_assets(int(corporation_id))
 
-        # Now sync the material exchange stock based on fresh corp assets
-        logger.info("Syncing Material Exchange stock from refreshed corp assets")
+        # Now sync the buyback stock based on fresh corp assets
+        logger.info("Syncing Buyback stock from refreshed corp assets")
         _sync_stock_impl()
 
         cache.set(
@@ -733,7 +733,7 @@ def _sync_stock_impl():
     try:
         config = MaterialExchangeConfig.objects.first()
         if not config:
-            logger.warning("Material Exchange not configured - skipping stock sync")
+            logger.warning("Buyback not configured - skipping stock sync")
             return
 
         # Filter assets for specific structure and hangar division
@@ -768,7 +768,7 @@ def _sync_stock_impl():
         target_structure_ids = config.get_buy_structure_ids()
         if not target_structure_ids:
             logger.warning(
-                "No buy locations configured on Material Exchange config %s; clearing stock",
+                "No buy locations configured on Buyback config %s; clearing stock",
                 config.pk,
             )
             MaterialExchangeStock.objects.filter(config=config).delete()
@@ -1078,7 +1078,7 @@ def _sync_stock_impl():
             config.save(update_fields=["last_stock_sync"])
 
         logger.info(
-            "Material Exchange stock sync completed: %s types updated",
+            "Buyback stock sync completed: %s types updated",
             len(stock_updates),
         )
 
@@ -1102,7 +1102,7 @@ def _sync_stock_impl():
         )
 
     except Exception as e:
-        logger.exception(f"Error syncing material exchange stock: {e}")
+        logger.exception(f"Error syncing buyback stock: {e}")
         emit_analytics_event(
             task="material_exchange.sync_stock",
             label="failed",
@@ -1165,7 +1165,7 @@ def sync_material_exchange_prices():
                 config.save(update_fields=["last_price_sync"])
 
         logger.info(
-            f"Material Exchange prices sync completed: {len(type_ids)} types updated"
+            f"Buyback prices sync completed: {len(type_ids)} types updated"
         )
         emit_analytics_event(
             task="material_exchange.sync_prices",
@@ -1175,9 +1175,10 @@ def sync_material_exchange_prices():
         )
 
     except Exception as e:
-        logger.exception(f"Error syncing material exchange prices: {e}")
+        logger.exception(f"Error syncing buyback prices: {e}")
         emit_analytics_event(
             task="material_exchange.sync_prices",
             label="failed",
             result="error",
         )
+

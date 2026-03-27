@@ -243,7 +243,7 @@
                         </div>
                         {% if selected_profile and selected_profile.admin_force_unavailable %}
                         <div class="small text-danger mt-1">
-                            {% trans "Availability is currently disabled by a Material Exchange admin. You can edit your profile, but only admins can re-enable availability." %}
+                            {% trans "Availability is currently disabled by an admin. You can edit your profile, but only admins can re-enable availability." %}
                         </div>
                         {% endif %}
 
@@ -411,3 +411,4 @@
     })();
 </script>
 {% endblock extra_javascript %}
+

@@ -47,7 +47,7 @@ INDY_HUB_BEAT_SCHEDULE = {
         "options": {"priority": 7},
         "apply_offset": True,
     },
-    # Material Exchange combined cycle: sync -> validate -> check completed
+    # Buyback combined cycle: sync -> validate -> check completed
     "indy-hub-material-exchange-cycle": {
         "task": "indy_hub.tasks.material_exchange_contracts.run_material_exchange_cycle",
         "schedule": crontab(minute="*/5"),  # Every 5 minutes
@@ -56,3 +56,4 @@ INDY_HUB_BEAT_SCHEDULE = {
     },
     # Removed: indy-hub-refresh-production-items - now using indy_hub SDE industry tables
 }
+

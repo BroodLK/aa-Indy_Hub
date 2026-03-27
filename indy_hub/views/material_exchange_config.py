@@ -1,4 +1,4 @@
-"""Material Exchange Configuration views."""
+"""Buyback Configuration views."""
 
 # Standard Library
 import hashlib
@@ -428,7 +428,7 @@ def material_exchange_request_all_scopes(request):
     emit_view_analytics_event(
         view_name="material_exchange_config.request_all_scopes", request=request
     )
-    Request all Material Exchange required ESI scopes at once.
+    Request all Buyback required ESI scopes at once.
 
     Required scopes:
     - esi-assets.read_corporation_assets.v1 (for structures)
@@ -557,7 +557,7 @@ def material_exchange_config(request, tokens):
         view_name="material_exchange_config.page", request=request
     )
     """
-    Material Exchange configuration page.
+    Buyback configuration page.
     Allows admins to configure corp, structure, and pricing.
     """
     config = MaterialExchangeConfig.objects.first()
@@ -1001,7 +1001,7 @@ def material_exchange_toggle_active(request):
     emit_view_analytics_event(
         view_name="material_exchange_config.toggle_active", request=request
     )
-    """Toggle Material Exchange availability from settings page."""
+    """Toggle Buyback availability from settings page."""
 
     if request.method != "POST":
         return redirect("indy_hub:settings_hub")
@@ -1013,7 +1013,7 @@ def material_exchange_toggle_active(request):
     if settings_obj.is_enabled == desired_active:
         messages.info(
             request,
-            _("No change: Material Exchange is already {state}.").format(
+            _("No change: Buyback is already {state}.").format(
                 state=_("enabled") if settings_obj.is_enabled else _("disabled")
             ),
         )
@@ -1039,9 +1039,9 @@ def material_exchange_toggle_active(request):
         # Beat not installed or table missing; ignore
         pass
     if desired_active:
-        messages.success(request, _("Material Exchange enabled."))
+        messages.success(request, _("Buyback enabled."))
     else:
-        messages.success(request, _("Material Exchange disabled."))
+        messages.success(request, _("Buyback disabled."))
 
     return redirect(next_url)
 
@@ -2091,7 +2091,7 @@ def _get_market_group_search_index_for_ids(
 
 
 def _handle_config_save(request, existing_config):
-    """Handle POST request to save Material Exchange configuration."""
+    """Handle POST request to save Buyback configuration."""
 
     corporation_id = request.POST.get("corporation_id")
     sell_structure_ids_raw = request.POST.getlist("sell_structure_ids")
@@ -3286,7 +3286,7 @@ def _handle_config_save(request, existing_config):
             existing_config.save()
             target_config = existing_config
             messages.success(
-                request, _("Material Exchange configuration updated successfully.")
+                request, _("Buyback configuration updated successfully.")
             )
         else:
             target_config = MaterialExchangeConfig.objects.create(
@@ -3334,7 +3334,7 @@ def _handle_config_save(request, existing_config):
                 is_active=is_active,
             )
             messages.success(
-                request, _("Material Exchange configuration created successfully.")
+                request, _("Buyback configuration created successfully.")
             )
 
         desired_type_ids = {
@@ -3458,3 +3458,4 @@ def material_exchange_debug_tokens(request, corp_id, tokens):
     return JsonResponse(
         {"corp_id": int(corp_id), "scope_filter": scope or None, "tokens": results}
     )
+

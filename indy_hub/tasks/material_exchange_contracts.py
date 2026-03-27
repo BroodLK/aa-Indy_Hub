@@ -1,5 +1,5 @@
 """
-Material Exchange contract validation and processing tasks.
+Buyback contract validation and processing tasks.
 Handles ESI contract checking, validation, and PM notifications for sell/buy orders.
 """
 
@@ -174,7 +174,7 @@ def _normalize_esi_mapping(payload, *, context: str) -> dict | None:
             if isinstance(result, dict):
                 return result
     logger.warning(
-        "Unexpected %s payload type for material exchange contracts: %s",
+        "Unexpected %s payload type for buyback contracts: %s",
         context,
         type(payload).__name__,
     )
@@ -396,7 +396,7 @@ def sync_esi_contracts():
     Fetch corporation contracts from ESI and store/update them in the database.
 
     This task:
-    1. Fetches all active Material Exchange configs
+    1. Fetches all active Buyback configs
     2. For each config, fetches corporation contracts from ESI
     3. Stores/updates contracts and their items in the database
     4. Removes stale contracts (expired/deleted from ESI)
@@ -405,14 +405,14 @@ def sync_esi_contracts():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Material Exchange disabled; skipping contract sync.")
+            logger.info("Buyback disabled; skipping contract sync.")
             return
     except Exception:
         pass
 
     configs = MaterialExchangeConfig.objects.all()
     if not configs.exists():
-        logger.info("Material Exchange not configured; skipping contract sync.")
+        logger.info("Buyback not configured; skipping contract sync.")
         return
 
     for config in configs:
@@ -1207,7 +1207,7 @@ def run_material_exchange_cycle():
     """
     End-to-end cycle: sync contracts, validate pending sell orders,
     validate pending buy orders, then check completion of approved orders.
-    Reprocessing contract automation runs regardless of Material Exchange config.
+    Reprocessing contract automation runs regardless of Buyback config.
     Intended to be scheduled in Celery Beat to simplify orchestration.
     """
     material_exchange_enabled = True
@@ -1235,7 +1235,7 @@ def run_material_exchange_cycle():
         check_completed_material_exchange_contracts()
     else:
         logger.info(
-            "Skipping Material Exchange contract workflow (enabled=%s, has_config=%s).",
+            "Skipping Buyback contract workflow (enabled=%s, has_config=%s).",
             material_exchange_enabled,
             material_exchange_has_config,
         )
@@ -1328,7 +1328,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
             if not contract_id:
                 continue
 
-            # Filter: process Indy Hub contract titles for material exchange, reprocessing, and capitals.
+            # Filter: process Indy Hub contract titles for buyback, reprocessing, and capitals.
             contract_title = contract_payload.get("title", "")
             contract_title_upper = str(contract_title or "").upper()
             if not any(
@@ -1497,14 +1497,14 @@ def validate_material_exchange_sell_orders():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Material Exchange disabled; skipping sell validation.")
+            logger.info("Buyback disabled; skipping sell validation.")
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.warning("No Material Exchange config found")
+        logger.warning("No Buyback config found")
         return
 
     pending_orders = MaterialExchangeSellOrder.objects.filter(
@@ -1588,14 +1588,14 @@ def validate_material_exchange_buy_orders():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Material Exchange disabled; skipping buy validation.")
+            logger.info("Buyback disabled; skipping buy validation.")
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.warning("No Material Exchange config found")
+        logger.warning("No Buyback config found")
         return
 
     pending_orders = MaterialExchangeBuyOrder.objects.filter(
@@ -4673,7 +4673,7 @@ def process_capital_ship_orders():
     """Auto-advance capital ship orders from contracts and contract status."""
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Material Exchange disabled; skipping capital order processing.")
+            logger.info("Buyback disabled; skipping capital order processing.")
             return
     except Exception:
         pass
@@ -5015,7 +5015,7 @@ def check_completed_material_exchange_contracts():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Material Exchange disabled; skipping completion check.")
+            logger.info("Buyback disabled; skipping completion check.")
             return
     except Exception:
         pass
@@ -5495,7 +5495,7 @@ def _notify_material_exchange_admins(
     link: str | None = None,
     thumbnail_url: str | None = None,
 ) -> None:
-    """Notify Material Exchange admins or send to webhook if configured."""
+    """Notify Buyback admins or send to webhook if configured."""
 
     webhook = NotificationWebhook.get_material_exchange_webhook()
     if webhook and webhook.webhook_url:
@@ -5525,7 +5525,7 @@ def _notify_material_exchange_admins(
 
 def _get_admins_for_config(config: MaterialExchangeConfig) -> list[User]:
     """
-    Get users to notify about material exchange orders.
+    Get users to notify about buyback orders.
     Includes: users with explicit can_manage_material_hub permission only.
     """
     # Django
@@ -5560,3 +5560,4 @@ def _get_corp_name(corporation_id: int) -> str:
     except Exception:
         pass
     return f"Corp {corporation_id}"
+

@@ -1,5 +1,5 @@
 """
-Material Exchange - User Order Management Views.
+Buyback - User Order Management Views.
 Handles user-facing order tracking, details, and history.
 """
 
@@ -1327,3 +1327,4 @@ def buy_order_delete(request, order_id):
         "indy_hub/material_exchange/order_delete_confirm.html",
         context,
     )
+

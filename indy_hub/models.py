@@ -1423,7 +1423,7 @@ class NotificationWebhook(models.Model):
     TYPE_BLUEPRINT_SHARING = "blueprint_sharing"
 
     TYPE_CHOICES = [
-        (TYPE_MATERIAL_EXCHANGE, "Material Exchange"),
+        (TYPE_MATERIAL_EXCHANGE, "Buyback"),
         (TYPE_BLUEPRINT_SHARING, "Blueprint sharing"),
     ]
 
@@ -1451,7 +1451,7 @@ class NotificationWebhook(models.Model):
         if self.webhook_type == self.TYPE_BLUEPRINT_SHARING:
             corp_label = ", ".join(self.corporation_names or []) or "(no corp)"
             return f"{label} - Blueprint sharing ({corp_label})"
-        return f"{label} - Material Exchange"
+        return f"{label} - Buyback"
 
     def clean(self):
         # Django
@@ -1462,7 +1462,7 @@ class NotificationWebhook(models.Model):
                 raise ValidationError(
                     {
                         NON_FIELD_ERRORS: [
-                            "Corporations must be empty for Material Exchange webhooks."
+                            "Corporations must be empty for Buyback webhooks."
                         ]
                     }
                 )
@@ -1818,38 +1818,38 @@ class ProductionSimulation(models.Model):
 
 
 # ============================================================================
-# Material Exchange (Corp Supply Hub) Models
+# Buyback (Corp Supply Hub) Models
 # ============================================================================
 
 
 class MaterialExchangeSettings(models.Model):
-    """Global settings for Material Exchange enable/disable state."""
+    """Global settings for Buyback enable/disable state."""
 
     is_enabled = models.BooleanField(
         default=True,
-        help_text=_("Enable/disable the Material Exchange module"),
+        help_text=_("Enable/disable the Buyback module"),
     )
     stats_selected_corporation_id = models.BigIntegerField(
         null=True,
         blank=True,
-        help_text=_("Saved corporation selection for Material Exchange stats."),
+        help_text=_("Saved corporation selection for Buyback stats."),
     )
     stats_selected_wallet_division = models.IntegerField(
         null=True,
         blank=True,
         validators=[MinValueValidator(1), MaxValueValidator(7)],
-        help_text=_("Saved wallet division selection for Material Exchange stats."),
+        help_text=_("Saved wallet division selection for Buyback stats."),
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Settings")
-        verbose_name_plural = _("Material Exchange Settings")
+        verbose_name = _("Buyback Settings")
+        verbose_name_plural = _("Buyback Settings")
         default_permissions = ()
 
     def __str__(self):
-        return f"Material Exchange Settings (enabled={self.is_enabled})"
+        return f"Buyback Settings (enabled={self.is_enabled})"
 
     @classmethod
     def get_solo(cls) -> "MaterialExchangeSettings":
@@ -1861,7 +1861,7 @@ class MaterialExchangeSettings(models.Model):
 
 class MaterialExchangeConfig(models.Model):
     """
-    Global configuration for the Material Exchange hub.
+    Global configuration for the Buyback hub.
     Stores structure location, hangar division, and pricing rules.
     """
 
@@ -1903,7 +1903,7 @@ class MaterialExchangeConfig(models.Model):
     )
     buy_enabled = models.BooleanField(
         default=True,
-        help_text=_("Enable/disable Material Exchange buy orders."),
+        help_text=_("Enable/disable Buyback buy orders."),
     )
     allow_fitted_ships = models.BooleanField(
         default=False,
@@ -2119,19 +2119,19 @@ class MaterialExchangeConfig(models.Model):
 
     # Status
     is_active = models.BooleanField(
-        default=True, help_text=_("Enable/disable the Material Exchange")
+        default=True, help_text=_("Enable/disable the Buyback")
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Configuration")
-        verbose_name_plural = _("Material Exchange Configurations")
+        verbose_name = _("Buyback Configuration")
+        verbose_name_plural = _("Buyback Configurations")
         default_permissions = ()
 
     def __str__(self):
-        return f"Material Exchange Config (Corp {self.corporation_id})"
+        return f"Buyback Config (Corp {self.corporation_id})"
 
     def _normalize_structure_ids(self, raw_ids) -> list[int]:
         ids: list[int] = []
@@ -2396,7 +2396,7 @@ class MaterialExchangeConfig(models.Model):
 
 
 class MaterialExchangeItemPriceOverride(models.Model):
-    """Per-item Material Exchange price override for a configuration."""
+    """Per-item Buyback price override for a configuration."""
 
     config = models.ForeignKey(
         MaterialExchangeConfig,
@@ -2457,8 +2457,8 @@ class MaterialExchangeItemPriceOverride(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Item Price Override")
-        verbose_name_plural = _("Material Exchange Item Price Overrides")
+        verbose_name = _("Buyback Item Price Override")
+        verbose_name_plural = _("Buyback Item Price Overrides")
         default_permissions = ()
         unique_together = ("config", "type_id")
         indexes = [
@@ -2583,7 +2583,7 @@ class MaterialExchangeStock(models.Model):
     """
     Cached stock levels from corporation assets (ESI).
     Refreshed on-demand via Celery task.
-    Single source of truth for Material Exchange inventory.
+    Single source of truth for Buyback inventory.
     """
 
     config = models.ForeignKey(
@@ -2622,8 +2622,8 @@ class MaterialExchangeStock(models.Model):
     )
 
     class Meta:
-        verbose_name = _("Material Exchange Stock")
-        verbose_name_plural = _("Material Exchange Stock")
+        verbose_name = _("Buyback Stock")
+        verbose_name_plural = _("Buyback Stock")
         default_permissions = ()
         unique_together = ("config", "type_id")
         indexes = [
@@ -2770,8 +2770,8 @@ class MaterialExchangeSellOrder(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Sell Order")
-        verbose_name_plural = _("Material Exchange Sell Orders")
+        verbose_name = _("Buyback Sell Order")
+        verbose_name_plural = _("Buyback Sell Orders")
         default_permissions = ()
         ordering = ["-created_at"]
         indexes = [
@@ -2893,8 +2893,8 @@ class MaterialExchangeSellOrderItem(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Sell Order Item")
-        verbose_name_plural = _("Material Exchange Sell Order Items")
+        verbose_name = _("Buyback Sell Order Item")
+        verbose_name_plural = _("Buyback Sell Order Items")
         default_permissions = ()
         ordering = ["created_at"]
         indexes = [
@@ -3012,8 +3012,8 @@ class MaterialExchangeBuyOrder(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Buy Order")
-        verbose_name_plural = _("Material Exchange Buy Orders")
+        verbose_name = _("Buyback Buy Order")
+        verbose_name_plural = _("Buyback Buy Orders")
         default_permissions = ()
         ordering = ["-created_at"]
         indexes = [
@@ -3138,8 +3138,8 @@ class MaterialExchangeBuyOrderItem(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Buy Order Item")
-        verbose_name_plural = _("Material Exchange Buy Order Items")
+        verbose_name = _("Buyback Buy Order Item")
+        verbose_name_plural = _("Buyback Buy Order Items")
         default_permissions = ()
         ordering = ["created_at"]
         indexes = [
@@ -3366,7 +3366,7 @@ class CapitalShipOrder(models.Model):
 class CapitalShipOrderChat(models.Model):
     class SenderRole(models.TextChoices):
         REQUESTER = "requester", _("Requester")
-        ADMIN = "admin", _("Material Exchange Admin")
+        ADMIN = "admin", _("Buyback Admin")
         SYSTEM = "system", _("System")
 
     order = models.OneToOneField(
@@ -3642,8 +3642,8 @@ class MaterialExchangeTransaction(models.Model):
     completed_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        verbose_name = _("Material Exchange Transaction")
-        verbose_name_plural = _("Material Exchange Transactions")
+        verbose_name = _("Buyback Transaction")
+        verbose_name_plural = _("Buyback Transactions")
         default_permissions = ()
         ordering = ["-completed_at"]
         indexes = [
@@ -3773,7 +3773,7 @@ class ReprocessingServiceProfile(models.Model):
     admin_force_unavailable = models.BooleanField(
         default=False,
         help_text=_(
-            "When enabled by a Material Exchange admin, the reprocessor cannot self-enable availability."
+            "When enabled by a Buyback admin, the reprocessor cannot self-enable availability."
         ),
     )
     margin_percent = models.DecimalField(
@@ -4061,7 +4061,7 @@ class ReprocessingServiceRequestOutput(models.Model):
 
 class ESIContract(models.Model):
     """
-    Cached ESI corporation contracts for Material Exchange validation.
+    Cached ESI corporation contracts for Buyback validation.
     Synced periodically to avoid excessive ESI calls.
     """
 
@@ -4253,3 +4253,4 @@ class SdeMarketGroup(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.id})"
+

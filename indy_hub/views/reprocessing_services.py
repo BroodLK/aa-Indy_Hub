@@ -137,6 +137,9 @@ def _infer_supported_structure_type(
             ),
         )
     label_probe = f"{structure_type_name or ''} {structure_name or ''}".lower()
+    if "moon drill" in label_probe:
+        # Exclude service modules that can appear in MoonMaterialBay-derived asset rows.
+        return None
     if "athanor" in label_probe:
         return (35835, STRUCTURE_LABEL_BY_TYPE_ID[35835])
     if "tatara" in label_probe:
@@ -666,7 +669,7 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
         merged_row["data_source"] = "corptools"
         structures_by_id[structure_id_int] = merged_row
 
-    # 2) Material Exchange-style cached corp assets (selected corp only) for fast non-ESI path.
+    # 2) Buyback-style cached corp assets (selected corp only) for fast non-ESI path.
     for corp_id in [int(selected_corporation_id)]:
         structure_flags_by_id = _extract_structure_flag_map_from_corp_assets(int(corp_id))
         structure_ids_from_assets = set(structure_flags_by_id.keys())
@@ -2100,7 +2103,7 @@ def reprocessing_become(request):
                 messages.warning(
                     request,
                     _(
-                        "Availability is currently disabled by a Material Exchange admin and cannot be self-enabled."
+                        "Availability is currently disabled by a Buyback admin and cannot be self-enabled."
                     ),
                 )
                 return redirect(_become_redirect_with_profile(target_profile.id))
@@ -2296,7 +2299,7 @@ def reprocessing_become(request):
                         request.user,
                         _("Reprocessing application submitted"),
                         _(
-                            "Your reprocessing profile for %(character)s has been submitted and is awaiting Material Exchange admin approval."
+                            "Your reprocessing profile for %(character)s has been submitted and is awaiting Buyback admin approval."
                         )
                         % {"character": profile.character_name},
                         level="info",
@@ -2308,7 +2311,7 @@ def reprocessing_become(request):
                         messages.warning(
                             request,
                             _(
-                                "Availability is currently disabled by a Material Exchange admin and cannot be self-enabled."
+                                "Availability is currently disabled by a Buyback admin and cannot be self-enabled."
                             ),
                         )
                     messages.success(
@@ -2322,7 +2325,7 @@ def reprocessing_become(request):
                         messages.warning(
                             request,
                             _(
-                                "Availability is currently disabled by a Material Exchange admin and cannot be self-enabled."
+                                "Availability is currently disabled by a Buyback admin and cannot be self-enabled."
                             ),
                         )
                     messages.success(request, _("Reprocessing profile updated."))
@@ -2531,7 +2534,7 @@ def reprocessing_admin_review(request, profile_id: int):
                 profile.user,
                 _("Reprocessing availability disabled by admin"),
                 _(
-                    "A Material Exchange admin disabled new contracts for %(character)s."
+                    "A Buyback admin disabled new contracts for %(character)s."
                 )
                 % {"character": profile.character_name},
                 level="warning",
@@ -2546,7 +2549,7 @@ def reprocessing_admin_review(request, profile_id: int):
                 profile.user,
                 _("Reprocessing availability enabled by admin"),
                 _(
-                    "A Material Exchange admin enabled new contracts for %(character)s."
+                    "A Buyback admin enabled new contracts for %(character)s."
                 )
                 % {"character": profile.character_name},
                 level="success",
@@ -3420,7 +3423,7 @@ def reprocessing_request_cancel(request, request_id: int):
         return redirect("indy_hub:reprocessing_browse")
 
     if request.user.id != service_request.requester_id and not _is_material_hub_admin(request.user):
-        messages.error(request, _("Only the requester or a Material Exchange admin can delete this request."))
+        messages.error(request, _("Only the requester or an admin can delete this request."))
         return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
     if service_request.status == ReprocessingServiceRequest.Status.COMPLETED:
         messages.error(request, _("This request is already closed."))
@@ -3503,5 +3506,6 @@ def reprocessing_request_dispute(request, request_id: int):
         level="warning",
         link=detail_link,
     )
-    messages.warning(request, _("Request marked as a contract anomaly. Material Exchange admins have been notified."))
+    messages.warning(request, _("Request marked as a contract anomaly. Admins have been notified."))
     return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
+

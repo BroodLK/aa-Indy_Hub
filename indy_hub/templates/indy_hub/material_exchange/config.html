@@ -2,7 +2,7 @@
 {% load i18n %}
 {% load static %}
 
-{% block page_title %}{% trans "Material Exchange Configuration" %}{% endblock page_title %}
+{% block page_title %}{% trans "Buyback Configuration" %}{% endblock page_title %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
@@ -18,7 +18,7 @@
             <div>
                 <h2 class="h3 mb-1">
                     <i class="fas fa-exchange-alt me-2"></i>
-                    {% trans "Material Exchange" %}
+                    {% trans "Buyback" %}
                 </h2>
                 <p class="description mb-0">{% trans "Configure corp hangar locations and pricing rules." %}</p>
             </div>
@@ -2408,7 +2408,7 @@ function requestDivisionsToken() {
 }
 
 function requestAssetsToken() {
-    // Redirect to Material Exchange authorization (corp scopes incl. assets)
+    // Redirect to Buyback authorization (corp scopes incl. assets)
     const nextUrl = encodeURIComponent(window.location.pathname + window.location.search);
     window.location.href = '{% url "indy_hub:authorize_material_exchange" %}?next=' + nextUrl;
 }
@@ -2615,3 +2615,4 @@ document.addEventListener('DOMContentLoaded', function() {
 
 </script>
 {% endblock content %}
+
