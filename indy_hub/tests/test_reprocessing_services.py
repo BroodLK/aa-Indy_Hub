@@ -37,6 +37,8 @@ from indy_hub.services.reprocessing import (
     resolve_processing_skill_level_for_item,
 )
 from indy_hub.views.reprocessing_services import (
+    _fetch_reprocessing_structures,
+    _infer_rig_profile_key_from_type_name,
     _infer_structure_rigs_from_cached_assets,
     _infer_supported_structure_type,
     _parse_request_item_lines,
@@ -701,6 +703,14 @@ class _FakeAssetQuerySet:
 
 
 class ReprocessingRigDetectionTests(TestCase):
+    def test_rig_name_includes_asteroid_variant(self):
+        self.assertEqual(
+            _infer_rig_profile_key_from_type_name(
+                "Standup M-Set Asteroid Ore Grading Processor I"
+            ),
+            "ore_t1",
+        )
+
     @patch("indy_hub.views.reprocessing_services.get_type_name")
     @patch("indy_hub.views.reprocessing_services.get_corp_assets_cached")
     def test_cached_rig_detection_resolves_nested_assets(
@@ -734,6 +744,50 @@ class ReprocessingRigDetectionTests(TestCase):
         result = _infer_structure_rigs_from_cached_assets([98000001], [9001])
 
         self.assertEqual(result, {9001: "moon_t2"})
+
+
+class ReprocessingStructureDiscoveryTests(TestCase):
+    @patch("indy_hub.views.reprocessing_services._resolve_system_security_modifiers", return_value={})
+    @patch("indy_hub.views.reprocessing_services.shared_client.resolve_ids_to_names", return_value={})
+    @patch("indy_hub.views.reprocessing_services._infer_structure_rigs_from_cached_assets", return_value={})
+    @patch("indy_hub.views.reprocessing_services._infer_structure_rigs_from_corptools", return_value={})
+    @patch(
+        "indy_hub.views.reprocessing_services._get_cached_structure_name_map",
+        return_value={9001: "BNX-AS - Bucket 6-2"},
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._extract_structure_flag_map_from_corp_assets",
+        return_value={9001: {"MoonMaterialBay", "ServiceSlot0"}},
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._load_corptools_structure_rows",
+        return_value=[
+            {
+                "structure_id": 9001,
+                "structure_name": "BNX-AS - Bucket 6-2",
+                "structure_type_id": 999001,
+                "structure_type_name": "Metenox Moon Drill",
+                "location_id": 30000142,
+                "location_name": "Sakht",
+                "owner_corporation_id": 98000001,
+            }
+        ],
+    )
+    @patch("indy_hub.views.reprocessing_services._get_alliance_corporation_ids", return_value=[98000001])
+    def test_discovery_excludes_metenox_rows_even_with_asset_flags(
+        self,
+        _mock_alliance_ids,
+        _mock_corptools_rows,
+        _mock_asset_flags,
+        _mock_cached_names,
+        _mock_rigs_corptools,
+        _mock_rigs_assets,
+        _mock_location_names,
+        _mock_security_modifiers,
+    ):
+        rows = _fetch_reprocessing_structures(user=None, selected_corporation_id=98000001)
+
+        self.assertEqual(rows, [])
 
 
 class ReprocessingRequestLineParsingTests(TestCase):

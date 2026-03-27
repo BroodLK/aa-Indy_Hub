@@ -97,6 +97,8 @@ _REPROCESSING_ESTIMATE_CACHE_TTL_SECONDS = 15 * 60
 _RIG_PROFILE_KEY_BY_NAME_PATTERN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "moon_t2"),
     (re.compile(r"standup\s+m-set\s+moon\s+ore\s+grading\s+processor\s+i$", re.IGNORECASE), "moon_t1"),
+    (re.compile(r"standup\s+m-set\s+asteroid\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "ore_t2"),
+    (re.compile(r"standup\s+m-set\s+asteroid\s+ore\s+grading\s+processor\s+i$", re.IGNORECASE), "ore_t1"),
     (re.compile(r"standup\s+m-set\s+ore\s+grading\s+processor\s+ii", re.IGNORECASE), "ore_t2"),
     (re.compile(r"standup\s+m-set\s+ore\s+grading\s+processor\s+i$", re.IGNORECASE), "ore_t1"),
 ]
@@ -431,7 +433,6 @@ def _load_corptools_structure_rows(corporation_ids: list[int]) -> list[dict[str,
         structures = (
             Structure.objects.filter(
                 corporation__in=corp_audits,
-                type_id__in=SUPPORTED_STRUCTURE_TYPE_IDS,
             )
             .select_related("corporation__corporation", "system_name")
             .order_by("structure_id")
@@ -502,33 +503,78 @@ def _infer_structure_rigs_from_corptools(
     if not corp_ids or not structure_ids:
         return {}
 
+    rig_key_by_structure: dict[int, str] = {}
     try:
         corp_audits = CorporationAudit.objects.filter(corporation__corporation_id__in=corp_ids)
-        rows = CorpAsset.objects.filter(
-            corporation__in=corp_audits,
-            location_id__in=structure_ids,
-        ).values_list("location_id", "location_flag", "type_id", "type_name__name")
+        assets_qs = CorpAsset.objects.filter(corporation__in=corp_audits)
     except Exception:
-        return {}
+        return rig_key_by_structure
 
-    rig_key_by_structure: dict[int, str] = {}
-    for location_id, location_flag, type_id, type_name in rows:
+    type_name_by_id: dict[int, str] = {}
+    frontier_root_by_location: dict[int, int] = {
+        int(structure_id): int(structure_id) for structure_id in structure_ids
+    }
+    visited_location_ids: set[int] = set()
+    for _depth in range(6):
+        query_location_ids = [
+            int(location_id)
+            for location_id in frontier_root_by_location
+            if int(location_id) not in visited_location_ids
+        ]
+        if not query_location_ids:
+            break
+        visited_location_ids.update(query_location_ids)
+
         try:
-            structure_id = int(location_id)
-            type_id_int = int(type_id)
-        except (TypeError, ValueError):
-            continue
-        flag_text = str(location_flag or "").strip().lower()
-        if flag_text and not any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
-            continue
-        type_name_text = str(type_name or get_type_name(type_id_int) or "")
-        candidate_key = _infer_rig_profile_key_from_type_name(type_name_text)
-        if not candidate_key:
-            continue
-        rig_key_by_structure[structure_id] = _pick_best_rig_profile_key(
-            rig_key_by_structure.get(structure_id),
-            candidate_key,
-        ) or candidate_key
+            rows = assets_qs.filter(location_id__in=query_location_ids).values_list(
+                "item_id",
+                "location_id",
+                "location_flag",
+                "type_id",
+                "type_name__name",
+            )
+        except Exception:
+            break
+
+        next_frontier: dict[int, int] = {}
+        for item_id, location_id, location_flag, type_id, type_name in rows:
+            try:
+                parent_location_id = int(location_id)
+                type_id_int = int(type_id)
+            except (TypeError, ValueError):
+                continue
+            structure_id = int(frontier_root_by_location.get(parent_location_id) or 0)
+            if structure_id <= 0:
+                continue
+
+            flag_text = str(location_flag or "").strip().lower()
+            if not flag_text or any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
+                type_name_text = str(type_name or "").strip()
+                if not type_name_text:
+                    cached = type_name_by_id.get(type_id_int)
+                    if cached is None:
+                        cached = str(get_type_name(type_id_int) or "")
+                        type_name_by_id[type_id_int] = cached
+                    type_name_text = cached
+                candidate_key = _infer_rig_profile_key_from_type_name(type_name_text)
+                if candidate_key:
+                    rig_key_by_structure[structure_id] = _pick_best_rig_profile_key(
+                        rig_key_by_structure.get(structure_id),
+                        candidate_key,
+                    ) or candidate_key
+
+            try:
+                item_id_int = int(item_id or 0)
+            except (TypeError, ValueError):
+                item_id_int = 0
+            if (
+                item_id_int > 0
+                and item_id_int not in visited_location_ids
+                and item_id_int not in next_frontier
+            ):
+                next_frontier[item_id_int] = structure_id
+
+        frontier_root_by_location = next_frontier
     return rig_key_by_structure
 
 
