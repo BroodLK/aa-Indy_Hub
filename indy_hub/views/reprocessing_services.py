@@ -126,6 +126,11 @@ def _infer_supported_structure_type(
     structure_flags: set[str] | None = None,
 ) -> tuple[int, str] | None:
     type_id = int(structure_type_id or 0)
+    normalized_flags = {
+        str(flag or "").strip().lower()
+        for flag in (structure_flags or set())
+        if str(flag or "").strip()
+    }
     if type_id in SUPPORTED_STRUCTURE_TYPE_IDS:
         return (
             int(type_id),
@@ -137,15 +142,21 @@ def _infer_supported_structure_type(
             ),
         )
     label_probe = f"{structure_type_name or ''} {structure_name or ''}".lower()
-    if "moon drill" in label_probe:
-        # Exclude service modules that can appear in MoonMaterialBay-derived asset rows.
+    if "moon drill" in label_probe or "metenox" in label_probe:
+        # Exclude Metenox moon drills that can share moon-related flags with refineries.
         return None
     if "athanor" in label_probe:
         return (35835, STRUCTURE_LABEL_BY_TYPE_ID[35835])
     if "tatara" in label_probe:
         return (35836, STRUCTURE_LABEL_BY_TYPE_ID[35836])
-    if any(str(flag).lower() == "moonmaterialbay" for flag in (structure_flags or set())):
-        # Refineries expose MoonMaterialBay; when type is unavailable we infer Athanor conservatively.
+    if "moonmaterialbay" in normalized_flags:
+        has_refinery_hints = any(
+            flag == "structurefuel" or flag.startswith("serviceslot")
+            for flag in normalized_flags
+        )
+        if not has_refinery_hints:
+            return None
+        # Refineries expose MoonMaterialBay; infer Athanor only with refinery-specific flags.
         return (35835, _("Athanor (inferred)"))
     return None
 
@@ -524,52 +535,98 @@ def _infer_structure_rigs_from_corptools(
 def _infer_structure_rigs_from_cached_assets(
     corporation_ids: list[int],
     structure_ids: list[int],
+    *,
+    allow_asset_refresh: bool = False,
 ) -> dict[int, str]:
     rig_key_by_structure: dict[int, str] = {}
     structure_id_set = {int(structure_id) for structure_id in structure_ids if int(structure_id) > 0}
     if not structure_id_set:
         return rig_key_by_structure
 
+    type_name_by_id: dict[int, str] = {}
     for corp_id in corporation_ids:
         try:
             assets_qs, _ = get_corp_assets_cached(
                 int(corp_id),
-                allow_refresh=False,
+                allow_refresh=allow_asset_refresh,
                 as_queryset=True,
-                values_fields=["location_id", "location_flag", "type_id"],
+                values_fields=["item_id", "location_id", "location_flag", "type_id"],
             )
         except Exception:
             continue
-        try:
-            asset_rows = assets_qs.filter(location_id__in=list(structure_id_set))
-        except Exception:
-            continue
-        for asset in asset_rows:
+
+        # Traverse descendant asset chains from each structure id so nested rig items resolve.
+        frontier_root_by_location: dict[int, int] = {
+            int(structure_id): int(structure_id) for structure_id in structure_id_set
+        }
+        visited_location_ids: set[int] = set()
+        for _depth in range(6):
+            query_location_ids = [
+                int(location_id)
+                for location_id in frontier_root_by_location
+                if int(location_id) not in visited_location_ids
+            ]
+            if not query_location_ids:
+                break
+            visited_location_ids.update(query_location_ids)
+
             try:
-                structure_id = int(asset.get("location_id") or 0)
-                type_id = int(asset.get("type_id") or 0)
-            except (TypeError, ValueError, AttributeError):
-                continue
-            if structure_id <= 0 or type_id <= 0:
-                continue
-            flag_text = str(asset.get("location_flag") or "").strip().lower()
-            if flag_text and not any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
-                continue
-            candidate_key = _infer_rig_profile_key_from_type_name(get_type_name(type_id))
-            if not candidate_key:
-                continue
-            rig_key_by_structure[structure_id] = _pick_best_rig_profile_key(
-                rig_key_by_structure.get(structure_id),
-                candidate_key,
-            ) or candidate_key
+                asset_rows = assets_qs.filter(location_id__in=query_location_ids)
+            except Exception:
+                break
+
+            next_frontier: dict[int, int] = {}
+            for asset in asset_rows:
+                try:
+                    parent_location_id = int(asset.get("location_id") or 0)
+                    type_id = int(asset.get("type_id") or 0)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                root_structure_id = int(frontier_root_by_location.get(parent_location_id) or 0)
+                if root_structure_id <= 0 or root_structure_id not in structure_id_set:
+                    continue
+                if type_id <= 0:
+                    continue
+
+                flag_text = str(asset.get("location_flag") or "").strip().lower()
+                if flag_text and not any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
+                    pass
+                else:
+                    type_name = type_name_by_id.get(type_id)
+                    if type_name is None:
+                        type_name = str(get_type_name(type_id) or "")
+                        type_name_by_id[type_id] = type_name
+                    candidate_key = _infer_rig_profile_key_from_type_name(type_name)
+                    if candidate_key:
+                        rig_key_by_structure[root_structure_id] = _pick_best_rig_profile_key(
+                            rig_key_by_structure.get(root_structure_id),
+                            candidate_key,
+                        ) or candidate_key
+
+                try:
+                    item_id = int(asset.get("item_id") or 0)
+                except (TypeError, ValueError, AttributeError):
+                    item_id = 0
+                if (
+                    item_id > 0
+                    and item_id not in visited_location_ids
+                    and item_id not in next_frontier
+                ):
+                    next_frontier[item_id] = root_structure_id
+
+            frontier_root_by_location = next_frontier
     return rig_key_by_structure
 
 
-def _extract_structure_flag_map_from_corp_assets(corp_id: int) -> dict[int, set[str]]:
+def _extract_structure_flag_map_from_corp_assets(
+    corp_id: int,
+    *,
+    allow_asset_refresh: bool = False,
+) -> dict[int, set[str]]:
     try:
         assets_qs, _ = get_corp_assets_cached(
             int(corp_id),
-            allow_refresh=False,
+            allow_refresh=allow_asset_refresh,
             as_queryset=True,
         )
     except Exception:
@@ -633,7 +690,12 @@ def _get_cached_structure_name_map(structure_ids: list[int]) -> dict[int, str]:
     }
 
 
-def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[dict[str, object]]:
+def _fetch_reprocessing_structures(
+    user,
+    selected_corporation_id: int,
+    *,
+    allow_asset_refresh: bool = False,
+) -> list[dict[str, object]]:
     """Return Athanor/Tatara choices from selected corp alliance scope (best-effort)."""
     _ = user
     structures_by_id: dict[int, dict[str, object]] = {}
@@ -671,7 +733,10 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
 
     # 2) Buyback-style cached corp assets (selected corp only) for fast non-ESI path.
     for corp_id in [int(selected_corporation_id)]:
-        structure_flags_by_id = _extract_structure_flag_map_from_corp_assets(int(corp_id))
+        structure_flags_by_id = _extract_structure_flag_map_from_corp_assets(
+            int(corp_id),
+            allow_asset_refresh=allow_asset_refresh,
+        )
         structure_ids_from_assets = set(structure_flags_by_id.keys())
         if not structure_ids_from_assets:
             continue
@@ -761,7 +826,11 @@ def _fetch_reprocessing_structures(user, selected_corporation_id: int) -> list[d
 
     structure_ids = sorted(int(row.get("structure_id") or 0) for row in filtered_rows)
     rig_key_hints = _infer_structure_rigs_from_corptools(corp_ids, structure_ids)
-    cached_rig_hints = _infer_structure_rigs_from_cached_assets(corp_ids, structure_ids)
+    cached_rig_hints = _infer_structure_rigs_from_cached_assets(
+        corp_ids,
+        structure_ids,
+        allow_asset_refresh=allow_asset_refresh,
+    )
     for structure_id, profile_key in cached_rig_hints.items():
         rig_key_hints[structure_id] = _pick_best_rig_profile_key(
             rig_key_hints.get(structure_id),
@@ -1898,6 +1967,12 @@ def reprocessing_become(request):
         selected_profile_id = 0
     selected_profile = profile_by_id.get(int(selected_profile_id or 0))
     is_edit_mode = bool(selected_profile)
+    request_action = (
+        str(request.POST.get("action") or "save_profile").strip().lower()
+        if request.method == "POST"
+        else ""
+    )
+    allow_asset_refresh = bool(request.method == "POST" and request_action == "refresh_profile_data")
 
     def _become_redirect_with_profile(profile_id: int | None = None) -> str:
         base_url = reverse("indy_hub:reprocessing_become")
@@ -2003,7 +2078,11 @@ def reprocessing_become(request):
 
     if selected_corporation_id:
         try:
-            structure_options = _fetch_reprocessing_structures(request.user, int(selected_corporation_id))
+            structure_options = _fetch_reprocessing_structures(
+                request.user,
+                int(selected_corporation_id),
+                allow_asset_refresh=allow_asset_refresh,
+            )
         except Exception as exc:
             logger.warning(
                 "Unable to load reprocessing structures for corp %s: %s",
@@ -2081,7 +2160,7 @@ def reprocessing_become(request):
         )
 
     if request.method == "POST":
-        action = str(request.POST.get("action") or "save_profile").strip().lower()
+        action = request_action or "save_profile"
         if action == "toggle_availability":
             try:
                 target_profile_id = int(request.POST.get("profile_id") or 0)

@@ -37,6 +37,7 @@ from indy_hub.services.reprocessing import (
     resolve_processing_skill_level_for_item,
 )
 from indy_hub.views.reprocessing_services import (
+    _infer_structure_rigs_from_cached_assets,
     _infer_supported_structure_type,
     _parse_request_item_lines,
 )
@@ -657,10 +658,82 @@ class ReprocessingStructureInferenceTests(TestCase):
             structure_type_id=None,
             structure_name="Refinery Alpha",
             structure_type_name="",
-            structure_flags={"MoonMaterialBay"},
+            structure_flags={"MoonMaterialBay", "ServiceSlot0"},
         )
         self.assertIsNotNone(inferred)
         self.assertEqual(inferred[0], 35835)
+
+    def test_does_not_infer_athanor_from_moon_material_bay_without_refinery_hints(self):
+        inferred = _infer_supported_structure_type(
+            structure_type_id=None,
+            structure_name="Bucket 6-2",
+            structure_type_name="",
+            structure_flags={"MoonMaterialBay"},
+        )
+        self.assertIsNone(inferred)
+
+    def test_does_not_infer_structure_from_metenox_name(self):
+        inferred = _infer_supported_structure_type(
+            structure_type_id=None,
+            structure_name="BNX-AS - Bucket 6-2",
+            structure_type_name="Metenox Moon Drill",
+            structure_flags={"MoonMaterialBay", "ServiceSlot0"},
+        )
+        self.assertIsNone(inferred)
+
+
+class _FakeAssetQuerySet:
+    def __init__(self, rows):
+        self._rows = list(rows or [])
+
+    def filter(self, **kwargs):
+        rows = list(self._rows)
+        for key, value in kwargs.items():
+            if key == "location_id__in":
+                wanted = {int(v) for v in (value or [])}
+                rows = [row for row in rows if int(row.get("location_id") or 0) in wanted]
+                continue
+            raise AssertionError(f"Unsupported filter key in test fake queryset: {key}")
+        return _FakeAssetQuerySet(rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class ReprocessingRigDetectionTests(TestCase):
+    @patch("indy_hub.views.reprocessing_services.get_type_name")
+    @patch("indy_hub.views.reprocessing_services.get_corp_assets_cached")
+    def test_cached_rig_detection_resolves_nested_assets(
+        self,
+        mock_get_assets,
+        mock_get_type_name,
+    ):
+        mock_get_assets.return_value = (
+            _FakeAssetQuerySet(
+                [
+                    {
+                        "item_id": 4001,
+                        "location_id": 9001,
+                        "location_flag": "ServiceSlot0",
+                        "type_id": 7777,
+                    },
+                    {
+                        "item_id": 5001,
+                        "location_id": 4001,
+                        "location_flag": "RigSlot0",
+                        "type_id": 8888,
+                    },
+                ]
+            ),
+            False,
+        )
+        mock_get_type_name.side_effect = lambda type_id: {
+            8888: "Standup M-Set Moon Ore Grading Processor II"
+        }.get(int(type_id), f"Type {type_id}")
+
+        result = _infer_structure_rigs_from_cached_assets([98000001], [9001])
+
+        self.assertEqual(result, {9001: "moon_t2"})
 
 
 class ReprocessingRequestLineParsingTests(TestCase):

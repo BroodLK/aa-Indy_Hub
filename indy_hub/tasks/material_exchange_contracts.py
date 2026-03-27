@@ -1913,7 +1913,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         if notify_admins_on_sell_anomaly and anomaly_updated:
             _notify_material_exchange_admins(
                 config,
-                _("Material Hub Order Requires Intervention"),
+                _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     f"Please contact user {order.seller.username} regarding this anomaly: seller has no linked EVE character."
@@ -2090,7 +2090,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"but it's located at the wrong structure.\n\n"
                         f"Required location(s): {expected_sell_locations_label}\n"
                         f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n\n"
-                        f"You can either create a new contract at the correct location, or contact a Material Hub admin (they have been notified)."
+                        f"You can either create a new contract at the correct location, or contact an admin (they have been notified)."
                     )
                     if notify_admins_on_sell_anomaly
                     else _(
@@ -2109,7 +2109,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         if notify_admins_on_sell_anomaly and anomaly_updated:
             _notify_material_exchange_admins(
                 config,
-                _("Material Hub Order Requires Intervention"),
+                _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     f"Please contact user {order.seller.username} regarding this anomaly: wrong contract location."
@@ -2209,7 +2209,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         if notify_admins_on_sell_anomaly and anomaly_updated:
             _notify_material_exchange_admins(
                 config,
-                _("Material Hub Order Requires Intervention"),
+                _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     f"Please contact user {order.seller.username} regarding this anomaly: contract price mismatch."
@@ -2328,7 +2328,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
                     f"{guidance_details_block}"
-                    "Please create a corrected contract, or contact a Material Hub admin (they have been notified)."
+                    "Please create a corrected contract, or contact a Hub admin (they have been notified)."
                 )
                 if notify_admins_on_sell_anomaly
                 else _(
@@ -2350,7 +2350,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         if notify_admins_on_sell_anomaly and anomaly_updated:
             _notify_material_exchange_admins(
                 config,
-                _("Material Hub Order Requires Intervention"),
+                _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     f"Please contact user {order.seller.username} regarding this anomaly: contract items mismatch."
@@ -2430,7 +2430,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             if notify_admins_on_sell_anomaly:
                 _notify_material_exchange_admins(
                     config,
-                    _("Material Hub Order Requires Intervention"),
+                    _("Hub Order Requires Intervention"),
                     _(
                         f"Order {order_ref} has a near-match contract #{contract_id} with wrong reference in title.\n"
                         f"Found title: {title_display}\n"
