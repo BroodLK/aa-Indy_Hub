@@ -1,10 +1,14 @@
 """Regression tests for contract check parsing helpers."""
 
+# Standard Library
+from types import SimpleNamespace
+
 # Django
 from django.test import SimpleTestCase
 
 # Local
 from indy_hub.utils.material_exchange_contract_check import (
+    build_expected_items,
     parse_contract_export,
     parse_contract_items,
     summarize_counter,
@@ -92,3 +96,35 @@ class ContractCheckParsingTests(SimpleTestCase):
             "1MN Afterburner I x 1",
         }
         self.assertEqual(set(summary), expected)
+
+    def test_parse_contract_items_keeps_10m_bounty_prefix_in_compact_stream(self) -> None:
+        compact_items = (
+            "Intact Shield Emitter x 310M Bounty SCC Encrypted Bond x 3"
+            "Trigger Unit x 7930"
+        )
+        parsed_items, parsed_labels = parse_contract_items(compact_items)
+        summary = summarize_counter(parsed_items, parsed_labels)
+
+        self.assertIn("Intact Shield Emitter x 3", summary)
+        self.assertIn("10M Bounty SCC Encrypted Bond x 3", summary)
+        self.assertIn("Trigger Unit x 7930", summary)
+        self.assertNotIn("M Bounty SCC Encrypted Bond x 3", summary)
+
+    def test_parse_contract_items_keeps_numeric_items_from_allowlist(self) -> None:
+        compact_items = (
+            "Intact Shield Emitter x 310,000 Skill Points x 1"
+            "Trigger Unit x 7930"
+        )
+        parsed_items, parsed_labels = parse_contract_items(compact_items)
+        summary = summarize_counter(parsed_items, parsed_labels)
+
+        self.assertIn("Intact Shield Emitter x 3", summary)
+        self.assertIn("10000 Skill Points x 1", summary)
+        self.assertIn("Trigger Unit x 7930", summary)
+
+    def test_item_key_normalization_matches_grouped_numeric_prefixes(self) -> None:
+        parsed_items, _parsed_labels = parse_contract_items("10000 Skill Points x 1")
+        expected_items, _expected_labels = build_expected_items(
+            [SimpleNamespace(type_name="10,000 Skill Points", quantity=1)]
+        )
+        self.assertEqual(parsed_items, expected_items)

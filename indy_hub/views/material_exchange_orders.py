@@ -1242,14 +1242,11 @@ def sell_order_delete(request, order_id):
     emit_view_analytics_event(
         view_name="material_exchange_orders.sell_order_delete", request=request
     )
-    order = get_object_or_404(
-        MaterialExchangeSellOrder,
-        id=order_id,
-        seller=request.user,
-    )
+    order = _get_sell_order_for_request(request, order_id)
+    is_manager = request.user.has_perm("indy_hub.can_manage_material_hub")
 
-    # Can only delete non-terminal orders
-    if order.status in ["completed", "rejected", "cancelled"]:
+    # Non-managers can only delete non-terminal orders.
+    if order.status in ["completed", "rejected", "cancelled"] and not is_manager:
         messages.error(
             request,
             _("Cannot delete completed or rejected orders."),
@@ -1287,14 +1284,11 @@ def buy_order_delete(request, order_id):
     emit_view_analytics_event(
         view_name="material_exchange_orders.buy_order_delete", request=request
     )
-    order = get_object_or_404(
-        MaterialExchangeBuyOrder,
-        id=order_id,
-        buyer=request.user,
-    )
+    order = _get_buy_order_for_request(request, order_id)
+    is_manager = request.user.has_perm("indy_hub.can_manage_material_hub")
 
-    # Can only delete non-terminal orders
-    if order.status in ["completed", "rejected", "cancelled"]:
+    # Non-managers can only delete non-terminal orders.
+    if order.status in ["completed", "rejected", "cancelled"] and not is_manager:
         messages.error(
             request,
             _("Cannot delete completed or rejected orders."),

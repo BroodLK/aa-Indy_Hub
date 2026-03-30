@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 from collections.abc import Iterable
+from functools import lru_cache
+from pathlib import Path
 
 CONTRACT_EXPORT_LABELS = [
     "Contract Type",
@@ -23,7 +25,13 @@ CONTRACT_EXPORT_LABELS = [
 MULTILINE_LABELS = {"Items For Sale", "Items Required"}
 ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:;|\|)\s*")
 ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
-NEXT_NUMERIC_ITEM_START_RE = re.compile(r"^[1-9]\d*(?:MN|mm|K)\b", re.IGNORECASE)
+NEXT_NUMERIC_ITEM_START_RE = re.compile(
+    r"^[1-9]\d*(?:MN|M|mm|K)\b", re.IGNORECASE
+)
+NUMBER_GROUPING_RE = re.compile(r"(?<=\d)[,.'\s](?=\d)")
+NUMERIC_LEADING_ITEMS_FILE = (
+    Path(__file__).resolve().parent / "data" / "numeric_leading_items.tsv"
+)
 
 
 def collapse_whitespace(value: str | None) -> str:
@@ -32,6 +40,13 @@ def collapse_whitespace(value: str | None) -> str:
 
 def normalize_text(value: str | None) -> str:
     return collapse_whitespace(value).casefold()
+
+
+def normalize_item_name(value: str | None) -> str:
+    """Normalize item names while tolerating grouped numeric prefixes."""
+
+    normalized = normalize_text(value)
+    return NUMBER_GROUPING_RE.sub("", normalized)
 
 
 def parse_positive_quantity(raw_value: str | int | None) -> int | None:
@@ -60,6 +75,62 @@ def parse_positive_quantity(raw_value: str | int | None) -> int | None:
     return None
 
 
+@lru_cache(maxsize=1)
+def _numeric_leading_item_prefixes() -> tuple[str, ...]:
+    """Load canonical item names that intentionally start with a digit."""
+
+    prefixes: set[str] = set()
+
+    try:
+        raw_lines = NUMERIC_LEADING_ITEMS_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return tuple()
+
+    for raw_line in raw_lines:
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+
+        parts = line.split("\t", 1)
+        if len(parts) == 2:
+            raw_name = parts[1]
+        else:
+            raw_name = parts[0]
+
+        name = collapse_whitespace(raw_name)
+        if not name or not name[0].isdigit():
+            continue
+
+        lowered = name.casefold()
+        prefixes.add(lowered)
+        prefixes.add(NUMBER_GROUPING_RE.sub("", lowered))
+
+    return tuple(sorted(prefixes, key=len, reverse=True))
+
+
+def _looks_like_known_numeric_item_name_start(value: str) -> bool:
+    text = collapse_whitespace(value)
+    if not text or not text[0].isdigit():
+        return False
+
+    lowered = text.casefold()
+    lowered_no_grouping = NUMBER_GROUPING_RE.sub("", lowered)
+
+    for candidate in (lowered, lowered_no_grouping):
+        for prefix in _numeric_leading_item_prefixes():
+            if not candidate.startswith(prefix):
+                continue
+
+            if len(candidate) == len(prefix):
+                return True
+
+            next_char = candidate[len(prefix)]
+            if next_char.isspace() or next_char in ",.;:|/\\-+()[]{}'\"":
+                return True
+
+    return False
+
+
 def looks_like_item_start(value: str) -> bool:
     """Best-effort detector for compact item boundaries in pasted exports."""
 
@@ -71,6 +142,8 @@ def looks_like_item_start(value: str) -> bool:
     if head.isalpha() or head == "'":
         return True
     if NEXT_NUMERIC_ITEM_START_RE.match(text):
+        return True
+    if _looks_like_known_numeric_item_name_start(text):
         return True
     return False
 
@@ -104,11 +177,7 @@ def split_quantity_and_remainder(raw_tail: str) -> tuple[int | None, str]:
     if not remainder:
         return full_quantity, ""
 
-    if remainder[0].isspace() or remainder[0] in ",;|":
-        return full_quantity, remainder
-
-    # Grouped quantities such as `1,640` are explicit; keep as-is.
-    if any(char in qty_token for char in ",. "):
+    if remainder[0] in ",;|":
         return full_quantity, remainder
 
     digits_only = re.sub(r"[^0-9]", "", qty_token)
@@ -120,7 +189,10 @@ def split_quantity_and_remainder(raw_tail: str) -> tuple[int | None, str]:
         if candidate_qty is None:
             continue
         candidate_remainder = f"{digits_only[split_index:]}{remainder}"
-        if not candidate_remainder or looks_like_item_start(candidate_remainder):
+        if not candidate_remainder:
+            return candidate_qty, candidate_remainder
+        stripped_remainder = candidate_remainder.lstrip()
+        if looks_like_item_start(stripped_remainder):
             return candidate_qty, candidate_remainder
 
     return full_quantity, remainder
@@ -196,7 +268,7 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
         if not clean_name or quantity is None or quantity <= 0:
             return False
 
-        key = normalize_text(clean_name)
+        key = normalize_item_name(clean_name)
         items[key] += quantity
         labels.setdefault(key, clean_name)
         return True
@@ -271,7 +343,7 @@ def build_expected_items(
         name = collapse_whitespace(getattr(item, "type_name", ""))
         if not name:
             continue
-        key = normalize_text(name)
+        key = normalize_item_name(name)
         counter[key] += int(getattr(item, "quantity", 0) or 0)
         labels.setdefault(key, name)
 

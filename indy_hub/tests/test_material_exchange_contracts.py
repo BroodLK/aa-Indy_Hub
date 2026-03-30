@@ -27,6 +27,8 @@ from indy_hub.tasks.material_exchange_contracts import (
     _get_effective_contract_location_id,
     _log_buy_order_transactions,
     _log_sell_order_transactions,
+    _validate_buy_order_from_db,
+    _validate_sell_order_from_db,
     check_completed_material_exchange_contracts,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
@@ -2116,6 +2118,167 @@ class NotificationDeduplicationTest(TestCase):
         sell_order.refresh_from_db()
         self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED)
         self.assertEqual(sell_order.esi_contract_id, correct_location_contract.contract_id)
+
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_sell_validation_does_not_re_notify_when_already_validated(
+        self,
+        mock_get_character_ids,
+        mock_notify_user,
+        mock_notify_admins,
+    ):
+        # Standard Library
+        from datetime import timedelta
+
+        # Django
+        from django.utils import timezone
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        seller_char_id = 445566778
+        mock_get_character_ids.return_value = [seller_char_id]
+
+        sell_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+            order_reference="INDY-VALIDATED-DEDUP-SELL-1",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=sell_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=100,
+            unit_price=10,
+            total_price=1000,
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=990001,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=sell_order.total_price,
+            title=sell_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=990101,
+            type_id=34,
+            quantity=100,
+            is_included=True,
+        )
+
+        stale_order = MaterialExchangeSellOrder.objects.get(pk=sell_order.pk)
+        now = timezone.now()
+        MaterialExchangeSellOrder.objects.filter(pk=sell_order.pk).update(
+            status=MaterialExchangeSellOrder.Status.VALIDATED,
+            esi_contract_id=contract.contract_id,
+            contract_validated_at=now,
+            notes=f"Contract validated: {contract.contract_id} @ {sell_order.total_price:,.0f} ISK",
+            updated_at=now,
+        )
+
+        contracts = ESIContract.objects.filter(
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+        ).prefetch_related("items")
+        _validate_sell_order_from_db(self.config, stale_order, contracts, esi_client=None)
+
+        mock_notify_user.assert_not_called()
+        mock_notify_admins.assert_not_called()
+
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_buy_validation_does_not_re_notify_when_already_validated(
+        self,
+        mock_get_character_ids,
+        mock_notify_user,
+        mock_notify_admins,
+    ):
+        # Standard Library
+        from datetime import timedelta
+
+        # Django
+        from django.utils import timezone
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        buyer_char_id = 112233445
+        mock_get_character_ids.return_value = [buyer_char_id]
+
+        buy_order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.buyer,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            order_reference="INDY-VALIDATED-DEDUP-BUY-1",
+        )
+        buy_item = MaterialExchangeBuyOrderItem.objects.create(
+            order=buy_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=100,
+            unit_price=10,
+            total_price=1000,
+            stock_available_at_creation=500,
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=990002,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=self.config.corporation_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=buy_order.total_price,
+            title=buy_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=990201,
+            type_id=34,
+            quantity=100,
+            is_included=True,
+        )
+
+        stale_order = MaterialExchangeBuyOrder.objects.get(pk=buy_order.pk)
+        now = timezone.now()
+        MaterialExchangeBuyOrder.objects.filter(pk=buy_order.pk).update(
+            status=MaterialExchangeBuyOrder.Status.VALIDATED,
+            esi_contract_id=contract.contract_id,
+            contract_validated_at=now,
+            notes=f"Contract validated: {contract.contract_id} @ {buy_order.total_price:,.0f} ISK",
+            updated_at=now,
+        )
+
+        contracts = ESIContract.objects.filter(
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+        ).prefetch_related("items")
+        _validate_buy_order_from_db(self.config, stale_order, contracts, esi_client=None)
+
+        mock_notify_user.assert_not_called()
+        mock_notify_admins.assert_not_called()
+
+        buy_item.refresh_from_db()
+        self.assertTrue(buy_item.esi_contract_validated)
+        self.assertEqual(buy_item.esi_contract_id, contract.contract_id)
 
 
 if __name__ == "__main__":

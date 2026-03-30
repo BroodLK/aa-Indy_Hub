@@ -148,6 +148,18 @@ _ACTIVE_REPROCESSING_STATUSES = [
     ReprocessingServiceRequest.Status.PROCESSING,
     ReprocessingServiceRequest.Status.AWAITING_RETURN_CONTRACT,
 ]
+_SELL_ORDER_VALIDATION_SOURCE_STATUSES = (
+    MaterialExchangeSellOrder.Status.DRAFT,
+    MaterialExchangeSellOrder.Status.AWAITING_VALIDATION,
+    MaterialExchangeSellOrder.Status.ANOMALY,
+    MaterialExchangeSellOrder.Status.ANOMALY_REJECTED,
+)
+_BUY_ORDER_VALIDATION_SOURCE_STATUSES = (
+    MaterialExchangeBuyOrder.Status.DRAFT,
+    MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
+)
+_ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
+_ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
 
 
 def _floor_isk_amount(value: Decimal | str | int | float | None) -> Decimal:
@@ -1734,9 +1746,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         override: bool,
         contract_location: str = "",
     ):
-        order.status = MaterialExchangeSellOrder.Status.VALIDATED
-        order.contract_validated_at = timezone.now()
-        order.esi_contract_id = contract_id
+        now = timezone.now()
+        normalized_contract_id = int(contract_id or 0)
 
         if override:
             try:
@@ -1745,31 +1756,56 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 )
             except (InvalidOperation, TypeError):
                 price_label = f"{order.total_price:,.0f}"
-            order.notes = (
-                f"Contract accepted in-game despite anomaly: {contract_id} @ "
+            notes = (
+                f"Contract accepted in-game despite anomaly: {normalized_contract_id} @ "
                 f"{price_label} ISK"
             )
         else:
-            order.notes = (
-                f"Contract validated: {contract_id} @ {order.total_price:,.0f} ISK"
+            notes = (
+                f"Contract validated: {normalized_contract_id} @ {order.total_price:,.0f} ISK"
             )
 
-        order.save(
-            update_fields=[
-                "status",
-                "esi_contract_id",
-                "contract_validated_at",
-                "notes",
-                "updated_at",
-            ]
+        rows_updated = MaterialExchangeSellOrder.objects.filter(
+            pk=order.pk,
+            status__in=_SELL_ORDER_VALIDATION_SOURCE_STATUSES,
+        ).update(
+            status=MaterialExchangeSellOrder.Status.VALIDATED,
+            contract_validated_at=now,
+            esi_contract_id=normalized_contract_id,
+            notes=notes,
+            updated_at=now,
         )
+        if rows_updated == 0:
+            order.refresh_from_db(fields=["status", "esi_contract_id"])
+            current_contract_id = int(order.esi_contract_id or 0)
+            if (
+                order.status == MaterialExchangeSellOrder.Status.VALIDATED
+                and current_contract_id == normalized_contract_id
+            ):
+                logger.info(
+                    "Skipping duplicate sell validation notification for order %s (contract %s)",
+                    order.id,
+                    normalized_contract_id,
+                )
+                return
+            logger.info(
+                "Skipping sell validation for order %s due to current status=%s",
+                order.id,
+                order.status,
+            )
+            return
+
+        order.status = MaterialExchangeSellOrder.Status.VALIDATED
+        order.contract_validated_at = now
+        order.esi_contract_id = normalized_contract_id
+        order.notes = notes
 
         if override:
             notify_user(
                 order.seller,
-                _("✅ Sell Order Accepted In-Game"),
+                _("Sell Order Accepted In-Game"),
                 _(
-                    f"Your sell order {order.order_reference} was in anomaly, but the corporation accepted contract #{contract_id} in-game. "
+                    f"Your sell order {order.order_reference} was in anomaly, but the corporation accepted contract #{normalized_contract_id} in-game. "
                     f"The order has been moved back to validated status."
                     + (f"\nLocation: {contract_location}" if contract_location else "")
                 ),
@@ -1781,7 +1817,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 config,
                 _("Sell Order Validated by In-Game Acceptance"),
                 _(
-                    f"{order.seller.username}'s anomalous order {order_ref} has been accepted in-game via contract #{contract_id}.\n"
+                    f"{order.seller.username}'s anomalous order {order_ref} has been accepted in-game via contract #{normalized_contract_id}.\n"
                     f"Order moved to validated status."
                     + (f"\nLocation: {contract_location}" if contract_location else "")
                 ),
@@ -1795,7 +1831,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             logger.info(
                 "Sell order %s validated by in-game acceptance of anomalous contract %s",
                 order.id,
-                contract_id,
+                normalized_contract_id,
             )
             emit_analytics_event(
                 task="material_exchange.sell_order_validated",
@@ -1806,10 +1842,10 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
 
         notify_user(
             order.seller,
-            _("✅ Sell Order Validated"),
+            _("Sell Order Validated"),
             _(
                 f"Your sell order {order.order_reference} has been validated!\n"
-                f"Contract #{contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
+                f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
                 + (f"Location: {contract_location}\n" if contract_location else "")
                 + f"Status: Awaiting corporation to accept the contract.\n"
                 f"Once accepted, you will receive payment."
@@ -1824,7 +1860,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"{order.seller.username} has created a contract and it has been validated as correct.\n"
                 f"Total: {order.total_price:,.0f} ISK\n"
-                f"Contract #{contract_id} verified from database.\n"
+                f"Contract #{normalized_contract_id} verified from database.\n"
                 + (f"Location: {contract_location}\n" if contract_location else "")
                 + "\n"
                 f"Awaiting corporation to accept the contract."
@@ -1839,14 +1875,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         logger.info(
             "Sell order %s validated: contract %s verified",
             order.id,
-            contract_id,
+            normalized_contract_id,
         )
         emit_analytics_event(
             task="material_exchange.sell_order_validated",
             label="standard",
             result="success",
         )
-
     def _set_sell_order_anomaly_rejected(*, contract_id: int, contract_status: str):
         anomaly_rejected_notes = (
             f"Anomaly contract {contract_id} was {contract_status} in-game. "
@@ -2549,46 +2584,72 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         override_details: str | None = None,
     ):
         now = timezone.now()
-
-        order.status = MaterialExchangeBuyOrder.Status.VALIDATED
-        order.contract_validated_at = now
-        order.esi_contract_id = contract.contract_id
+        normalized_contract_id = int(getattr(contract, "contract_id", 0) or 0)
 
         if override:
-            order.notes = (
-                f"Contract accepted in-game despite anomaly: {contract.contract_id} @ "
+            notes = (
+                f"Contract accepted in-game despite anomaly: {normalized_contract_id} @ "
                 f"{contract.price:,.0f} ISK"
                 + (f" ({override_reason})" if override_reason else "")
                 + (f"\n\n{override_details}" if override_details else "")
             )
         else:
-            order.notes = (
-                f"Contract validated: {contract.contract_id} @ "
+            notes = (
+                f"Contract validated: {normalized_contract_id} @ "
                 f"{contract.price:,.0f} ISK"
             )
 
-        order.save(
-            update_fields=[
-                "status",
-                "esi_contract_id",
-                "contract_validated_at",
-                "notes",
-                "updated_at",
-            ]
+        rows_updated = MaterialExchangeBuyOrder.objects.filter(
+            pk=order.pk,
+            status__in=_BUY_ORDER_VALIDATION_SOURCE_STATUSES,
+        ).update(
+            status=MaterialExchangeBuyOrder.Status.VALIDATED,
+            contract_validated_at=now,
+            esi_contract_id=normalized_contract_id,
+            notes=notes,
+            updated_at=now,
         )
+        status_transitioned = rows_updated > 0
+
+        if not status_transitioned:
+            order.refresh_from_db(fields=["status", "esi_contract_id"])
+            current_contract_id = int(order.esi_contract_id or 0)
+            if not (
+                order.status == MaterialExchangeBuyOrder.Status.VALIDATED
+                and current_contract_id == normalized_contract_id
+            ):
+                logger.info(
+                    "Skipping buy validation for order %s due to current status=%s",
+                    order.id,
+                    order.status,
+                )
+                return
 
         order.items.update(
-            esi_contract_id=contract.contract_id,
+            esi_contract_id=normalized_contract_id,
             esi_contract_validated=True,
             esi_validation_checked_at=now,
         )
 
+        if not status_transitioned:
+            logger.info(
+                "Skipping duplicate buy validation notification for order %s (contract %s)",
+                order.id,
+                normalized_contract_id,
+            )
+            return
+
+        order.status = MaterialExchangeBuyOrder.Status.VALIDATED
+        order.contract_validated_at = now
+        order.esi_contract_id = normalized_contract_id
+        order.notes = notes
+
         if override:
             notify_user(
                 order.buyer,
-                _("✅ Buy Order Accepted In-Game"),
+                _("Buy Order Accepted In-Game"),
                 _(
-                    f"Your buy order {order.order_reference} had a validation anomaly, but contract #{contract.contract_id} was accepted in-game. "
+                    f"Your buy order {order.order_reference} had a validation anomaly, but contract #{normalized_contract_id} was accepted in-game. "
                     f"The order has been moved back to validated status and completion sync will follow."
                     + (f"\n\n{override_details}" if override_details else "")
                 ),
@@ -2600,7 +2661,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 config,
                 _("Buy Order Validated by In-Game Acceptance"),
                 _(
-                    f"{order.buyer.username}'s anomalous buy order {order_ref} has been accepted in-game via contract #{contract.contract_id}.\n"
+                    f"{order.buyer.username}'s anomalous buy order {order_ref} has been accepted in-game via contract #{normalized_contract_id}.\n"
                     f"Order moved to validated status."
                     + (f"\n\n{override_details}" if override_details else "")
                 ),
@@ -2614,7 +2675,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             logger.info(
                 "Buy order %s validated by in-game acceptance of anomalous contract %s (%s)",
                 order.id,
-                contract.contract_id,
+                normalized_contract_id,
                 override_reason or "no reason",
             )
             emit_analytics_event(
@@ -2629,7 +2690,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _("Buy Contract Created"),
             _(
                 f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
-                f"Contract #{contract.contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
+                f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
                 f"Next step: accept the in-game contract to receive your items.\n"
                 f"You will receive another notification once delivery is completed."
             ),
@@ -2642,7 +2703,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"Buy contract created for {order.buyer.username}.\n"
                 f"Order: {order.order_reference}\n"
-                f"Contract: #{contract.contract_id}\n"
+                f"Contract: #{normalized_contract_id}\n"
                 f"Total: {order.total_price:,.0f} ISK\n\n"
             ),
             level="success",
@@ -2655,14 +2716,13 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         logger.info(
             "Buy order %s validated: contract %s verified",
             order.id,
-            contract.contract_id,
+            normalized_contract_id,
         )
         emit_analytics_event(
             task="material_exchange.buy_order_validated",
             label="standard",
             result="success",
         )
-
     order_ref_lower = str(order_ref or "").strip().lower()
     for contract in contracts:
         title = str(contract.title or "")
@@ -3743,79 +3803,121 @@ def handle_material_exchange_buy_order_created(order_id):
         return
 
     config = order.config
-
-    items = list(order.items.all())
-    total_qty = order.total_quantity
-    total_price = order.total_price
-
-    preview_lines = []
-    for item in items[:5]:
-        preview_lines.append(
-            f"- {item.type_name or item.type_id}: {item.quantity:,}x @ {item.unit_price:,.2f} ISK"
-        )
-    if len(items) > 5:
-        preview_lines.append(_("…"))
-
-    preview = "\n".join(preview_lines) if preview_lines else _("(no items)")
-
-    title = _("New Buy Order")
-    message = _(
-        f"{order.buyer.username} created a buy order {order.order_reference}.\n"
-        f"Items: {len(items)} (qty: {total_qty:,})\n"
-        f"Total: {total_price:,.2f} ISK\n\n"
-        f"Preview:\n{preview}\n\n"
-        f"Review and approve to proceed with delivery."
+    lock_key = (
+        f"material_exchange:buy_order:{int(order_id)}:created_notification:lock"
     )
-    link = (
-        f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-        f"?next=/indy_hub/material-exchange/%23admin-panel"
+    sent_key = (
+        f"material_exchange:buy_order:{int(order_id)}:created_notification:sent"
     )
-
-    webhook = NotificationWebhook.get_material_exchange_webhook()
-    if webhook and webhook.webhook_url:
-        sent, message_id = send_discord_webhook_with_message_id(
-            webhook.webhook_url,
-            title,
-            message,
-            level="info",
-            link=link,
-            embed_title=f"🛒 {title}",
-            mention_everyone=bool(getattr(webhook, "ping_here", False)),
+    if cache.get(sent_key):
+        logger.info(
+            "Skipping duplicate buy-order-created notification for order %s",
+            order_id,
         )
-        if sent:
-            if message_id:
-                NotificationWebhookMessage.objects.create(
-                    webhook_type=NotificationWebhook.TYPE_MATERIAL_EXCHANGE,
-                    webhook_url=webhook.webhook_url,
-                    message_id=message_id,
-                    buy_order=order,
-                )
-            logger.info("Buy order %s notification sent to webhook", order_id)
-            emit_analytics_event(
-                task="material_exchange.buy_order_created",
-                label="webhook",
-                result="success",
-                value=max(len(items), 1),
+        return
+    if not cache.add(
+        lock_key,
+        timezone.now().timestamp(),
+        _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS,
+    ):
+        logger.debug(
+            "Buy-order-created notification already in progress for order %s",
+            order_id,
+        )
+        return
+
+    try:
+        if cache.get(sent_key):
+            logger.info(
+                "Skipping duplicate buy-order-created notification for order %s",
+                order_id,
             )
             return
 
-    admins = _get_admins_for_config(config)
-    notify_multi(
-        admins,
-        title,
-        message,
-        level="info",
-        link=link,
-    )
+        items = list(order.items.all())
+        total_qty = order.total_quantity
+        total_price = order.total_price
 
-    logger.info("Buy order %s notification sent to admins", order_id)
-    emit_analytics_event(
-        task="material_exchange.buy_order_created",
-        label="admin_notify",
-        result="success",
-        value=max(len(items), 1),
-    )
+        preview_lines = []
+        for item in items[:5]:
+            preview_lines.append(
+                f"- {item.type_name or item.type_id}: {item.quantity:,}x @ {item.unit_price:,.2f} ISK"
+            )
+        if len(items) > 5:
+            preview_lines.append("...")
 
+        preview = "\n".join(preview_lines) if preview_lines else _("(no items)")
+
+        title = _("New Buy Order")
+        message = _(
+            f"{order.buyer.username} created a buy order {order.order_reference}.\n"
+            f"Items: {len(items)} (qty: {total_qty:,})\n"
+            f"Total: {total_price:,.2f} ISK\n\n"
+            f"Preview:\n{preview}\n\n"
+            f"Review and approve to proceed with delivery."
+        )
+        link = (
+            f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+            f"?next=/indy_hub/material-exchange/%23admin-panel"
+        )
+
+        delivery_label = "admin_notify"
+        webhook = NotificationWebhook.get_material_exchange_webhook()
+        webhook_sent = False
+        if webhook and webhook.webhook_url:
+            sent, message_id = send_discord_webhook_with_message_id(
+                webhook.webhook_url,
+                title,
+                message,
+                level="info",
+                link=link,
+                embed_title=f"Buyback {title}",
+                mention_everyone=bool(getattr(webhook, "ping_here", False)),
+            )
+            if sent:
+                webhook_sent = True
+                delivery_label = "webhook"
+                if message_id:
+                    NotificationWebhookMessage.objects.create(
+                        webhook_type=NotificationWebhook.TYPE_MATERIAL_EXCHANGE,
+                        webhook_url=webhook.webhook_url,
+                        message_id=message_id,
+                        buy_order=order,
+                    )
+
+        if not webhook_sent:
+            admins = _get_admins_for_config(config)
+            notify_multi(
+                admins,
+                title,
+                message,
+                level="info",
+                link=link,
+            )
+
+        cache.set(
+            sent_key,
+            timezone.now().timestamp(),
+            _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS,
+        )
+        logger.info("Buy order %s notification sent via %s", order_id, delivery_label)
+
+        try:
+            emit_analytics_event(
+                task="material_exchange.buy_order_created",
+                label=delivery_label,
+                result="success",
+                value=max(len(items), 1),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Analytics emit failed for buy order %s created notification: %s",
+                order_id,
+                exc,
+                exc_info=True,
+            )
+    finally:
+        cache.delete(lock_key)
 
 @shared_task(
     autoretry_for=(Exception,),
@@ -3840,51 +3942,97 @@ def handle_material_exchange_sell_order_created(order_id):
         return
 
     config = order.config
-
-    items = list(order.items.all())
-    total_qty = order.total_quantity
-    total_price = order.total_price
-
-    preview_lines = []
-    for item in items[:5]:
-        preview_lines.append(
-            f"- {item.type_name or item.type_id}: {item.quantity:,}x @ {item.unit_price:,.2f} ISK"
+    lock_key = (
+        f"material_exchange:sell_order:{int(order_id)}:created_notification:lock"
+    )
+    sent_key = (
+        f"material_exchange:sell_order:{int(order_id)}:created_notification:sent"
+    )
+    if cache.get(sent_key):
+        logger.info(
+            "Skipping duplicate sell-order-created notification for order %s",
+            order_id,
         )
-    if len(items) > 5:
-        preview_lines.append("...")
+        return
+    if not cache.add(
+        lock_key,
+        timezone.now().timestamp(),
+        _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS,
+    ):
+        logger.debug(
+            "Sell-order-created notification already in progress for order %s",
+            order_id,
+        )
+        return
 
-    preview = "\n".join(preview_lines) if preview_lines else _("(no items)")
-    source_location = str(getattr(order, "source_location_name", "") or "").strip()
+    try:
+        if cache.get(sent_key):
+            logger.info(
+                "Skipping duplicate sell-order-created notification for order %s",
+                order_id,
+            )
+            return
 
-    title = _("New Sell Order")
-    message = _(
-        f"{order.seller.username} wants to sell with order {order.order_reference}.\n"
-        f"Items: {len(items)} (qty: {total_qty:,})\n"
-        f"Total: {total_price:,.2f} ISK"
-        + (f"\nLocation: {source_location}" if source_location else "")
-        + f"\n\nPreview:\n{preview}\n\n"
-        f"Review and approve to start contract validation."
-    )
-    link = (
-        f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-        f"?next=/indy_hub/material-exchange/%23admin-panel"
-    )
+        items = list(order.items.all())
+        total_qty = order.total_quantity
+        total_price = order.total_price
 
-    _notify_material_exchange_admins(
-        config,
-        title,
-        message,
-        level="info",
-        link=link,
-    )
+        preview_lines = []
+        for item in items[:5]:
+            preview_lines.append(
+                f"- {item.type_name or item.type_id}: {item.quantity:,}x @ {item.unit_price:,.2f} ISK"
+            )
+        if len(items) > 5:
+            preview_lines.append("...")
 
-    logger.info("Sell order %s notification sent to admins/webhook", order_id)
-    emit_analytics_event(
-        task="material_exchange.sell_order_created",
-        label="admin_or_webhook",
-        result="success",
-        value=max(len(items), 1),
-    )
+        preview = "\n".join(preview_lines) if preview_lines else _("(no items)")
+        source_location = str(getattr(order, "source_location_name", "") or "").strip()
+
+        title = _("New Sell Order")
+        message = _(
+            f"{order.seller.username} wants to sell with order {order.order_reference}.\n"
+            f"Items: {len(items)} (qty: {total_qty:,})\n"
+            f"Total: {total_price:,.2f} ISK"
+            + (f"\nLocation: {source_location}" if source_location else "")
+            + f"\n\nPreview:\n{preview}\n\n"
+            f"Review and approve to start contract validation."
+        )
+        link = (
+            f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+            f"?next=/indy_hub/material-exchange/%23admin-panel"
+        )
+
+        _notify_material_exchange_admins(
+            config,
+            title,
+            message,
+            level="info",
+            link=link,
+        )
+
+        cache.set(
+            sent_key,
+            timezone.now().timestamp(),
+            _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS,
+        )
+        logger.info("Sell order %s notification sent to admins/webhook", order_id)
+
+        try:
+            emit_analytics_event(
+                task="material_exchange.sell_order_created",
+                label="admin_or_webhook",
+                result="success",
+                value=max(len(items), 1),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Analytics emit failed for sell order %s created notification: %s",
+                order_id,
+                exc,
+                exc_info=True,
+            )
+    finally:
+        cache.delete(lock_key)
 
 
 def _get_capital_manager_users() -> list[User]:
