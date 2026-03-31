@@ -465,6 +465,22 @@ urlpatterns = [
         buy_order_delete,
         name="buy_order_delete",
     ),
+    # Backward-compatible aliases for legacy links (singular "my-order" and no trailing slash)
+    path(
+        "material-exchange/my-orders/buy/<int:order_id>/delete",
+        buy_order_delete,
+        name="buy_order_delete_legacy_no_slash",
+    ),
+    path(
+        "material-exchange/my-order/buy/<int:order_id>/delete/",
+        buy_order_delete,
+        name="buy_order_delete_legacy_singular",
+    ),
+    path(
+        "material-exchange/my-order/buy/<int:order_id>/delete",
+        buy_order_delete,
+        name="buy_order_delete_legacy_singular_no_slash",
+    ),
     path(
         "material-exchange/capital-orders/",
         capital_ship_orders,

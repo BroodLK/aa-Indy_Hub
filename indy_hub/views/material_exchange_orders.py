@@ -44,6 +44,16 @@ from .navigation import build_nav_context
 
 logger = get_extension_logger(__name__)
 
+_MATERIAL_HUB_MANAGER_PERMS = (
+    "indy_hub.can_manage_material_hub",
+    # Legacy codename kept for backward-compat with stale deployments/permissions.
+    "indy_hub.can_manage_material_exchange",
+)
+
+
+def _can_manage_material_hub(user) -> bool:
+    return any(user.has_perm(permission) for permission in _MATERIAL_HUB_MANAGER_PERMS)
+
 
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
@@ -187,7 +197,7 @@ def sell_order_detail(request, order_id):
 
     # Admins can inspect any order; regular users limited to their own
     try:
-        if request.user.has_perm("indy_hub.can_manage_material_hub"):
+        if _can_manage_material_hub(request.user):
             order = get_object_or_404(queryset, id=order_id)
         else:
             order = get_object_or_404(queryset, id=order_id, seller=request.user)
@@ -247,7 +257,7 @@ def buy_order_detail(request, order_id):
 
     # Admins can inspect any order; regular users limited to their own
     try:
-        if request.user.has_perm("indy_hub.can_manage_material_hub"):
+        if _can_manage_material_hub(request.user):
             order = get_object_or_404(queryset, id=order_id)
         else:
             order = get_object_or_404(queryset, id=order_id, buyer=request.user)
@@ -573,7 +583,7 @@ def _get_sell_order_for_request(request, order_id):
     queryset = MaterialExchangeSellOrder.objects.prefetch_related(
         "items"
     ).select_related("config", "seller")
-    if request.user.has_perm("indy_hub.can_manage_material_hub"):
+    if _can_manage_material_hub(request.user):
         return get_object_or_404(queryset, id=order_id)
     return get_object_or_404(queryset, id=order_id, seller=request.user)
 
@@ -582,7 +592,7 @@ def _get_buy_order_for_request(request, order_id):
     queryset = MaterialExchangeBuyOrder.objects.prefetch_related(
         "items"
     ).select_related("config", "buyer")
-    if request.user.has_perm("indy_hub.can_manage_material_hub"):
+    if _can_manage_material_hub(request.user):
         return get_object_or_404(queryset, id=order_id)
     return get_object_or_404(queryset, id=order_id, buyer=request.user)
 
@@ -1243,7 +1253,7 @@ def sell_order_delete(request, order_id):
         view_name="material_exchange_orders.sell_order_delete", request=request
     )
     order = _get_sell_order_for_request(request, order_id)
-    is_manager = request.user.has_perm("indy_hub.can_manage_material_hub")
+    is_manager = _can_manage_material_hub(request.user)
 
     # Non-managers can only delete non-terminal orders.
     if order.status in ["completed", "rejected", "cancelled"] and not is_manager:
@@ -1285,7 +1295,7 @@ def buy_order_delete(request, order_id):
         view_name="material_exchange_orders.buy_order_delete", request=request
     )
     order = _get_buy_order_for_request(request, order_id)
-    is_manager = request.user.has_perm("indy_hub.can_manage_material_hub")
+    is_manager = _can_manage_material_hub(request.user)
 
     # Non-managers can only delete non-terminal orders.
     if order.status in ["completed", "rejected", "cancelled"] and not is_manager:
