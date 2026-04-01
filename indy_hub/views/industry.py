@@ -2604,6 +2604,24 @@ def craft_bp(request, type_id):
     resolved_manufacturing_cost = _parse_optional_float(
         resolved_system_payload.get("manufacturing_cost_index")
     )
+    resolved_invention_cost = _parse_optional_float(
+        resolved_system_payload.get("invention_cost_index")
+    )
+    resolved_copying_cost = _parse_optional_float(
+        resolved_system_payload.get("copying_cost_index")
+    )
+    resolved_reaction_cost = _parse_optional_float(
+        resolved_system_payload.get("reaction_cost_index")
+    )
+    invention_cost_from_query = _parse_optional_float(
+        request.GET.get("industry_fee_invention_cost")
+    )
+    copying_cost_from_query = _parse_optional_float(
+        request.GET.get("industry_fee_copying_cost")
+    )
+    reaction_cost_from_query = _parse_optional_float(
+        request.GET.get("industry_fee_reaction_cost")
+    )
     fee_manufacturing_cost = (
         manufacturing_cost_from_query
         if manufacturing_cost_from_query is not None
@@ -2632,14 +2650,20 @@ def craft_bp(request, type_id):
         "security": fee_security,
         "system_id": fee_system_id,
         "manufacturing_cost": fee_manufacturing_cost,
-        "invention_cost": _parse_optional_float(
-            request.GET.get("industry_fee_invention_cost")
+        "invention_cost": (
+            invention_cost_from_query
+            if invention_cost_from_query is not None
+            else resolved_invention_cost
         ),
-        "copying_cost": _parse_optional_float(
-            request.GET.get("industry_fee_copying_cost")
+        "copying_cost": (
+            copying_cost_from_query
+            if copying_cost_from_query is not None
+            else resolved_copying_cost
         ),
-        "reaction_cost": _parse_optional_float(
-            request.GET.get("industry_fee_reaction_cost")
+        "reaction_cost": (
+            reaction_cost_from_query
+            if reaction_cost_from_query is not None
+            else resolved_reaction_cost
         ),
         "facility_tax": _parse_optional_float(
             request.GET.get("industry_fee_facility_tax")

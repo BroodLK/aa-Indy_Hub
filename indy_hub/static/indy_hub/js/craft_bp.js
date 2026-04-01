@@ -3658,15 +3658,8 @@ function applySelectedStructureDerivedSettings() {
     const rigInputs = document.querySelectorAll('#configure-pane .build-rig-input[data-rig-key]');
     rigInputs.forEach((input) => {
         const key = String(input.getAttribute('data-rig-key') || '').trim().toLowerCase();
-        if (rigKeySet.size > 0) {
-            input.checked = rigKeySet.has(key);
-            input.disabled = true;
-        } else {
-            input.disabled = false;
-            if (selectedOption && String(selectedOption.value || '').trim() !== 'none') {
-                input.checked = false;
-            }
-        }
+        input.disabled = true;
+        input.checked = rigKeySet.size > 0 && rigKeySet.has(key);
     });
 
     const structureTypeIdInput = document.getElementById('industryFeeStructureTypeIdInput');
@@ -3683,8 +3676,7 @@ function applySelectedStructureDerivedSettings() {
 
     const facilityTaxInput = document.getElementById('industryFeeFacilityTaxInput');
     if (facilityTaxInput) {
-        const hasExplicit = String(facilityTaxInput.value || '').trim() !== '';
-        const canAutoFill = !hasExplicit || facilityTaxInput.dataset.autoFilled === '1';
+        const canAutoFill = facilityTaxInput.dataset.autoFilled !== '0';
         if (facilityTax !== null) {
             if (canAutoFill) {
                 facilityTaxInput.value = String(facilityTax);
@@ -3809,6 +3801,9 @@ function applyResolvedBuildSystemContext(context, environment) {
     const systemId = Number(system.system_id) || 0;
     const manufacturingIndexPercent = Number(system.manufacturing_cost_percent);
     const manufacturingIndexFraction = Number(system.manufacturing_cost_index);
+    const inventionIndexFraction = Number(system.invention_cost_index);
+    const copyingIndexFraction = Number(system.copying_cost_index);
+    const reactionIndexFraction = Number(system.reaction_cost_index);
     const securityClass = String(system.security_class || '').trim().toUpperCase();
 
     const buildSystemInput = document.getElementById('buildSystemInput');
@@ -3833,19 +3828,38 @@ function applyResolvedBuildSystemContext(context, environment) {
     }
 
     const industryFeeSecurityInput = document.getElementById('industryFeeSecurityInput');
-    const securityHasExplicit = String(industryFeeSecurityInput?.value || '').trim() !== '';
-    const securityCanAutoFill = !securityHasExplicit || industryFeeSecurityInput?.dataset.autoFilled === '1';
+    const securityCanAutoFill = industryFeeSecurityInput?.dataset.autoFilled !== '0';
     if (industryFeeSecurityInput && securityClass && securityCanAutoFill) {
         industryFeeSecurityInput.value = securityClass;
         industryFeeSecurityInput.dataset.autoFilled = '1';
     }
 
     const industryFeeManufacturingInput = document.getElementById('industryFeeManufacturingCostInput');
-    const manufacturingHasExplicit = String(industryFeeManufacturingInput?.value || '').trim() !== '';
-    const manufacturingCanAutoFill = !manufacturingHasExplicit || industryFeeManufacturingInput?.dataset.autoFilled === '1';
+    const manufacturingCanAutoFill = industryFeeManufacturingInput?.dataset.autoFilled !== '0';
     if (industryFeeManufacturingInput && Number.isFinite(manufacturingIndexFraction) && manufacturingCanAutoFill) {
         industryFeeManufacturingInput.value = String(Math.max(0, manufacturingIndexFraction));
         industryFeeManufacturingInput.dataset.autoFilled = '1';
+    }
+
+    const industryFeeInventionInput = document.getElementById('industryFeeInventionCostInput');
+    const inventionCanAutoFill = industryFeeInventionInput?.dataset.autoFilled !== '0';
+    if (industryFeeInventionInput && Number.isFinite(inventionIndexFraction) && inventionCanAutoFill) {
+        industryFeeInventionInput.value = String(Math.max(0, inventionIndexFraction));
+        industryFeeInventionInput.dataset.autoFilled = '1';
+    }
+
+    const industryFeeCopyingInput = document.getElementById('industryFeeCopyingCostInput');
+    const copyingCanAutoFill = industryFeeCopyingInput?.dataset.autoFilled !== '0';
+    if (industryFeeCopyingInput && Number.isFinite(copyingIndexFraction) && copyingCanAutoFill) {
+        industryFeeCopyingInput.value = String(Math.max(0, copyingIndexFraction));
+        industryFeeCopyingInput.dataset.autoFilled = '1';
+    }
+
+    const industryFeeReactionInput = document.getElementById('industryFeeReactionCostInput');
+    const reactionCanAutoFill = industryFeeReactionInput?.dataset.autoFilled !== '0';
+    if (industryFeeReactionInput && Number.isFinite(reactionIndexFraction) && reactionCanAutoFill) {
+        industryFeeReactionInput.value = String(Math.max(0, reactionIndexFraction));
+        industryFeeReactionInput.dataset.autoFilled = '1';
     }
 
     renderSystemStructureOptions(context.structures || [], environment);
@@ -3865,6 +3879,21 @@ function clearAutoFilledIndustryFeeSystemContext() {
     const industryFeeManufacturingInput = document.getElementById('industryFeeManufacturingCostInput');
     if (industryFeeManufacturingInput && industryFeeManufacturingInput.dataset.autoFilled === '1') {
         industryFeeManufacturingInput.value = '';
+    }
+
+    const industryFeeInventionInput = document.getElementById('industryFeeInventionCostInput');
+    if (industryFeeInventionInput && industryFeeInventionInput.dataset.autoFilled === '1') {
+        industryFeeInventionInput.value = '';
+    }
+
+    const industryFeeCopyingInput = document.getElementById('industryFeeCopyingCostInput');
+    if (industryFeeCopyingInput && industryFeeCopyingInput.dataset.autoFilled === '1') {
+        industryFeeCopyingInput.value = '';
+    }
+
+    const industryFeeReactionInput = document.getElementById('industryFeeReactionCostInput');
+    if (industryFeeReactionInput && industryFeeReactionInput.dataset.autoFilled === '1') {
+        industryFeeReactionInput.value = '';
     }
 
     const industryFeeFacilityTaxInput = document.getElementById('industryFeeFacilityTaxInput');
@@ -4142,6 +4171,36 @@ function initializeIndustryFeeSystemIdPrefill() {
         });
         manufacturingCostInput.addEventListener('input', () => {
             manufacturingCostInput.dataset.autoFilled = '0';
+        });
+    }
+
+    const inventionCostInput = document.getElementById('industryFeeInventionCostInput');
+    if (inventionCostInput) {
+        inventionCostInput.addEventListener('change', () => {
+            inventionCostInput.dataset.autoFilled = '0';
+        });
+        inventionCostInput.addEventListener('input', () => {
+            inventionCostInput.dataset.autoFilled = '0';
+        });
+    }
+
+    const copyingCostInput = document.getElementById('industryFeeCopyingCostInput');
+    if (copyingCostInput) {
+        copyingCostInput.addEventListener('change', () => {
+            copyingCostInput.dataset.autoFilled = '0';
+        });
+        copyingCostInput.addEventListener('input', () => {
+            copyingCostInput.dataset.autoFilled = '0';
+        });
+    }
+
+    const reactionCostInput = document.getElementById('industryFeeReactionCostInput');
+    if (reactionCostInput) {
+        reactionCostInput.addEventListener('change', () => {
+            reactionCostInput.dataset.autoFilled = '0';
+        });
+        reactionCostInput.addEventListener('input', () => {
+            reactionCostInput.dataset.autoFilled = '0';
         });
     }
 

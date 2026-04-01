@@ -238,20 +238,24 @@ def _fetch_esi_industry_facility_rows() -> list[dict]:
     return rows if isinstance(rows, list) else []
 
 
-def _get_manufacturing_index_map() -> dict[int, float]:
-    cache_key = "indy_hub:craft_env:manufacturing_index_map:v1"
+def _get_system_cost_index_maps() -> dict[int, dict[str, float]]:
+    cache_key = "indy_hub:craft_env:system_cost_index_maps:v1"
     cached = cache.get(cache_key)
     if isinstance(cached, dict):
         try:
             return {
-                int(system_id): float(index)
-                for system_id, index in cached.items()
+                int(system_id): {
+                    str(activity_name): float(cost_index)
+                    for activity_name, cost_index in (activity_map or {}).items()
+                    if str(activity_name)
+                }
+                for system_id, activity_map in cached.items()
                 if int(system_id) > 0
             }
         except Exception:
             pass
 
-    mapping: dict[int, float] = {}
+    mapping: dict[int, dict[str, float]] = {}
     for row in _fetch_esi_industry_system_rows():
         if not isinstance(row, dict):
             continue
@@ -268,20 +272,21 @@ def _get_manufacturing_index_map() -> dict[int, float]:
         cost_indices = row.get("cost_indices")
         if not isinstance(cost_indices, list):
             continue
-        manufacturing_index = None
+        activity_map: dict[str, float] = {}
         for activity_row in cost_indices:
             if not isinstance(activity_row, dict):
                 continue
-            if str(activity_row.get("activity") or "").strip().lower() != "manufacturing":
+            activity_name = str(activity_row.get("activity") or "").strip().lower()
+            if not activity_name:
                 continue
             try:
-                manufacturing_index = float(activity_row.get("cost_index") or 0.0)
+                cost_index = float(activity_row.get("cost_index") or 0.0)
             except (TypeError, ValueError):
-                manufacturing_index = None
-            break
-        if manufacturing_index is None:
+                continue
+            activity_map[activity_name] = max(0.0, float(cost_index))
+        if not activity_map:
             continue
-        mapping[system_id] = max(0.0, float(manufacturing_index))
+        mapping[system_id] = activity_map
 
     cache.set(cache_key, mapping, INDUSTRY_SYSTEMS_CACHE_TTL_SECONDS)
     return mapping
@@ -888,14 +893,22 @@ def resolve_craft_system_context(
         }
 
     resolved_system_id = int(resolved_system.get("system_id") or 0)
-    manufacturing_index = _get_manufacturing_index_map().get(resolved_system_id)
-    if manufacturing_index is None:
-        manufacturing_index = 0.0
+    system_cost_indices = _get_system_cost_index_maps().get(resolved_system_id, {})
+    manufacturing_index = float(system_cost_indices.get("manufacturing") or 0.0)
+    invention_index = float(system_cost_indices.get("invention") or 0.0)
+    copying_index = float(system_cost_indices.get("copying") or 0.0)
+    reaction_index = float(system_cost_indices.get("reaction") or 0.0)
 
     system_payload = {
         **resolved_system,
-        "manufacturing_cost_index": float(manufacturing_index),
-        "manufacturing_cost_percent": float(manufacturing_index) * 100.0,
+        "manufacturing_cost_index": manufacturing_index,
+        "manufacturing_cost_percent": manufacturing_index * 100.0,
+        "invention_cost_index": invention_index,
+        "invention_cost_percent": invention_index * 100.0,
+        "copying_cost_index": copying_index,
+        "copying_cost_percent": copying_index * 100.0,
+        "reaction_cost_index": reaction_index,
+        "reaction_cost_percent": reaction_index * 100.0,
     }
 
     structures: list[dict[str, object]] = []
