@@ -5171,6 +5171,17 @@ function populatePrices(allInputs, prices) {
     // Populate all material and sale price inputs
     allInputs.forEach(inp => {
         const tid = inp.getAttribute('data-type-id');
+        const rowKind = String(inp.closest('tr')?.getAttribute('data-row-kind') || '').trim().toLowerCase();
+        if (rowKind === 'bpc') {
+            inp.value = '0.00';
+            inp.classList.remove('bg-warning', 'border-warning');
+            inp.removeAttribute('title');
+            if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function' && tid) {
+                window.SimulationAPI.setPrice(tid, 'fuzzwork', 0);
+            }
+            return;
+        }
+
         const raw = prices[tid] ?? prices[String(parseInt(tid, 10))];
         let price = raw != null ? parseFloat(raw) : NaN;
         if (isNaN(price)) price = 0;
@@ -5262,17 +5273,26 @@ function buildFinancialRow(item, pricesMap) {
     const fuzzInput = row.querySelector('.fuzzwork-price');
     const realInput = row.querySelector('.real-price');
 
-    const priceEntry = pricesMap.get(item.typeId) || {};
-    const fuzzPrice = Number(priceEntry.fuzzwork || 0);
-    const realPrice = Number(priceEntry.real || 0);
+    const priceEntry = isBpc ? {} : (pricesMap.get(item.typeId) || {});
+    const fuzzPrice = isBpc ? 0 : Number(priceEntry.fuzzwork || 0);
+    const realPrice = isBpc ? 0 : Number(priceEntry.real || 0);
 
-    fuzzInput.value = fuzzPrice.toFixed(2);
-    if (fuzzPrice <= 0) {
-        fuzzInput.classList.add('bg-warning', 'border-warning');
-        fuzzInput.setAttribute('title', __('Price not available (Fuzzwork)'));
-    } else {
+    if (isBpc) {
+        fuzzInput.value = '0.00';
         fuzzInput.classList.remove('bg-warning', 'border-warning');
         fuzzInput.removeAttribute('title');
+        if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
+            window.SimulationAPI.setPrice(item.typeId, 'fuzzwork', 0);
+        }
+    } else {
+        fuzzInput.value = fuzzPrice.toFixed(2);
+        if (fuzzPrice <= 0) {
+            fuzzInput.classList.add('bg-warning', 'border-warning');
+            fuzzInput.setAttribute('title', __('Price not available (Fuzzwork)'));
+        } else {
+            fuzzInput.classList.remove('bg-warning', 'border-warning');
+            fuzzInput.removeAttribute('title');
+        }
     }
 
     if (realPrice > 0) {
@@ -5299,7 +5319,7 @@ function buildFinancialRow(item, pricesMap) {
         attachPriceInputListener(realInput);
     }
 
-    return { row, typeId: item.typeId, fuzzInput, realInput };
+    return { row, typeId: item.typeId, fuzzInput, realInput, isBpc };
 }
 
 function updateFinancialRow(row, item) {
@@ -5351,6 +5371,16 @@ function updateFinancialRow(row, item) {
     }
 
     const realInput = row.querySelector('.real-price');
+    const fuzzInput = row.querySelector('.fuzzwork-price');
+    if (fuzzInput && isBpc) {
+        fuzzInput.value = '0.00';
+        fuzzInput.classList.remove('bg-warning', 'border-warning');
+        fuzzInput.removeAttribute('title');
+        if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
+            window.SimulationAPI.setPrice(item.typeId, 'fuzzwork', 0);
+        }
+    }
+
     if (realInput) {
         if (hasFixedUnitPrice) {
             realInput.value = fixedUnitPrice.toFixed(2);
@@ -6429,14 +6459,34 @@ function updateFinancialTabFromState() {
     }
 
     if (newRows.length > 0) {
+        const pricedRows = newRows.filter((entry) => !entry.isBpc);
+        newRows
+            .filter((entry) => entry.isBpc)
+            .forEach(({ typeId, fuzzInput }) => {
+                if (fuzzInput) {
+                    fuzzInput.value = '0.00';
+                    fuzzInput.classList.remove('bg-warning', 'border-warning');
+                    fuzzInput.removeAttribute('title');
+                }
+                if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
+                    window.SimulationAPI.setPrice(typeId, 'fuzzwork', 0);
+                }
+            });
+
         const typeIds = Array.from(new Set(
-            newRows
+            pricedRows
                 .map(entry => Number(entry.typeId) || 0)
                 .filter((typeId) => typeId > 0)
                 .map((typeId) => String(typeId))
         ));
+        if (typeIds.length === 0) {
+            if (typeof recalcFinancials === 'function') {
+                recalcFinancials();
+            }
+            return;
+        }
         fetchAllPrices(typeIds).then(prices => {
-            newRows.forEach(({ typeId, fuzzInput, realInput }) => {
+            pricedRows.forEach(({ typeId, fuzzInput, realInput }) => {
                 const priceValue = parseFloat(prices[typeId] ?? prices[String(typeId)]) || 0;
                 fuzzInput.value = priceValue.toFixed(2);
                 if (priceValue <= 0) {

@@ -244,27 +244,32 @@ def fetch_jita_public_bpc_contracts(
             total_price = _extract_price(contract)
             issued_at = str(contract.get("date_issued") or "")
             expires_at = str(contract.get("date_expired") or "")
-
-            for match in matches:
-                runs = int(match["runs"])
-                total_price_float = float(total_price)
-                offers.append(
-                    {
-                        "contract_id": contract_id,
-                        "title": str(contract.get("title") or "").strip(),
-                        "issuer_id": int(contract.get("issuer_id") or 0),
-                        "start_location_id": int(contract.get("start_location_id") or 0),
-                        "end_location_id": int(contract.get("end_location_id") or 0),
-                        "price_total": total_price_float,
-                        "price_per_run": (total_price_float / runs) if runs > 0 else total_price_float,
-                        "runs": runs,
-                        "copies": int(match["copies"]),
-                        "me": int(match["me"]),
-                        "te": int(match["te"]),
-                        "issued_at": issued_at,
-                        "expires_at": expires_at,
-                    }
-                )
+            runs = max(1, sum(max(1, int(match.get("runs") or 1)) for match in matches))
+            copies = max(1, sum(max(1, int(match.get("copies") or 1)) for match in matches))
+            me_values = [int(match.get("me") or 0) for match in matches]
+            te_values = [int(match.get("te") or 0) for match in matches]
+            me = min(me_values) if me_values else 0
+            te = min(te_values) if te_values else 0
+            mixed_stats = len(set(me_values)) > 1 or len(set(te_values)) > 1
+            total_price_float = float(total_price)
+            offers.append(
+                {
+                    "contract_id": contract_id,
+                    "title": str(contract.get("title") or "").strip(),
+                    "issuer_id": int(contract.get("issuer_id") or 0),
+                    "start_location_id": int(contract.get("start_location_id") or 0),
+                    "end_location_id": int(contract.get("end_location_id") or 0),
+                    "price_total": total_price_float,
+                    "price_per_run": (total_price_float / runs) if runs > 0 else total_price_float,
+                    "runs": runs,
+                    "copies": copies,
+                    "me": me,
+                    "te": te,
+                    "mixed_stats": mixed_stats,
+                    "issued_at": issued_at,
+                    "expires_at": expires_at,
+                }
+            )
 
         offers.sort(
             key=lambda offer: (
