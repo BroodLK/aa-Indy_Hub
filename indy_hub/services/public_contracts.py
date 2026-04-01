@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Standard Library
 from decimal import Decimal
+import inspect
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
@@ -42,14 +43,66 @@ def _resolve_operation(resource: str, snake_name: str):
 
 
 def _run_openapi_operation(operation, **kwargs):
-    try:
-        result_obj = operation(**kwargs)
+    def _invoke(call_kwargs: dict):
+        result_obj = operation(**call_kwargs)
         return result_obj.results() if hasattr(result_obj, "results") else result_obj
-    except Exception as exc:
-        status_code = getattr(exc, "status_code", None)
-        if status_code == 404:
-            return None
-        raise PublicContractsError(str(exc)) from exc
+
+    attempts: list[dict] = [dict(kwargs)]
+    if "datasource" in kwargs:
+        without_datasource = dict(kwargs)
+        without_datasource.pop("datasource", None)
+        attempts.append(without_datasource)
+
+    try:
+        signature = inspect.signature(operation)
+    except Exception:
+        signature = None
+
+    if signature is not None:
+        params = signature.parameters
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in params.values()
+        )
+        if not accepts_var_kwargs:
+            filtered_attempts: list[dict] = []
+            for attempt_kwargs in attempts:
+                filtered = {
+                    key: value
+                    for key, value in attempt_kwargs.items()
+                    if key in params
+                }
+                filtered_attempts.append(filtered)
+            attempts.extend(filtered_attempts)
+
+    deduped_attempts: list[dict] = []
+    seen_signatures: set[tuple[tuple[str, str], ...]] = set()
+    for attempt_kwargs in attempts:
+        marker = tuple(
+            sorted((str(key), repr(value)) for key, value in attempt_kwargs.items())
+        )
+        if marker in seen_signatures:
+            continue
+        seen_signatures.add(marker)
+        deduped_attempts.append(attempt_kwargs)
+
+    last_error: Exception | None = None
+    for attempt_kwargs in deduped_attempts:
+        try:
+            return _invoke(attempt_kwargs)
+        except Exception as exc:
+            status_code = getattr(exc, "status_code", None)
+            if status_code == 404:
+                return None
+            last_error = exc
+            continue
+
+    if last_error is not None:
+        raise PublicContractsError(
+            f"{type(last_error).__name__}: {last_error}"
+        ) from last_error
+
+    raise PublicContractsError("OpenAPI operation call failed without an explicit exception")
 
 
 def _fetch_public_contract_page_cached(

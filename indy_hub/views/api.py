@@ -532,7 +532,7 @@ def craft_bpc_contracts(request):
                 exc,
             )
             offers = []
-            failures[str(blueprint_type_id)] = "fetch_error"
+            failures[str(blueprint_type_id)] = str(exc)[:220]
         contracts_by_blueprint[str(blueprint_type_id)] = offers
 
     logger.info(
