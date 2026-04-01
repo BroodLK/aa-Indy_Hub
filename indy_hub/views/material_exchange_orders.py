@@ -290,6 +290,7 @@ def buy_order_detail(request, order_id):
         buyer_recipients, fallback=buyer_main_character
     )
     order_location_label = _resolve_buy_order_location_label(order)
+    contract_check_amount_label = _buy_order_amount_label_for_user(order, request.user)
 
     context = {
         "order": order,
@@ -300,6 +301,7 @@ def buy_order_detail(request, order_id):
         "buyer_main_character": buyer_main_character,
         "contract_check_recipient_label": contract_check_recipient_label,
         "order_location_label": order_location_label,
+        "contract_check_amount_label": contract_check_amount_label,
         "can_cancel": order.status not in ["completed", "rejected", "cancelled"],
     }
 
@@ -316,6 +318,7 @@ def _build_contract_check_payload(
     recipient_names: list[str],
     location_candidates: list[str],
     location_label: str,
+    amount_label_override: str | None = None,
 ):
     fields = parse_contract_export(raw_text)
     expected_items, expected_item_labels = build_expected_items(order.items.all())
@@ -325,7 +328,9 @@ def _build_contract_check_payload(
     expected_items_summary = summarize_counter(expected_items, expected_item_labels)
     actual_items_summary = summarize_counter(actual_items, expected_item_labels)
 
-    if order_type == "sell":
+    if amount_label_override:
+        amount_label = amount_label_override
+    elif order_type == "sell":
         amount_label = "I will receive"
     else:
         amount_label = "I will pay"
@@ -579,6 +584,17 @@ def _build_contract_check_payload(
     }
 
 
+def _buy_order_amount_label_for_user(order: MaterialExchangeBuyOrder, user) -> str:
+    """Return the buy-order amount label for the current user perspective."""
+    is_manager = _can_manage_material_hub(user)
+    is_order_buyer = bool(
+        user and getattr(user, "id", None) == getattr(order, "buyer_id", None)
+    )
+    if is_manager and not is_order_buyer:
+        return _("I will receive")
+    return _("I will pay")
+
+
 def _get_sell_order_for_request(request, order_id):
     queryset = MaterialExchangeSellOrder.objects.prefetch_related(
         "items"
@@ -647,6 +663,7 @@ def buy_order_check_contract(request, order_id):
         fallback_buyer = _resolve_main_character_name(order.buyer)
         buyer_recipients = [fallback_buyer] if fallback_buyer else []
     location_candidates, location_label = _get_buy_contract_check_locations(order)
+    amount_label = str(_buy_order_amount_label_for_user(order, request.user))
     payload = _build_contract_check_payload(
         order=order,
         order_type="buy",
@@ -654,6 +671,7 @@ def buy_order_check_contract(request, order_id):
         recipient_names=buyer_recipients,
         location_candidates=location_candidates,
         location_label=location_label,
+        amount_label_override=amount_label,
     )
     return JsonResponse(payload)
 

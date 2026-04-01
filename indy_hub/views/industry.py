@@ -60,6 +60,7 @@ from ..notifications import (
     send_discord_webhook_with_message_id,
 )
 from ..services.esi_client import ESITokenError, ESIUnmodifiedError, shared_client
+from ..services.industry_environment import resolve_craft_system_context
 from ..services.simulations import summarize_simulations
 from ..tasks.industry import (
     BLUEPRINT_SCOPE,
@@ -2404,6 +2405,53 @@ def craft_bp(request, type_id):
             return minimum
         return max(minimum, min(parsed, maximum))
 
+    def _parse_optional_int(raw_value: object, *, minimum: int = 1) -> int | None:
+        value = str(raw_value or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        if parsed < minimum:
+            return None
+        return parsed
+
+    def _parse_optional_float(raw_value: object) -> float | None:
+        value = str(raw_value or "").strip()
+        if not value:
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed
+
+    def _parse_bool(raw_value: object, *, default: bool = False) -> bool:
+        value = str(raw_value or "").strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        return default
+
+    def _parse_positive_int_list(raw_value: object) -> list[int]:
+        values: list[int] = []
+        seen: set[int] = set()
+        raw_text = str(raw_value or "").strip()
+        if not raw_text:
+            return values
+        for token in raw_text.split(","):
+            try:
+                parsed = int(str(token or "").strip())
+            except (TypeError, ValueError):
+                continue
+            if parsed <= 0 or parsed in seen:
+                continue
+            seen.add(parsed)
+            values.append(parsed)
+        return values
+
     try:
         num_runs = int(request.GET.get("runs", 1))
         if num_runs < 1:
@@ -2423,15 +2471,34 @@ def craft_bp(request, type_id):
     te = max(0, min(te, 20))
 
     build_system = _parse_safe_system_name(request.GET.get("build_system", ""))
-    build_system_index = _parse_bounded_percent(
-        request.GET.get("build_system_index", 0),
-        minimum=0.0,
-        maximum=100.0,
+    build_system_id = _parse_optional_int(request.GET.get("build_system_id"))
+    resolved_system_context = resolve_craft_system_context(
+        user=request.user,
+        system_text=build_system,
+        system_id=build_system_id,
+        include_structures=False,
     )
+    resolved_system_payload = (
+        resolved_system_context.get("system", {})
+        if isinstance(resolved_system_context, dict)
+        else {}
+    )
+    if resolved_system_payload:
+        build_system = str(resolved_system_payload.get("system_name") or build_system)
+        build_system_id = _parse_optional_int(resolved_system_payload.get("system_id"))
+        build_system_index = _parse_bounded_percent(
+            float(resolved_system_payload.get("manufacturing_cost_percent") or 0.0),
+            minimum=0.0,
+            maximum=100.0,
+        )
+    else:
+        build_system_index = 0.0
+
     build_structure_type = str(request.GET.get("build_structure", "none") or "none")
     build_structure_type = build_structure_type.strip().lower()
     if build_structure_type not in CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE:
         build_structure_type = "none"
+    build_structure_id = _parse_optional_int(request.GET.get("build_structure_id"))
     build_structure_material_bonus = CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE.get(
         build_structure_type, 0.0
     )
@@ -2495,8 +2562,10 @@ def craft_bp(request, type_id):
 
     build_environment = {
         "system": build_system,
+        "system_id": build_system_id,
         "system_index": build_system_index,
         "structure_type": build_structure_type,
+        "structure_id": build_structure_id,
         "structure_material_bonus": build_structure_material_bonus,
         "structure_material_bonus_pct": round(build_structure_material_bonus * 100.0, 3),
         "rig_keys": selected_rig_keys,
@@ -2506,6 +2575,80 @@ def craft_bp(request, type_id):
         "rig_bonus_by_domain_pct": build_rig_bonus_by_domain_pct,
         "effective_material_bonus": effective_material_bonus,
         "effective_material_bonus_pct": round(effective_material_bonus * 100.0, 3),
+    }
+
+    default_fee_security = str(
+        resolved_system_payload.get("security_class") or "HIGH_SEC"
+    )
+    fee_security = str(
+        request.GET.get("industry_fee_security", default_fee_security)
+        or default_fee_security
+    )
+    fee_security = fee_security.strip().upper()
+    if fee_security not in {"HIGH_SEC", "LOW_SEC", "NULL_SEC", "WORMHOLE"}:
+        fee_security = default_fee_security if default_fee_security in {
+            "HIGH_SEC",
+            "LOW_SEC",
+            "NULL_SEC",
+            "WORMHOLE",
+        } else "HIGH_SEC"
+
+    manufacturing_cost_from_query = _parse_optional_float(
+        request.GET.get("industry_fee_manufacturing_cost")
+    )
+    resolved_manufacturing_cost = _parse_optional_float(
+        resolved_system_payload.get("manufacturing_cost_index")
+    )
+    fee_manufacturing_cost = (
+        manufacturing_cost_from_query
+        if manufacturing_cost_from_query is not None
+        else (
+            resolved_manufacturing_cost
+            if resolved_manufacturing_cost is not None
+            else (
+                float(build_system_index) / 100.0
+                if float(build_system_index or 0) > 0
+                else None
+            )
+        )
+    )
+    fee_system_id = _parse_optional_int(request.GET.get("industry_fee_system_id"))
+    if fee_system_id is None and build_system_id is not None:
+        fee_system_id = int(build_system_id)
+
+    industry_fee_config = {
+        "enabled": _parse_bool(
+            request.GET.get("industry_fee_enabled", "0"),
+            default=False,
+        ),
+        "structure_type_id": _parse_optional_int(
+            request.GET.get("industry_fee_structure_type_id")
+        ),
+        "security": fee_security,
+        "system_id": fee_system_id,
+        "manufacturing_cost": fee_manufacturing_cost,
+        "invention_cost": _parse_optional_float(
+            request.GET.get("industry_fee_invention_cost")
+        ),
+        "copying_cost": _parse_optional_float(
+            request.GET.get("industry_fee_copying_cost")
+        ),
+        "reaction_cost": _parse_optional_float(
+            request.GET.get("industry_fee_reaction_cost")
+        ),
+        "facility_tax": _parse_optional_float(
+            request.GET.get("industry_fee_facility_tax")
+        ),
+        "system_cost_bonus": _parse_optional_float(
+            request.GET.get("industry_fee_system_cost_bonus")
+        ),
+        "rig_ids": _parse_positive_int_list(request.GET.get("industry_fee_rig_ids", "")),
+        "alpha": _parse_bool(request.GET.get("industry_fee_alpha", "0"), default=False),
+        "extra_params": re.sub(
+            r"[^A-Za-z0-9_=&%.,:+\-]",
+            "",
+            str(request.GET.get("industry_fee_extra_params", "") or "").strip(),
+        )[:512],
     }
 
     logger.warning(
@@ -3699,12 +3842,16 @@ def craft_bp(request, type_id):
             "market_group_map": _to_serializable(market_group_map),
             "materials_by_group": _to_serializable(materials_by_group),
             "build_environment": _to_serializable(build_environment),
+            "industry_fee_config": _to_serializable(industry_fee_config),
             "build_rig_catalog": _to_serializable(build_rig_catalog),
             "urls": {
                 "save": reverse("indy_hub:save_production_config"),
                 "load_list": reverse("indy_hub:production_simulations_list"),
                 "load_config": reverse("indy_hub:load_production_config"),
                 "fuzzwork_price": reverse("indy_hub:fuzzwork_price"),
+                "craft_build_environment": reverse("indy_hub:craft_build_environment"),
+                "craft_bpc_contracts": reverse("indy_hub:craft_bpc_contracts"),
+                "craft_industry_fees": reverse("indy_hub:craft_industry_fees"),
                 "craft_bp_payload": reverse(
                     "indy_hub:craft_bp_payload", args=[type_id]
                 ),
@@ -3716,6 +3863,20 @@ def craft_bp(request, type_id):
         if request.GET.get("next"):
             next_input = (
                 f'<input type="hidden" name="next" value="{request.GET.get("next")}">'
+            )
+        sim_input = ""
+        sim_id = _parse_optional_int(request.GET.get("sim"))
+        if sim_id is not None:
+            sim_input = f'<input type="hidden" name="sim" value="{sim_id}">'
+        draft_input = ""
+        draft_value = re.sub(
+            r"[^A-Za-z0-9_-]",
+            "",
+            str(request.GET.get("draft", "") or "").strip(),
+        )[:64]
+        if draft_value:
+            draft_input = (
+                f'<input type="hidden" name="draft" value="{draft_value}">'
             )
 
         craft_controls_html = (
@@ -3729,10 +3890,25 @@ def craft_bp(request, type_id):
             f'<input type="hidden" name="te" value="{te}">'
             f'<input type="hidden" name="buy" value="{request.GET.get("buy", "")}">'
             f'<input type="hidden" name="build_system" value="{build_system}">'
+            f'<input type="hidden" name="build_system_id" value="{build_system_id or ""}">'
             f'<input type="hidden" name="build_system_index" value="{build_system_index}">'
             f'<input type="hidden" name="build_structure" value="{build_structure_type}">'
+            f'<input type="hidden" name="build_structure_id" value="{build_structure_id or ""}">'
             f'<input type="hidden" name="build_rigs" value="{",".join(selected_rig_keys)}">'
-            f"{next_input}"
+            f'<input type="hidden" name="industry_fee_enabled" value="{1 if industry_fee_config.get("enabled") else 0}">'
+            f'<input type="hidden" name="industry_fee_structure_type_id" value="{industry_fee_config.get("structure_type_id") or ""}">'
+            f'<input type="hidden" name="industry_fee_security" value="{industry_fee_config.get("security") or ""}">'
+            f'<input type="hidden" name="industry_fee_system_id" value="{industry_fee_config.get("system_id") or ""}">'
+            f'<input type="hidden" name="industry_fee_manufacturing_cost" value="{industry_fee_config.get("manufacturing_cost") if industry_fee_config.get("manufacturing_cost") is not None else ""}">'
+            f'<input type="hidden" name="industry_fee_invention_cost" value="{industry_fee_config.get("invention_cost") if industry_fee_config.get("invention_cost") is not None else ""}">'
+            f'<input type="hidden" name="industry_fee_copying_cost" value="{industry_fee_config.get("copying_cost") if industry_fee_config.get("copying_cost") is not None else ""}">'
+            f'<input type="hidden" name="industry_fee_reaction_cost" value="{industry_fee_config.get("reaction_cost") if industry_fee_config.get("reaction_cost") is not None else ""}">'
+            f'<input type="hidden" name="industry_fee_facility_tax" value="{industry_fee_config.get("facility_tax") if industry_fee_config.get("facility_tax") is not None else ""}">'
+            f'<input type="hidden" name="industry_fee_system_cost_bonus" value="{industry_fee_config.get("system_cost_bonus") if industry_fee_config.get("system_cost_bonus") is not None else ""}">'
+            f'<input type="hidden" name="industry_fee_rig_ids" value="{",".join(str(rig_id) for rig_id in (industry_fee_config.get("rig_ids") or []))}">'
+            f'<input type="hidden" name="industry_fee_alpha" value="{1 if industry_fee_config.get("alpha") else 0}">'
+            f'<input type="hidden" name="industry_fee_extra_params" value="{industry_fee_config.get("extra_params") or ""}">'
+            f"{next_input}{sim_input}{draft_input}"
             f'<input type="hidden" name="active_tab" id="activeTabInput" value="{active_tab}">'
             "</form>"
             '<button id="saveSimulationBtn" class="btn btn-light btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#saveSimulationModal">'
@@ -3809,6 +3985,7 @@ def craft_bp(request, type_id):
             "market_group_map": market_group_map,
             "materials_by_group": materials_by_group,
             "build_environment": build_environment,
+            "industry_fee_config": industry_fee_config,
             "build_rig_catalog": build_rig_catalog,
             "blueprint_payload": blueprint_payload,
             "back_url": back_url,
@@ -3840,8 +4017,10 @@ def craft_bp(request, type_id):
                 "te": 0,
                 "build_environment": {
                     "system": "",
+                    "system_id": None,
                     "system_index": 0.0,
                     "structure_type": "none",
+                    "structure_id": None,
                     "structure_material_bonus": 0.0,
                     "structure_material_bonus_pct": 0.0,
                     "rig_keys": [],

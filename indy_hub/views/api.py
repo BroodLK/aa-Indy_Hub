@@ -8,6 +8,7 @@ These views handle API calls, external data fetching, and service integrations.
 import json
 from decimal import Decimal
 from math import ceil
+from urllib.parse import parse_qsl
 
 # Django
 from django.contrib.auth.decorators import login_required
@@ -31,6 +32,16 @@ from ..models import (
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_type_name
 from ..utils.menu_badge import compute_menu_badge_count
+from ..services.public_contracts import (
+    PublicContractsError,
+    fetch_jita_public_bpc_contracts,
+)
+from ..services.everef import (
+    EVERefError,
+    fetch_industry_cost,
+    summarize_job_fees,
+)
+from ..services.industry_environment import resolve_craft_system_context
 
 logger = get_extension_logger(__name__)
 
@@ -45,6 +56,14 @@ def _to_serializable(value):
     if isinstance(value, list):
         return [_to_serializable(item) for item in value]
     return value
+
+
+def _parse_optional_int(raw_value) -> int | None:
+    try:
+        parsed = int(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 @login_required
@@ -396,6 +415,309 @@ def fuzzwork_price(request):
 @indy_hub_access_required
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
+@require_http_methods(["GET"])
+def craft_build_environment(request):
+    """Resolve craft build environment from system name/id and return structure options."""
+    emit_view_analytics_event(view_name="api.craft_build_environment", request=request)
+
+    system_text = str(request.GET.get("system", "") or "").strip()
+    explicit_system_id = _parse_optional_int(request.GET.get("system_id"))
+    selected_structure_id = _parse_optional_int(request.GET.get("structure_id"))
+
+    if not system_text and explicit_system_id is None:
+        return JsonResponse(
+            {
+                "resolved": False,
+                "system": None,
+                "structures": [],
+                "selected_structure_id": selected_structure_id,
+                "error": "system parameter required",
+            },
+            status=200,
+        )
+
+    context = resolve_craft_system_context(
+        user=request.user,
+        system_text=system_text,
+        system_id=explicit_system_id,
+        include_structures=True,
+    )
+    system_payload = context.get("system")
+    structures = context.get("structures") or []
+    if not isinstance(structures, list):
+        structures = []
+
+    for row in structures:
+        if not isinstance(row, dict):
+            continue
+        row.setdefault("structure_type_id", None)
+        row.setdefault("structure_type_key", "")
+        row.setdefault("structure_type_name", "")
+        row.setdefault("material_bonus", 0.0)
+        row.setdefault("rig_keys", [])
+        row.setdefault("rig_type_ids", [])
+        row.setdefault("facility_tax", None)
+
+    resolved = bool(system_payload)
+    if not resolved:
+        return JsonResponse(
+            {
+                "resolved": False,
+                "system": None,
+                "structures": [],
+                "selected_structure_id": selected_structure_id,
+                "error": "system_not_found",
+            },
+            status=200,
+        )
+
+    if selected_structure_id is not None:
+        matching = [
+            row
+            for row in structures
+            if int(row.get("structure_id") or 0) == int(selected_structure_id)
+        ]
+        if not matching:
+            selected_structure_id = None
+
+    return JsonResponse(
+        {
+            "resolved": True,
+            "system": system_payload,
+            "structures": structures,
+            "selected_structure_id": selected_structure_id,
+        },
+        status=200,
+    )
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def craft_bpc_contracts(request):
+    """Return public Jita BPC contracts for one or more blueprint type IDs."""
+    emit_view_analytics_event(view_name="api.craft_bpc_contracts", request=request)
+
+    raw_ids = str(request.GET.get("blueprint_type_ids", "")).strip()
+    if not raw_ids:
+        return JsonResponse({"contracts_by_blueprint": {}}, status=200)
+
+    parsed_ids: list[int] = []
+    for raw in raw_ids.split(","):
+        try:
+            type_id = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if type_id > 0 and type_id not in parsed_ids:
+            parsed_ids.append(type_id)
+
+    # Keep the endpoint bounded since every type can trigger multiple ESI requests.
+    parsed_ids = parsed_ids[:20]
+    if not parsed_ids:
+        return JsonResponse({"contracts_by_blueprint": {}}, status=200)
+
+    contracts_by_blueprint: dict[str, list[dict]] = {}
+    failures: dict[str, str] = {}
+    for blueprint_type_id in parsed_ids:
+        try:
+            offers = fetch_jita_public_bpc_contracts(
+                blueprint_type_id=blueprint_type_id,
+                blueprint_name=get_type_name(blueprint_type_id),
+            )
+        except PublicContractsError as exc:
+            logger.warning(
+                "Unable to fetch public contracts for blueprint %s: %s",
+                blueprint_type_id,
+                exc,
+            )
+            offers = []
+            failures[str(blueprint_type_id)] = "fetch_error"
+        contracts_by_blueprint[str(blueprint_type_id)] = offers
+
+    return JsonResponse(
+        {
+            "contracts_by_blueprint": contracts_by_blueprint,
+            "errors": failures,
+        },
+        status=200,
+    )
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def craft_industry_fees(request):
+    """Return aggregated EVERef job fees for the provided production jobs."""
+    emit_view_analytics_event(view_name="api.craft_industry_fees", request=request)
+
+    raw_jobs = str(request.GET.get("jobs", "")).strip()
+    if not raw_jobs:
+        return JsonResponse(
+            {"jobs": [], "total_job_cost": 0, "total_api_cost": 0, "errors": []}, status=200
+        )
+
+    jobs: list[tuple[int, int]] = []
+    for raw in raw_jobs.split(","):
+        token = str(raw or "").strip()
+        if ":" not in token:
+            continue
+        left, right = token.split(":", 1)
+        try:
+            product_id = int(left.strip())
+            runs = max(1, int(right.strip()))
+        except (TypeError, ValueError):
+            continue
+        if product_id <= 0:
+            continue
+        jobs.append((product_id, runs))
+
+    if not jobs:
+        return JsonResponse(
+            {"jobs": [], "total_job_cost": 0, "total_api_cost": 0, "errors": []}, status=200
+        )
+
+    # Keep this bounded to avoid bursty fan-out.
+    jobs = jobs[:40]
+
+    optional_query: dict[str, object] = {}
+    string_fields = [
+        "security",
+        "material_prices",
+    ]
+    for field_name in string_fields:
+        value = str(request.GET.get(field_name, "")).strip()
+        if value:
+            optional_query[field_name] = value
+
+    int_fields = [
+        "structure_type_id",
+        "system_id",
+        "decryptor_id",
+    ]
+    for field_name in int_fields:
+        raw_value = str(request.GET.get(field_name, "")).strip()
+        if not raw_value:
+            continue
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            optional_query[field_name] = parsed
+
+    float_fields = [
+        "manufacturing_cost",
+        "invention_cost",
+        "copying_cost",
+        "reaction_cost",
+        "researching_me_cost",
+        "researching_te_cost",
+        "facility_tax",
+        "system_cost_bonus",
+    ]
+    for field_name in float_fields:
+        raw_value = str(request.GET.get(field_name, "")).strip()
+        if not raw_value:
+            continue
+        try:
+            parsed = float(raw_value)
+        except (TypeError, ValueError):
+            continue
+        optional_query[field_name] = parsed
+
+    alpha_raw = str(request.GET.get("alpha", "")).strip().lower()
+    if alpha_raw in {"1", "true", "yes", "on"}:
+        optional_query["alpha"] = "true"
+    elif alpha_raw in {"0", "false", "no", "off"}:
+        optional_query["alpha"] = "false"
+
+    rig_ids = []
+    for raw_rig in request.GET.getlist("rig_id"):
+        try:
+            rig_id = int(str(raw_rig).strip())
+        except (TypeError, ValueError):
+            continue
+        if rig_id > 0:
+            rig_ids.append(rig_id)
+    if rig_ids:
+        optional_query["rig_id"] = rig_ids
+
+    # Optional passthrough for advanced skill/index params:
+    # extra_params=invention_cost=0.02&advanced_industry=5
+    extra_params_raw = str(request.GET.get("extra_params", "")).strip()
+    if extra_params_raw:
+        for key, value in parse_qsl(extra_params_raw, keep_blank_values=False):
+            safe_key = str(key or "").strip().lower()
+            safe_value = str(value or "").strip()
+            if not safe_key or not safe_value:
+                continue
+            if not safe_key.replace("_", "").isalnum():
+                continue
+            if safe_key in optional_query:
+                continue
+            optional_query[safe_key] = safe_value
+
+    response_jobs = []
+    errors = []
+    total_job_cost = Decimal("0")
+    total_api_cost = Decimal("0")
+
+    for product_id, runs in jobs:
+        cache_key = (
+            "indy_hub:craft_industry_fee:v1:"
+            f"{product_id}:{runs}:"
+            f"{json.dumps(optional_query, sort_keys=True, default=str)}"
+        )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            response_jobs.append(cached)
+            total_job_cost += Decimal(str(cached.get("total_job_cost") or 0))
+            total_api_cost += Decimal(str(cached.get("total_api_cost") or 0))
+            continue
+
+        try:
+            payload = fetch_industry_cost(
+                product_id=product_id,
+                runs=runs,
+                query_params=optional_query,
+            )
+            summary = summarize_job_fees(payload)
+            row = {
+                "product_id": product_id,
+                "runs": runs,
+                "total_job_cost": float(summary["total_job_cost"]),
+                "total_api_cost": float(summary["total_api_cost"]),
+                "section_job_costs": summary["section_job_costs"],
+            }
+            cache.set(cache_key, row, 300)
+            response_jobs.append(row)
+            total_job_cost += Decimal(str(row["total_job_cost"]))
+            total_api_cost += Decimal(str(row["total_api_cost"]))
+        except EVERefError as exc:
+            errors.append(
+                {
+                    "product_id": product_id,
+                    "runs": runs,
+                    "error": str(exc),
+                }
+            )
+
+    return JsonResponse(
+        {
+            "jobs": response_jobs,
+            "total_job_cost": float(total_job_cost),
+            "total_api_cost": float(total_api_cost),
+            "errors": errors,
+        },
+        status=200,
+    )
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
 @require_http_methods(["POST"])
 def save_production_config(request):
     emit_view_analytics_event(view_name="api.save_production_config", request=request)
@@ -428,33 +750,59 @@ def save_production_config(request):
     try:
         data = json.loads(request.body)
         blueprint_type_id = data.get("blueprint_type_id")
-        runs = data.get("runs", 1)
+        runs = int(data.get("runs", 1) or 1)
+        if runs < 1:
+            runs = 1
+
+        simulation_id_raw = data.get("simulation_id")
+        simulation_id = None
+        if simulation_id_raw not in (None, "", 0, "0"):
+            try:
+                simulation_id = int(simulation_id_raw)
+            except (TypeError, ValueError):
+                return JsonResponse({"error": "simulation_id must be an integer"}, status=400)
 
         if not blueprint_type_id:
             return JsonResponse({"error": "blueprint_type_id is required"}, status=400)
 
         # Create or update the simulation
-        simulation, created = ProductionSimulation.objects.get_or_create(
-            user=request.user,
-            blueprint_type_id=blueprint_type_id,
-            runs=runs,
-            defaults={
-                "blueprint_name": data.get(
-                    "blueprint_name", f"Blueprint {blueprint_type_id}"
-                ),
-                "simulation_name": data.get("simulation_name", ""),
-                "active_tab": data.get("active_tab", "materials"),
-                "estimated_cost": data.get("estimated_cost", 0),
-                "estimated_revenue": data.get("estimated_revenue", 0),
-                "estimated_profit": data.get("estimated_profit", 0),
-            },
-        )
+        simulation = None
+        created = False
+        if simulation_id:
+            simulation = ProductionSimulation.objects.filter(
+                id=simulation_id,
+                user=request.user,
+            ).first()
+            if simulation is None:
+                return JsonResponse({"error": "simulation not found"}, status=404)
+            if int(simulation.blueprint_type_id) != int(blueprint_type_id):
+                return JsonResponse(
+                    {"error": "simulation does not match blueprint_type_id"},
+                    status=400,
+                )
+        else:
+            simulation, created = ProductionSimulation.objects.get_or_create(
+                user=request.user,
+                blueprint_type_id=blueprint_type_id,
+                runs=runs,
+                defaults={
+                    "blueprint_name": data.get(
+                        "blueprint_name", f"Blueprint {blueprint_type_id}"
+                    ),
+                    "simulation_name": data.get("simulation_name", ""),
+                    "active_tab": data.get("active_tab", "materials"),
+                    "estimated_cost": data.get("estimated_cost", 0),
+                    "estimated_revenue": data.get("estimated_revenue", 0),
+                    "estimated_profit": data.get("estimated_profit", 0),
+                },
+            )
 
         if not created:
             # Update the existing simulation
             simulation.blueprint_name = data.get(
                 "blueprint_name", simulation.blueprint_name
             )
+            simulation.runs = runs
             simulation.simulation_name = data.get(
                 "simulation_name", simulation.simulation_name
             )
@@ -593,6 +941,14 @@ def load_production_config(request):
         "estimated_profit": 50000.0
     }
     """
+    simulation_id_param = request.GET.get("simulation_id")
+    simulation_id = None
+    if simulation_id_param not in (None, "", "0"):
+        try:
+            simulation_id = int(simulation_id_param)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "simulation_id must be an integer"}, status=400)
+
     blueprint_type_id = request.GET.get("blueprint_type_id")
     runs_param = request.GET.get("runs", 1)
     try:
@@ -608,19 +964,29 @@ def load_production_config(request):
             status=400,
         )
 
-    if not blueprint_type_id:
+    if simulation_id is None and not blueprint_type_id:
         return JsonResponse(
             {"error": "blueprint_type_id parameter required"}, status=400
         )
 
     try:
         simulation = None  # Load the simulation if it exists
-        try:
-            simulation = ProductionSimulation.objects.get(
-                user=request.user, blueprint_type_id=blueprint_type_id, runs=runs
-            )
-        except ProductionSimulation.DoesNotExist:
-            pass
+        if simulation_id is not None:
+            simulation = ProductionSimulation.objects.filter(
+                user=request.user,
+                id=simulation_id,
+            ).first()
+            if simulation is None:
+                return JsonResponse({"error": "simulation not found"}, status=404)
+            blueprint_type_id = int(simulation.blueprint_type_id)
+            runs = int(simulation.runs or runs)
+        else:
+            try:
+                simulation = ProductionSimulation.objects.get(
+                    user=request.user, blueprint_type_id=blueprint_type_id, runs=runs
+                )
+            except ProductionSimulation.DoesNotExist:
+                pass
 
         items = []  # Step 1: production/buy/useless configurations
         if simulation:

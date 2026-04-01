@@ -9,6 +9,33 @@ const CRAFT_BP = {
     productTypeId: null, // Will be set from Django template
 };
 let CRAFT_COMPUTED_NEEDED_ROWS = null;
+const CRAFT_BPC_CONTRACT_STATE = {
+    loaded: false,
+    loading: false,
+    offersByBlueprintType: new Map(),
+    selectedByBlueprintType: new Map(),
+};
+const CRAFT_INDUSTRY_FEE_STATE = {
+    loading: false,
+    signature: '',
+    loaded: false,
+    totalJobCost: 0,
+    totalApiCost: 0,
+    jobs: [],
+    errors: [],
+};
+const CRAFT_BUILD_SYSTEM_STATE = {
+    loading: false,
+    lastSignature: '',
+    debounceTimer: null,
+    structuresById: new Map(),
+};
+const CRAFT_SELECTION_SCOPE = {
+    initialized: false,
+    blueprintTypeId: 0,
+    simulationId: null,
+    draftId: '',
+};
 
 const __ = (typeof window !== 'undefined' && typeof window.gettext === 'function') ? window.gettext.bind(window) : (msg => msg);
 
@@ -117,6 +144,226 @@ function getSimulationPricesMap() {
     return mapLikeToMap(state.prices);
 }
 
+function getCurrentQueryParam(name) {
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        return String(params.get(name) || '').trim();
+    } catch (error) {
+        return '';
+    }
+}
+
+function sanitizeScopeToken(rawValue) {
+    return String(rawValue || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+}
+
+function createDraftScopeToken() {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function ensureCraftSelectionScope() {
+    if (CRAFT_SELECTION_SCOPE.initialized) {
+        return CRAFT_SELECTION_SCOPE;
+    }
+
+    const blueprintTypeId = Number(getCurrentBlueprintTypeId()) || 0;
+    const simRaw = getCurrentQueryParam('sim');
+    const simNumeric = Number(simRaw);
+    if (Number.isFinite(simNumeric) && simNumeric > 0) {
+        CRAFT_SELECTION_SCOPE.initialized = true;
+        CRAFT_SELECTION_SCOPE.blueprintTypeId = blueprintTypeId;
+        CRAFT_SELECTION_SCOPE.simulationId = Math.floor(simNumeric);
+        CRAFT_SELECTION_SCOPE.draftId = '';
+        return CRAFT_SELECTION_SCOPE;
+    }
+
+    let draftId = sanitizeScopeToken(getCurrentQueryParam('draft'));
+    if (!draftId) {
+        draftId = createDraftScopeToken();
+        try {
+            const nextUrl = new URL(window.location.href);
+            nextUrl.searchParams.set('draft', draftId);
+            window.history.replaceState(window.history.state, '', nextUrl.toString());
+        } catch (error) {
+            // Ignore URL sync failures and continue with in-memory draft scope.
+        }
+    }
+
+    CRAFT_SELECTION_SCOPE.initialized = true;
+    CRAFT_SELECTION_SCOPE.blueprintTypeId = blueprintTypeId;
+    CRAFT_SELECTION_SCOPE.simulationId = null;
+    CRAFT_SELECTION_SCOPE.draftId = draftId;
+    return CRAFT_SELECTION_SCOPE;
+}
+
+function resetCraftSelectionScope() {
+    CRAFT_SELECTION_SCOPE.initialized = false;
+}
+
+function getCraftSelectionScopeSuffix() {
+    const scope = ensureCraftSelectionScope();
+    if (scope.simulationId) {
+        return `sim_${scope.simulationId}`;
+    }
+    const draftId = sanitizeScopeToken(scope.draftId) || 'default';
+    return `draft_${draftId}`;
+}
+
+function getScopedCraftStorageKey(prefix) {
+    const scope = ensureCraftSelectionScope();
+    return `${prefix}_${String(scope.blueprintTypeId || 0)}_${getCraftSelectionScopeSuffix()}`;
+}
+
+function setCraftSimulationScope(simulationId) {
+    const numericSimulationId = Number(simulationId) || 0;
+    if (numericSimulationId <= 0) {
+        return;
+    }
+    try {
+        const nextUrl = new URL(window.location.href);
+        nextUrl.searchParams.set('sim', String(Math.floor(numericSimulationId)));
+        nextUrl.searchParams.delete('draft');
+        window.history.replaceState(window.history.state, '', nextUrl.toString());
+    } catch (error) {
+        console.error('[CraftBP] Failed updating simulation scope URL', error);
+    }
+    resetCraftSelectionScope();
+    ensureCraftSelectionScope();
+}
+
+function getBpcContractStorageKey() {
+    return getScopedCraftStorageKey('craft_bp_bpc_contracts');
+}
+
+function loadSelectedBpcContractsFromStorage() {
+    const storageKey = getBpcContractStorageKey();
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType = new Map();
+
+    try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) {
+            return;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') {
+            return;
+        }
+
+        Object.entries(parsed).forEach(([bpTypeIdRaw, offersRaw]) => {
+            const blueprintTypeId = Number(bpTypeIdRaw) || 0;
+            if (!blueprintTypeId || !Array.isArray(offersRaw)) {
+                return;
+            }
+            const offerMap = new Map();
+            offersRaw.forEach((offerRaw) => {
+                const contractId = Number(offerRaw && offerRaw.contract_id) || 0;
+                if (!contractId) {
+                    return;
+                }
+                const normalized = {
+                    blueprint_type_id: blueprintTypeId,
+                    contract_id: contractId,
+                    title: String(offerRaw.title || '').trim(),
+                    price_total: Number(offerRaw.price_total) || 0,
+                    price_per_run: Number(offerRaw.price_per_run) || 0,
+                    runs: Math.max(1, Number(offerRaw.runs) || 1),
+                    copies: Math.max(1, Number(offerRaw.copies) || 1),
+                    me: Number(offerRaw.me) || 0,
+                    te: Number(offerRaw.te) || 0,
+                    issued_at: String(offerRaw.issued_at || ''),
+                    expires_at: String(offerRaw.expires_at || ''),
+                    selected_at: Number(offerRaw.selected_at) || Date.now(),
+                };
+                offerMap.set(contractId, normalized);
+            });
+            if (offerMap.size > 0) {
+                CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.set(blueprintTypeId, offerMap);
+            }
+        });
+    } catch (error) {
+        console.error('[CraftBP] Failed to load selected BPC contracts from storage', error);
+    }
+}
+
+function saveSelectedBpcContractsToStorage() {
+    const storageKey = getBpcContractStorageKey();
+    const payload = {};
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
+        if (!(offerMap instanceof Map) || offerMap.size === 0) {
+            return;
+        }
+        payload[String(blueprintTypeId)] = Array.from(offerMap.values());
+    });
+    try {
+        localStorage.setItem(storageKey, JSON.stringify(payload));
+    } catch (error) {
+        console.error('[CraftBP] Failed to persist selected BPC contracts', error);
+    }
+}
+
+function getSelectedContractOffersForBlueprint(blueprintTypeId) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    if (!numericBlueprintTypeId) {
+        return [];
+    }
+    const offerMap = CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.get(numericBlueprintTypeId);
+    if (!(offerMap instanceof Map) || offerMap.size === 0) {
+        return [];
+    }
+    return Array.from(offerMap.values()).sort((left, right) => (Number(left.selected_at) || 0) - (Number(right.selected_at) || 0));
+}
+
+function getSelectedContractRunsForBlueprint(blueprintTypeId) {
+    return getSelectedContractOffersForBlueprint(blueprintTypeId).reduce((total, offer) => {
+        return total + Math.max(0, Number(offer.runs) || 0);
+    }, 0);
+}
+
+function upsertSelectedContractOffer(blueprintTypeId, offer) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    const contractId = Number(offer && offer.contract_id) || 0;
+    if (!numericBlueprintTypeId || !contractId) {
+        return false;
+    }
+    let offerMap = CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.get(numericBlueprintTypeId);
+    if (!(offerMap instanceof Map)) {
+        offerMap = new Map();
+        CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.set(numericBlueprintTypeId, offerMap);
+    }
+    offerMap.set(contractId, {
+        blueprint_type_id: numericBlueprintTypeId,
+        contract_id: contractId,
+        title: String(offer.title || '').trim(),
+        price_total: Number(offer.price_total) || 0,
+        price_per_run: Number(offer.price_per_run) || 0,
+        runs: Math.max(1, Number(offer.runs) || 1),
+        copies: Math.max(1, Number(offer.copies) || 1),
+        me: Number(offer.me) || 0,
+        te: Number(offer.te) || 0,
+        issued_at: String(offer.issued_at || ''),
+        expires_at: String(offer.expires_at || ''),
+        selected_at: Date.now(),
+    });
+    return true;
+}
+
+function removeSelectedContractOffer(blueprintTypeId, contractId) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    const numericContractId = Number(contractId) || 0;
+    if (!numericBlueprintTypeId || !numericContractId) {
+        return false;
+    }
+    const offerMap = CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.get(numericBlueprintTypeId);
+    if (!(offerMap instanceof Map)) {
+        return false;
+    }
+    const removed = offerMap.delete(numericContractId);
+    if (offerMap.size === 0) {
+        CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.delete(numericBlueprintTypeId);
+    }
+    return removed;
+}
+
 function attachPriceInputListener(input) {
     if (!input || input.dataset.priceListenerAttached === 'true') {
         return;
@@ -145,6 +392,9 @@ function refreshTabsAfterStateChange(options = {}) {
     if (!options.keepComputedNeeded) {
         CRAFT_COMPUTED_NEEDED_ROWS = null;
     }
+    if (typeof syncConfigureVisibilityWithPlan === 'function') {
+        syncConfigureVisibilityWithPlan();
+    }
     if (typeof updateMaterialsTabFromState === 'function') {
         updateMaterialsTabFromState();
     }
@@ -153,6 +403,9 @@ function refreshTabsAfterStateChange(options = {}) {
     }
     if (typeof updateNeededTabFromState === 'function') {
         updateNeededTabFromState(Boolean(options.forceNeeded));
+    }
+    if (typeof renderBuyBpcsTab === 'function') {
+        renderBuyBpcsTab();
     }
 }
 
@@ -195,6 +448,33 @@ window.CraftBP = {
             }
         });
         document.dispatchEvent(event);
+    },
+
+    setSimulationScope: function(simulationId, options = {}) {
+        const migrateCurrentState = options.migrateCurrentState !== false;
+        setCraftSimulationScope(simulationId);
+
+        if (migrateCurrentState) {
+            if (typeof getCurrentMETEConfig === 'function') {
+                const storageKey = getScopedCraftStorageKey('craft_bp_config');
+                try {
+                    localStorage.setItem(storageKey, JSON.stringify(getCurrentMETEConfig()));
+                } catch (error) {
+                    console.error('[CraftBP] Failed to persist configure state for simulation scope', error);
+                }
+            }
+            if (typeof saveSelectedBpcContractsToStorage === 'function') {
+                saveSelectedBpcContractsToStorage();
+            }
+            return;
+        }
+
+        if (typeof loadSelectedBpcContractsFromStorage === 'function') {
+            loadSelectedBpcContractsFromStorage();
+        }
+        if (typeof renderBuyBpcsTab === 'function') {
+            renderBuyBpcsTab();
+        }
     }
 };
 
@@ -211,8 +491,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     initializeBlueprintIcons();
     initializeCollapseHandlers();
+    ensureCraftSelectionScope();
     initializeBuyCraftSwitches();
     restoreBuyCraftStateFromURL();
+    loadSelectedBpcContractsFromStorage();
+    initializeBuyBpcsTab();
+    syncConfigureVisibilityWithPlan();
     if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
         window.SimulationAPI.refreshFromDom();
     }
@@ -3008,6 +3292,8 @@ function initializeFinancialCalculations() {
 
     // Initialize Configure tab change handlers (ME/TE/BP usage/build environment)
     initializeMETEHandlers();
+    initializeBuildEnvironmentSystemSync();
+    initializeIndustryFeeSystemIdPrefill();
 }
 
 /**
@@ -3018,17 +3304,14 @@ function initializeMETEHandlers() {
     window.craftBPFlags = window.craftBPFlags || {};
     window.craftBPFlags.hasPendingMETEChanges = false;
 
-    // Get blueprint ID for localStorage key
-    const bpTypeId = getCurrentBlueprintTypeId();
-    const storageKey = `craft_bp_config_${bpTypeId}`;
-
     // Restore Configure settings from localStorage on page load
-    restoreMETEFromLocalStorage(storageKey);
+    restoreMETEFromLocalStorage(getScopedCraftStorageKey('craft_bp_config'));
     updateBuildEnvironmentSummary();
 
     function saveMETEToLocalStorage() {
         const config = getCurrentMETEConfig();
         try {
+            const storageKey = getScopedCraftStorageKey('craft_bp_config');
             localStorage.setItem(storageKey, JSON.stringify(config));
             craftBPDebugLog('Configure settings saved to localStorage');
         } catch (error) {
@@ -3059,7 +3342,7 @@ function initializeMETEHandlers() {
 
     // Listen to Configure inputs (ME/TE + Use BP + build environment) and schedule apply on tab change.
     const configureInputs = document.querySelectorAll(
-        '#configure-pane input[name^="me_"], #configure-pane input[name^="te_"], #configure-pane input.bp-use-input[data-blueprint-type-id], #configure-pane [data-build-env-input="1"]'
+        '#configure-pane input[name^="me_"], #configure-pane input[name^="te_"], #configure-pane input.bp-use-input[data-blueprint-type-id], #configure-pane [data-build-env-input="1"], #configure-pane [data-industry-fee-input="1"]'
     );
     craftBPDebugLog(`Found ${configureInputs.length} Configure inputs to monitor for changes`);
 
@@ -3124,8 +3407,10 @@ function parseBuildEnvironmentFromUrl() {
         const params = new URLSearchParams(window.location.search || '');
         parsed.hasAny = (
             params.has('build_system')
+            || params.has('build_system_id')
             || params.has('build_system_index')
             || params.has('build_structure')
+            || params.has('build_structure_id')
             || params.has('build_rigs')
         );
         if (!parsed.hasAny) {
@@ -3134,6 +3419,12 @@ function parseBuildEnvironmentFromUrl() {
 
         if (params.has('build_system')) {
             parsed.system = String(params.get('build_system') || '').trim().slice(0, 64);
+        }
+        if (params.has('build_system_id')) {
+            const raw = Number(params.get('build_system_id') || 0);
+            if (Number.isFinite(raw) && raw > 0) {
+                parsed.systemId = Math.floor(raw);
+            }
         }
         if (params.has('build_system_index')) {
             const raw = Number(params.get('build_system_index') || 0);
@@ -3144,6 +3435,12 @@ function parseBuildEnvironmentFromUrl() {
         if (params.has('build_structure')) {
             const structure = String(params.get('build_structure') || '').trim().toLowerCase();
             parsed.structureType = structure || 'none';
+        }
+        if (params.has('build_structure_id')) {
+            const raw = Number(params.get('build_structure_id') || 0);
+            if (Number.isFinite(raw) && raw > 0) {
+                parsed.structureId = Math.floor(raw);
+            }
         }
         if (params.has('build_rigs')) {
             parsed.rigKeys = [];
@@ -3177,6 +3474,14 @@ function applyBuildEnvironmentToDom(environment) {
         systemInput.value = environment.system;
     }
 
+    const systemIdInput = document.getElementById('buildSystemIdInput');
+    if (systemIdInput && environment.systemId !== undefined && environment.systemId !== null && environment.systemId !== '') {
+        const numeric = Number(environment.systemId);
+        if (Number.isFinite(numeric) && numeric > 0) {
+            systemIdInput.value = String(Math.floor(numeric));
+        }
+    }
+
     const systemIndexInput = document.getElementById('buildSystemIndexInput');
     if (systemIndexInput && environment.systemIndex !== undefined && environment.systemIndex !== null && environment.systemIndex !== '') {
         const numeric = Number(environment.systemIndex);
@@ -3186,12 +3491,26 @@ function applyBuildEnvironmentToDom(environment) {
     }
 
     const structureSelect = document.getElementById('buildStructureSelect');
-    if (structureSelect && typeof environment.structureType === 'string' && environment.structureType) {
-        const requested = environment.structureType.toLowerCase();
-        const option = Array.from(structureSelect.options || []).find(
-            (opt) => String(opt.value || '').toLowerCase() === requested
-        );
+    const structureIdInput = document.getElementById('buildStructureIdInput');
+    if (structureSelect) {
+        const requestedStructureId = Number(environment.structureId) || 0;
+        const requestedStructureType = String(environment.structureType || '').trim().toLowerCase();
+        let option = null;
+        if (requestedStructureId > 0) {
+            option = Array.from(structureSelect.options || []).find((opt) => {
+                return (Number(opt.getAttribute('data-structure-id')) || 0) === requestedStructureId;
+            });
+        }
+        if (!option && requestedStructureType) {
+            option = Array.from(structureSelect.options || []).find((opt) => {
+                const typeKey = String(opt.getAttribute('data-structure-type') || opt.value || '').trim().toLowerCase();
+                return typeKey === requestedStructureType;
+            });
+        }
         structureSelect.value = option ? option.value : 'none';
+        if (structureIdInput) {
+            structureIdInput.value = requestedStructureId > 0 ? String(requestedStructureId) : '';
+        }
     }
 
     if (Array.isArray(environment.rigKeys)) {
@@ -3212,9 +3531,18 @@ function getBuildEnvironmentFromDom() {
     const selectedStructureOption = structureSelect
         ? structureSelect.options[structureSelect.selectedIndex]
         : null;
-    const structureType = structureSelect
-        ? String(structureSelect.value || 'none').trim().toLowerCase()
-        : 'none';
+    const structureType = selectedStructureOption
+        ? String(selectedStructureOption.getAttribute('data-structure-type') || selectedStructureOption.value || 'none').trim().toLowerCase()
+        : (
+            structureSelect
+                ? String(structureSelect.value || 'none').trim().toLowerCase()
+                : 'none'
+        );
+    const structureIdInput = document.getElementById('buildStructureIdInput');
+    const structureId = selectedStructureOption
+        ? (Number(selectedStructureOption.getAttribute('data-structure-id')) || 0)
+        : 0;
+    const fallbackStructureId = Number(structureIdInput ? structureIdInput.value : 0) || 0;
     const structureBonus = selectedStructureOption
         ? (Number(selectedStructureOption.getAttribute('data-material-bonus') || 0) || 0)
         : 0;
@@ -3236,8 +3564,13 @@ function getBuildEnvironmentFromDom() {
     });
 
     const systemInput = document.getElementById('buildSystemInput');
+    const systemIdInput = document.getElementById('buildSystemIdInput');
     const systemIndexInput = document.getElementById('buildSystemIndexInput');
+    const rawSystemId = Number(systemIdInput ? systemIdInput.value : 0);
     const rawSystemIndex = Number(systemIndexInput ? systemIndexInput.value : 0);
+    const systemId = Number.isFinite(rawSystemId) && rawSystemId > 0
+        ? Math.floor(rawSystemId)
+        : 0;
     const systemIndex = Number.isFinite(rawSystemIndex)
         ? Math.max(0, Math.min(rawSystemIndex, 100))
         : 0;
@@ -3245,8 +3578,10 @@ function getBuildEnvironmentFromDom() {
 
     return {
         system: String(systemInput ? systemInput.value : '').trim().slice(0, 64),
+        systemId,
         systemIndex,
         structureType: structureType || 'none',
+        structureId: structureId > 0 ? structureId : (fallbackStructureId > 0 ? fallbackStructureId : 0),
         structureMaterialBonus: Math.max(0, structureBonus),
         rigKeys: Array.from(new Set(rigKeys)),
         rigMaterialBonus: Math.max(0, rigBonus),
@@ -3271,9 +3606,597 @@ function updateBuildEnvironmentSummary() {
     }
 }
 
+function getCraftBuildEnvironmentApiUrl() {
+    return String(window.BLUEPRINT_DATA?.urls?.craft_build_environment || '').trim();
+}
+
+function parseCommaList(value) {
+    return String(value || '')
+        .split(',')
+        .map((token) => String(token || '').trim())
+        .filter(Boolean);
+}
+
+function parseCommaIntList(value) {
+    return parseCommaList(value)
+        .map((token) => Number(token) || 0)
+        .filter((valueInt) => valueInt > 0);
+}
+
+function applySelectedStructureDerivedSettings() {
+    const structureSelect = document.getElementById('buildStructureSelect');
+    const structureIdInput = document.getElementById('buildStructureIdInput');
+    const selectedOption = structureSelect
+        ? structureSelect.options[structureSelect.selectedIndex]
+        : null;
+
+    const rigKeys = selectedOption ? parseCommaList(selectedOption.getAttribute('data-rig-keys')) : [];
+    const rigKeySet = new Set(rigKeys.map((key) => key.toLowerCase()));
+    const rigTypeIds = selectedOption ? parseCommaIntList(selectedOption.getAttribute('data-rig-type-ids')) : [];
+    const structureTypeId = selectedOption
+        ? (Number(selectedOption.getAttribute('data-structure-type-id')) || 0)
+        : 0;
+    const selectedStructureId = selectedOption
+        ? (Number(selectedOption.getAttribute('data-structure-id')) || 0)
+        : 0;
+    const facilityTaxAttr = selectedOption
+        ? String(selectedOption.getAttribute('data-facility-tax') || '').trim()
+        : '';
+    const facilityTaxParsed = Number(facilityTaxAttr);
+    const facilityTax = (
+        facilityTaxAttr !== ''
+        && Number.isFinite(facilityTaxParsed)
+        && facilityTaxParsed >= 0
+    )
+        ? facilityTaxParsed
+        : null;
+
+    if (structureIdInput) {
+        structureIdInput.value = selectedStructureId > 0 ? String(selectedStructureId) : '';
+    }
+
+    const rigInputs = document.querySelectorAll('#configure-pane .build-rig-input[data-rig-key]');
+    rigInputs.forEach((input) => {
+        const key = String(input.getAttribute('data-rig-key') || '').trim().toLowerCase();
+        if (rigKeySet.size > 0) {
+            input.checked = rigKeySet.has(key);
+            input.disabled = true;
+        } else {
+            input.disabled = false;
+            if (selectedOption && String(selectedOption.value || '').trim() !== 'none') {
+                input.checked = false;
+            }
+        }
+    });
+
+    const structureTypeIdInput = document.getElementById('industryFeeStructureTypeIdInput');
+    if (structureTypeIdInput) {
+        structureTypeIdInput.value = structureTypeId > 0 ? String(structureTypeId) : '';
+        structureTypeIdInput.dataset.autoFilled = '1';
+    }
+
+    const rigTypeIdsInput = document.getElementById('industryFeeRigIdsInput');
+    if (rigTypeIdsInput) {
+        rigTypeIdsInput.value = rigTypeIds.length > 0 ? rigTypeIds.join(',') : '';
+        rigTypeIdsInput.dataset.autoFilled = '1';
+    }
+
+    const facilityTaxInput = document.getElementById('industryFeeFacilityTaxInput');
+    if (facilityTaxInput) {
+        const hasExplicit = String(facilityTaxInput.value || '').trim() !== '';
+        const canAutoFill = !hasExplicit || facilityTaxInput.dataset.autoFilled === '1';
+        if (facilityTax !== null) {
+            if (canAutoFill) {
+                facilityTaxInput.value = String(facilityTax);
+                facilityTaxInput.dataset.autoFilled = '1';
+            }
+        } else if (facilityTaxInput.dataset.autoFilled === '1') {
+            facilityTaxInput.value = '';
+            facilityTaxInput.dataset.autoFilled = '0';
+        }
+    }
+
+    updateBuildEnvironmentSummary();
+}
+
+function renderSystemStructureOptions(structures, environment) {
+    const structureSelect = document.getElementById('buildStructureSelect');
+    if (!structureSelect) {
+        return;
+    }
+
+    const preferredStructureId = Number(environment?.structureId) || 0;
+    const preferredStructureType = String(environment?.structureType || '').trim().toLowerCase();
+
+    CRAFT_BUILD_SYSTEM_STATE.structuresById = new Map();
+
+    const options = [];
+    options.push({
+        value: 'none',
+        label: __('No structure selected'),
+        structureId: 0,
+        structureType: 'none',
+        structureTypeId: 0,
+        materialBonus: 0,
+        rigKeys: [],
+        rigTypeIds: [],
+        facilityTax: null,
+    });
+
+    (Array.isArray(structures) ? structures : []).forEach((row) => {
+        const structureId = Number(row?.structure_id) || 0;
+        if (structureId <= 0) {
+            return;
+        }
+        const structureType = String(row?.structure_type_key || '').trim().toLowerCase();
+        const labelName = String(row?.structure_name || '').trim() || `Structure ${structureId}`;
+        const typeName = String(row?.structure_type_name || '').trim();
+        const materialBonus = Number(row?.material_bonus) || 0;
+        const rigKeys = Array.from(new Set((Array.isArray(row?.rig_keys) ? row.rig_keys : []).map((key) => String(key || '').trim().toLowerCase()).filter(Boolean)));
+        const rigTypeIds = Array.from(new Set((Array.isArray(row?.rig_type_ids) ? row.rig_type_ids : []).map((id) => Number(id) || 0).filter((id) => id > 0)));
+        const structureTypeId = Number(row?.structure_type_id) || 0;
+        const facilityTaxRaw = row?.facility_tax;
+        const facilityTaxText = facilityTaxRaw === null || facilityTaxRaw === undefined
+            ? ''
+            : String(facilityTaxRaw).trim();
+        const facilityTaxParsed = Number(facilityTaxText);
+        const facilityTax = (
+            facilityTaxText !== ''
+            && Number.isFinite(facilityTaxParsed)
+            && facilityTaxParsed >= 0
+        )
+            ? facilityTaxParsed
+            : null;
+
+        CRAFT_BUILD_SYSTEM_STATE.structuresById.set(structureId, row);
+        options.push({
+            value: `structure:${structureId}`,
+            label: typeName ? `${labelName} (${typeName})` : labelName,
+            structureId,
+            structureType: structureType || 'none',
+            structureTypeId,
+            materialBonus: Math.max(0, materialBonus),
+            rigKeys,
+            rigTypeIds,
+            facilityTax,
+        });
+    });
+
+    structureSelect.innerHTML = '';
+    options.forEach((optionData) => {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        option.setAttribute('data-structure-id', optionData.structureId > 0 ? String(optionData.structureId) : '');
+        option.setAttribute('data-structure-type', optionData.structureType || 'none');
+        option.setAttribute('data-structure-type-id', optionData.structureTypeId > 0 ? String(optionData.structureTypeId) : '');
+        option.setAttribute('data-material-bonus', String(optionData.materialBonus || 0));
+        option.setAttribute('data-rig-keys', optionData.rigKeys.join(','));
+        option.setAttribute('data-rig-type-ids', optionData.rigTypeIds.join(','));
+        option.setAttribute(
+            'data-facility-tax',
+            optionData.facilityTax !== null && optionData.facilityTax !== undefined
+                ? String(optionData.facilityTax)
+                : ''
+        );
+        structureSelect.appendChild(option);
+    });
+
+    let selectedOptionValue = 'none';
+    if (preferredStructureId > 0) {
+        const byId = options.find((opt) => opt.structureId === preferredStructureId);
+        if (byId) {
+            selectedOptionValue = byId.value;
+        }
+    }
+    if (selectedOptionValue === 'none' && preferredStructureType) {
+        const byType = options.find((opt) => opt.structureType === preferredStructureType);
+        if (byType) {
+            selectedOptionValue = byType.value;
+        }
+    }
+    structureSelect.value = selectedOptionValue;
+    applySelectedStructureDerivedSettings();
+}
+
+function applyResolvedBuildSystemContext(context, environment) {
+    const system = context && typeof context === 'object' ? context.system : null;
+    if (!system || typeof system !== 'object') {
+        return;
+    }
+
+    const systemName = String(system.system_name || '').trim();
+    const systemId = Number(system.system_id) || 0;
+    const manufacturingIndexPercent = Number(system.manufacturing_cost_percent);
+    const manufacturingIndexFraction = Number(system.manufacturing_cost_index);
+    const securityClass = String(system.security_class || '').trim().toUpperCase();
+
+    const buildSystemInput = document.getElementById('buildSystemInput');
+    if (buildSystemInput && systemName) {
+        buildSystemInput.value = systemName;
+    }
+
+    const buildSystemIdInput = document.getElementById('buildSystemIdInput');
+    if (buildSystemIdInput) {
+        buildSystemIdInput.value = systemId > 0 ? String(systemId) : '';
+    }
+
+    const buildSystemIndexInput = document.getElementById('buildSystemIndexInput');
+    if (buildSystemIndexInput && Number.isFinite(manufacturingIndexPercent)) {
+        buildSystemIndexInput.value = String(Math.max(0, manufacturingIndexPercent));
+    }
+
+    const industryFeeSystemIdInput = document.getElementById('industryFeeSystemIdInput');
+    if (industryFeeSystemIdInput && systemId > 0) {
+        industryFeeSystemIdInput.value = String(systemId);
+        industryFeeSystemIdInput.dataset.autoFilled = '1';
+    }
+
+    const industryFeeSecurityInput = document.getElementById('industryFeeSecurityInput');
+    const securityHasExplicit = String(industryFeeSecurityInput?.value || '').trim() !== '';
+    const securityCanAutoFill = !securityHasExplicit || industryFeeSecurityInput?.dataset.autoFilled === '1';
+    if (industryFeeSecurityInput && securityClass && securityCanAutoFill) {
+        industryFeeSecurityInput.value = securityClass;
+        industryFeeSecurityInput.dataset.autoFilled = '1';
+    }
+
+    const industryFeeManufacturingInput = document.getElementById('industryFeeManufacturingCostInput');
+    const manufacturingHasExplicit = String(industryFeeManufacturingInput?.value || '').trim() !== '';
+    const manufacturingCanAutoFill = !manufacturingHasExplicit || industryFeeManufacturingInput?.dataset.autoFilled === '1';
+    if (industryFeeManufacturingInput && Number.isFinite(manufacturingIndexFraction) && manufacturingCanAutoFill) {
+        industryFeeManufacturingInput.value = String(Math.max(0, manufacturingIndexFraction));
+        industryFeeManufacturingInput.dataset.autoFilled = '1';
+    }
+
+    renderSystemStructureOptions(context.structures || [], environment);
+}
+
+function clearAutoFilledIndustryFeeSystemContext() {
+    const industryFeeSystemIdInput = document.getElementById('industryFeeSystemIdInput');
+    if (industryFeeSystemIdInput && industryFeeSystemIdInput.dataset.autoFilled === '1') {
+        industryFeeSystemIdInput.value = '';
+    }
+
+    const industryFeeSecurityInput = document.getElementById('industryFeeSecurityInput');
+    if (industryFeeSecurityInput && industryFeeSecurityInput.dataset.autoFilled === '1') {
+        industryFeeSecurityInput.value = '';
+    }
+
+    const industryFeeManufacturingInput = document.getElementById('industryFeeManufacturingCostInput');
+    if (industryFeeManufacturingInput && industryFeeManufacturingInput.dataset.autoFilled === '1') {
+        industryFeeManufacturingInput.value = '';
+    }
+
+    const industryFeeFacilityTaxInput = document.getElementById('industryFeeFacilityTaxInput');
+    if (industryFeeFacilityTaxInput && industryFeeFacilityTaxInput.dataset.autoFilled === '1') {
+        industryFeeFacilityTaxInput.value = '';
+    }
+}
+
+async function syncBuildEnvironmentFromSystem(options = {}) {
+    const apiUrl = getCraftBuildEnvironmentApiUrl();
+    if (!apiUrl) {
+        return;
+    }
+
+    const environment = getBuildEnvironmentFromDom();
+    const systemText = String(environment.system || '').trim();
+    const systemId = Number(environment.systemId) || 0;
+    if (!systemText && systemId <= 0) {
+        return;
+    }
+
+    const signature = `${systemText}|${systemId}`;
+    CRAFT_BUILD_SYSTEM_STATE.lastSignature = signature;
+    CRAFT_BUILD_SYSTEM_STATE.loading = true;
+
+    try {
+        const url = new URL(apiUrl, window.location.origin);
+        if (systemText) {
+            url.searchParams.set('system', systemText);
+        }
+        if (systemId > 0) {
+            url.searchParams.set('system_id', String(systemId));
+        }
+        if (Number(environment.structureId) > 0) {
+            url.searchParams.set('structure_id', String(environment.structureId));
+        }
+
+        const response = await fetch(url.toString(), {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+        });
+        if (!response.ok) {
+            throw new Error(`Request failed with status ${response.status}`);
+        }
+        const payload = await response.json();
+        if (signature !== CRAFT_BUILD_SYSTEM_STATE.lastSignature) {
+            return;
+        }
+        if (!payload || payload.resolved !== true) {
+            clearAutoFilledIndustryFeeSystemContext();
+            return;
+        }
+
+        applyResolvedBuildSystemContext(payload, environment);
+        if (options.markChanged !== false && typeof updateBuildEnvironmentSummary === 'function') {
+            updateBuildEnvironmentSummary();
+        }
+    } catch (error) {
+        console.error('[CraftBP] Failed resolving build environment', error);
+    } finally {
+        if (signature === CRAFT_BUILD_SYSTEM_STATE.lastSignature) {
+            CRAFT_BUILD_SYSTEM_STATE.loading = false;
+        }
+    }
+}
+
+function initializeBuildEnvironmentSystemSync() {
+    const buildSystemInput = document.getElementById('buildSystemInput');
+    const buildSystemIdInput = document.getElementById('buildSystemIdInput');
+    const buildStructureSelect = document.getElementById('buildStructureSelect');
+    const buildStructureIdInput = document.getElementById('buildStructureIdInput');
+    if (!buildSystemInput || !buildStructureSelect) {
+        return;
+    }
+
+    const scheduleSync = () => {
+        if (buildSystemIdInput) {
+            buildSystemIdInput.value = '';
+        }
+        const buildSystemIndexInput = document.getElementById('buildSystemIndexInput');
+        if (buildSystemIndexInput) {
+            buildSystemIndexInput.value = '';
+        }
+        if (buildStructureIdInput) {
+            buildStructureIdInput.value = '';
+        }
+        clearAutoFilledIndustryFeeSystemContext();
+        if (buildStructureSelect) {
+            buildStructureSelect.value = 'none';
+            applySelectedStructureDerivedSettings();
+        }
+        if (CRAFT_BUILD_SYSTEM_STATE.debounceTimer) {
+            window.clearTimeout(CRAFT_BUILD_SYSTEM_STATE.debounceTimer);
+        }
+        CRAFT_BUILD_SYSTEM_STATE.debounceTimer = window.setTimeout(() => {
+            syncBuildEnvironmentFromSystem();
+        }, 350);
+    };
+
+    buildSystemInput.addEventListener('input', scheduleSync);
+    buildSystemInput.addEventListener('change', () => {
+        if (CRAFT_BUILD_SYSTEM_STATE.debounceTimer) {
+            window.clearTimeout(CRAFT_BUILD_SYSTEM_STATE.debounceTimer);
+        }
+        syncBuildEnvironmentFromSystem();
+    });
+    if (buildSystemIdInput) {
+        buildSystemIdInput.addEventListener('change', scheduleSync);
+    }
+
+    buildStructureSelect.addEventListener('change', () => {
+        applySelectedStructureDerivedSettings();
+    });
+
+    syncBuildEnvironmentFromSystem({ markChanged: false });
+}
+
+function parseIndustryFeeConfigFromUrl() {
+    const parsed = { hasAny: false };
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const knownKeys = [
+            'industry_fee_enabled',
+            'industry_fee_structure_type_id',
+            'industry_fee_security',
+            'industry_fee_system_id',
+            'industry_fee_manufacturing_cost',
+            'industry_fee_invention_cost',
+            'industry_fee_copying_cost',
+            'industry_fee_reaction_cost',
+            'industry_fee_facility_tax',
+            'industry_fee_system_cost_bonus',
+            'industry_fee_rig_ids',
+            'industry_fee_alpha',
+            'industry_fee_extra_params',
+        ];
+        parsed.hasAny = knownKeys.some((key) => params.has(key));
+        if (!parsed.hasAny) {
+            return parsed;
+        }
+
+        const parseMaybeNumber = (value) => {
+            const numeric = Number(value);
+            return Number.isFinite(numeric) ? numeric : null;
+        };
+
+        parsed.enabled = ['1', 'true', 'yes', 'on'].includes(String(params.get('industry_fee_enabled') || '').trim().toLowerCase());
+        parsed.structure_type_id = parseMaybeNumber(params.get('industry_fee_structure_type_id'));
+        parsed.security = String(params.get('industry_fee_security') || 'HIGH_SEC').trim().toUpperCase();
+        parsed.system_id = parseMaybeNumber(params.get('industry_fee_system_id'));
+        parsed.manufacturing_cost = parseMaybeNumber(params.get('industry_fee_manufacturing_cost'));
+        parsed.invention_cost = parseMaybeNumber(params.get('industry_fee_invention_cost'));
+        parsed.copying_cost = parseMaybeNumber(params.get('industry_fee_copying_cost'));
+        parsed.reaction_cost = parseMaybeNumber(params.get('industry_fee_reaction_cost'));
+        parsed.facility_tax = parseMaybeNumber(params.get('industry_fee_facility_tax'));
+        parsed.system_cost_bonus = parseMaybeNumber(params.get('industry_fee_system_cost_bonus'));
+        parsed.rig_ids = String(params.get('industry_fee_rig_ids') || '')
+            .split(',')
+            .map((token) => Number(String(token || '').trim()) || 0)
+            .filter((id) => id > 0);
+        parsed.alpha = ['1', 'true', 'yes', 'on'].includes(String(params.get('industry_fee_alpha') || '').trim().toLowerCase());
+        parsed.extra_params = String(params.get('industry_fee_extra_params') || '').trim();
+    } catch (e) {
+        // ignore
+    }
+    return parsed;
+}
+
+function getIndustryFeeConfigFromDom() {
+    const getNumber = (id) => {
+        const input = document.getElementById(id);
+        if (!input) {
+            return null;
+        }
+        const raw = String(input.value || '').trim();
+        if (!raw) {
+            return null;
+        }
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : null;
+    };
+
+    const rigIds = String(document.getElementById('industryFeeRigIdsInput')?.value || '')
+        .split(',')
+        .map((token) => Number(String(token || '').trim()) || 0)
+        .filter((id) => id > 0);
+
+    return {
+        enabled: Boolean(document.getElementById('industryFeeEnabledInput')?.checked),
+        structure_type_id: getNumber('industryFeeStructureTypeIdInput'),
+        security: String(document.getElementById('industryFeeSecurityInput')?.value || 'HIGH_SEC').trim().toUpperCase(),
+        system_id: (() => {
+            const explicit = getNumber('industryFeeSystemIdInput');
+            if (explicit) {
+                return explicit;
+            }
+            return resolveBuildEnvironmentSystemId();
+        })(),
+        manufacturing_cost: getNumber('industryFeeManufacturingCostInput'),
+        invention_cost: getNumber('industryFeeInventionCostInput'),
+        copying_cost: getNumber('industryFeeCopyingCostInput'),
+        reaction_cost: getNumber('industryFeeReactionCostInput'),
+        facility_tax: getNumber('industryFeeFacilityTaxInput'),
+        system_cost_bonus: getNumber('industryFeeSystemCostBonusInput'),
+        rig_ids: Array.from(new Set(rigIds)),
+        alpha: Boolean(document.getElementById('industryFeeAlphaInput')?.checked),
+        extra_params: String(document.getElementById('industryFeeExtraParamsInput')?.value || '').trim(),
+    };
+}
+
+function resolveBuildEnvironmentSystemId() {
+    const buildSystemIdInput = document.getElementById('buildSystemIdInput');
+    const explicitSystemId = Number(String(buildSystemIdInput?.value || '').trim());
+    if (Number.isFinite(explicitSystemId) && explicitSystemId > 0) {
+        return Math.floor(explicitSystemId);
+    }
+    return null;
+}
+
+function syncIndustryFeeSystemIdPrefill() {
+    const systemIdInput = document.getElementById('industryFeeSystemIdInput');
+    if (!systemIdInput) {
+        return;
+    }
+    const hasExplicit = String(systemIdInput.value || '').trim() !== '';
+    if (hasExplicit && systemIdInput.dataset.autoFilled !== '1') {
+        return;
+    }
+    const resolvedId = resolveBuildEnvironmentSystemId();
+    if (resolvedId && resolvedId > 0) {
+        systemIdInput.value = String(resolvedId);
+        systemIdInput.dataset.autoFilled = '1';
+    } else if (systemIdInput.dataset.autoFilled === '1') {
+        systemIdInput.value = '';
+        systemIdInput.dataset.autoFilled = '0';
+    }
+}
+
+function initializeIndustryFeeSystemIdPrefill() {
+    const buildSystemInput = document.getElementById('buildSystemInput');
+    const buildSystemIdInput = document.getElementById('buildSystemIdInput');
+    const systemIdInput = document.getElementById('industryFeeSystemIdInput');
+    if (!buildSystemInput || !systemIdInput) {
+        return;
+    }
+
+    if (!String(systemIdInput.value || '').trim()) {
+        systemIdInput.dataset.autoFilled = '1';
+        syncIndustryFeeSystemIdPrefill();
+    }
+
+    buildSystemInput.addEventListener('input', syncIndustryFeeSystemIdPrefill);
+    buildSystemInput.addEventListener('change', syncIndustryFeeSystemIdPrefill);
+    if (buildSystemIdInput) {
+        buildSystemIdInput.addEventListener('input', syncIndustryFeeSystemIdPrefill);
+        buildSystemIdInput.addEventListener('change', syncIndustryFeeSystemIdPrefill);
+    }
+    systemIdInput.addEventListener('input', () => {
+        systemIdInput.dataset.autoFilled = '0';
+    });
+
+    const securityInput = document.getElementById('industryFeeSecurityInput');
+    if (securityInput) {
+        securityInput.addEventListener('change', () => {
+            securityInput.dataset.autoFilled = '0';
+        });
+        securityInput.addEventListener('input', () => {
+            securityInput.dataset.autoFilled = '0';
+        });
+    }
+
+    const manufacturingCostInput = document.getElementById('industryFeeManufacturingCostInput');
+    if (manufacturingCostInput) {
+        manufacturingCostInput.addEventListener('change', () => {
+            manufacturingCostInput.dataset.autoFilled = '0';
+        });
+        manufacturingCostInput.addEventListener('input', () => {
+            manufacturingCostInput.dataset.autoFilled = '0';
+        });
+    }
+
+    const facilityTaxInput = document.getElementById('industryFeeFacilityTaxInput');
+    if (facilityTaxInput) {
+        facilityTaxInput.addEventListener('change', () => {
+            facilityTaxInput.dataset.autoFilled = '0';
+        });
+        facilityTaxInput.addEventListener('input', () => {
+            facilityTaxInput.dataset.autoFilled = '0';
+        });
+    }
+}
+
+function applyIndustryFeeConfigToDom(config) {
+    if (!config || typeof config !== 'object') {
+        return;
+    }
+    const setValue = (id, value) => {
+        const input = document.getElementById(id);
+        if (!input) {
+            return;
+        }
+        input.value = value === null || value === undefined ? '' : String(value);
+    };
+
+    const enabledInput = document.getElementById('industryFeeEnabledInput');
+    if (enabledInput && config.enabled !== undefined) {
+        enabledInput.checked = Boolean(config.enabled);
+    }
+    setValue('industryFeeStructureTypeIdInput', config.structure_type_id);
+    setValue('industryFeeSystemIdInput', config.system_id);
+    setValue('industryFeeManufacturingCostInput', config.manufacturing_cost);
+    setValue('industryFeeInventionCostInput', config.invention_cost);
+    setValue('industryFeeCopyingCostInput', config.copying_cost);
+    setValue('industryFeeReactionCostInput', config.reaction_cost);
+    setValue('industryFeeFacilityTaxInput', config.facility_tax);
+    setValue('industryFeeSystemCostBonusInput', config.system_cost_bonus);
+    setValue('industryFeeRigIdsInput', Array.isArray(config.rig_ids) ? config.rig_ids.join(',') : '');
+    setValue('industryFeeExtraParamsInput', config.extra_params || '');
+
+    const securityInput = document.getElementById('industryFeeSecurityInput');
+    if (securityInput && config.security) {
+        securityInput.value = String(config.security).toUpperCase();
+    }
+    const alphaInput = document.getElementById('industryFeeAlphaInput');
+    if (alphaInput && config.alpha !== undefined) {
+        alphaInput.checked = Boolean(config.alpha);
+    }
+}
+
 function restoreMETEFromLocalStorage(storageKey) {
     const urlUseIds = parseUseBlueprintIdsFromUrl();
     const urlBuildEnvironment = parseBuildEnvironmentFromUrl();
+    const urlIndustryFee = parseIndustryFeeConfigFromUrl();
 
     try {
         const savedConfig = localStorage.getItem(storageKey);
@@ -3291,6 +4214,9 @@ function restoreMETEFromLocalStorage(storageKey) {
             }
             if (urlBuildEnvironment.hasAny) {
                 applyBuildEnvironmentToDom(urlBuildEnvironment);
+            }
+            if (urlIndustryFee.hasAny) {
+                applyIndustryFeeConfigToDom(urlIndustryFee);
             }
             updateBuildEnvironmentSummary();
             return;
@@ -3324,6 +4250,9 @@ function restoreMETEFromLocalStorage(storageKey) {
         if (config.buildEnvironment && typeof config.buildEnvironment === 'object') {
             applyBuildEnvironmentToDom(config.buildEnvironment);
         }
+        if (config.industryFee && typeof config.industryFee === 'object') {
+            applyIndustryFeeConfigToDom(config.industryFee);
+        }
 
         // URL override for easy sharing/bookmarking when present.
         if (urlUseIds.size > 0) {
@@ -3337,6 +4266,9 @@ function restoreMETEFromLocalStorage(storageKey) {
         }
         if (urlBuildEnvironment.hasAny) {
             applyBuildEnvironmentToDom(urlBuildEnvironment);
+        }
+        if (urlIndustryFee.hasAny) {
+            applyIndustryFeeConfigToDom(urlIndustryFee);
         }
 
         updateBuildEnvironmentSummary();
@@ -3375,7 +4307,7 @@ function applyPendingMETEChanges() {
         const cleanUrl = new URL(window.location.pathname, window.location.origin);
 
         // Copy over params we want to keep
-        const paramsToKeep = ['buy', 'next'];
+        const paramsToKeep = ['buy', 'next', 'sim', 'draft'];
         const originalUrl = new URL(window.location.href);
         for (const param of paramsToKeep) {
             const value = originalUrl.searchParams.get(param);
@@ -3418,14 +4350,57 @@ function applyPendingMETEChanges() {
         if (buildEnvironment.system) {
             cleanUrl.searchParams.set('build_system', buildEnvironment.system);
         }
+        if (Number.isFinite(buildEnvironment.systemId) && buildEnvironment.systemId > 0) {
+            cleanUrl.searchParams.set('build_system_id', buildEnvironment.systemId);
+        }
         if (Number.isFinite(buildEnvironment.systemIndex) && buildEnvironment.systemIndex > 0) {
             cleanUrl.searchParams.set('build_system_index', buildEnvironment.systemIndex);
         }
         if (buildEnvironment.structureType && buildEnvironment.structureType !== 'none') {
             cleanUrl.searchParams.set('build_structure', buildEnvironment.structureType);
         }
+        if (Number.isFinite(buildEnvironment.structureId) && buildEnvironment.structureId > 0) {
+            cleanUrl.searchParams.set('build_structure_id', buildEnvironment.structureId);
+        }
         if (Array.isArray(buildEnvironment.rigKeys) && buildEnvironment.rigKeys.length > 0) {
             cleanUrl.searchParams.set('build_rigs', buildEnvironment.rigKeys.join(','));
+        }
+
+        const industryFee = config.industryFee || {};
+        cleanUrl.searchParams.set('industry_fee_enabled', industryFee.enabled ? '1' : '0');
+        if (industryFee.structure_type_id) {
+            cleanUrl.searchParams.set('industry_fee_structure_type_id', industryFee.structure_type_id);
+        }
+        if (industryFee.security) {
+            cleanUrl.searchParams.set('industry_fee_security', industryFee.security);
+        }
+        if (industryFee.system_id) {
+            cleanUrl.searchParams.set('industry_fee_system_id', industryFee.system_id);
+        }
+        if (industryFee.manufacturing_cost !== null && industryFee.manufacturing_cost !== undefined) {
+            cleanUrl.searchParams.set('industry_fee_manufacturing_cost', industryFee.manufacturing_cost);
+        }
+        if (industryFee.invention_cost !== null && industryFee.invention_cost !== undefined) {
+            cleanUrl.searchParams.set('industry_fee_invention_cost', industryFee.invention_cost);
+        }
+        if (industryFee.copying_cost !== null && industryFee.copying_cost !== undefined) {
+            cleanUrl.searchParams.set('industry_fee_copying_cost', industryFee.copying_cost);
+        }
+        if (industryFee.reaction_cost !== null && industryFee.reaction_cost !== undefined) {
+            cleanUrl.searchParams.set('industry_fee_reaction_cost', industryFee.reaction_cost);
+        }
+        if (industryFee.facility_tax !== null && industryFee.facility_tax !== undefined) {
+            cleanUrl.searchParams.set('industry_fee_facility_tax', industryFee.facility_tax);
+        }
+        if (industryFee.system_cost_bonus !== null && industryFee.system_cost_bonus !== undefined) {
+            cleanUrl.searchParams.set('industry_fee_system_cost_bonus', industryFee.system_cost_bonus);
+        }
+        if (Array.isArray(industryFee.rig_ids) && industryFee.rig_ids.length > 0) {
+            cleanUrl.searchParams.set('industry_fee_rig_ids', industryFee.rig_ids.join(','));
+        }
+        cleanUrl.searchParams.set('industry_fee_alpha', industryFee.alpha ? '1' : '0');
+        if (industryFee.extra_params) {
+            cleanUrl.searchParams.set('industry_fee_extra_params', industryFee.extra_params);
         }
 
         craftBPDebugLog(`Reloading with URL: ${cleanUrl.toString()}`);
@@ -3455,7 +4430,8 @@ function getCurrentMETEConfig() {
         mainME: 0,
         mainTE: 0,
         blueprintConfigs: {},
-        buildEnvironment: {}
+        buildEnvironment: {},
+        industryFee: {}
     };
 
     // Get ME/TE inputs from config tab
@@ -3511,6 +4487,7 @@ function getCurrentMETEConfig() {
     });
 
     config.buildEnvironment = getBuildEnvironmentFromDom();
+    config.industryFee = getIndustryFeeConfigFromDom();
 
     return config;
 }
@@ -3565,6 +4542,165 @@ function hideLoadingIndicator() {
     }
 }
 
+function getIndustryFeeApiUrl() {
+    return String(window.BLUEPRINT_DATA?.urls?.craft_industry_fees || '').trim();
+}
+
+function collectIndustryFeeJobs() {
+    const jobsByProductType = new Map();
+    const addJob = (productTypeId, runs) => {
+        const numericProductTypeId = Number(productTypeId) || 0;
+        const numericRuns = Math.max(0, Math.ceil(Number(runs) || 0));
+        if (!numericProductTypeId || numericRuns <= 0) {
+            return;
+        }
+        jobsByProductType.set(
+            numericProductTypeId,
+            (jobsByProductType.get(numericProductTypeId) || 0) + numericRuns
+        );
+    };
+
+    // Main product manufacturing job.
+    const mainProductTypeId = getProductTypeIdValue();
+    const mainRuns = Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 0) || 0;
+    addJob(mainProductTypeId, mainRuns);
+
+    // Produced sub-components based on current Buy/Prod switches.
+    const cycles = (window.SimulationAPI && typeof window.SimulationAPI.getProductionCycles === 'function')
+        ? (window.SimulationAPI.getProductionCycles() || [])
+        : [];
+    cycles.forEach((entry) => {
+        const typeId = Number(entry?.typeId || entry?.type_id || 0) || 0;
+        const runs = Number(entry?.cycles || 0) || 0;
+        addJob(typeId, runs);
+    });
+
+    return Array.from(jobsByProductType.entries())
+        .map(([product_id, runs]) => ({ product_id, runs }))
+        .sort((left, right) => Number(left.product_id) - Number(right.product_id));
+}
+
+function buildIndustryFeeSignature(industryFeeConfig, jobs) {
+    return JSON.stringify({
+        cfg: industryFeeConfig || {},
+        jobs: Array.isArray(jobs) ? jobs : [],
+    });
+}
+
+function getIndustryFeeTotalCost() {
+    return Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.totalJobCost) || 0);
+}
+
+async function ensureIndustryFeeEstimateUpToDate() {
+    const feeConfig = getIndustryFeeConfigFromDom();
+    const jobs = collectIndustryFeeJobs();
+    const signature = buildIndustryFeeSignature(feeConfig, jobs);
+
+    if (!feeConfig.enabled || jobs.length === 0) {
+        CRAFT_INDUSTRY_FEE_STATE.signature = signature;
+        CRAFT_INDUSTRY_FEE_STATE.loaded = true;
+        CRAFT_INDUSTRY_FEE_STATE.loading = false;
+        CRAFT_INDUSTRY_FEE_STATE.totalJobCost = 0;
+        CRAFT_INDUSTRY_FEE_STATE.totalApiCost = 0;
+        CRAFT_INDUSTRY_FEE_STATE.jobs = [];
+        CRAFT_INDUSTRY_FEE_STATE.errors = [];
+        return;
+    }
+
+    const endpoint = getIndustryFeeApiUrl();
+    if (!endpoint) {
+        return;
+    }
+    if (CRAFT_INDUSTRY_FEE_STATE.loading && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
+        return;
+    }
+    if (CRAFT_INDUSTRY_FEE_STATE.loaded && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
+        return;
+    }
+
+    CRAFT_INDUSTRY_FEE_STATE.loading = true;
+    CRAFT_INDUSTRY_FEE_STATE.signature = signature;
+
+    const params = new URLSearchParams();
+    params.set(
+        'jobs',
+        jobs.map((job) => `${job.product_id}:${job.runs}`).join(',')
+    );
+    if (feeConfig.structure_type_id) {
+        params.set('structure_type_id', String(Math.floor(Number(feeConfig.structure_type_id))));
+    }
+    if (feeConfig.security) {
+        params.set('security', String(feeConfig.security).toUpperCase());
+    }
+    if (feeConfig.system_id) {
+        params.set('system_id', String(Math.floor(Number(feeConfig.system_id))));
+    }
+    if (feeConfig.manufacturing_cost !== null && feeConfig.manufacturing_cost !== undefined) {
+        params.set('manufacturing_cost', String(feeConfig.manufacturing_cost));
+    }
+    if (feeConfig.invention_cost !== null && feeConfig.invention_cost !== undefined) {
+        params.set('invention_cost', String(feeConfig.invention_cost));
+    }
+    if (feeConfig.copying_cost !== null && feeConfig.copying_cost !== undefined) {
+        params.set('copying_cost', String(feeConfig.copying_cost));
+    }
+    if (feeConfig.reaction_cost !== null && feeConfig.reaction_cost !== undefined) {
+        params.set('reaction_cost', String(feeConfig.reaction_cost));
+    }
+    if (feeConfig.facility_tax !== null && feeConfig.facility_tax !== undefined) {
+        params.set('facility_tax', String(feeConfig.facility_tax));
+    }
+    if (feeConfig.system_cost_bonus !== null && feeConfig.system_cost_bonus !== undefined) {
+        params.set('system_cost_bonus', String(feeConfig.system_cost_bonus));
+    }
+    if (feeConfig.alpha) {
+        params.set('alpha', 'true');
+    }
+    if (Array.isArray(feeConfig.rig_ids)) {
+        feeConfig.rig_ids.forEach((rigId) => {
+            const numericRigId = Number(rigId) || 0;
+            if (numericRigId > 0) {
+                params.append('rig_id', String(Math.floor(numericRigId)));
+            }
+        });
+    }
+    if (feeConfig.extra_params) {
+        params.set('extra_params', String(feeConfig.extra_params).trim());
+    }
+
+    try {
+        const requestUrl = `${endpoint}?${params.toString()}`;
+        const response = await fetch(requestUrl, {
+            method: 'GET',
+            credentials: 'same-origin',
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        CRAFT_INDUSTRY_FEE_STATE.loaded = true;
+        CRAFT_INDUSTRY_FEE_STATE.totalJobCost = Math.max(0, Number(payload?.total_job_cost) || 0);
+        CRAFT_INDUSTRY_FEE_STATE.totalApiCost = Math.max(0, Number(payload?.total_api_cost) || 0);
+        CRAFT_INDUSTRY_FEE_STATE.jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+        CRAFT_INDUSTRY_FEE_STATE.errors = Array.isArray(payload?.errors) ? payload.errors : [];
+        if (typeof recalcFinancials === 'function') {
+            recalcFinancials();
+        }
+    } catch (error) {
+        console.error('[CraftBP] Failed loading industry fee estimate', error);
+        CRAFT_INDUSTRY_FEE_STATE.loaded = true;
+        CRAFT_INDUSTRY_FEE_STATE.totalJobCost = 0;
+        CRAFT_INDUSTRY_FEE_STATE.totalApiCost = 0;
+        CRAFT_INDUSTRY_FEE_STATE.jobs = [];
+        CRAFT_INDUSTRY_FEE_STATE.errors = [{ error: String(error && error.message ? error.message : error) }];
+        if (typeof recalcFinancials === 'function') {
+            recalcFinancials();
+        }
+    } finally {
+        CRAFT_INDUSTRY_FEE_STATE.loading = false;
+    }
+}
+
 /**
  * Format a number as a price with ISK suffix
  * @param {number} num - The number to format
@@ -3587,6 +4723,12 @@ function formatNumber(num) {
  * Recalculate financial totals
  */
 function recalcFinancials() {
+    if (typeof ensureIndustryFeeEstimateUpToDate === 'function') {
+        ensureIndustryFeeEstimateUpToDate().catch((error) => {
+            console.error('[CraftBP] Failed scheduling industry fee estimate refresh', error);
+        });
+    }
+
     let costTotal = 0;
     let revTotal = 0;
 
@@ -3702,15 +4844,22 @@ function recalcFinancials() {
 
     revTotal += surplusRevenue;
 
-    const profit = revTotal - costTotal;
+    const industryFeeTotal = getIndustryFeeTotalCost();
+    const costTotalWithFees = costTotal + industryFeeTotal;
+    const profit = revTotal - costTotalWithFees;
     // Margin = profit / revenue (not markup on cost).
     const marginValue = revTotal > 0 ? (profit / revTotal) * 100 : 0;
     const marginText = marginValue.toFixed(1);
 
+    const grandTotalIndustryFeeEl = document.querySelector('.grand-total-industry-fee');
     const grandTotalCostEl = document.querySelector('.grand-total-cost');
     const grandTotalRevEl = document.querySelector('.grand-total-rev');
     const profitEl = document.querySelector('.profit');
     const profitPctEl = document.querySelector('.profit-pct');
+
+    if (grandTotalIndustryFeeEl) {
+        grandTotalIndustryFeeEl.textContent = formatPrice(industryFeeTotal);
+    }
 
     if (grandTotalCostEl) {
         grandTotalCostEl.textContent = formatPrice(costTotal);
@@ -3729,7 +4878,7 @@ function recalcFinancials() {
 
     const summaryCostEl = document.getElementById('financialSummaryCost');
     if (summaryCostEl) {
-        summaryCostEl.textContent = formatPrice(costTotal);
+        summaryCostEl.textContent = formatPrice(costTotalWithFees);
     }
 
     const summaryRevenueEl = document.getElementById('financialSummaryRevenue');
@@ -3742,6 +4891,11 @@ function recalcFinancials() {
         summaryProfitEl.textContent = formatPrice(profit);
         summaryProfitEl.classList.remove('text-success', 'text-danger');
         summaryProfitEl.classList.add(profit >= 0 ? 'text-success' : 'text-danger');
+    }
+
+    const summaryIndustryFeesEl = document.getElementById('financialSummaryIndustryFees');
+    if (summaryIndustryFeesEl) {
+        summaryIndustryFeesEl.textContent = formatPrice(industryFeeTotal);
     }
 
     const summaryMarginEl = document.getElementById('financialSummaryMargin');
@@ -4016,6 +5170,8 @@ function buildFinancialRow(item, pricesMap) {
         ? `<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-2 craft-row-kind-marker">${escapeHtml(__('BPC'))}</span>`
         : '<span class="craft-row-kind-marker d-none"></span>';
     const qtyBadgeClass = isBpc ? 'bg-warning text-dark' : 'bg-primary text-white';
+    const fixedUnitPrice = Number(item.unitPrice);
+    const hasFixedUnitPrice = Number.isFinite(fixedUnitPrice) && fixedUnitPrice > 0;
 
     const row = document.createElement('tr');
     row.setAttribute('data-type-id', String(item.typeId));
@@ -4068,7 +5224,21 @@ function buildFinancialRow(item, pricesMap) {
         updatePriceInputManualState(realInput, false);
     }
 
-    attachPriceInputListener(realInput);
+    if (hasFixedUnitPrice) {
+        realInput.value = fixedUnitPrice.toFixed(2);
+        realInput.readOnly = true;
+        realInput.classList.add('readonly');
+        realInput.dataset.fixedPrice = 'true';
+        updatePriceInputManualState(realInput, true);
+    } else {
+        realInput.readOnly = false;
+        realInput.classList.remove('readonly');
+        realInput.dataset.fixedPrice = 'false';
+    }
+
+    if (realInput.dataset.fixedPrice !== 'true') {
+        attachPriceInputListener(realInput);
+    }
 
     return { row, typeId: item.typeId, fuzzInput, realInput };
 }
@@ -4079,6 +5249,8 @@ function updateFinancialRow(row, item) {
     const isBpc = rowKind === 'bpc';
     const imagePath = isBpc ? 'bp' : 'icon';
     const itemTypeName = String(item.typeName || item.name || item.type_id || item.typeId || '');
+    const fixedUnitPrice = Number(item.unitPrice);
+    const hasFixedUnitPrice = Number.isFinite(fixedUnitPrice) && fixedUnitPrice > 0;
 
     row.setAttribute('data-type-id', String(item.typeId));
     row.setAttribute('data-row-kind', rowKind);
@@ -4116,6 +5288,21 @@ function updateFinancialRow(row, item) {
             qtyBadge.classList.add('bg-warning', 'text-dark');
         } else {
             qtyBadge.classList.add('bg-primary', 'text-white');
+        }
+    }
+
+    const realInput = row.querySelector('.real-price');
+    if (realInput) {
+        if (hasFixedUnitPrice) {
+            realInput.value = fixedUnitPrice.toFixed(2);
+            realInput.readOnly = true;
+            realInput.classList.add('readonly');
+            realInput.dataset.fixedPrice = 'true';
+            updatePriceInputManualState(realInput, true);
+        } else if (realInput.dataset.fixedPrice === 'true') {
+            realInput.readOnly = false;
+            realInput.classList.remove('readonly');
+            realInput.dataset.fixedPrice = 'false';
         }
     }
 }
@@ -4494,7 +5681,85 @@ function getMainBlueprintInfoForFinancialPlanner() {
     return {};
 }
 
-function collectMissingBlueprintCopyRows() {
+function isProductPlannedForProduction(productTypeId) {
+    const numericProductTypeId = Number(productTypeId) || 0;
+    if (!numericProductTypeId) {
+        return false;
+    }
+    const mode = getTreeSwitchModeForType(numericProductTypeId);
+    return mode === 'prod';
+}
+
+function syncConfigureCardFromSelectedContracts(blueprintTypeId) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    if (!numericBlueprintTypeId) {
+        return;
+    }
+
+    const useInput = document.querySelector(`#configure-pane input.bp-use-input[data-blueprint-type-id="${numericBlueprintTypeId}"]`);
+    const meInput = document.querySelector(`#configure-pane input[name="me_${numericBlueprintTypeId}"]`);
+    const teInput = document.querySelector(`#configure-pane input[name="te_${numericBlueprintTypeId}"]`);
+    if (!useInput) {
+        return;
+    }
+
+    const selectedOffers = getSelectedContractOffersForBlueprint(numericBlueprintTypeId);
+    if (selectedOffers.length === 0) {
+        if (useInput.dataset.contractDriven === 'true') {
+            useInput.checked = false;
+            useInput.dataset.contractDriven = 'false';
+            useInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return;
+    }
+
+    const primaryOffer = selectedOffers[0];
+    if (!useInput.disabled) {
+        useInput.checked = true;
+        useInput.dataset.contractDriven = 'true';
+        useInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (meInput) {
+        meInput.value = String(Math.max(0, Math.min(Number(primaryOffer.me) || 0, 10)));
+        meInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (teInput) {
+        teInput.value = String(Math.max(0, Math.min(Number(primaryOffer.te) || 0, 20)));
+        teInput.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+}
+
+function syncConfigureVisibilityWithPlan() {
+    const configurePane = document.getElementById('configure-pane');
+    if (!configurePane) {
+        return;
+    }
+
+    configurePane.querySelectorAll('.craft-bp-card[data-blueprint-type-id]').forEach((card) => {
+        const productTypeId = Number(card.getAttribute('data-product-type-id')) || 0;
+        if (!productTypeId) {
+            return;
+        }
+        const keepVisible = isProductPlannedForProduction(productTypeId);
+        card.classList.toggle('d-none', !keepVisible);
+        const useInput = card.querySelector('input.bp-use-input[data-blueprint-type-id]');
+        if (!keepVisible && useInput && useInput.checked) {
+            useInput.checked = false;
+            useInput.dataset.contractDriven = 'false';
+            useInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+
+    configurePane.querySelectorAll('.craft-config-items-grid').forEach((grid) => {
+        const visibleCards = grid.querySelectorAll('.craft-bp-card:not(.d-none)');
+        const levelContainer = grid.closest('.craft-config-level');
+        if (levelContainer) {
+            levelContainer.classList.toggle('d-none', visibleCards.length === 0);
+        }
+    });
+}
+
+function collectBlueprintCopyDeficits() {
     const blueprintConfigs = getBlueprintConfigsForFinancialPlanner();
     if (!Array.isArray(blueprintConfigs) || blueprintConfigs.length === 0) {
         return [];
@@ -4503,7 +5768,7 @@ function collectMissingBlueprintCopyRows() {
     const cyclesSummary = getCraftCyclesSummaryForFinancialPlanner();
     const mainBpInfo = getMainBlueprintInfoForFinancialPlanner();
     const blueprintNames = getBlueprintNameMapFromConfigPane();
-    const blueprintContextsByProductType = buildBlueprintUsageContextByProductType();
+    const selectedByBlueprintType = getBlueprintUseSelectionFromDom();
     const runsInputEl = document.getElementById('runsInput');
 
     const mainBpTypeId = Number(
@@ -4519,10 +5784,32 @@ function collectMissingBlueprintCopyRows() {
         ? (Number(mainBpInfo.runs_available) || 0)
         : null;
 
-    const bpcRows = [];
+    const deficits = [];
     blueprintConfigs.forEach((bp) => {
-        const bpTypeId = Number(bp?.type_id || bp?.typeId) || 0;
-        if (!bpTypeId) {
+        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || blueprintTypeId) || 0;
+        if (!isProductPlannedForProduction(productTypeId)) {
+            return;
+        }
+
+        const cyclesData = cyclesSummary[productTypeId]
+            || cyclesSummary[String(productTypeId)]
+            || cyclesSummary[blueprintTypeId]
+            || cyclesSummary[String(blueprintTypeId)];
+
+        let requiredRuns = cyclesData ? (Number(cyclesData.cycles) || 0) : null;
+        if (requiredRuns === null && mainBpTypeId && blueprintTypeId === mainBpTypeId) {
+            requiredRuns = mainNumRuns;
+        }
+        if (requiredRuns === null) {
+            return;
+        }
+        requiredRuns = Math.max(0, Number(requiredRuns) || 0);
+        if (requiredRuns <= 0) {
             return;
         }
 
@@ -4535,64 +5822,439 @@ function collectMissingBlueprintCopyRows() {
         const isCopy = Boolean(bp?.is_copy ?? bp?.isCopy);
         const runsAvailableRaw = bp?.runs_available ?? bp?.runsAvailable;
         const hasRunsAvailable = runsAvailableRaw !== null && runsAvailableRaw !== undefined && runsAvailableRaw !== '';
-        const isCopyOwned = userOwns && isCopy && hasRunsAvailable;
-        const isNotOwned = !userOwns;
+        const hasOriginal = userOwns && !isCopy;
+        const selectedInConfigure = Boolean(selectedByBlueprintType.get(blueprintTypeId));
 
-        if (!isCopyOwned && !isNotOwned) {
-            return;
+        let availableRuns = 0;
+        if (selectedInConfigure) {
+            if (hasOriginal) {
+                availableRuns = Number.POSITIVE_INFINITY;
+            } else if (userOwns && isCopy && hasRunsAvailable) {
+                availableRuns = Number(runsAvailableRaw) || 0;
+            }
         }
-
-        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || bpTypeId) || 0;
-        const usageContext = getBlueprintUsageContextForProductType(productTypeId, blueprintContextsByProductType);
-        // Show BPC demand unless this blueprint is explicitly enabled via "Use this BP".
-        if (usageContext && usageContext.active) {
-            return;
-        }
-        const cyclesData = cyclesSummary[productTypeId]
-            || cyclesSummary[String(productTypeId)]
-            || cyclesSummary[bpTypeId]
-            || cyclesSummary[String(bpTypeId)];
-
-        let requiredRuns = cyclesData ? (Number(cyclesData.cycles) || 0) : null;
-        if (requiredRuns === null && mainBpTypeId && bpTypeId === mainBpTypeId) {
-            requiredRuns = mainNumRuns;
-        }
-        if (requiredRuns === null) {
-            return;
-        }
-        requiredRuns = Math.max(0, Number(requiredRuns) || 0);
-
-        let availableRuns = isCopyOwned ? (Number(runsAvailableRaw) || 0) : 0;
-        if (mainBpTypeId && bpTypeId === mainBpTypeId && mainAvailableRuns !== null) {
+        if (mainBpTypeId && blueprintTypeId === mainBpTypeId && mainAvailableRuns !== null && selectedInConfigure) {
             availableRuns = mainAvailableRuns;
         }
 
-        const shortfallRuns = Math.max(0, Math.ceil(requiredRuns - availableRuns));
-        if (!shortfallRuns) {
-            return;
-        }
+        const selectedContractRuns = getSelectedContractRunsForBlueprint(blueprintTypeId);
+        const effectiveAvailableRuns = Number.isFinite(availableRuns)
+            ? Math.max(0, availableRuns + selectedContractRuns)
+            : Number.POSITIVE_INFINITY;
+        const deficitRuns = Number.isFinite(effectiveAvailableRuns)
+            ? Math.max(0, Math.ceil(requiredRuns - effectiveAvailableRuns))
+            : 0;
 
         const fallbackName = String(cyclesData?.type_name || cyclesData?.typeName || '').trim();
         const blueprintName = String(
-            blueprintNames.get(bpTypeId)
+            blueprintNames.get(blueprintTypeId)
             || bp?.type_name
             || bp?.typeName
             || fallbackName
-            || `Blueprint ${bpTypeId}`
+            || `Blueprint ${blueprintTypeId}`
         ).trim();
 
-        bpcRows.push({
-            typeId: bpTypeId,
-            typeName: blueprintName,
-            quantity: shortfallRuns,
-            marketGroup: __('Blueprint Copies'),
-            rowKind: 'bpc',
-            rowKey: `bpc:${bpTypeId}`,
+        deficits.push({
+            blueprintTypeId,
+            productTypeId,
+            blueprintName,
+            requiredRuns,
+            ownedRuns: Number.isFinite(availableRuns) ? Math.max(0, Number(availableRuns) || 0) : Number.POSITIVE_INFINITY,
+            selectedRuns: selectedContractRuns,
+            deficitRuns,
+            selectedInConfigure,
+            userOwns,
+            isCopy,
+            hasOriginal,
         });
     });
 
-    bpcRows.sort((a, b) => String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' }));
-    return bpcRows;
+    deficits.sort((left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' }));
+    return deficits;
+}
+
+function collectMissingBlueprintCopyRows() {
+    return collectBlueprintCopyDeficits()
+        .filter((row) => Number(row.deficitRuns) > 0)
+        .map((row) => ({
+            typeId: row.blueprintTypeId,
+            typeName: row.blueprintName,
+            quantity: Math.max(1, Number(row.deficitRuns) || 0),
+            marketGroup: __('Blueprint Copies'),
+            rowKind: 'bpc',
+            rowKey: `bpc-missing:${row.blueprintTypeId}`,
+        }));
+}
+
+function collectSelectedBlueprintContractRows() {
+    pruneSelectedContractsToCurrentProductionPlan();
+    const rows = [];
+    const blueprintNameMap = getBlueprintNameMapFromConfigPane();
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
+        if (!(offerMap instanceof Map) || offerMap.size === 0) {
+            return;
+        }
+        const blueprintName = String(
+            blueprintNameMap.get(blueprintTypeId)
+            || `Blueprint ${blueprintTypeId}`
+        ).trim();
+
+        offerMap.forEach((offer, contractId) => {
+            const runs = Math.max(1, Number(offer.runs) || 1);
+            const totalPrice = Math.max(0, Number(offer.price_total) || 0);
+            const unitPrice = runs > 0 ? (totalPrice / runs) : totalPrice;
+            rows.push({
+                typeId: blueprintTypeId,
+                typeName: `${blueprintName} (Contract #${contractId}, ME ${Number(offer.me) || 0}, TE ${Number(offer.te) || 0})`,
+                quantity: runs,
+                marketGroup: __('Blueprint Copies'),
+                rowKind: 'bpc',
+                rowKey: `bpc-contract:${blueprintTypeId}:${contractId}`,
+                unitPrice,
+            });
+        });
+    });
+    rows.sort((left, right) => String(left.typeName).localeCompare(String(right.typeName), undefined, { sensitivity: 'base' }));
+    return rows;
+}
+
+function getBlueprintConfigByTypeIdMap() {
+    const map = new Map();
+    getBlueprintConfigsForFinancialPlanner().forEach((bp) => {
+        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+        map.set(blueprintTypeId, bp);
+    });
+    return map;
+}
+
+function pruneSelectedContractsToCurrentProductionPlan() {
+    const configByTypeId = getBlueprintConfigByTypeIdMap();
+    let changed = false;
+    Array.from(CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.keys()).forEach((blueprintTypeId) => {
+        const bp = configByTypeId.get(blueprintTypeId);
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || 0) || 0;
+        if (!bp || !productTypeId || !isProductPlannedForProduction(productTypeId)) {
+            CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.delete(blueprintTypeId);
+            syncConfigureCardFromSelectedContracts(blueprintTypeId);
+            changed = true;
+        }
+    });
+    if (changed) {
+        saveSelectedBpcContractsToStorage();
+    }
+}
+
+function getCraftBpcContractsUrl() {
+    return String(window.BLUEPRINT_DATA?.urls?.craft_bpc_contracts || '').trim();
+}
+
+async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false } = {}) {
+    const endpoint = getCraftBpcContractsUrl();
+    if (!endpoint) {
+        return;
+    }
+    const uniqueIds = Array.from(new Set((Array.isArray(blueprintTypeIds) ? blueprintTypeIds : [])
+        .map((id) => Number(id) || 0)
+        .filter((id) => id > 0)));
+    if (uniqueIds.length === 0) {
+        return;
+    }
+
+    const idsToFetch = force
+        ? uniqueIds
+        : uniqueIds.filter((id) => !CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(id));
+    if (idsToFetch.length === 0) {
+        return;
+    }
+
+    const requestUrl = new URL(endpoint, window.location.origin);
+    requestUrl.searchParams.set('blueprint_type_ids', idsToFetch.join(','));
+
+    const response = await fetch(requestUrl.toString(), {
+        method: 'GET',
+        credentials: 'same-origin',
+    });
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    const contractMap = payload && payload.contracts_by_blueprint && typeof payload.contracts_by_blueprint === 'object'
+        ? payload.contracts_by_blueprint
+        : {};
+
+    idsToFetch.forEach((blueprintTypeId) => {
+        const rawOffers = contractMap[String(blueprintTypeId)];
+        const normalizedOffers = Array.isArray(rawOffers)
+            ? rawOffers
+                .map((offer) => ({
+                    blueprint_type_id: blueprintTypeId,
+                    contract_id: Number(offer?.contract_id) || 0,
+                    title: String(offer?.title || '').trim(),
+                    price_total: Number(offer?.price_total) || 0,
+                    price_per_run: Number(offer?.price_per_run) || 0,
+                    runs: Math.max(1, Number(offer?.runs) || 1),
+                    copies: Math.max(1, Number(offer?.copies) || 1),
+                    me: Number(offer?.me) || 0,
+                    te: Number(offer?.te) || 0,
+                    issued_at: String(offer?.issued_at || ''),
+                    expires_at: String(offer?.expires_at || ''),
+                }))
+                .filter((offer) => offer.contract_id > 0)
+            : [];
+        CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.set(blueprintTypeId, normalizedOffers);
+    });
+}
+
+function getBuyBpcsSortKey() {
+    const selectEl = document.getElementById('buyBpcsSortSelect');
+    return String(selectEl ? selectEl.value : 'effective');
+}
+
+function sortBuyBpcOffers(offers, deficitRuns, sortKey) {
+    const rows = Array.isArray(offers) ? [...offers] : [];
+    const normalizedSortKey = String(sortKey || 'effective');
+    rows.sort((left, right) => {
+        const leftRuns = Math.max(1, Number(left.runs) || 1);
+        const rightRuns = Math.max(1, Number(right.runs) || 1);
+        const leftPrice = Math.max(0, Number(left.price_total) || 0);
+        const rightPrice = Math.max(0, Number(right.price_total) || 0);
+        const leftEffectiveRuns = Math.max(1, Math.min(leftRuns, Math.max(1, Number(deficitRuns) || 1)));
+        const rightEffectiveRuns = Math.max(1, Math.min(rightRuns, Math.max(1, Number(deficitRuns) || 1)));
+        const leftEffective = leftPrice / leftEffectiveRuns;
+        const rightEffective = rightPrice / rightEffectiveRuns;
+
+        if (normalizedSortKey === 'total_price' && leftPrice !== rightPrice) {
+            return leftPrice - rightPrice;
+        }
+        if (normalizedSortKey === 'runs_desc' && leftRuns !== rightRuns) {
+            return rightRuns - leftRuns;
+        }
+        if (normalizedSortKey === 'me_desc' && Number(left.me) !== Number(right.me)) {
+            return Number(right.me) - Number(left.me);
+        }
+        if (normalizedSortKey === 'te_desc' && Number(left.te) !== Number(right.te)) {
+            return Number(right.te) - Number(left.te);
+        }
+        if (normalizedSortKey === 'newest') {
+            const leftIssued = Date.parse(String(left.issued_at || '')) || 0;
+            const rightIssued = Date.parse(String(right.issued_at || '')) || 0;
+            if (leftIssued !== rightIssued) {
+                return rightIssued - leftIssued;
+            }
+        }
+
+        if (leftEffective !== rightEffective) {
+            return leftEffective - rightEffective;
+        }
+        if (leftPrice !== rightPrice) {
+            return leftPrice - rightPrice;
+        }
+        return leftRuns - rightRuns;
+    });
+    return rows;
+}
+
+function setBuyBpcsStatus(message, variant = 'info') {
+    const statusEl = document.getElementById('buyBpcsStatus');
+    if (!statusEl) {
+        return;
+    }
+    if (!message) {
+        statusEl.className = 'alert alert-info mb-3 d-none';
+        statusEl.textContent = '';
+        return;
+    }
+    statusEl.className = `alert alert-${variant} mb-3`;
+    statusEl.textContent = String(message);
+}
+
+function renderBuyBpcsTab() {
+    const listEl = document.getElementById('buyBpcsList');
+    const emptyEl = document.getElementById('buyBpcsEmptyState');
+    if (!listEl || !emptyEl) {
+        return;
+    }
+
+    pruneSelectedContractsToCurrentProductionPlan();
+
+    const deficits = collectBlueprintCopyDeficits().filter((row) => Number(row.deficitRuns) > 0);
+    listEl.innerHTML = '';
+
+    if (deficits.length === 0) {
+        emptyEl.classList.remove('d-none');
+        return;
+    }
+
+    emptyEl.classList.add('d-none');
+    const paneEl = document.getElementById('buy-bpcs-pane');
+    const tabIsActive = Boolean(paneEl && paneEl.classList.contains('active'));
+    if (tabIsActive && !CRAFT_BPC_CONTRACT_STATE.loading) {
+        const missingOfferIds = deficits
+            .map((row) => Number(row.blueprintTypeId) || 0)
+            .filter((blueprintTypeId) => blueprintTypeId > 0 && !CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(blueprintTypeId));
+        if (missingOfferIds.length > 0) {
+            refreshBuyBpcsOffers({ force: false });
+        }
+    }
+    const sortKey = getBuyBpcsSortKey();
+
+    deficits.forEach((row) => {
+        const blueprintTypeId = Number(row.blueprintTypeId) || 0;
+        const offers = CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.get(blueprintTypeId) || [];
+        const selectedOffers = getSelectedContractOffersForBlueprint(blueprintTypeId);
+        const selectedIds = new Set(selectedOffers.map((offer) => Number(offer.contract_id) || 0));
+        const sortedOffers = sortBuyBpcOffers(offers, row.deficitRuns, sortKey);
+
+        const card = document.createElement('section');
+        card.className = 'card border-0 bg-body-tertiary';
+        card.innerHTML = `
+            <div class="card-body">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                    <div>
+                        <h6 class="mb-1">${escapeHtml(row.blueprintName)}</h6>
+                        <div class="small text-muted">
+                            ${escapeHtml(__('Required runs'))}: <strong>${formatInteger(row.requiredRuns)}</strong>
+                            - ${escapeHtml(__('Owned/selected'))}: <strong>${formatInteger(Number(row.ownedRuns) || 0)} / ${formatInteger(row.selectedRuns)}</strong>
+                            - ${escapeHtml(__('Missing'))}: <strong class="text-danger">${formatInteger(row.deficitRuns)}</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>${escapeHtml(__('Contract'))}</th>
+                                <th class="text-end">${escapeHtml(__('Price'))}</th>
+                                <th class="text-end">${escapeHtml(__('Runs'))}</th>
+                                <th class="text-end">ME</th>
+                                <th class="text-end">TE</th>
+                                <th class="text-end">${escapeHtml(__('ISK/run'))}</th>
+                                <th class="text-end">${escapeHtml(__('Action'))}</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+
+        const tbody = card.querySelector('tbody');
+        if (!tbody) {
+            listEl.appendChild(card);
+            return;
+        }
+
+        if (sortedOffers.length === 0) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td colspan="7" class="text-muted small">
+                    ${escapeHtml(__('No matching public Jita contracts found right now.'))}
+                </td>
+            `;
+            tbody.appendChild(tr);
+            listEl.appendChild(card);
+            return;
+        }
+
+        sortedOffers.slice(0, 25).forEach((offer) => {
+            const contractId = Number(offer.contract_id) || 0;
+            const isSelected = selectedIds.has(contractId);
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="small">
+                    <strong>#${contractId}</strong>
+                    ${offer.title ? `<span class="text-muted"> - ${escapeHtml(offer.title)}</span>` : ''}
+                </td>
+                <td class="text-end">${formatPrice(Number(offer.price_total) || 0)}</td>
+                <td class="text-end">${formatInteger(Number(offer.runs) || 0)}</td>
+                <td class="text-end">${formatInteger(Number(offer.me) || 0)}</td>
+                <td class="text-end">${formatInteger(Number(offer.te) || 0)}</td>
+                <td class="text-end">${formatPrice(Number(offer.price_per_run) || 0)}</td>
+                <td class="text-end">
+                    <button type="button" class="btn btn-sm ${isSelected ? 'btn-success' : 'btn-outline-primary'}" data-bpc-offer-toggle="1">
+                        ${isSelected ? escapeHtml(__('Using')) : escapeHtml(__('Use this'))}
+                    </button>
+                </td>
+            `;
+
+            const button = tr.querySelector('button[data-bpc-offer-toggle="1"]');
+            if (button) {
+                button.addEventListener('click', () => {
+                    if (isSelected) {
+                        removeSelectedContractOffer(blueprintTypeId, contractId);
+                    } else {
+                        upsertSelectedContractOffer(blueprintTypeId, offer);
+                    }
+                    syncConfigureCardFromSelectedContracts(blueprintTypeId);
+                    saveSelectedBpcContractsToStorage();
+                    refreshTabsAfterStateChange({ forceNeeded: true });
+                });
+            }
+
+            tbody.appendChild(tr);
+        });
+        listEl.appendChild(card);
+    });
+}
+
+async function refreshBuyBpcsOffers({ force = false } = {}) {
+    const deficits = collectBlueprintCopyDeficits().filter((row) => Number(row.deficitRuns) > 0);
+    const blueprintTypeIds = deficits.map((row) => Number(row.blueprintTypeId) || 0).filter((id) => id > 0);
+    if (blueprintTypeIds.length === 0) {
+        setBuyBpcsStatus('', 'info');
+        renderBuyBpcsTab();
+        return;
+    }
+
+    CRAFT_BPC_CONTRACT_STATE.loading = true;
+    setBuyBpcsStatus(__('Loading public Jita contracts...'), 'info');
+    try {
+        await fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force });
+        setBuyBpcsStatus('', 'info');
+    } catch (error) {
+        console.error('[CraftBP] Failed loading BPC contract offers', error);
+        setBuyBpcsStatus(__('Unable to load public Jita contracts right now.'), 'warning');
+    } finally {
+        CRAFT_BPC_CONTRACT_STATE.loading = false;
+        renderBuyBpcsTab();
+    }
+}
+
+function initializeBuyBpcsTab() {
+    if (CRAFT_BPC_CONTRACT_STATE.loaded) {
+        return;
+    }
+    CRAFT_BPC_CONTRACT_STATE.loaded = true;
+
+    const sortSelect = document.getElementById('buyBpcsSortSelect');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', () => {
+            renderBuyBpcsTab();
+        });
+    }
+
+    const refreshBtn = document.getElementById('buyBpcsRefreshBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            refreshBuyBpcsOffers({ force: true });
+        });
+    }
+
+    const tabButton = document.getElementById('buy-bpcs-tab-btn');
+    if (tabButton) {
+        tabButton.addEventListener('shown.bs.tab', () => {
+            refreshBuyBpcsOffers({ force: false });
+        });
+    }
+
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((_offerMap, blueprintTypeId) => {
+        syncConfigureCardFromSelectedContracts(blueprintTypeId);
+    });
+
+    renderBuyBpcsTab();
 }
 
 function updateFinancialTabFromState() {
@@ -4662,7 +6324,9 @@ function updateFinancialTabFromState() {
         }
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
-    const sortedItems = sortedMaterials;
+    const selectedBpcRows = collectSelectedBlueprintContractRows();
+    const missingBpcRows = collectMissingBlueprintCopyRows();
+    const sortedItems = [...selectedBpcRows, ...missingBpcRows, ...sortedMaterials];
 
     const existingRows = new Map();
     tableBody.querySelectorAll('tr[data-type-id]').forEach(row => {
@@ -5439,6 +7103,7 @@ function setCraftBPConfig(fuzzworkUrl, productTypeId) {
 window.updateMaterialsTabFromState = updateMaterialsTabFromState;
 window.updateFinancialTabFromState = updateFinancialTabFromState;
 window.updateNeededTabFromState = updateNeededTabFromState;
+window.getIndustryFeeConfigFromDom = getIndustryFeeConfigFromDom;
 
 // One-time sort for the server-rendered Cycles table on the Build tab.
 // This keeps the UI consistent with the dashboard category ordering.

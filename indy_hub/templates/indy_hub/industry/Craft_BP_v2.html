@@ -79,6 +79,12 @@
                 </button>
             </li>
             <li class="nav-item" role="presentation">
+                <button class="nav-link" id="buy-bpcs-tab-btn" data-bs-toggle="tab" data-bs-target="#buy-bpcs-pane" type="button" role="tab" aria-controls="buy-bpcs-pane" data-tab-name="buy_bpcs">
+                    <i class="fas fa-copy"></i>
+                    <span>{% trans "Buy BPCs" %}</span>
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
                 <button class="nav-link" id="run-optimized-tab-btn" data-bs-toggle="tab" data-bs-target="#run-optimized-pane" type="button" role="tab" aria-controls="run-optimized-pane" data-tab-name="run_optimized">
                     <i class="fas fa-chart-line"></i>
                     <span>{% trans "Run optimized" %}</span>
@@ -276,6 +282,10 @@
                             <span class="craft-kpi-label">{% trans "Margin" %}</span>
                             <span class="craft-kpi-value" id="financialSummaryMargin">0%</span>
                         </div>
+                        <div class="craft-kpi craft-kpi-lg">
+                            <span class="craft-kpi-label">{% trans "Industry Fees" %}</span>
+                            <span class="craft-kpi-value text-warning" id="financialSummaryIndustryFees">0 ISK</span>
+                        </div>
                     </div>
                 </div>
 
@@ -356,6 +366,10 @@
                                 </tr>
                             </tbody>
                             <tfoot class="table-light">
+                                <tr>
+                                    <th colspan="4" class="text-end text-xs">{% trans "Industry Fees (EVERef)" %}</th>
+                                    <th class="text-end text-xs grand-total-industry-fee fw-semibold text-warning" colspan="2">0</th>
+                                </tr>
                                 <tr>
                                     <th colspan="4" class="text-end text-xs">{% trans "Total Material Cost" %}</th>
                                     <th class="text-end text-xs grand-total-cost fw-semibold text-danger" colspan="2">0</th>
@@ -576,7 +590,7 @@
                     <div class="card border-0 bg-body-tertiary">
                         <div class="card-body">
                             <div class="row g-3">
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <label for="buildSystemInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
                                         {% trans "System" %}
                                     </label>
@@ -588,11 +602,26 @@
                                         placeholder="Jita"
                                         data-build-env-input="1"
                                     >
-                                    <div class="form-text">{% trans "Used for industry index context." %}</div>
+                                    <div class="form-text">{% trans "Type a system name; ID, security, and index are resolved automatically." %}</div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
+                                    <label for="buildSystemIdInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "System ID" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="buildSystemIdInput"
+                                        class="form-control form-control-sm"
+                                        min="1"
+                                        value="{{ build_environment.system_id|default:'' }}"
+                                        readonly
+                                        data-build-env-input="1"
+                                    >
+                                    <div class="form-text">{% trans "Auto-filled from EVE SDE." %}</div>
+                                </div>
+                                <div class="col-lg-3">
                                     <label for="buildSystemIndexInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
-                                        {% trans "System Index %" %}
+                                        {% trans "System Index % (Auto)" %}
                                     </label>
                                     <input
                                         type="number"
@@ -602,29 +631,76 @@
                                         max="100"
                                         step="0.01"
                                         value="{{ build_environment.system_index|default:0 }}"
+                                        readonly
                                         data-build-env-input="1"
                                     >
-                                    <div class="form-text">{% trans "Stored for cost/index calculations." %}</div>
+                                    <div class="form-text">{% trans "Pulled from ESI industry cost indices." %}</div>
                                 </div>
-                                <div class="col-lg-4">
+                                <div class="col-lg-3">
                                     <label for="buildStructureSelect" class="form-label small fw-semibold text-uppercase text-muted mb-1">
                                         {% trans "Structure" %}
                                     </label>
                                     <select id="buildStructureSelect" class="form-select form-select-sm" data-build-env-input="1">
-                                        <option value="none" data-material-bonus="0" {% if build_environment.structure_type == "none" %}selected{% endif %}>
-                                            {% trans "No structure bonus" %}
+                                        <option
+                                            value="none"
+                                            data-structure-id=""
+                                            data-structure-type="none"
+                                            data-structure-type-id=""
+                                            data-material-bonus="0"
+                                            data-rig-keys=""
+                                            data-rig-type-ids=""
+                                            data-facility-tax=""
+                                            {% if build_environment.structure_type == "none" %}selected{% endif %}
+                                        >
+                                            {% trans "No structure selected" %}
                                         </option>
-                                        <option value="raitaru" data-material-bonus="0.01" {% if build_environment.structure_type == "raitaru" %}selected{% endif %}>
+                                        <option
+                                            value="raitaru"
+                                            data-structure-id=""
+                                            data-structure-type="raitaru"
+                                            data-structure-type-id="35825"
+                                            data-material-bonus="0.01"
+                                            data-rig-keys=""
+                                            data-rig-type-ids=""
+                                            data-facility-tax=""
+                                            {% if build_environment.structure_type == "raitaru" %}selected{% endif %}
+                                        >
                                             Raitaru (1%)
                                         </option>
-                                        <option value="azbel" data-material-bonus="0.01" {% if build_environment.structure_type == "azbel" %}selected{% endif %}>
+                                        <option
+                                            value="azbel"
+                                            data-structure-id=""
+                                            data-structure-type="azbel"
+                                            data-structure-type-id="35826"
+                                            data-material-bonus="0.01"
+                                            data-rig-keys=""
+                                            data-rig-type-ids=""
+                                            data-facility-tax=""
+                                            {% if build_environment.structure_type == "azbel" %}selected{% endif %}
+                                        >
                                             Azbel (1%)
                                         </option>
-                                        <option value="sotiyo" data-material-bonus="0.01" {% if build_environment.structure_type == "sotiyo" %}selected{% endif %}>
+                                        <option
+                                            value="sotiyo"
+                                            data-structure-id=""
+                                            data-structure-type="sotiyo"
+                                            data-structure-type-id="35827"
+                                            data-material-bonus="0.01"
+                                            data-rig-keys=""
+                                            data-rig-type-ids=""
+                                            data-facility-tax=""
+                                            {% if build_environment.structure_type == "sotiyo" %}selected{% endif %}
+                                        >
                                             Sotiyo (1%)
                                         </option>
                                     </select>
-                                    <div class="form-text">{% trans "Material bonus from structure type." %}</div>
+                                    <input
+                                        type="hidden"
+                                        id="buildStructureIdInput"
+                                        value="{{ build_environment.structure_id|default:'' }}"
+                                        data-build-env-input="1"
+                                    >
+                                    <div class="form-text">{% trans "Filtered to engineering complexes in the selected system." %}</div>
                                 </div>
                             </div>
 
@@ -663,6 +739,200 @@
                                     <span>{% trans "Structure bonus:" %} <strong id="buildStructureBonusValue">{{ build_environment.structure_material_bonus_pct|default:0|floatformat:2 }}%</strong></span>
                                     <span>{% trans "Rig bonus (max):" %} <strong id="buildRigBonusValue">{{ build_environment.rig_material_bonus_pct|default:0|floatformat:2 }}%</strong></span>
                                     <span>{% trans "Effective total bonus:" %} <strong id="buildEffectiveMaterialBonusValue">{{ build_environment.effective_material_bonus_pct|default:0|floatformat:2 }}%</strong></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-4">
+                    <h3 class="craft-section-title">
+                        <i class="fas fa-receipt text-warning"></i> {% trans "Industry Fee Model (EVERef)" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="industryFeeEnabledInput"
+                                    data-industry-fee-input="1"
+                                    {% if industry_fee_config.enabled %}checked{% endif %}
+                                >
+                                <label class="form-check-label small fw-semibold" for="industryFeeEnabledInput">
+                                    {% trans "Enable industry fee estimation in margin calculations" %}
+                                </label>
+                            </div>
+
+                            <div class="row g-3">
+                                <div class="col-lg-3">
+                                    <label for="industryFeeStructureTypeIdInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Structure Type ID" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeStructureTypeIdInput"
+                                        class="form-control form-control-sm"
+                                        min="1"
+                                        value="{{ industry_fee_config.structure_type_id|default:'' }}"
+                                        placeholder="35827"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-3">
+                                    <label for="industryFeeSecurityInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Security" %}
+                                    </label>
+                                    <select id="industryFeeSecurityInput" class="form-select form-select-sm" data-industry-fee-input="1">
+                                        <option value="HIGH_SEC" {% if industry_fee_config.security == "HIGH_SEC" %}selected{% endif %}>HIGH_SEC</option>
+                                        <option value="LOW_SEC" {% if industry_fee_config.security == "LOW_SEC" %}selected{% endif %}>LOW_SEC</option>
+                                        <option value="NULL_SEC" {% if industry_fee_config.security == "NULL_SEC" %}selected{% endif %}>NULL_SEC</option>
+                                        <option value="WORMHOLE" {% if industry_fee_config.security == "WORMHOLE" %}selected{% endif %}>WORMHOLE</option>
+                                    </select>
+                                </div>
+                                <div class="col-lg-3">
+                                    <label for="industryFeeSystemIdInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "System ID (optional)" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeSystemIdInput"
+                                        class="form-control form-control-sm"
+                                        min="1"
+                                        value="{{ industry_fee_config.system_id|default:'' }}"
+                                        placeholder="30000142"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-3">
+                                    <label for="industryFeeRigIdsInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Rig Type IDs (comma)" %}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="industryFeeRigIdsInput"
+                                        class="form-control form-control-sm"
+                                        value="{{ industry_fee_config.rig_ids|join:',' }}"
+                                        placeholder="37180,37183"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mt-1">
+                                <div class="col-lg-3">
+                                    <label for="industryFeeManufacturingCostInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Manufacturing Cost Index" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeManufacturingCostInput"
+                                        class="form-control form-control-sm"
+                                        step="0.0001"
+                                        value="{{ industry_fee_config.manufacturing_cost|default:'' }}"
+                                        placeholder="0.0129"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-3">
+                                    <label for="industryFeeInventionCostInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Invention Cost Index" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeInventionCostInput"
+                                        class="form-control form-control-sm"
+                                        step="0.0001"
+                                        value="{{ industry_fee_config.invention_cost|default:'' }}"
+                                        placeholder="0.0129"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-2">
+                                    <label for="industryFeeCopyingCostInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Copying Index" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeCopyingCostInput"
+                                        class="form-control form-control-sm"
+                                        step="0.0001"
+                                        value="{{ industry_fee_config.copying_cost|default:'' }}"
+                                        placeholder="0.0000"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-2">
+                                    <label for="industryFeeReactionCostInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Reaction Index" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeReactionCostInput"
+                                        class="form-control form-control-sm"
+                                        step="0.0001"
+                                        value="{{ industry_fee_config.reaction_cost|default:'' }}"
+                                        placeholder="0.0000"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-2">
+                                    <label for="industryFeeFacilityTaxInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Facility Tax" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeFacilityTaxInput"
+                                        class="form-control form-control-sm"
+                                        step="0.0001"
+                                        value="{{ industry_fee_config.facility_tax|default:'' }}"
+                                        placeholder="0.0200"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mt-1">
+                                <div class="col-lg-3">
+                                    <label for="industryFeeSystemCostBonusInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "System Cost Bonus" %}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        id="industryFeeSystemCostBonusInput"
+                                        class="form-control form-control-sm"
+                                        step="0.0001"
+                                        value="{{ industry_fee_config.system_cost_bonus|default:'' }}"
+                                        placeholder="-0.5"
+                                        data-industry-fee-input="1"
+                                    >
+                                </div>
+                                <div class="col-lg-2 d-flex align-items-end">
+                                    <div class="form-check mb-1">
+                                        <input
+                                            class="form-check-input"
+                                            type="checkbox"
+                                            id="industryFeeAlphaInput"
+                                            data-industry-fee-input="1"
+                                            {% if industry_fee_config.alpha %}checked{% endif %}
+                                        >
+                                        <label class="form-check-label small" for="industryFeeAlphaInput">
+                                            {% trans "Alpha Clone" %}
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-lg-7">
+                                    <label for="industryFeeExtraParamsInput" class="form-label small fw-semibold text-uppercase text-muted mb-1">
+                                        {% trans "Extra Params (query string, optional)" %}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="industryFeeExtraParamsInput"
+                                        class="form-control form-control-sm"
+                                        value="{{ industry_fee_config.extra_params|default:'' }}"
+                                        placeholder="advanced_industry=5&industry=5"
+                                        data-industry-fee-input="1"
+                                    >
                                 </div>
                             </div>
                         </div>
@@ -708,7 +978,7 @@
                                     <div class="craft-config-level">
                                         <div class="craft-config-items-grid">
                                             {% for bc in level.blueprints %}
-                                            <div class="craft-bp-card card h-100" data-blueprint-type-id="{{ bc.type_id }}" {% if not bc.user_owns %}data-blueprint-not-owned="true"{% endif %}>
+                                            <div class="craft-bp-card card h-100" data-blueprint-type-id="{{ bc.type_id }}" data-product-type-id="{{ bc.product_type_id|default:bc.type_id }}" {% if not bc.user_owns %}data-blueprint-not-owned="true"{% endif %}>
                                                 <div class="card-header text-center py-1 {% if bc.user_owns %}bg-success bg-opacity-10{% elif bc.shared_copies_available %}bg-warning bg-opacity-10{% else %}bg-danger bg-opacity-10{% endif %}">
                                                     <img
                                                         src="https://images.evetech.net/types/{{ bc.type_id }}/bp?size=128"
@@ -866,6 +1136,40 @@
                     <div class="alert alert-info"><i class="fas fa-info-circle me-2"></i>{% trans "No child blueprints require configuration tweaks for this item." %}</div>
                     {% endif %}
                 </section>
+            </div>
+
+            <!-- ========== BUY BPCS TAB (V2) ========== -->
+            <div class="tab-pane fade" id="buy-bpcs-pane" role="tabpanel" aria-labelledby="buy-bpcs-tab-btn">
+                <section class="craft-section mb-3">
+                    <div class="craft-section-header-with-actions">
+                        <h3 class="craft-section-title">
+                            <i class="fas fa-copy text-warning"></i> {% trans "Missing Blueprint Copies" %}
+                        </h3>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="small text-muted mb-0" for="buyBpcsSortSelect">{% trans "Sort offers" %}</label>
+                            <select id="buyBpcsSortSelect" class="form-select form-select-sm" style="max-width: 230px;">
+                                <option value="effective">{% trans "Lowest effective ISK/run" %}</option>
+                                <option value="total_price">{% trans "Lowest total price" %}</option>
+                                <option value="runs_desc">{% trans "Most runs" %}</option>
+                                <option value="me_desc">{% trans "Best ME" %}</option>
+                                <option value="te_desc">{% trans "Best TE" %}</option>
+                                <option value="newest">{% trans "Newest" %}</option>
+                            </select>
+                            <button id="buyBpcsRefreshBtn" class="btn btn-outline-info btn-sm" type="button">
+                                <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh" %}
+                            </button>
+                        </div>
+                    </div>
+                    <p class="small text-muted mt-2 mb-0">
+                        {% trans "Only components set to Produce are listed. Selecting a contract can auto-apply its ME/TE in Configure and add the purchase to the planner." %}
+                    </p>
+                </section>
+
+                <div id="buyBpcsStatus" class="alert alert-info mb-3 d-none"></div>
+                <div id="buyBpcsEmptyState" class="alert alert-success d-none">
+                    <i class="fas fa-check-circle me-2"></i>{% trans "No missing BPC runs for current Produce items." %}
+                </div>
+                <div id="buyBpcsList" class="d-flex flex-column gap-3"></div>
             </div>
 
             <!-- ========== HOW TO TAB (V2) ========== -->
@@ -1158,26 +1462,58 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             buyInput.value = Array.from(new Set(buyDecisions)).join(',');
 
+            const ensureHidden = (name, value) => {
+                let input = controlForm.querySelector(`input[name="${name}"]`);
+                if (!input) {
+                    input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = name;
+                    controlForm.appendChild(input);
+                }
+                input.value = value;
+            };
+
+            const currentUrlParams = new URLSearchParams(window.location.search || '');
+            const simScope = String(currentUrlParams.get('sim') || '').trim();
+            const draftScope = String(currentUrlParams.get('draft') || '').trim();
+            if (simScope) {
+                ensureHidden('sim', simScope);
+            }
+            if (draftScope) {
+                ensureHidden('draft', draftScope);
+            }
+
             if (typeof getBuildEnvironmentFromDom === 'function') {
                 const env = getBuildEnvironmentFromDom() || {};
-                const ensureHidden = (name, value) => {
-                    let input = controlForm.querySelector(`input[name="${name}"]`);
-                    if (!input) {
-                        input = document.createElement('input');
-                        input.type = 'hidden';
-                        input.name = name;
-                        controlForm.appendChild(input);
-                    }
-                    input.value = value;
-                };
 
                 ensureHidden('build_system', String(env.system || ''));
+                ensureHidden('build_system_id', String(env.systemId || ''));
                 ensureHidden('build_system_index', String(env.systemIndex || 0));
                 ensureHidden('build_structure', String(env.structureType || 'none'));
+                ensureHidden('build_structure_id', String(env.structureId || ''));
                 ensureHidden(
                     'build_rigs',
                     Array.isArray(env.rigKeys) ? env.rigKeys.join(',') : ''
                 );
+            }
+
+            if (typeof getIndustryFeeConfigFromDom === 'function') {
+                const fee = getIndustryFeeConfigFromDom() || {};
+                const feeRigIds = Array.isArray(fee.rig_ids) ? fee.rig_ids : [];
+
+                ensureHidden('industry_fee_enabled', fee.enabled ? '1' : '0');
+                ensureHidden('industry_fee_structure_type_id', fee.structure_type_id || '');
+                ensureHidden('industry_fee_security', fee.security || 'HIGH_SEC');
+                ensureHidden('industry_fee_system_id', fee.system_id || '');
+                ensureHidden('industry_fee_manufacturing_cost', fee.manufacturing_cost ?? '');
+                ensureHidden('industry_fee_invention_cost', fee.invention_cost ?? '');
+                ensureHidden('industry_fee_copying_cost', fee.copying_cost ?? '');
+                ensureHidden('industry_fee_reaction_cost', fee.reaction_cost ?? '');
+                ensureHidden('industry_fee_facility_tax', fee.facility_tax ?? '');
+                ensureHidden('industry_fee_system_cost_bonus', fee.system_cost_bonus ?? '');
+                ensureHidden('industry_fee_rig_ids', feeRigIds.join(','));
+                ensureHidden('industry_fee_alpha', fee.alpha ? '1' : '0');
+                ensureHidden('industry_fee_extra_params', fee.extra_params || '');
             }
         });
     }

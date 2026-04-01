@@ -90,7 +90,7 @@
                             data-location="{{ order_location_label }}"
                             data-amount="{{ order.total_price|floatformat:0|intcomma }}"
                             data-amount-raw="{{ order.total_price|floatformat:0 }}"
-                            data-amount-label="{% trans 'I will pay' %}"
+                            data-amount-label="{{ contract_check_amount_label }}"
                         >
                             <i class="fas fa-paste me-1"></i>{% trans "Paste & Check" %}
                         </button>

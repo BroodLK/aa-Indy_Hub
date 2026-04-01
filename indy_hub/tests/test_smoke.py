@@ -390,6 +390,94 @@ class MaterialExchangeContractCheckTests(TestCase):
         )
         self.assertFalse(amount_check["passed"])
 
+    def test_buy_order_contract_check_reports_success_for_manager_creator_view(self) -> None:
+        grant_indy_permissions(self.user, "can_manage_material_hub")
+        buyer = User.objects.create_user("buyrecipient", password="secret123")
+        buyer_character = assign_main_character(buyer, character_id=7011002)
+        grant_indy_permissions(buyer)
+
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=buyer,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            order_reference="INDY-BUY-CHECK-MANAGER",
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=order,
+            type_id=22,
+            type_name="Coherent Asteroid Mining Crystal Type A II",
+            quantity=20,
+            unit_price="1200000.00",
+            total_price="24000000.00",
+        )
+
+        response = self.client.post(
+            reverse("indy_hub:buy_order_check_contract", args=[order.id]),
+            {
+                "contract_text": (
+                    "Contract Type\tItem Exchange\n"
+                    "Description\tINDY-BUY-CHECK-MANAGER\n"
+                    f"Availability\tPrivate ({buyer_character.character_name})\n"
+                    "Location\tC-N4OD - Fountain of Life\n"
+                    "I will pay\t0 ISK\n"
+                    "I will receive\t24.000.000 ISK\n"
+                    "Items For Sale\tCoherent Asteroid Mining Crystal Type A II x 20\n"
+                    "Items Required\t\n"
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        amount_check = next(
+            check for check in payload["checks"] if check["key"] == "amount"
+        )
+        self.assertEqual(amount_check["label"], "I will receive")
+        self.assertTrue(amount_check["passed"])
+
+    def test_buy_order_contract_check_reports_success_for_manager_own_order(self) -> None:
+        grant_indy_permissions(self.user, "can_manage_material_hub")
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.user,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            order_reference="INDY-BUY-CHECK-MANAGER-OWN",
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=order,
+            type_id=222,
+            type_name="Coherent Asteroid Mining Crystal Type A II",
+            quantity=20,
+            unit_price="1200000.00",
+            total_price="24000000.00",
+        )
+
+        response = self.client.post(
+            reverse("indy_hub:buy_order_check_contract", args=[order.id]),
+            {
+                "contract_text": (
+                    "Contract Type\tItem Exchange\n"
+                    "Description\tINDY-BUY-CHECK-MANAGER-OWN\n"
+                    f"Availability\tPrivate ({self.character.character_name})\n"
+                    "Location\tC-N4OD - Fountain of Life\n"
+                    "I will pay\t24.000.000 ISK\n"
+                    "I will receive\t0 ISK\n"
+                    "Items For Sale\tCoherent Asteroid Mining Crystal Type A II x 20\n"
+                    "Items Required\t\n"
+                )
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        amount_check = next(
+            check for check in payload["checks"] if check["key"] == "amount"
+        )
+        self.assertEqual(amount_check["label"], "I will pay")
+        self.assertTrue(amount_check["passed"])
+
     def test_sell_order_contract_check_reports_missing_and_surplus_items(self) -> None:
         order = MaterialExchangeSellOrder.objects.create(
             config=self.config,
@@ -476,6 +564,39 @@ class MaterialExchangeContractCheckTests(TestCase):
         self.assertContains(
             response, reverse("indy_hub:buy_order_check_contract", args=[order.id])
         )
+
+    def test_buy_order_detail_uses_receive_amount_label_for_manager(self) -> None:
+        grant_indy_permissions(self.user, "can_manage_material_hub")
+        buyer = User.objects.create_user("buyviewer", password="secret123")
+        assign_main_character(buyer, character_id=7011003)
+        grant_indy_permissions(buyer)
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=buyer,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            order_reference="INDY-BUY-DETAIL-MANAGER",
+        )
+
+        response = self.client.get(
+            reverse("indy_hub:buy_order_detail", args=[order.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-amount-label="I will receive"')
+
+    def test_buy_order_detail_uses_pay_amount_label_for_manager_own_order(self) -> None:
+        grant_indy_permissions(self.user, "can_manage_material_hub")
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.user,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+            order_reference="INDY-BUY-DETAIL-MANAGER-OWN",
+        )
+
+        response = self.client.get(
+            reverse("indy_hub:buy_order_detail", args=[order.id])
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-amount-label="I will pay"')
 
 
 class BlueprintModelClassificationTests(TestCase):

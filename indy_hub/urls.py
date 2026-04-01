@@ -3,6 +3,9 @@ from django.http import HttpResponse
 from django.urls import path
 
 from .views.api import (
+    craft_build_environment,
+    craft_bpc_contracts,
+    craft_industry_fees,
     craft_bp_payload,
     fuzzwork_price,
     load_production_config,
@@ -225,6 +228,21 @@ urlpatterns = [
     ),
     path("craft/<int:type_id>/", craft_bp, name="craft_bp"),
     path("api/fuzzwork-price/", fuzzwork_price, name="fuzzwork_price"),
+    path(
+        "api/craft-build-environment/",
+        craft_build_environment,
+        name="craft_build_environment",
+    ),
+    path(
+        "api/craft-bpc-contracts/",
+        craft_bpc_contracts,
+        name="craft_bpc_contracts",
+    ),
+    path(
+        "api/craft-industry-fees/",
+        craft_industry_fees,
+        name="craft_industry_fees",
+    ),
     path(
         "api/craft-bp-payload/<int:type_id>/", craft_bp_payload, name="craft_bp_payload"
     ),

@@ -1,0 +1,286 @@
+"""Helpers for querying public ESI contract data for blueprint copies."""
+
+from __future__ import annotations
+
+# Standard Library
+from decimal import Decimal
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
+# Local
+from indy_hub.services.cache_utils import get_or_set_cache_with_lock
+from indy_hub.services.esi_client import shared_client
+
+logger = get_extension_logger(__name__)
+
+ESI_DATASOURCE = "tranquility"
+THE_FORGE_REGION_ID = 10000002
+JITA_STATION_ID = 60003760
+PUBLIC_CONTRACTS_ROUTE_CACHE_TTL_SECONDS = 1800
+PUBLIC_CONTRACT_ITEMS_ROUTE_CACHE_TTL_SECONDS = 1800
+PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS = 1800
+
+
+class PublicContractsError(Exception):
+    """Raised when public contract fetching fails."""
+
+
+def _resolve_operation(resource: str, snake_name: str):
+    client = shared_client.client
+    resource_obj = getattr(client, resource, None)
+    if resource_obj is None:
+        return None
+
+    operation = getattr(resource_obj, snake_name, None)
+    if callable(operation):
+        return operation
+
+    camel_name = "".join(part.capitalize() for part in snake_name.split("_"))
+    operation = getattr(resource_obj, camel_name, None)
+    return operation if callable(operation) else None
+
+
+def _run_openapi_operation(operation, **kwargs):
+    try:
+        result_obj = operation(**kwargs)
+        return result_obj.results() if hasattr(result_obj, "results") else result_obj
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 404:
+            return None
+        raise PublicContractsError(str(exc)) from exc
+
+
+def _fetch_public_contract_page_cached(
+    *,
+    get_public_contracts,
+    page: int,
+) -> list[dict]:
+    cache_key = (
+        f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:"
+        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v1"
+    )
+
+    def _loader() -> list[dict]:
+        payload = _run_openapi_operation(
+            get_public_contracts,
+            region_id=THE_FORGE_REGION_ID,
+            datasource=ESI_DATASOURCE,
+            page=int(page),
+        )
+        return payload if isinstance(payload, list) else []
+
+    rows = get_or_set_cache_with_lock(
+        cache_key=cache_key,
+        ttl_seconds=PUBLIC_CONTRACTS_ROUTE_CACHE_TTL_SECONDS,
+        loader=_loader,
+        lock_ttl_seconds=25,
+        wait_timeout_seconds=10.0,
+        poll_interval_seconds=0.2,
+    )
+    return rows if isinstance(rows, list) else []
+
+
+def _fetch_public_contract_items_cached(
+    *,
+    get_public_contract_items,
+    contract_id: int,
+) -> list[dict]:
+    cache_key = (
+        f"indy_hub:esi:contracts:public_items:"
+        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v1"
+    )
+
+    def _loader() -> list[dict]:
+        payload = _run_openapi_operation(
+            get_public_contract_items,
+            contract_id=int(contract_id),
+            datasource=ESI_DATASOURCE,
+        )
+        return payload if isinstance(payload, list) else []
+
+    rows = get_or_set_cache_with_lock(
+        cache_key=cache_key,
+        ttl_seconds=PUBLIC_CONTRACT_ITEMS_ROUTE_CACHE_TTL_SECONDS,
+        loader=_loader,
+        lock_ttl_seconds=20,
+        wait_timeout_seconds=8.0,
+        poll_interval_seconds=0.2,
+    )
+    return rows if isinstance(rows, list) else []
+
+
+def _normalize_title(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_jita_contract(contract: dict) -> bool:
+    start_location_id = int(contract.get("start_location_id") or 0)
+    end_location_id = int(contract.get("end_location_id") or 0)
+    return start_location_id == JITA_STATION_ID or end_location_id == JITA_STATION_ID
+
+
+def _extract_price(contract: dict) -> Decimal:
+    price = Decimal(str(contract.get("price") or 0))
+    reward = Decimal(str(contract.get("reward") or 0))
+    return price + reward
+
+
+def _extract_matching_bpc_items(items: list[dict], *, blueprint_type_id: int) -> list[dict]:
+    matches: list[dict] = []
+    for item in items:
+        if int(item.get("type_id") or 0) != blueprint_type_id:
+            continue
+        if not bool(item.get("is_included", False)):
+            continue
+
+        runs = int(item.get("runs") or 0)
+        copies = max(1, int(item.get("quantity") or 1))
+        me = int(item.get("material_efficiency") or 0)
+        te = int(item.get("time_efficiency") or 0)
+        is_copy = bool(item.get("is_blueprint_copy", False)) or runs > 0
+        if not is_copy:
+            continue
+
+        total_runs = runs if runs > 0 else 1
+        if copies > 1:
+            total_runs = total_runs * copies
+
+        matches.append(
+            {
+                "runs": max(1, int(total_runs)),
+                "copies": copies,
+                "me": me,
+                "te": te,
+            }
+        )
+    return matches
+
+
+def fetch_jita_public_bpc_contracts(
+    *,
+    blueprint_type_id: int,
+    blueprint_name: str,
+    max_pages: int = 6,
+    max_candidates: int = 80,
+    timeout: int = 8,
+) -> list[dict]:
+    """Return public Jita contract offers for a specific blueprint copy type."""
+    # Kept for API compatibility; OpenAPI client timeout is configured in shared_client.
+    _ = timeout
+    normalized_name = _normalize_title(blueprint_name)
+    if blueprint_type_id <= 0:
+        return []
+
+    get_public_contracts = _resolve_operation(
+        "Contracts",
+        "get_contracts_public_region_id",
+    )
+    get_public_contract_items = _resolve_operation(
+        "Contracts",
+        "get_contracts_public_items_contract_id",
+    )
+    if not callable(get_public_contracts) or not callable(get_public_contract_items):
+        logger.warning("Contracts OpenAPI operations are unavailable for public BPC lookup")
+        raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
+
+    cache_key = (
+        f"indy_hub:craft_bpc_offers:v2:"
+        f"blueprint:{int(blueprint_type_id)}:"
+        f"pages:{int(max_pages)}:candidates:{int(max_candidates)}"
+    )
+
+    def _loader() -> list[dict]:
+        candidates: list[dict] = []
+        for page in range(1, max_pages + 1):
+            payload = _fetch_public_contract_page_cached(
+                get_public_contracts=get_public_contracts,
+                page=page,
+            )
+            if not payload:
+                break
+
+            for contract in payload:
+                if str(contract.get("contract_type") or "").strip().lower() != "item_exchange":
+                    continue
+                if str(contract.get("status") or "").strip().lower() != "outstanding":
+                    continue
+                if not _is_jita_contract(contract):
+                    continue
+
+                title = _normalize_title(contract.get("title"))
+                if normalized_name:
+                    if title and normalized_name not in title and "bpc" not in title:
+                        continue
+
+                candidates.append(contract)
+                if len(candidates) >= max_candidates:
+                    break
+
+            if len(candidates) >= max_candidates:
+                break
+
+        offers: list[dict] = []
+        for contract in candidates:
+            contract_id = int(contract.get("contract_id") or 0)
+            if not contract_id:
+                continue
+
+            items_payload = _fetch_public_contract_items_cached(
+                get_public_contract_items=get_public_contract_items,
+                contract_id=contract_id,
+            )
+            if not items_payload:
+                continue
+
+            matches = _extract_matching_bpc_items(
+                items_payload,
+                blueprint_type_id=blueprint_type_id,
+            )
+            if not matches:
+                continue
+
+            total_price = _extract_price(contract)
+            issued_at = str(contract.get("date_issued") or "")
+            expires_at = str(contract.get("date_expired") or "")
+
+            for match in matches:
+                runs = int(match["runs"])
+                total_price_float = float(total_price)
+                offers.append(
+                    {
+                        "contract_id": contract_id,
+                        "title": str(contract.get("title") or "").strip(),
+                        "issuer_id": int(contract.get("issuer_id") or 0),
+                        "start_location_id": int(contract.get("start_location_id") or 0),
+                        "end_location_id": int(contract.get("end_location_id") or 0),
+                        "price_total": total_price_float,
+                        "price_per_run": (total_price_float / runs) if runs > 0 else total_price_float,
+                        "runs": runs,
+                        "copies": int(match["copies"]),
+                        "me": int(match["me"]),
+                        "te": int(match["te"]),
+                        "issued_at": issued_at,
+                        "expires_at": expires_at,
+                    }
+                )
+
+        offers.sort(
+            key=lambda offer: (
+                float(offer.get("price_per_run") or 0),
+                -int(offer.get("me") or 0),
+                -int(offer.get("te") or 0),
+            )
+        )
+        return offers
+
+    result = get_or_set_cache_with_lock(
+        cache_key=cache_key,
+        ttl_seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
+        loader=_loader,
+        lock_ttl_seconds=30,
+        wait_timeout_seconds=10.0,
+        poll_interval_seconds=0.2,
+    )
+    return result if isinstance(result, list) else []

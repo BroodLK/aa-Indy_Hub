@@ -10,6 +10,7 @@
         : ((singular, plural, count) => (Number(count) === 1 ? singular : plural));
     let cachedSimulations = null;
     let isFetchingSimulations = false;
+    let currentSimulationId = null;
 
     function getCsrfToken() {
         const match = document.cookie.match(/csrftoken=([^;]+)/);
@@ -31,6 +32,37 @@
         }
         const number = parseFloat(cleaned);
         return Number.isFinite(number) ? number : 0;
+    }
+
+    function getSimulationIdFromUrl() {
+        try {
+            const url = new URL(window.location.href);
+            const raw = String(url.searchParams.get('sim') || '').trim();
+            const numeric = Number(raw);
+            return Number.isFinite(numeric) && numeric > 0 ? Math.floor(numeric) : null;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function syncSimulationScope(simulationId, options = {}) {
+        const numericSimulationId = Number(simulationId) || 0;
+        if (numericSimulationId <= 0) {
+            return;
+        }
+        currentSimulationId = Math.floor(numericSimulationId);
+        if (window.CraftBP && typeof window.CraftBP.setSimulationScope === 'function') {
+            window.CraftBP.setSimulationScope(currentSimulationId, options);
+        } else {
+            try {
+                const nextUrl = new URL(window.location.href);
+                nextUrl.searchParams.set('sim', String(currentSimulationId));
+                nextUrl.searchParams.delete('draft');
+                window.history.replaceState(window.history.state, '', nextUrl.toString());
+            } catch (error) {
+                // ignore
+            }
+        }
     }
 
     function showSimulationStatus(message, variant = 'info') {
@@ -218,6 +250,7 @@
             blueprint_name: blueprintData.name || document.querySelector('.blueprint-hero .hero-title')?.textContent?.trim() || document.querySelector('.blueprint-header h1')?.textContent?.trim() || __('Blueprint'),
             runs: runsInput ? Number(runsInput.value) || 1 : 1,
             simulation_name: simulationNameInput ? simulationNameInput.value.trim() : '',
+            simulation_id: currentSimulationId || getSimulationIdFromUrl(),
             active_tab: getActiveTabId(),
             items: gatherProductionItems(),
             blueprint_efficiencies: gatherBlueprintEfficiencies(),
@@ -244,6 +277,7 @@
 
             const data = await response.json();
             if (data && data.success) {
+                syncSimulationScope(data.simulation_id, { migrateCurrentState: true });
                 showSimulationStatus(__('Simulation saved successfully.'), 'success');
                 cachedSimulations = null; // force refresh next time
             } else {
@@ -409,6 +443,11 @@
     }
 
     function applySimulationConfig(config, simulationMeta) {
+        syncSimulationScope(
+            config.simulation_id || simulationMeta.id || simulationMeta.simulation_id,
+            { migrateCurrentState: false }
+        );
+
         const runsInput = document.getElementById('runsInput');
         if (runsInput && Number.isFinite(Number(config.runs))) {
             runsInput.value = Number(config.runs);
@@ -468,8 +507,12 @@
 
         try {
             const url = new URL(blueprintData.load_config_url, window.location.origin);
-            url.searchParams.set('blueprint_type_id', simulation.blueprint_type_id);
-            url.searchParams.set('runs', simulation.runs);
+            if (simulation.id) {
+                url.searchParams.set('simulation_id', simulation.id);
+            } else {
+                url.searchParams.set('blueprint_type_id', simulation.blueprint_type_id);
+                url.searchParams.set('runs', simulation.runs);
+            }
 
             const response = await fetch(url.toString(), {
                 headers: {
@@ -532,6 +575,7 @@
     });
 
     document.addEventListener('DOMContentLoaded', () => {
+        currentSimulationId = getSimulationIdFromUrl();
         if (window.CraftBPTabs && typeof window.CraftBPTabs.init === 'function') {
             window.CraftBPTabs.init();
         }

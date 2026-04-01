@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-# Alliance Auth (External Libs)
-from app_utils.app_settings import clean_setting
-
 # AA Example App
+from indy_hub.utils.settings import clean_setting
+
 from indy_hub import __esi_compatibility_date__
 
 DISCORD_DM_ENABLED = clean_setting(

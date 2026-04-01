@@ -16,10 +16,6 @@ from django.utils.translation import gettext_lazy as _
 from allianceauth.notifications.models import Notification
 from allianceauth.services.hooks import get_extension_logger
 
-# Alliance Auth (External Libs)
-# AppUtils
-from app_utils.urls import site_absolute_url
-
 # AA Example App
 # Indy Hub
 from indy_hub.app_settings import DISCORD_DM_ENABLED as DM_ENABLED
@@ -27,6 +23,7 @@ from indy_hub.app_settings import DISCORD_FOOTER_TEXT as EMBED_FOOTER_TEXT
 from indy_hub.app_settings import (
     SITE_URL,
 )
+from indy_hub.utils.urls import site_absolute_url
 
 logger = get_extension_logger(__name__)
 
