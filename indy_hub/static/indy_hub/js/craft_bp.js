@@ -6054,8 +6054,11 @@ function collectBlueprintCopyDeficits() {
     return deficits;
 }
 
-function collectMissingBlueprintCopyRows() {
-    return collectBlueprintCopyDeficits()
+function collectMissingBlueprintCopyRows(deficitsOverride = null) {
+    const deficits = Array.isArray(deficitsOverride)
+        ? deficitsOverride
+        : collectBlueprintCopyDeficits();
+    return deficits
         .filter((row) => Number(row.deficitRuns) > 0)
         .map((row) => ({
             typeId: row.blueprintTypeId,
@@ -6067,11 +6070,22 @@ function collectMissingBlueprintCopyRows() {
         }));
 }
 
-function collectSelectedBlueprintContractRows() {
+function collectSelectedBlueprintContractRows(deficitsOverride = null) {
     pruneSelectedContractsToCurrentProductionPlan();
+    const deficitRows = Array.isArray(deficitsOverride)
+        ? deficitsOverride
+        : collectBlueprintCopyDeficits().filter((row) => Number(row.deficitRuns) > 0);
+    const neededBlueprintTypeIds = new Set(
+        deficitRows
+            .map((row) => Number(row?.blueprintTypeId) || 0)
+            .filter((id) => id > 0)
+    );
     const rows = [];
     const blueprintNameMap = getBlueprintNameMapFromConfigPane();
     CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
+        if (neededBlueprintTypeIds.size > 0 && !neededBlueprintTypeIds.has(Number(blueprintTypeId) || 0)) {
+            return;
+        }
         if (!(offerMap instanceof Map) || offerMap.size === 0) {
             return;
         }
@@ -6527,8 +6541,11 @@ function updateFinancialTabFromState() {
         }
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
-    const selectedBpcRows = collectSelectedBlueprintContractRows();
-    const missingBpcRows = collectMissingBlueprintCopyRows();
+    const blueprintDeficitRows = collectBlueprintCopyDeficits().filter(
+        (row) => Number(row?.deficitRuns) > 0
+    );
+    const selectedBpcRows = collectSelectedBlueprintContractRows(blueprintDeficitRows);
+    const missingBpcRows = collectMissingBlueprintCopyRows(blueprintDeficitRows);
     const sortedItems = [...selectedBpcRows, ...missingBpcRows, ...sortedMaterials];
 
     const existingRows = new Map();

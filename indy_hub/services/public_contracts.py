@@ -44,10 +44,21 @@ def _resolve_operation(resource: str, snake_name: str):
 
 
 def _run_openapi_operation(operation, **kwargs):
-    def _invoke(call_kwargs: dict, *, use_cache: bool = False):
+    def _invoke(
+        call_kwargs: dict,
+        *,
+        use_cache: bool = False,
+        disable_etag: bool = False,
+    ):
         result_obj = operation(**call_kwargs)
         if not hasattr(result_obj, "results"):
             return result_obj
+
+        if disable_etag:
+            try:
+                return result_obj.results(use_etag=False)
+            except TypeError:
+                return result_obj.results()
 
         if use_cache:
             try:
@@ -64,28 +75,6 @@ def _run_openapi_operation(operation, **kwargs):
         if status_code == 304:
             return True
         return "HTTPNotModified" in type(exc).__name__
-
-    def _with_force_refresh(call_kwargs: dict) -> list[dict]:
-        # django-esi/OpenAPI sometimes returns 304 while the cached body is unavailable.
-        # Force a non-conditional request to recover payload for public endpoints.
-        forced_variants: list[dict] = []
-        for header_key in ("If-None-Match", "if_none_match"):
-            forced = dict(call_kwargs)
-            forced[header_key] = ""
-            forced_variants.append(forced)
-
-        last_force_error: Exception | None = None
-        for forced_kwargs in forced_variants:
-            try:
-                return _invoke(forced_kwargs)
-            except Exception as force_exc:
-                if _is_not_modified_error(force_exc):
-                    continue
-                last_force_error = force_exc
-                continue
-        if last_force_error is not None:
-            raise last_force_error
-        return None
 
     attempts: list[dict] = [dict(kwargs)]
     if "datasource" in kwargs:
@@ -151,31 +140,37 @@ def _run_openapi_operation(operation, **kwargs):
                         cache_exc,
                     )
                 try:
-                    forced_payload = _with_force_refresh(attempt_kwargs)
-                    if forced_payload is not None:
+                    bypass_payload = _invoke(attempt_kwargs, disable_etag=True)
+                    if bypass_payload is not None:
                         logger.debug(
-                            "OpenAPI forced refresh succeeded after 304 for %s (%s)",
+                            "OpenAPI ETag bypass succeeded after 304 for %s (%s)",
                             getattr(operation, "__name__", repr(operation)),
                             attempt_kwargs,
                         )
-                        return forced_payload
-                except Exception as force_exc:
-                    if getattr(force_exc, "status_code", None) == 404:
+                        return bypass_payload
+                except Exception as bypass_exc:
+                    if getattr(bypass_exc, "status_code", None) == 404:
                         return None
-                    if not _is_not_modified_error(force_exc):
-                        last_error = force_exc
+                    if not _is_not_modified_error(bypass_exc):
+                        last_error = bypass_exc
                     logger.debug(
-                        "OpenAPI forced refresh failed after 304 for %s (%s): %s",
+                        "OpenAPI ETag bypass failed after 304 for %s (%s): %s",
                         getattr(operation, "__name__", repr(operation)),
                         attempt_kwargs,
-                        force_exc,
+                        bypass_exc,
                     )
                 continue
             last_error = exc
             continue
 
     if saw_not_modified:
-        return None
+        if last_error is not None:
+            raise PublicContractsError(
+                f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}: {last_error}"
+            ) from last_error
+        raise PublicContractsError(
+            f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}"
+        )
 
     if last_error is not None:
         raise PublicContractsError(
@@ -192,7 +187,7 @@ def _fetch_public_contract_page_cached(
 ) -> list[dict]:
     cache_key = (
         f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:"
-        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v3"
+        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v4"
     )
 
     def _loader() -> list[dict]:
@@ -202,7 +197,21 @@ def _fetch_public_contract_page_cached(
             datasource=ESI_DATASOURCE,
             page=int(page),
         )
-        return payload if isinstance(payload, list) else []
+        if isinstance(payload, list):
+            return payload
+        if (
+            isinstance(payload, tuple)
+            and len(payload) > 0
+            and isinstance(payload[0], list)
+        ):
+            return payload[0]
+        if payload is not None:
+            logger.debug(
+                "Unexpected public contracts payload type for page %s: %s",
+                page,
+                type(payload).__name__,
+            )
+        return []
 
     rows = get_or_set_cache_with_lock(
         cache_key=cache_key,
@@ -222,7 +231,7 @@ def _fetch_public_contract_items_cached(
 ) -> list[dict]:
     cache_key = (
         f"indy_hub:esi:contracts:public_items:"
-        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v3"
+        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v4"
     )
 
     def _loader() -> list[dict]:
@@ -231,7 +240,21 @@ def _fetch_public_contract_items_cached(
             contract_id=int(contract_id),
             datasource=ESI_DATASOURCE,
         )
-        return payload if isinstance(payload, list) else []
+        if isinstance(payload, list):
+            return payload
+        if (
+            isinstance(payload, tuple)
+            and len(payload) > 0
+            and isinstance(payload[0], list)
+        ):
+            return payload[0]
+        if payload is not None:
+            logger.debug(
+                "Unexpected public contract items payload type for contract %s: %s",
+                contract_id,
+                type(payload).__name__,
+            )
+        return []
 
     rows = get_or_set_cache_with_lock(
         cache_key=cache_key,
@@ -319,7 +342,7 @@ def fetch_jita_public_bpc_contracts(
         raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
 
     cache_key = (
-        f"indy_hub:craft_bpc_offers:v5:"
+        f"indy_hub:craft_bpc_offers:v6:"
         f"blueprint:{int(blueprint_type_id)}:"
         f"pages:{int(max_pages)}:candidates:{int(max_candidates)}"
     )
