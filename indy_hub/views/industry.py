@@ -2478,9 +2478,14 @@ def craft_bp(request, type_id):
         system_id=build_system_id,
         include_structures=False,
     )
-    resolved_system_payload = (
-        resolved_system_context.get("system", {})
+    resolved_system_payload_raw = (
+        resolved_system_context.get("system")
         if isinstance(resolved_system_context, dict)
+        else None
+    )
+    resolved_system_payload = (
+        resolved_system_payload_raw
+        if isinstance(resolved_system_payload_raw, dict)
         else {}
     )
     if resolved_system_payload:
