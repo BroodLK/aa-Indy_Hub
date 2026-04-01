@@ -192,7 +192,7 @@ def _fetch_public_contract_page_cached(
 ) -> list[dict]:
     cache_key = (
         f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:"
-        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v2"
+        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v3"
     )
 
     def _loader() -> list[dict]:
@@ -222,7 +222,7 @@ def _fetch_public_contract_items_cached(
 ) -> list[dict]:
     cache_key = (
         f"indy_hub:esi:contracts:public_items:"
-        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v2"
+        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v3"
     )
 
     def _loader() -> list[dict]:
@@ -319,7 +319,7 @@ def fetch_jita_public_bpc_contracts(
         raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
 
     cache_key = (
-        f"indy_hub:craft_bpc_offers:v4:"
+        f"indy_hub:craft_bpc_offers:v5:"
         f"blueprint:{int(blueprint_type_id)}:"
         f"pages:{int(max_pages)}:candidates:{int(max_candidates)}"
     )
@@ -330,8 +330,15 @@ def fetch_jita_public_bpc_contracts(
             require_title_hint: bool,
             pages: int,
             candidates_limit: int,
-        ) -> list[dict]:
+        ) -> tuple[list[dict], dict]:
             candidates_local: list[dict] = []
+            stats = {
+                "scanned": 0,
+                "type_filtered": 0,
+                "status_filtered": 0,
+                "location_filtered": 0,
+                "title_filtered": 0,
+            }
             for page in range(1, max(1, pages) + 1):
                 payload = _fetch_public_contract_page_cached(
                     get_public_contracts=get_public_contracts,
@@ -341,16 +348,29 @@ def fetch_jita_public_bpc_contracts(
                     break
 
                 for contract in payload:
-                    if str(contract.get("contract_type") or "").strip().lower() != "item_exchange":
+                    stats["scanned"] += 1
+
+                    # ESI public contracts commonly uses "type", while some wrappers expose "contract_type".
+                    contract_type = str(
+                        contract.get("contract_type") or contract.get("type") or ""
+                    ).strip().lower()
+                    if contract_type and contract_type != "item_exchange":
+                        stats["type_filtered"] += 1
                         continue
-                    if str(contract.get("status") or "").strip().lower() != "outstanding":
+
+                    # Some payload variants do not include status for public contracts.
+                    status = str(contract.get("status") or "").strip().lower()
+                    if status and status != "outstanding":
+                        stats["status_filtered"] += 1
                         continue
                     if not _is_jita_contract(contract):
+                        stats["location_filtered"] += 1
                         continue
 
                     if require_title_hint and normalized_name:
                         title = _normalize_title(contract.get("title"))
                         if title and normalized_name not in title and "bpc" not in title:
+                            stats["title_filtered"] += 1
                             continue
 
                     candidates_local.append(contract)
@@ -359,20 +379,24 @@ def fetch_jita_public_bpc_contracts(
 
                 if len(candidates_local) >= candidates_limit:
                     break
-            return candidates_local
+            return candidates_local, stats
 
-        candidates = _collect_candidates(
+        candidates, candidate_stats = _collect_candidates(
             require_title_hint=True,
             pages=max_pages,
             candidates_limit=max_candidates,
         )
         used_fallback_candidate_scan = False
         if not candidates:
-            candidates = _collect_candidates(
+            candidates, fallback_stats = _collect_candidates(
                 require_title_hint=False,
                 pages=max(max_pages * 2, 12),
                 candidates_limit=max(max_candidates * 2, 200),
             )
+            candidate_stats = {
+                key: int(candidate_stats.get(key, 0)) + int(fallback_stats.get(key, 0))
+                for key in set(candidate_stats.keys()).union(fallback_stats.keys())
+            }
             used_fallback_candidate_scan = True
 
         offers: list[dict] = []
@@ -433,12 +457,21 @@ def fetch_jita_public_bpc_contracts(
             )
         )
         logger.info(
-            "Public BPC contracts lookup bp=%s name='%s' candidates=%s offers=%s fallback_scan=%s",
+            (
+                "Public BPC contracts lookup bp=%s name='%s' "
+                "scanned=%s candidates=%s offers=%s fallback_scan=%s "
+                "filtered(type=%s status=%s location=%s title=%s)"
+            ),
             blueprint_type_id,
             blueprint_name,
+            int(candidate_stats.get("scanned") or 0),
             len(candidates),
             len(offers),
             used_fallback_candidate_scan,
+            int(candidate_stats.get("type_filtered") or 0),
+            int(candidate_stats.get("status_filtered") or 0),
+            int(candidate_stats.get("location_filtered") or 0),
+            int(candidate_stats.get("title_filtered") or 0),
         )
         return offers
 
