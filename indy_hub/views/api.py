@@ -535,6 +535,13 @@ def craft_bpc_contracts(request):
             failures[str(blueprint_type_id)] = "fetch_error"
         contracts_by_blueprint[str(blueprint_type_id)] = offers
 
+    logger.info(
+        "craft_bpc_contracts user=%s requested=%s failures=%s",
+        request.user.id,
+        parsed_ids,
+        failures,
+    )
+
     return JsonResponse(
         {
             "contracts_by_blueprint": contracts_by_blueprint,

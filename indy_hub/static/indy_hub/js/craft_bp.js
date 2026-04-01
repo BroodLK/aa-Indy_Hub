@@ -14,6 +14,7 @@ const CRAFT_BPC_CONTRACT_STATE = {
     loading: false,
     offersByBlueprintType: new Map(),
     selectedByBlueprintType: new Map(),
+    fetchErrorsByBlueprintType: new Map(),
 };
 const CRAFT_INDUSTRY_FEE_STATE = {
     loading: false,
@@ -6043,20 +6044,20 @@ function getCraftBpcContractsUrl() {
 async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false } = {}) {
     const endpoint = getCraftBpcContractsUrl();
     if (!endpoint) {
-        return;
+        return { errorCount: 0 };
     }
     const uniqueIds = Array.from(new Set((Array.isArray(blueprintTypeIds) ? blueprintTypeIds : [])
         .map((id) => Number(id) || 0)
         .filter((id) => id > 0)));
     if (uniqueIds.length === 0) {
-        return;
+        return { errorCount: 0 };
     }
 
     const idsToFetch = force
         ? uniqueIds
         : uniqueIds.filter((id) => !CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(id));
     if (idsToFetch.length === 0) {
-        return;
+        return { errorCount: 0 };
     }
 
     const requestUrl = new URL(endpoint, window.location.origin);
@@ -6073,6 +6074,10 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
     const contractMap = payload && payload.contracts_by_blueprint && typeof payload.contracts_by_blueprint === 'object'
         ? payload.contracts_by_blueprint
         : {};
+    const errorsMap = payload && payload.errors && typeof payload.errors === 'object'
+        ? payload.errors
+        : {};
+    let errorCount = 0;
 
     idsToFetch.forEach((blueprintTypeId) => {
         const rawOffers = contractMap[String(blueprintTypeId)];
@@ -6094,7 +6099,17 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
                 .filter((offer) => offer.contract_id > 0)
             : [];
         CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.set(blueprintTypeId, normalizedOffers);
+
+        const fetchError = String(errorsMap[String(blueprintTypeId)] || '').trim();
+        if (fetchError) {
+            CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.set(blueprintTypeId, fetchError);
+            errorCount += 1;
+            console.warn('[CraftBP] BPC contract fetch failed for blueprint', blueprintTypeId, fetchError);
+        } else {
+            CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.delete(blueprintTypeId);
+        }
     });
+    return { errorCount };
 }
 
 function getBuyBpcsSortKey() {
@@ -6301,8 +6316,16 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
     CRAFT_BPC_CONTRACT_STATE.loading = true;
     setBuyBpcsStatus(__('Loading public Jita contracts...'), 'info');
     try {
-        await fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force });
-        setBuyBpcsStatus('', 'info');
+        const fetchResult = await fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force });
+        const errorCount = Number(fetchResult?.errorCount) || 0;
+        if (errorCount > 0) {
+            setBuyBpcsStatus(
+                __('Some blueprint contract lookups failed. Check server logs for craft_bpc_contracts/public_contracts details.'),
+                'warning'
+            );
+        } else {
+            setBuyBpcsStatus('', 'info');
+        }
     } catch (error) {
         console.error('[CraftBP] Failed loading BPC contract offers', error);
         setBuyBpcsStatus(__('Unable to load public Jita contracts right now.'), 'warning');
@@ -6541,19 +6564,33 @@ function getTreeSwitchModeForType(typeId) {
         return 'prod';
     }
 
+    const switchEls = Array.from(
+        document.querySelectorAll(`#tab-tree input.mat-switch[data-type-id="${numericTypeId}"]`)
+    );
+    if (switchEls.length > 0) {
+        const usableSwitches = switchEls.filter(
+            (switchEl) => switchEl.dataset.fixedMode !== 'useless' && switchEl.dataset.userState !== 'useless'
+        );
+        if (usableSwitches.length === 0) {
+            return 'useless';
+        }
+
+        const unlockedSwitches = usableSwitches.filter(
+            (switchEl) => !(switchEl.dataset.lockedByParent === 'true' && switchEl.disabled)
+        );
+        if (unlockedSwitches.length > 0) {
+            return unlockedSwitches.some((switchEl) => Boolean(switchEl.checked)) ? 'prod' : 'buy';
+        }
+
+        // Every visible switch for this type is parent-locked, so treat it as BUY.
+        return 'buy';
+    }
+
     if (window.SimulationAPI && typeof window.SimulationAPI.getSwitchState === 'function') {
         const stateFromApi = window.SimulationAPI.getSwitchState(numericTypeId);
         if (stateFromApi === 'buy' || stateFromApi === 'prod' || stateFromApi === 'useless') {
             return stateFromApi;
         }
-    }
-
-    const switchEl = document.querySelector(`#tab-tree input.mat-switch[data-type-id="${numericTypeId}"]`);
-    if (switchEl) {
-        if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
-            return 'useless';
-        }
-        return switchEl.checked ? 'prod' : 'buy';
     }
     return 'prod';
 }

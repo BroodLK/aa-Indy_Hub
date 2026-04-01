@@ -162,8 +162,8 @@ def fetch_jita_public_bpc_contracts(
     *,
     blueprint_type_id: int,
     blueprint_name: str,
-    max_pages: int = 6,
-    max_candidates: int = 80,
+    max_pages: int = 8,
+    max_candidates: int = 120,
     timeout: int = 8,
 ) -> list[dict]:
     """Return public Jita contract offers for a specific blueprint copy type."""
@@ -186,40 +186,61 @@ def fetch_jita_public_bpc_contracts(
         raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
 
     cache_key = (
-        f"indy_hub:craft_bpc_offers:v2:"
+        f"indy_hub:craft_bpc_offers:v3:"
         f"blueprint:{int(blueprint_type_id)}:"
         f"pages:{int(max_pages)}:candidates:{int(max_candidates)}"
     )
 
     def _loader() -> list[dict]:
-        candidates: list[dict] = []
-        for page in range(1, max_pages + 1):
-            payload = _fetch_public_contract_page_cached(
-                get_public_contracts=get_public_contracts,
-                page=page,
-            )
-            if not payload:
-                break
-
-            for contract in payload:
-                if str(contract.get("contract_type") or "").strip().lower() != "item_exchange":
-                    continue
-                if str(contract.get("status") or "").strip().lower() != "outstanding":
-                    continue
-                if not _is_jita_contract(contract):
-                    continue
-
-                title = _normalize_title(contract.get("title"))
-                if normalized_name:
-                    if title and normalized_name not in title and "bpc" not in title:
-                        continue
-
-                candidates.append(contract)
-                if len(candidates) >= max_candidates:
+        def _collect_candidates(
+            *,
+            require_title_hint: bool,
+            pages: int,
+            candidates_limit: int,
+        ) -> list[dict]:
+            candidates_local: list[dict] = []
+            for page in range(1, max(1, pages) + 1):
+                payload = _fetch_public_contract_page_cached(
+                    get_public_contracts=get_public_contracts,
+                    page=page,
+                )
+                if not payload:
                     break
 
-            if len(candidates) >= max_candidates:
-                break
+                for contract in payload:
+                    if str(contract.get("contract_type") or "").strip().lower() != "item_exchange":
+                        continue
+                    if str(contract.get("status") or "").strip().lower() != "outstanding":
+                        continue
+                    if not _is_jita_contract(contract):
+                        continue
+
+                    if require_title_hint and normalized_name:
+                        title = _normalize_title(contract.get("title"))
+                        if title and normalized_name not in title and "bpc" not in title:
+                            continue
+
+                    candidates_local.append(contract)
+                    if len(candidates_local) >= candidates_limit:
+                        break
+
+                if len(candidates_local) >= candidates_limit:
+                    break
+            return candidates_local
+
+        candidates = _collect_candidates(
+            require_title_hint=True,
+            pages=max_pages,
+            candidates_limit=max_candidates,
+        )
+        used_fallback_candidate_scan = False
+        if not candidates:
+            candidates = _collect_candidates(
+                require_title_hint=False,
+                pages=max(max_pages * 2, 12),
+                candidates_limit=max(max_candidates * 2, 200),
+            )
+            used_fallback_candidate_scan = True
 
         offers: list[dict] = []
         for contract in candidates:
@@ -277,6 +298,14 @@ def fetch_jita_public_bpc_contracts(
                 -int(offer.get("me") or 0),
                 -int(offer.get("te") or 0),
             )
+        )
+        logger.info(
+            "Public BPC contracts lookup bp=%s name='%s' candidates=%s offers=%s fallback_scan=%s",
+            blueprint_type_id,
+            blueprint_name,
+            len(candidates),
+            len(offers),
+            used_fallback_candidate_scan,
         )
         return offers
 
