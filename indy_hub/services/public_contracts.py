@@ -65,6 +65,28 @@ def _run_openapi_operation(operation, **kwargs):
             return True
         return "HTTPNotModified" in type(exc).__name__
 
+    def _with_force_refresh(call_kwargs: dict) -> list[dict]:
+        # django-esi/OpenAPI sometimes returns 304 while the cached body is unavailable.
+        # Force a non-conditional request to recover payload for public endpoints.
+        forced_variants: list[dict] = []
+        for header_key in ("If-None-Match", "if_none_match"):
+            forced = dict(call_kwargs)
+            forced[header_key] = ""
+            forced_variants.append(forced)
+
+        last_force_error: Exception | None = None
+        for forced_kwargs in forced_variants:
+            try:
+                return _invoke(forced_kwargs)
+            except Exception as force_exc:
+                if _is_not_modified_error(force_exc):
+                    continue
+                last_force_error = force_exc
+                continue
+        if last_force_error is not None:
+            raise last_force_error
+        return None
+
     attempts: list[dict] = [dict(kwargs)]
     if "datasource" in kwargs:
         without_datasource = dict(kwargs)
@@ -128,6 +150,26 @@ def _run_openapi_operation(operation, **kwargs):
                         attempt_kwargs,
                         cache_exc,
                     )
+                try:
+                    forced_payload = _with_force_refresh(attempt_kwargs)
+                    if forced_payload is not None:
+                        logger.debug(
+                            "OpenAPI forced refresh succeeded after 304 for %s (%s)",
+                            getattr(operation, "__name__", repr(operation)),
+                            attempt_kwargs,
+                        )
+                        return forced_payload
+                except Exception as force_exc:
+                    if getattr(force_exc, "status_code", None) == 404:
+                        return None
+                    if not _is_not_modified_error(force_exc):
+                        last_error = force_exc
+                    logger.debug(
+                        "OpenAPI forced refresh failed after 304 for %s (%s): %s",
+                        getattr(operation, "__name__", repr(operation)),
+                        attempt_kwargs,
+                        force_exc,
+                    )
                 continue
             last_error = exc
             continue
@@ -150,7 +192,7 @@ def _fetch_public_contract_page_cached(
 ) -> list[dict]:
     cache_key = (
         f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:"
-        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v1"
+        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v2"
     )
 
     def _loader() -> list[dict]:
@@ -180,7 +222,7 @@ def _fetch_public_contract_items_cached(
 ) -> list[dict]:
     cache_key = (
         f"indy_hub:esi:contracts:public_items:"
-        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v1"
+        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v2"
     )
 
     def _loader() -> list[dict]:
@@ -277,7 +319,7 @@ def fetch_jita_public_bpc_contracts(
         raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
 
     cache_key = (
-        f"indy_hub:craft_bpc_offers:v3:"
+        f"indy_hub:craft_bpc_offers:v4:"
         f"blueprint:{int(blueprint_type_id)}:"
         f"pages:{int(max_pages)}:candidates:{int(max_candidates)}"
     )

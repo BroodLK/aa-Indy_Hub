@@ -224,6 +224,7 @@ function setCraftSimulationScope(simulationId) {
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('sim', String(Math.floor(numericSimulationId)));
         nextUrl.searchParams.delete('draft');
+        nextUrl.searchParams.delete('buy');
         window.history.replaceState(window.history.state, '', nextUrl.toString());
     } catch (error) {
         console.error('[CraftBP] Failed updating simulation scope URL', error);
@@ -234,6 +235,80 @@ function setCraftSimulationScope(simulationId) {
 
 function getBpcContractStorageKey() {
     return getScopedCraftStorageKey('craft_bp_bpc_contracts');
+}
+
+function getBuyCraftStorageKey() {
+    return getScopedCraftStorageKey('craft_bp_buy_craft');
+}
+
+function saveBuyCraftStateToStorage() {
+    const storageKey = getBuyCraftStorageKey();
+    const buyTypeIds = getCurrentBuyCraftDecisions();
+    try {
+        localStorage.setItem(storageKey, JSON.stringify({ buy: buyTypeIds }));
+    } catch (error) {
+        console.error('[CraftBP] Failed to persist buy/craft state', error);
+    }
+}
+
+function loadBuyCraftStateFromStorage() {
+    const storageKey = getBuyCraftStorageKey();
+    try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) {
+            return [];
+        }
+        const parsed = JSON.parse(raw);
+        const source = Array.isArray(parsed) ? parsed : parsed?.buy;
+        if (!Array.isArray(source)) {
+            return [];
+        }
+        return Array.from(
+            new Set(
+                source
+                    .map((value) => Number(String(value).trim()) || 0)
+                    .filter((value) => value > 0)
+            )
+        );
+    } catch (error) {
+        console.error('[CraftBP] Failed to load buy/craft state', error);
+        return [];
+    }
+}
+
+function applyBuyCraftStateToTree(buyTypeIds) {
+    const treeTab = document.getElementById('tab-tree');
+    if (!treeTab) {
+        return;
+    }
+
+    const buySet = new Set(
+        (Array.isArray(buyTypeIds) ? buyTypeIds : [])
+            .map((value) => Number(String(value).trim()) || 0)
+            .filter((value) => value > 0)
+    );
+
+    treeTab.querySelectorAll('input.mat-switch[data-type-id]').forEach((switchEl) => {
+        if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
+            return;
+        }
+        const typeId = Number(switchEl.getAttribute('data-type-id')) || 0;
+        if (!typeId) {
+            return;
+        }
+        const mode = buySet.has(typeId) ? 'buy' : 'prod';
+        switchEl.dataset.userState = mode;
+        switchEl.checked = mode !== 'buy';
+        updateSwitchLabel(switchEl);
+    });
+
+    if (typeof window.refreshTreeSwitchHierarchy === 'function') {
+        window.refreshTreeSwitchHierarchy();
+    }
+    if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
+        window.SimulationAPI.refreshFromDom();
+    }
+    refreshTabsAfterStateChange();
 }
 
 function loadSelectedBpcContractsFromStorage() {
@@ -467,11 +542,20 @@ window.CraftBP = {
             if (typeof saveSelectedBpcContractsToStorage === 'function') {
                 saveSelectedBpcContractsToStorage();
             }
+            if (typeof saveBuyCraftStateToStorage === 'function') {
+                saveBuyCraftStateToStorage();
+            }
             return;
         }
 
         if (typeof loadSelectedBpcContractsFromStorage === 'function') {
             loadSelectedBpcContractsFromStorage();
+        }
+        if (typeof loadBuyCraftStateFromStorage === 'function' && typeof applyBuyCraftStateToTree === 'function') {
+            const savedBuyTypeIds = loadBuyCraftStateFromStorage();
+            if (savedBuyTypeIds.length > 0) {
+                applyBuyCraftStateToTree(savedBuyTypeIds);
+            }
         }
         if (typeof renderBuyBpcsTab === 'function') {
             renderBuyBpcsTab();
@@ -626,6 +710,7 @@ function handleTreeSwitchChange(event) {
         window.SimulationAPI.refreshFromDom();
     }
 
+    saveBuyCraftStateToStorage();
     refreshTabsAfterStateChange();
 }
 
@@ -776,6 +861,7 @@ function setTreeModeForAll(mode) {
         window.SimulationAPI.refreshFromDom();
     }
 
+    saveBuyCraftStateToStorage();
     refreshTabsAfterStateChange();
 }
 
@@ -1442,6 +1528,7 @@ async function optimizeProfitabilityConfig() {
     if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
         window.SimulationAPI.refreshFromDom();
     }
+    saveBuyCraftStateToStorage();
     refreshTabsAfterStateChange({ forceNeeded: true });
     if (typeof recalcFinancials === 'function') {
         recalcFinancials();
@@ -2972,17 +3059,31 @@ function initializeRunOptimizedTab() {
  * Collect current buy/craft decisions from the tree
  */
 function getCurrentBuyCraftDecisions() {
-    const buyDecisions = [];
+    const buyDecisions = new Set();
 
-    // Traverse the material tree and collect items marked for buying
-    document.querySelectorAll('.mat-switch').forEach(function(switchEl) {
-        const typeId = switchEl.getAttribute('data-type-id');
-        if (!switchEl.checked) { // Unchecked means "buy" instead of "craft"
-            buyDecisions.push(typeId);
+    const treeTab = document.getElementById('tab-tree');
+    if (!treeTab) {
+        return [];
+    }
+
+    // Only persist explicit, user-controlled BUY decisions.
+    treeTab.querySelectorAll('input.mat-switch[data-type-id]').forEach((switchEl) => {
+        if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
+            return;
+        }
+        if (switchEl.dataset.lockedByParent === 'true' && switchEl.disabled) {
+            return;
+        }
+        const typeId = Number(switchEl.getAttribute('data-type-id')) || 0;
+        if (!typeId) {
+            return;
+        }
+        if (!switchEl.checked) {
+            buyDecisions.add(typeId);
         }
     });
 
-    return buyDecisions;
+    return Array.from(buyDecisions).sort((left, right) => left - right);
 }
 
 /**
@@ -3002,37 +3103,18 @@ function updateBuyCraftDecisions() {
 function restoreBuyCraftStateFromURL() {
     const urlParams = new URLSearchParams(window.location.search);
     const buyList = urlParams.get('buy');
+    const parsedFromUrl = buyList
+        ? buyList.split(',').map((id) => Number(String(id).trim()) || 0).filter((id) => id > 0)
+        : [];
+    const sourceTypeIds = parsedFromUrl.length > 0 ? parsedFromUrl : loadBuyCraftStateFromStorage();
 
-    if (buyList) {
-        const buyDecisions = buyList.split(',').map(id => id.trim()).filter(id => id);
-        craftBPDebugLog('Restoring buy decisions from URL:', buyDecisions);
-
-        // Set all switches to default (checked = craft)
-        document.querySelectorAll('.mat-switch').forEach(function(switchEl) {
-            switchEl.checked = true; // Default to craft
-            updateSwitchLabel(switchEl);
+    if (sourceTypeIds.length > 0) {
+        craftBPDebugLog('Restoring buy decisions', {
+            fromUrl: parsedFromUrl.length > 0,
+            count: sourceTypeIds.length,
         });
-
-        // Set switches for buy decisions to unchecked
-        buyDecisions.forEach(function(typeId) {
-            const switchEl = document.querySelector(`.mat-switch[data-type-id="${typeId}"]`);
-            if (switchEl) {
-                switchEl.checked = false; // Set to buy
-                updateSwitchLabel(switchEl);
-            }
-        });
-
-        // Trigger visual updates for tree hierarchy (children switches)
-        // Use setTimeout to ensure all switches are set before updating visuals
-        setTimeout(function() {
-            if (typeof window.refreshTreeSwitchHierarchy === 'function') {
-                window.refreshTreeSwitchHierarchy();
-            }
-            if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
-                window.SimulationAPI.refreshFromDom();
-            }
-            refreshTabsAfterStateChange();
-        }, 100);
+        applyBuyCraftStateToTree(sourceTypeIds);
+        saveBuyCraftStateToStorage();
     }
 }
 
@@ -4374,6 +4456,15 @@ function applyPendingMETEChanges() {
             if (value) {
                 cleanUrl.searchParams.set(param, value);
             }
+        }
+
+        // Persist current Buy/Prod decisions before reload and ensure URL reflects them.
+        saveBuyCraftStateToStorage();
+        const buyDecisions = getCurrentBuyCraftDecisions();
+        if (buyDecisions.length > 0) {
+            cleanUrl.searchParams.set('buy', buyDecisions.join(','));
+        } else {
+            cleanUrl.searchParams.delete('buy');
         }
 
         // Set ME/TE for main blueprint (these are REQUIRED)
