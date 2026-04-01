@@ -8,6 +8,7 @@ import inspect
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
+from esi.exceptions import HTTPNotModified
 
 # Local
 from indy_hub.services.cache_utils import get_or_set_cache_with_lock
@@ -43,9 +44,26 @@ def _resolve_operation(resource: str, snake_name: str):
 
 
 def _run_openapi_operation(operation, **kwargs):
-    def _invoke(call_kwargs: dict):
+    def _invoke(call_kwargs: dict, *, use_cache: bool = False):
         result_obj = operation(**call_kwargs)
-        return result_obj.results() if hasattr(result_obj, "results") else result_obj
+        if not hasattr(result_obj, "results"):
+            return result_obj
+
+        if use_cache:
+            try:
+                return result_obj.results(use_cache=True)
+            except TypeError:
+                return result_obj.results()
+
+        return result_obj.results()
+
+    def _is_not_modified_error(exc: Exception) -> bool:
+        if isinstance(exc, HTTPNotModified):
+            return True
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 304:
+            return True
+        return "HTTPNotModified" in type(exc).__name__
 
     attempts: list[dict] = [dict(kwargs)]
     if "datasource" in kwargs:
@@ -87,6 +105,7 @@ def _run_openapi_operation(operation, **kwargs):
         deduped_attempts.append(attempt_kwargs)
 
     last_error: Exception | None = None
+    saw_not_modified = False
     for attempt_kwargs in deduped_attempts:
         try:
             return _invoke(attempt_kwargs)
@@ -94,8 +113,27 @@ def _run_openapi_operation(operation, **kwargs):
             status_code = getattr(exc, "status_code", None)
             if status_code == 404:
                 return None
+            if _is_not_modified_error(exc):
+                saw_not_modified = True
+                try:
+                    return _invoke(attempt_kwargs, use_cache=True)
+                except Exception as cache_exc:
+                    if getattr(cache_exc, "status_code", None) == 404:
+                        return None
+                    if not _is_not_modified_error(cache_exc):
+                        last_error = cache_exc
+                    logger.debug(
+                        "OpenAPI 304 cache fallback failed for %s (%s): %s",
+                        getattr(operation, "__name__", repr(operation)),
+                        attempt_kwargs,
+                        cache_exc,
+                    )
+                continue
             last_error = exc
             continue
+
+    if saw_not_modified:
+        return None
 
     if last_error is not None:
         raise PublicContractsError(
