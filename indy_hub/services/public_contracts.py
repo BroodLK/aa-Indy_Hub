@@ -158,7 +158,7 @@ def _is_openapi_rows_payload(payload) -> bool:
     return False
 
 
-def _run_openapi_operation(operation, **kwargs):
+def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwargs):
     def _invoke(
         call_kwargs: dict,
         *,
@@ -234,6 +234,8 @@ def _run_openapi_operation(operation, **kwargs):
     saw_not_modified = False
     for attempt_kwargs in deduped_attempts:
         try:
+            if prefer_disable_etag:
+                return _invoke(attempt_kwargs, disable_etag=True)
             return _invoke(attempt_kwargs)
         except Exception as exc:
             status_code = getattr(exc, "status_code", None)
@@ -316,6 +318,7 @@ def _fetch_public_contract_page_cached(
     def _loader() -> list[dict]:
         payload = _run_openapi_operation(
             get_public_contracts,
+            prefer_disable_etag=True,
             region_id=THE_FORGE_REGION_ID,
             datasource=ESI_DATASOURCE,
             page=int(page),
@@ -356,6 +359,7 @@ def _fetch_public_contract_items_cached(
         try:
             payload = _run_openapi_operation(
                 get_public_contract_items,
+                prefer_disable_etag=True,
                 contract_id=int(contract_id),
                 datasource=ESI_DATASOURCE,
             )
