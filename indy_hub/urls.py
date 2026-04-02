@@ -5,6 +5,7 @@ from django.urls import path
 from .views.api import (
     craft_build_environment,
     craft_bpc_contracts,
+    craft_sync_owned_bpcs,
     craft_industry_fees,
     craft_bp_payload,
     fuzzwork_price,
@@ -237,6 +238,11 @@ urlpatterns = [
         "api/craft-bpc-contracts/",
         craft_bpc_contracts,
         name="craft_bpc_contracts",
+    ),
+    path(
+        "api/craft-sync-owned-bpcs/",
+        craft_sync_owned_bpcs,
+        name="craft_sync_owned_bpcs",
     ),
     path(
         "api/craft-industry-fees/",

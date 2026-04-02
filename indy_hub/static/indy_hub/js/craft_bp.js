@@ -31,12 +31,21 @@ const CRAFT_INDUSTRY_FEE_STATE = {
     totalApiCost: 0,
     jobs: [],
     errors: [],
+    lastAttemptAtMs: 0,
 };
+const CRAFT_INDUSTRY_FEE_RETRY_MS = 15000;
 const CRAFT_BUILD_SYSTEM_STATE = {
     loading: false,
     lastSignature: '',
     debounceTimer: null,
     structuresById: new Map(),
+};
+const CRAFT_LIVE_PAYLOAD_STATE = {
+    loading: false,
+    lastSignature: '',
+    debounceTimer: null,
+    requestSeq: 0,
+    queued: false,
 };
 const CRAFT_SELECTION_SCOPE = {
     initialized: false,
@@ -3642,7 +3651,68 @@ function initializeMETEHandlers() {
         }
     }
 
-    function markMETEChanges() {
+    let bpcCoverageRefreshTimer = null;
+
+    function scheduleLiveBpcCoverageRefresh() {
+        if (bpcCoverageRefreshTimer) {
+            window.clearTimeout(bpcCoverageRefreshTimer);
+        }
+        bpcCoverageRefreshTimer = window.setTimeout(() => {
+            bpcCoverageRefreshTimer = null;
+            refreshTabsAfterStateChange({ forceNeeded: true, keepComputedNeeded: true });
+        }, 80);
+    }
+
+    function shouldRefreshLiveBpcCoverage(changedInput, eventType = '') {
+        if (!changedInput || typeof changedInput.matches !== 'function') {
+            return false;
+        }
+
+        // "Use this BP" directly changes owned BPC coverage and deficits.
+        if (changedInput.matches('#configure-pane input.bp-use-input[data-blueprint-type-id]')) {
+            return true;
+        }
+
+        // Runs changes can affect required BPC runs; refresh on committed changes only.
+        if (changedInput.id === 'runsInput') {
+            return eventType === 'change';
+        }
+
+        return false;
+    }
+
+    function shouldRefreshLiveMaterialsFromPayload(changedInput, eventType = '') {
+        if (!changedInput || typeof changedInput.matches !== 'function') {
+            return false;
+        }
+
+        // ME/TE edits affect mineral quantities for production chains.
+        if (
+            changedInput.matches('#configure-pane input[name^="me_"]')
+            || changedInput.matches('#configure-pane input[name^="te_"]')
+        ) {
+            return true;
+        }
+
+        // Toggling "Use this BP" changes whether that blueprint ME/TE applies.
+        if (changedInput.matches('#configure-pane input.bp-use-input[data-blueprint-type-id]')) {
+            return true;
+        }
+
+        // Runs changes should refresh quantities once committed.
+        if (changedInput.id === 'runsInput') {
+            return eventType === 'change';
+        }
+
+        return false;
+    }
+
+    function markMETEChanges(eventOrInput = null) {
+        const changedInput = eventOrInput && eventOrInput.target ? eventOrInput.target : eventOrInput;
+        const eventType = eventOrInput && typeof eventOrInput.type === 'string'
+            ? eventOrInput.type
+            : '';
+
         // Save to localStorage immediately
         saveMETEToLocalStorage();
 
@@ -3661,6 +3731,13 @@ function initializeMETEHandlers() {
             }
         }
         updateBuildEnvironmentSummary();
+
+        if (shouldRefreshLiveBpcCoverage(changedInput, eventType)) {
+            scheduleLiveBpcCoverageRefresh();
+        }
+        if (shouldRefreshLiveMaterialsFromPayload(changedInput, eventType)) {
+            scheduleLiveCraftPayloadRefresh(eventType || 'input');
+        }
     }
 
     // Listen to Configure inputs (ME/TE + Use BP + build environment) and schedule apply on tab change.
@@ -4995,22 +5072,35 @@ async function ensureIndustryFeeEstimateUpToDate() {
         CRAFT_INDUSTRY_FEE_STATE.totalApiCost = 0;
         CRAFT_INDUSTRY_FEE_STATE.jobs = [];
         CRAFT_INDUSTRY_FEE_STATE.errors = [];
+        CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = 0;
         return;
     }
 
     const endpoint = getIndustryFeeApiUrl();
     if (!endpoint) {
+        CRAFT_INDUSTRY_FEE_STATE.errors = [{ error: 'industry_fee_endpoint_missing' }];
         return;
     }
     if (CRAFT_INDUSTRY_FEE_STATE.loading && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
         return;
     }
     if (CRAFT_INDUSTRY_FEE_STATE.loaded && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
+        if (!Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors) || CRAFT_INDUSTRY_FEE_STATE.errors.length === 0) {
+            return;
+        }
+        const nowMs = Date.now();
+        const lastAttemptAtMs = Number(CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs) || 0;
+        if ((nowMs - lastAttemptAtMs) < CRAFT_INDUSTRY_FEE_RETRY_MS) {
+            return;
+        }
+    }
+    if (CRAFT_INDUSTRY_FEE_STATE.loaded && CRAFT_INDUSTRY_FEE_STATE.signature === signature && jobs.length === 0) {
         return;
     }
 
     CRAFT_INDUSTRY_FEE_STATE.loading = true;
     CRAFT_INDUSTRY_FEE_STATE.signature = signature;
+    CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = Date.now();
 
     const params = new URLSearchParams();
     params.set(
@@ -5287,6 +5377,19 @@ function recalcFinancials() {
     const summaryIndustryFeesEl = document.getElementById('financialSummaryIndustryFees');
     if (summaryIndustryFeesEl) {
         summaryIndustryFeesEl.textContent = formatPrice(industryFeeTotal);
+        const hasFeeErrors = Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors) && CRAFT_INDUSTRY_FEE_STATE.errors.length > 0;
+        summaryIndustryFeesEl.classList.toggle('text-danger', hasFeeErrors);
+        if (hasFeeErrors) {
+            const errorPreview = String(
+                CRAFT_INDUSTRY_FEE_STATE.errors
+                    .map((row) => row?.error || '')
+                    .filter(Boolean)
+                    .join('; ')
+            ).slice(0, 240);
+            summaryIndustryFeesEl.setAttribute('title', errorPreview || 'Industry fee lookup error');
+        } else {
+            summaryIndustryFeesEl.removeAttribute('title');
+        }
     }
 
     const summaryMarginEl = document.getElementById('financialSummaryMargin');
@@ -5944,6 +6047,202 @@ function buildBlueprintUsageContextByProductType() {
     return byProductType;
 }
 
+function clampInt(value, minValue, maxValue) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return minValue;
+    }
+    return Math.max(minValue, Math.min(Math.floor(numeric), maxValue));
+}
+
+function getLiveCraftPayloadRequestRootMeTe() {
+    let rootMe = Number(window.BLUEPRINT_DATA?.me) || 0;
+    let rootTe = Number(window.BLUEPRINT_DATA?.te) || 0;
+
+    const formMeInput = document.querySelector('#blueprint-control-form input[name="me"]');
+    const formTeInput = document.querySelector('#blueprint-control-form input[name="te"]');
+    if (formMeInput) {
+        rootMe = clampInt(formMeInput.value, 0, 10);
+    }
+    if (formTeInput) {
+        rootTe = clampInt(formTeInput.value, 0, 20);
+    }
+
+    const mainBlueprintTypeId = Number(getCurrentBlueprintTypeId()) || 0;
+    if (mainBlueprintTypeId > 0) {
+        const mainMeInput = document.querySelector(`#configure-pane input[name="me_${mainBlueprintTypeId}"]`);
+        const mainTeInput = document.querySelector(`#configure-pane input[name="te_${mainBlueprintTypeId}"]`);
+        if (mainMeInput) {
+            rootMe = clampInt(mainMeInput.value, 0, 10);
+        }
+        if (mainTeInput) {
+            rootTe = clampInt(mainTeInput.value, 0, 20);
+        }
+    }
+
+    return { me: rootMe, te: rootTe };
+}
+
+function collectLiveCraftPayloadMeTeOverrides() {
+    const overrides = [];
+    const mainBlueprintTypeId = Number(getCurrentBlueprintTypeId()) || 0;
+
+    document.querySelectorAll('#configure-pane .craft-bp-card[data-blueprint-type-id]').forEach((card) => {
+        const blueprintTypeId = Number(card.getAttribute('data-blueprint-type-id')) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+
+        const meInput = card.querySelector(`input[name="me_${blueprintTypeId}"]`);
+        const teInput = card.querySelector(`input[name="te_${blueprintTypeId}"]`);
+        if (!meInput && !teInput) {
+            return;
+        }
+
+        const useInput = card.querySelector(`input.bp-use-input[data-blueprint-type-id="${blueprintTypeId}"]`);
+        const isMainBlueprint = blueprintTypeId === mainBlueprintTypeId;
+        const isActiveInConfigure = isMainBlueprint || Boolean(useInput && !useInput.disabled && useInput.checked);
+        if (!isActiveInConfigure) {
+            return;
+        }
+
+        if (meInput) {
+            overrides.push([`me_${blueprintTypeId}`, String(clampInt(meInput.value, 0, 10))]);
+        }
+        if (teInput) {
+            overrides.push([`te_${blueprintTypeId}`, String(clampInt(teInput.value, 0, 20))]);
+        }
+    });
+
+    overrides.sort((left, right) => String(left[0]).localeCompare(String(right[0])));
+    return overrides;
+}
+
+function buildLiveCraftPayloadRequest() {
+    const endpoint = String(window.BLUEPRINT_DATA?.urls?.craft_bp_payload || '').trim();
+    if (!endpoint) {
+        return null;
+    }
+
+    const runsValue = Math.max(1, Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 1) || 1);
+    const root = getLiveCraftPayloadRequestRootMeTe();
+    const overrides = collectLiveCraftPayloadMeTeOverrides();
+    const signature = JSON.stringify({
+        runs: runsValue,
+        me: root.me,
+        te: root.te,
+        overrides,
+    });
+
+    const requestUrl = new URL(endpoint, window.location.origin);
+    requestUrl.searchParams.set('runs', String(runsValue));
+    requestUrl.searchParams.set('me', String(root.me));
+    requestUrl.searchParams.set('te', String(root.te));
+    overrides.forEach(([key, value]) => {
+        requestUrl.searchParams.set(key, value);
+    });
+    if (window.INDY_HUB_DEBUG) {
+        requestUrl.searchParams.set('indy_debug', '1');
+    }
+
+    return {
+        signature,
+        url: requestUrl.toString(),
+    };
+}
+
+function applyLiveCraftPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        return;
+    }
+
+    if (!window.BLUEPRINT_DATA || typeof window.BLUEPRINT_DATA !== 'object') {
+        window.BLUEPRINT_DATA = {};
+    }
+
+    const target = window.BLUEPRINT_DATA;
+    [
+        'type_id',
+        'bp_type_id',
+        'num_runs',
+        'me',
+        'te',
+        'product_type_id',
+        'output_qty_per_run',
+        'final_product_qty',
+        'materials_tree',
+        'recipe_map',
+    ].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(payload, key)) {
+            target[key] = payload[key];
+        }
+    });
+}
+
+async function refreshLiveCraftPayloadFromConfigure({ force = false } = {}) {
+    const request = buildLiveCraftPayloadRequest();
+    if (!request) {
+        return false;
+    }
+    if (!force && request.signature === CRAFT_LIVE_PAYLOAD_STATE.lastSignature) {
+        return false;
+    }
+
+    CRAFT_LIVE_PAYLOAD_STATE.lastSignature = request.signature;
+    const requestSeq = ++CRAFT_LIVE_PAYLOAD_STATE.requestSeq;
+    CRAFT_LIVE_PAYLOAD_STATE.loading = true;
+
+    try {
+        const response = await fetch(request.url, {
+            headers: { 'Accept': 'application/json' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) {
+            throw new Error(`craft_bp_payload failed: ${response.status}`);
+        }
+        const payload = await response.json();
+        if (requestSeq !== CRAFT_LIVE_PAYLOAD_STATE.requestSeq) {
+            return false;
+        }
+
+        applyLiveCraftPayload(payload);
+        CRAFT_COMPUTED_NEEDED_ROWS = null;
+        if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
+            window.SimulationAPI.refreshFromDom();
+        }
+        refreshTabsAfterStateChange({ forceNeeded: true });
+        return true;
+    } catch (error) {
+        if (requestSeq === CRAFT_LIVE_PAYLOAD_STATE.requestSeq) {
+            console.error('[CraftBP] Live payload refresh failed', error);
+        }
+        return false;
+    } finally {
+        if (requestSeq === CRAFT_LIVE_PAYLOAD_STATE.requestSeq) {
+            CRAFT_LIVE_PAYLOAD_STATE.loading = false;
+            if (CRAFT_LIVE_PAYLOAD_STATE.queued) {
+                CRAFT_LIVE_PAYLOAD_STATE.queued = false;
+                refreshLiveCraftPayloadFromConfigure({ force: true });
+            }
+        }
+    }
+}
+
+function scheduleLiveCraftPayloadRefresh(eventType = 'input') {
+    const delayMs = eventType === 'change' ? 120 : 320;
+    if (CRAFT_LIVE_PAYLOAD_STATE.debounceTimer) {
+        window.clearTimeout(CRAFT_LIVE_PAYLOAD_STATE.debounceTimer);
+    }
+    CRAFT_LIVE_PAYLOAD_STATE.debounceTimer = window.setTimeout(() => {
+        CRAFT_LIVE_PAYLOAD_STATE.debounceTimer = null;
+        if (CRAFT_LIVE_PAYLOAD_STATE.loading) {
+            CRAFT_LIVE_PAYLOAD_STATE.queued = true;
+            return;
+        }
+        refreshLiveCraftPayloadFromConfigure();
+    }, delayMs);
+}
+
 function getBlueprintUsageContextForProductType(typeId, contextsByProductType = null) {
     const productTypeId = Number(typeId) || 0;
     if (!productTypeId) {
@@ -6590,6 +6889,14 @@ function sortBuyBpcOffers(offers, deficitRuns, sortKey) {
         const rightRuns = Math.max(1, Number(right.runs) || 1);
         const leftPrice = Math.max(0, Number(left.price_total) || 0);
         const rightPrice = Math.max(0, Number(right.price_total) || 0);
+        const leftPricePerRun = Math.max(
+            0,
+            Number(left.price_per_run) || (leftPrice / leftRuns)
+        );
+        const rightPricePerRun = Math.max(
+            0,
+            Number(right.price_per_run) || (rightPrice / rightRuns)
+        );
         const leftEffectiveRuns = Math.max(1, Math.min(leftRuns, Math.max(1, Number(deficitRuns) || 1)));
         const rightEffectiveRuns = Math.max(1, Math.min(rightRuns, Math.max(1, Number(deficitRuns) || 1)));
         const leftEffective = leftPrice / leftEffectiveRuns;
@@ -6597,6 +6904,12 @@ function sortBuyBpcOffers(offers, deficitRuns, sortKey) {
 
         if (normalizedSortKey === 'total_price' && leftPrice !== rightPrice) {
             return leftPrice - rightPrice;
+        }
+        if (
+            (normalizedSortKey === 'effective' || normalizedSortKey === 'price_per_run')
+            && leftPricePerRun !== rightPricePerRun
+        ) {
+            return leftPricePerRun - rightPricePerRun;
         }
         if (normalizedSortKey === 'runs_desc' && leftRuns !== rightRuns) {
             return rightRuns - leftRuns;
@@ -6615,11 +6928,14 @@ function sortBuyBpcOffers(offers, deficitRuns, sortKey) {
             }
         }
 
-        if (leftEffective !== rightEffective) {
-            return leftEffective - rightEffective;
+        if (leftPricePerRun !== rightPricePerRun) {
+            return leftPricePerRun - rightPricePerRun;
         }
         if (leftPrice !== rightPrice) {
             return leftPrice - rightPrice;
+        }
+        if (leftEffective !== rightEffective) {
+            return leftEffective - rightEffective;
         }
         return leftRuns - rightRuns;
     });
@@ -6948,7 +7264,7 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
             );
         } else {
             if (fetchResult?.fetched && fetchResult?.isCached && !force) {
-                setBuyBpcsStatus(__('Loaded from cache.'), 'info');
+                setBuyBpcsStatus(__('Loaded from local snapshot cache (not real-time).'), 'info');
             } else {
                 setBuyBpcsStatus('', 'info');
             }

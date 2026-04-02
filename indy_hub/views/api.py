@@ -20,6 +20,7 @@ from django.views.decorators.http import require_http_methods
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
+from esi.models import Token
 
 from ..decorators import indy_hub_access_required, indy_hub_permission_required
 
@@ -43,10 +44,15 @@ from ..services.everef import (
     summarize_job_fees,
 )
 from ..services.industry_environment import resolve_craft_system_context
+from ..tasks.industry import MANUAL_REFRESH_KIND_BLUEPRINTS, request_manual_refresh
 
 logger = get_extension_logger(__name__)
 
 MENU_BADGE_CACHE_TTL_SECONDS = 45
+BLUEPRINT_SCOPE_SET = [
+    "esi-characters.read_blueprints.v1",
+    "esi-universe.read_structures.v1",
+]
 
 
 def _to_serializable(value):
@@ -561,6 +567,85 @@ def craft_bpc_contracts(request):
             "expires_at": str(cache_meta.get("expires_at") or ""),
             "fetched_at": timezone.now().isoformat(),
             "is_cached": bool(cache_meta.get("is_cached")),
+        },
+        status=200,
+    )
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["POST"])
+def craft_sync_owned_bpcs(request):
+    """Queue a refresh of the user's owned blueprints/BPCs from ESI."""
+    emit_view_analytics_event(view_name="api.craft_sync_owned_bpcs", request=request)
+
+    try:
+        blueprint_tokens = (
+            Token.objects.filter(user=request.user)
+            .require_scopes(BLUEPRINT_SCOPE_SET)
+            .require_valid()
+        )
+    except Exception:
+        blueprint_tokens = Token.objects.none()
+
+    if not blueprint_tokens.exists():
+        return JsonResponse(
+            {
+                "scheduled": False,
+                "error": "missing_blueprint_tokens",
+                "message": "No valid blueprint token found. Re-authorize blueprint scopes first.",
+            },
+            status=400,
+        )
+
+    try:
+        scheduled, remaining = request_manual_refresh(
+            MANUAL_REFRESH_KIND_BLUEPRINTS,
+            request.user.id,
+            priority=5,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Failed to queue owned BPC refresh for user %s: %s", request.user.id, exc
+        )
+        return JsonResponse(
+            {
+                "scheduled": False,
+                "error": "queue_failed",
+                "message": "Failed to queue blueprint refresh.",
+            },
+            status=500,
+        )
+
+    if scheduled:
+        return JsonResponse(
+            {
+                "scheduled": True,
+                "message": "Owned BPC refresh queued. Reload in about a minute.",
+            },
+            status=200,
+        )
+
+    if remaining is None:
+        return JsonResponse(
+            {
+                "scheduled": False,
+                "error": "inactive_or_missing_scope",
+                "message": "Refresh skipped because the character is offline or missing required scope.",
+            },
+            status=200,
+        )
+
+    retry_seconds = max(1, int(ceil(remaining.total_seconds())))
+    retry_minutes = max(1, int(ceil(retry_seconds / 60)))
+    return JsonResponse(
+        {
+            "scheduled": False,
+            "error": "cooldown",
+            "retry_seconds": retry_seconds,
+            "retry_minutes": retry_minutes,
+            "message": f"Blueprint refresh is on cooldown. Retry in about {retry_minutes} minute(s).",
         },
         status=200,
     )

@@ -577,6 +577,9 @@
                         <button class="btn btn-outline-info" type="button" id="presetOwnedEfficiency" title="{% trans 'Apply parameters from owned blueprints' %}">
                             <i class="fas fa-cube me-1"></i>{% trans "From Owned BP" %}
                         </button>
+                        <button class="btn btn-outline-primary" type="button" id="refreshOwnedBpcsBtn" title="{% trans 'Queue refresh of your owned BPCs from ESI' %}">
+                            <i class="fas fa-sync-alt me-1"></i>{% trans "Sync Owned BPCs" %}
+                        </button>
                         <button class="btn btn-outline-secondary" type="button" id="presetResetEfficiency" title="{% trans 'ME: 0, TE: 0' %}">
                             <i class="fas fa-undo me-1"></i>{% trans "Reset" %}
                         </button>
@@ -1161,7 +1164,7 @@
                         <div class="d-flex align-items-center gap-2">
                             <label class="small text-muted mb-0" for="buyBpcsSortSelect">{% trans "Sort offers" %}</label>
                             <select id="buyBpcsSortSelect" class="form-select form-select-sm" style="max-width: 230px;">
-                                <option value="effective">{% trans "Lowest effective ISK/run" %}</option>
+                                <option value="effective">{% trans "Lowest ISK/run" %}</option>
                                 <option value="total_price">{% trans "Lowest total price" %}</option>
                                 <option value="runs_desc">{% trans "Most runs" %}</option>
                                 <option value="me_desc">{% trans "Best ME" %}</option>
@@ -1179,6 +1182,10 @@
                     </p>
                 </section>
 
+                <div class="alert alert-warning mb-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    {% trans "Public contract data here is a delayed snapshot from local cache and is not real-time. Use it as trend guidance only, and verify availability/pricing in-game before buying." %}
+                </div>
                 <div id="buyBpcsStatus" class="alert alert-info mb-3 d-none"></div>
                 <div id="buyBpcsEmptyState" class="alert alert-success d-none">
                     <i class="fas fa-check-circle me-2"></i>{% trans "No missing BPC runs for current Produce items." %}
@@ -1605,12 +1612,19 @@ document.addEventListener('DOMContentLoaded', function() {
     // Preset buttons
     const presetMaxBtn = document.getElementById('presetMaxEfficiency');
     const presetOwnedBtn = document.getElementById('presetOwnedEfficiency');
+    const refreshOwnedBpcsBtn = document.getElementById('refreshOwnedBpcsBtn');
     const presetResetBtn = document.getElementById('presetResetEfficiency');
+    const syncOwnedBpcsUrl = '{% url "indy_hub:craft_sync_owned_bpcs" %}';
 
     const blueprintConfigs = {{ blueprint_configs_json|safe }};
     const blueprintConfigsByTypeId = new Map(
         (Array.isArray(blueprintConfigs) ? blueprintConfigs : []).map(bc => [Number(bc.type_id), bc])
     );
+
+    function getCsrfTokenFromCookie() {
+        const match = document.cookie.match(/csrftoken=([^;]+)/);
+        return match ? decodeURIComponent(match[1]) : '';
+    }
 
     if (presetMaxBtn) {
         presetMaxBtn.addEventListener('click', function() {
@@ -1655,6 +1669,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 input.dispatchEvent(new Event('change', { bubbles: true }));
             });
             showToast(`{% trans "Applied owned BP parameters to" %} ${count} {% trans "blueprints" %}`);
+        });
+    }
+
+    if (refreshOwnedBpcsBtn) {
+        refreshOwnedBpcsBtn.addEventListener('click', async function() {
+            const originalHtml = refreshOwnedBpcsBtn.innerHTML;
+            refreshOwnedBpcsBtn.disabled = true;
+            refreshOwnedBpcsBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>{% trans "Syncing..." %}';
+            try {
+                const response = await fetch(syncOwnedBpcsUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': getCsrfTokenFromCookie(),
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    credentials: 'same-origin',
+                });
+                const data = await response.json();
+                const message = String(data?.message || '{% trans "Unable to queue owned BPC refresh." %}');
+                const isSuccess = Boolean(response.ok && data?.scheduled);
+                showToast(message, isSuccess);
+                if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                    window.CraftBP.pushStatus(message, isSuccess ? 'success' : 'warning');
+                }
+                if (isSuccess) {
+                    window.setTimeout(() => window.location.reload(), 2500);
+                }
+            } catch (error) {
+                showToast('{% trans "Failed to queue owned BPC refresh." %}', false);
+            } finally {
+                refreshOwnedBpcsBtn.disabled = false;
+                refreshOwnedBpcsBtn.innerHTML = originalHtml;
+            }
         });
     }
 
