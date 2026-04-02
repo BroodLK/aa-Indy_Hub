@@ -16,7 +16,7 @@ const CRAFT_BPC_CONTRACT_STATE = {
     selectedByBlueprintType: new Map(),
     fetchErrorsByBlueprintType: new Map(),
 };
-const CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS = 120000;
+const CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS = 1200000;
 const CRAFT_INDUSTRY_FEE_STATE = {
     loading: false,
     signature: '',
