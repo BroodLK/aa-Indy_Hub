@@ -16,6 +16,7 @@ const CRAFT_BPC_CONTRACT_STATE = {
     selectedByBlueprintType: new Map(),
     fetchErrorsByBlueprintType: new Map(),
 };
+const CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS = 45000;
 const CRAFT_INDUSTRY_FEE_STATE = {
     loading: false,
     signature: '',
@@ -6160,7 +6161,10 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
 
     const idsToFetch = force
         ? uniqueIds
-        : uniqueIds.filter((id) => !CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(id));
+        : uniqueIds.filter(
+            (id) => !CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(id)
+                && !CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(id)
+        );
     if (idsToFetch.length === 0) {
         return { errorCount: 0 };
     }
@@ -6168,14 +6172,33 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
     const requestUrl = new URL(endpoint, window.location.origin);
     requestUrl.searchParams.set('blueprint_type_ids', idsToFetch.join(','));
 
-    const response = await fetch(requestUrl.toString(), {
-        method: 'GET',
-        credentials: 'same-origin',
-    });
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+    const controller = (typeof AbortController === 'function') ? new AbortController() : null;
+    const timeoutHandle = controller
+        ? window.setTimeout(() => controller.abort(), CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS)
+        : null;
+
+    let payload = {};
+    try {
+        const response = await fetch(requestUrl.toString(), {
+            method: 'GET',
+            credentials: 'same-origin',
+            signal: controller ? controller.signal : undefined,
+        });
+        if (!response.ok) {
+            let responseSnippet = '';
+            try {
+                responseSnippet = String(await response.text()).slice(0, 220);
+            } catch (error) {
+                responseSnippet = '';
+            }
+            throw new Error(`HTTP ${response.status}${responseSnippet ? `: ${responseSnippet}` : ''}`);
+        }
+        payload = await response.json();
+    } finally {
+        if (timeoutHandle !== null) {
+            window.clearTimeout(timeoutHandle);
+        }
     }
-    const payload = await response.json();
     const contractMap = payload && payload.contracts_by_blueprint && typeof payload.contracts_by_blueprint === 'object'
         ? payload.contracts_by_blueprint
         : {};
@@ -6303,7 +6326,18 @@ function renderBuyBpcsTab() {
     if (tabIsActive && !CRAFT_BPC_CONTRACT_STATE.loading) {
         const missingOfferIds = deficits
             .map((row) => Number(row.blueprintTypeId) || 0)
-            .filter((blueprintTypeId) => blueprintTypeId > 0 && !CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(blueprintTypeId));
+            .filter((blueprintTypeId) => {
+                if (blueprintTypeId <= 0) {
+                    return false;
+                }
+                if (CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(blueprintTypeId)) {
+                    return false;
+                }
+                if (CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(blueprintTypeId)) {
+                    return false;
+                }
+                return true;
+            });
         if (missingOfferIds.length > 0) {
             refreshBuyBpcsOffers({ force: false });
         }
@@ -6422,8 +6456,11 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
     setBuyBpcsStatus(__('Loading public Jita contracts...'), 'info');
     try {
         const fetchResult = await fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force });
-        const errorCount = Number(fetchResult?.errorCount) || 0;
-        if (errorCount > 0) {
+        const fetchErrorCount = Number(fetchResult?.errorCount) || 0;
+        const existingErrorCount = blueprintTypeIds.filter(
+            (blueprintTypeId) => CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(blueprintTypeId)
+        ).length;
+        if ((fetchErrorCount + existingErrorCount) > 0) {
             setBuyBpcsStatus(
                 __('Some blueprint contract lookups failed. Check server logs for craft_bpc_contracts/public_contracts details.'),
                 'warning'
@@ -6433,6 +6470,14 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
         }
     } catch (error) {
         console.error('[CraftBP] Failed loading BPC contract offers', error);
+        blueprintTypeIds.forEach((blueprintTypeId) => {
+            if (!CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(blueprintTypeId)) {
+                CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.set(
+                    blueprintTypeId,
+                    String(error?.message || 'request_failed').slice(0, 220)
+                );
+            }
+        });
         setBuyBpcsStatus(__('Unable to load public Jita contracts right now.'), 'warning');
     } finally {
         CRAFT_BPC_CONTRACT_STATE.loading = false;
