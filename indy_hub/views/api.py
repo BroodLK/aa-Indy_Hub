@@ -73,6 +73,14 @@ def _parse_optional_int(raw_value) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _parse_optional_float(raw_value) -> float | None:
+    try:
+        parsed = float(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
 @login_required
 @require_http_methods(["GET"])
 def menu_badge_count(request):
@@ -127,6 +135,21 @@ def craft_bp_payload(request, type_id: int):
         te = int(request.GET.get("te", 0) or 0)
     except (TypeError, ValueError):
         te = 0
+
+    structure_bonus_raw = _parse_optional_float(
+        request.GET.get("build_structure_material_bonus")
+    )
+    rig_bonus_raw = _parse_optional_float(request.GET.get("build_rig_material_bonus"))
+    effective_bonus_raw = _parse_optional_float(
+        request.GET.get("build_effective_material_bonus")
+    )
+    structure_bonus = max(0.0, min(1.0, float(structure_bonus_raw or 0.0)))
+    rig_bonus = max(0.0, min(1.0, float(rig_bonus_raw or 0.0)))
+    if effective_bonus_raw is None:
+        effective_material_bonus = 1.0 - ((1.0 - structure_bonus) * (1.0 - rig_bonus))
+    else:
+        effective_material_bonus = max(0.0, min(1.0, float(effective_bonus_raw)))
+    environment_material_multiplier = max(0.0, 1.0 - effective_material_bonus)
 
     # Parse per-blueprint ME/TE overrides: me_<bpTypeId>, te_<bpTypeId>
     me_te_configs: dict[int, dict[str, int]] = {}
@@ -189,6 +212,9 @@ def craft_bp_payload(request, type_id: int):
                 "product_type_id": int(product_type_id) if product_type_id else None,
                 "output_qty_per_run": int(output_qty_per_run or 1),
                 "top_level_material_rows": mats_count,
+                "build_structure_material_bonus": float(structure_bonus),
+                "build_rig_material_bonus": float(rig_bonus),
+                "build_effective_material_bonus": float(effective_material_bonus),
             }
         except Exception as e:
             debug_info = {
@@ -230,14 +256,16 @@ def craft_bp_payload(request, type_id: int):
 
             mats = []
             for row in cursor.fetchall():
-                # IMPORTANT: ME rounding must be applied per-run (per job/cycle), then multiplied.
-                # Doing ceil((base * runs) * (1 - ME)) underestimates for small base quantities.
-                per_run_qty = ceil((row[2] or 0) * (100 - blueprint_me) / 100)
-                qty = int(per_run_qty) * int(runs)
+                base_per_run_qty = int(row[2] or 0)
+                base_total_qty = int(base_per_run_qty) * int(runs)
+                me_multiplier = max(0.0, (100 - blueprint_me) / 100.0)
+                total_multiplier = me_multiplier * environment_material_multiplier
+                qty = ceil(base_total_qty * total_multiplier)
                 mat = {
                     "type_id": row[0],
                     "type_name": get_type_name(row[0]),
                     "quantity": qty,
+                    "quantity_default": base_total_qty,
                     "cycles": None,
                     "produced_per_cycle": None,
                     "total_produced": None,
@@ -303,6 +331,7 @@ def craft_bp_payload(request, type_id: int):
                                         (base_qty_per_cycle or 0)
                                         * (100 - sub_bp_me)
                                         / 100
+                                        * environment_material_multiplier
                                     )
                                     if qty_per_cycle <= 0:
                                         continue

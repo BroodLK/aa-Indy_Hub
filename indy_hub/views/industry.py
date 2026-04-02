@@ -117,8 +117,8 @@ else:  # pragma: no cover - Eve SDE not installed
 logger = get_extension_logger(__name__)
 
 # Craft planner build-environment defaults for material quantity math.
-# Material formula per run:
-# ceil(base_qty * (1 - ME) * (1 - structure_bonus) * (1 - rig_bonus))
+# Material formula per blueprint job:
+# ceil((base_qty * runs) * (1 - ME) * (1 - structure_bonus) * (1 - rig_bonus))
 CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE: dict[str, float] = {
     "none": 0.0,
     "raitaru": 0.01,
@@ -2993,23 +2993,20 @@ def craft_bp(request, type_id):
                     rig_bonus_for_blueprint = _get_blueprint_rig_bonus(bp_id)
                     mats = []
                     for row in cursor.fetchall():
-                        # Apply material modifiers per run, then multiply by runs.
-                        # Final per-run qty:
-                        # ceil(base * (1-ME) * (1-structure_bonus) * (1-rig_bonus))
                         base_per_run_qty = int(row[2] or 0)
+                        base_total_qty = base_per_run_qty * int(runs)
                         me_multiplier = max(0.0, (100 - blueprint_me) / 100.0)
                         structure_multiplier = max(
                             0.0, 1.0 - float(build_structure_material_bonus)
                         )
                         rig_multiplier = max(0.0, 1.0 - float(rig_bonus_for_blueprint))
-                        per_run_qty = ceil(
-                            base_per_run_qty
+                        qty = ceil(
+                            base_total_qty
                             * me_multiplier
                             * structure_multiplier
                             * rig_multiplier
                         )
-                        qty = int(per_run_qty) * int(runs)
-                        qty_default = base_per_run_qty * int(runs)
+                        qty_default = base_total_qty
                         mat = {
                             "type_id": row[0],
                             "type_name": get_type_name(row[0]),
@@ -3702,18 +3699,18 @@ def craft_bp(request, type_id):
             root_rig_bonus = _get_blueprint_rig_bonus(type_id)
             for row in cursor.fetchall():
                 base_per_run_qty = int(row[2] or 0)
+                base_total_qty = base_per_run_qty * int(num_runs)
                 me_multiplier = max(0.0, (100 - me) / 100.0)
                 structure_multiplier = max(
                     0.0, 1.0 - float(build_structure_material_bonus)
                 )
                 rig_multiplier = max(0.0, 1.0 - float(root_rig_bonus))
-                per_run_qty = ceil(
-                    base_per_run_qty
+                qty = ceil(
+                    base_total_qty
                     * me_multiplier
                     * structure_multiplier
                     * rig_multiplier
                 )
-                qty = int(per_run_qty) * int(num_runs)
                 direct_materials_list.append(
                     {
                         "type_id": row[0],

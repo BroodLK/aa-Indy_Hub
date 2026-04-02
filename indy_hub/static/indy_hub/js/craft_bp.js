@@ -3584,6 +3584,16 @@ function initializeFinancialCalculations() {
         });
     }
 
+    const calculateIndustryFeesBtn = document.getElementById('calculateIndustryFeesBtn');
+    if (calculateIndustryFeesBtn) {
+        calculateIndustryFeesBtn.addEventListener('click', () => {
+            ensureIndustryFeeEstimateUpToDate({ force: true }).catch((error) => {
+                console.error('[CraftBP] Industry fee calculation failed', error);
+            });
+        });
+    }
+    syncIndustryFeeManualControls();
+
     const resetBtn = document.getElementById('resetManualPricesBtn');
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
@@ -5055,14 +5065,98 @@ function buildIndustryFeeSignature(industryFeeConfig, jobs) {
     });
 }
 
-function getIndustryFeeTotalCost() {
-    return Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.totalJobCost) || 0);
-}
-
-async function ensureIndustryFeeEstimateUpToDate() {
+function getCurrentIndustryFeeContext() {
     const feeConfig = getIndustryFeeConfigFromDom();
     const jobs = collectIndustryFeeJobs();
     const signature = buildIndustryFeeSignature(feeConfig, jobs);
+    return { feeConfig, jobs, signature };
+}
+
+function isIndustryFeeEstimateCurrent(context = null) {
+    const ctx = context || getCurrentIndustryFeeContext();
+    if (!ctx?.feeConfig?.enabled || !Array.isArray(ctx?.jobs) || ctx.jobs.length === 0) {
+        return true;
+    }
+    if (!CRAFT_INDUSTRY_FEE_STATE.loaded || CRAFT_INDUSTRY_FEE_STATE.loading) {
+        return false;
+    }
+    return String(CRAFT_INDUSTRY_FEE_STATE.signature || '') === String(ctx.signature || '');
+}
+
+function getIndustryFeeTotalCost(context = null) {
+    const ctx = context || getCurrentIndustryFeeContext();
+    if (!isIndustryFeeEstimateCurrent(ctx)) {
+        return 0;
+    }
+    return Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.totalJobCost) || 0);
+}
+
+function syncIndustryFeeManualControls() {
+    const button = document.getElementById('calculateIndustryFeesBtn');
+    if (!button) {
+        return;
+    }
+    const ctx = getCurrentIndustryFeeContext();
+    const endpoint = getIndustryFeeApiUrl();
+    const hasEndpoint = Boolean(endpoint);
+    const enabled = Boolean(ctx?.feeConfig?.enabled);
+    const hasJobs = Array.isArray(ctx?.jobs) && ctx.jobs.length > 0;
+    const hasErrors = Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors) && CRAFT_INDUSTRY_FEE_STATE.errors.length > 0;
+    const isCurrent = isIndustryFeeEstimateCurrent(ctx);
+
+    button.classList.remove('btn-outline-warning', 'btn-warning', 'btn-outline-secondary');
+    if (!enabled) {
+        button.disabled = true;
+        button.classList.add('btn-outline-secondary');
+        button.innerHTML = `<i class="fas fa-receipt me-1"></i>${escapeHtml(__('Fees Disabled'))}`;
+        button.setAttribute('title', __('Enable industry fee estimation in Configure to calculate fees.'));
+        return;
+    }
+    if (!hasJobs) {
+        button.disabled = true;
+        button.classList.add('btn-outline-secondary');
+        button.innerHTML = `<i class="fas fa-receipt me-1"></i>${escapeHtml(__('No Jobs'))}`;
+        button.setAttribute('title', __('No production jobs are currently selected for fee estimation.'));
+        return;
+    }
+    if (!hasEndpoint) {
+        button.disabled = true;
+        button.classList.add('btn-outline-secondary');
+        button.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i>${escapeHtml(__('Fees API Missing'))}`;
+        button.setAttribute('title', __('Industry fee API endpoint is not configured.'));
+        return;
+    }
+    if (CRAFT_INDUSTRY_FEE_STATE.loading) {
+        button.disabled = true;
+        button.classList.add('btn-warning');
+        button.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>${escapeHtml(__('Calculating Fees...'))}`;
+        button.setAttribute('title', __('Industry fee calculation is running.'));
+        return;
+    }
+
+    button.disabled = false;
+    button.classList.add('btn-outline-warning');
+    if (isCurrent && !hasErrors) {
+        button.innerHTML = `<i class="fas fa-sync-alt me-1"></i>${escapeHtml(__('Recalculate Fees'))}`;
+        button.setAttribute('title', __('Re-run industry fee calculation for current planner state.'));
+        return;
+    }
+    if (hasErrors && isCurrent) {
+        button.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i>${escapeHtml(__('Retry Fees'))}`;
+        button.setAttribute('title', __('Previous industry fee request failed. Click to retry.'));
+        return;
+    }
+
+    button.innerHTML = `<i class="fas fa-receipt me-1"></i>${escapeHtml(__('Calculate Fees'))}`;
+    button.setAttribute('title', __('Calculate industry fees for current planner state.'));
+}
+
+async function ensureIndustryFeeEstimateUpToDate(options = {}) {
+    const force = Boolean(options && options.force);
+    const feeContext = getCurrentIndustryFeeContext();
+    const feeConfig = feeContext.feeConfig;
+    const jobs = feeContext.jobs;
+    const signature = feeContext.signature;
 
     if (!feeConfig.enabled || jobs.length === 0) {
         CRAFT_INDUSTRY_FEE_STATE.signature = signature;
@@ -5073,18 +5167,20 @@ async function ensureIndustryFeeEstimateUpToDate() {
         CRAFT_INDUSTRY_FEE_STATE.jobs = [];
         CRAFT_INDUSTRY_FEE_STATE.errors = [];
         CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = 0;
+        syncIndustryFeeManualControls();
         return;
     }
 
     const endpoint = getIndustryFeeApiUrl();
     if (!endpoint) {
         CRAFT_INDUSTRY_FEE_STATE.errors = [{ error: 'industry_fee_endpoint_missing' }];
+        syncIndustryFeeManualControls();
         return;
     }
-    if (CRAFT_INDUSTRY_FEE_STATE.loading && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
+    if (!force && CRAFT_INDUSTRY_FEE_STATE.loading && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
         return;
     }
-    if (CRAFT_INDUSTRY_FEE_STATE.loaded && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
+    if (!force && CRAFT_INDUSTRY_FEE_STATE.loaded && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
         if (!Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors) || CRAFT_INDUSTRY_FEE_STATE.errors.length === 0) {
             return;
         }
@@ -5101,6 +5197,7 @@ async function ensureIndustryFeeEstimateUpToDate() {
     CRAFT_INDUSTRY_FEE_STATE.loading = true;
     CRAFT_INDUSTRY_FEE_STATE.signature = signature;
     CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = Date.now();
+    syncIndustryFeeManualControls();
 
     const params = new URLSearchParams();
     params.set(
@@ -5179,6 +5276,7 @@ async function ensureIndustryFeeEstimateUpToDate() {
         }
     } finally {
         CRAFT_INDUSTRY_FEE_STATE.loading = false;
+        syncIndustryFeeManualControls();
     }
 }
 
@@ -5204,12 +5302,6 @@ function formatNumber(num) {
  * Recalculate financial totals
  */
 function recalcFinancials() {
-    if (typeof ensureIndustryFeeEstimateUpToDate === 'function') {
-        ensureIndustryFeeEstimateUpToDate().catch((error) => {
-            console.error('[CraftBP] Failed scheduling industry fee estimate refresh', error);
-        });
-    }
-
     let costTotal = 0;
     let revTotal = 0;
 
@@ -5325,7 +5417,9 @@ function recalcFinancials() {
 
     revTotal += surplusRevenue;
 
-    const industryFeeTotal = getIndustryFeeTotalCost();
+    const industryFeeContext = getCurrentIndustryFeeContext();
+    const industryFeeTotal = getIndustryFeeTotalCost(industryFeeContext);
+    const industryFeesCurrent = isIndustryFeeEstimateCurrent(industryFeeContext);
     const costTotalWithFees = costTotal + industryFeeTotal;
     const profit = revTotal - costTotalWithFees;
     // Margin = profit / revenue (not markup on cost).
@@ -5377,8 +5471,16 @@ function recalcFinancials() {
     const summaryIndustryFeesEl = document.getElementById('financialSummaryIndustryFees');
     if (summaryIndustryFeesEl) {
         summaryIndustryFeesEl.textContent = formatPrice(industryFeeTotal);
-        const hasFeeErrors = Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors) && CRAFT_INDUSTRY_FEE_STATE.errors.length > 0;
+        const hasFeeErrors = industryFeesCurrent
+            && Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors)
+            && CRAFT_INDUSTRY_FEE_STATE.errors.length > 0;
+        const isStaleManual = Boolean(industryFeeContext?.feeConfig?.enabled)
+            && Array.isArray(industryFeeContext?.jobs)
+            && industryFeeContext.jobs.length > 0
+            && !industryFeesCurrent
+            && !CRAFT_INDUSTRY_FEE_STATE.loading;
         summaryIndustryFeesEl.classList.toggle('text-danger', hasFeeErrors);
+        summaryIndustryFeesEl.classList.toggle('text-body-secondary', isStaleManual);
         if (hasFeeErrors) {
             const errorPreview = String(
                 CRAFT_INDUSTRY_FEE_STATE.errors
@@ -5387,6 +5489,10 @@ function recalcFinancials() {
                     .join('; ')
             ).slice(0, 240);
             summaryIndustryFeesEl.setAttribute('title', errorPreview || 'Industry fee lookup error');
+        } else if (CRAFT_INDUSTRY_FEE_STATE.loading) {
+            summaryIndustryFeesEl.setAttribute('title', __('Industry fee calculation in progress...'));
+        } else if (isStaleManual) {
+            summaryIndustryFeesEl.setAttribute('title', __('Industry fees are not calculated for this configuration. Click "Calculate Fees".'));
         } else {
             summaryIndustryFeesEl.removeAttribute('title');
         }
@@ -5450,6 +5556,8 @@ function recalcFinancials() {
         heroUpdatedEl.textContent = formattedTime;
         heroUpdatedEl.setAttribute('title', now.toLocaleString());
     }
+
+    syncIndustryFeeManualControls();
 }
 
 /**
@@ -6127,17 +6235,49 @@ function buildLiveCraftPayloadRequest() {
     const runsValue = Math.max(1, Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 1) || 1);
     const root = getLiveCraftPayloadRequestRootMeTe();
     const overrides = collectLiveCraftPayloadMeTeOverrides();
+    const buildEnvironment = getBuildEnvironmentFromDom();
     const signature = JSON.stringify({
         runs: runsValue,
         me: root.me,
         te: root.te,
         overrides,
+        buildEnvironment: {
+            structureType: String(buildEnvironment?.structureType || 'none').trim().toLowerCase(),
+            rigKeys: Array.isArray(buildEnvironment?.rigKeys) ? buildEnvironment.rigKeys : [],
+            structureMaterialBonus: Number(buildEnvironment?.structureMaterialBonus) || 0,
+            rigMaterialBonus: Number(buildEnvironment?.rigMaterialBonus) || 0,
+            effectiveMaterialBonus: Number(buildEnvironment?.effectiveMaterialBonus) || 0,
+        },
     });
 
     const requestUrl = new URL(endpoint, window.location.origin);
     requestUrl.searchParams.set('runs', String(runsValue));
     requestUrl.searchParams.set('me', String(root.me));
     requestUrl.searchParams.set('te', String(root.te));
+    if (buildEnvironment && typeof buildEnvironment === 'object') {
+        const structureType = String(buildEnvironment.structureType || 'none').trim().toLowerCase();
+        if (structureType && structureType !== 'none') {
+            requestUrl.searchParams.set('build_structure', structureType);
+        }
+        const rigKeys = Array.isArray(buildEnvironment.rigKeys)
+            ? buildEnvironment.rigKeys.map((key) => String(key || '').trim().toLowerCase()).filter(Boolean)
+            : [];
+        if (rigKeys.length > 0) {
+            requestUrl.searchParams.set('build_rigs', rigKeys.join(','));
+        }
+        const structureBonus = Number(buildEnvironment.structureMaterialBonus) || 0;
+        const rigBonus = Number(buildEnvironment.rigMaterialBonus) || 0;
+        const effectiveBonus = Number(buildEnvironment.effectiveMaterialBonus) || 0;
+        if (structureBonus > 0) {
+            requestUrl.searchParams.set('build_structure_material_bonus', String(structureBonus));
+        }
+        if (rigBonus > 0) {
+            requestUrl.searchParams.set('build_rig_material_bonus', String(rigBonus));
+        }
+        if (effectiveBonus > 0) {
+            requestUrl.searchParams.set('build_effective_material_bonus', String(effectiveBonus));
+        }
+    }
     overrides.forEach(([key, value]) => {
         requestUrl.searchParams.set(key, value);
     });
@@ -6545,14 +6685,22 @@ function syncConfigureVisibilityWithPlan() {
     }
 
     configurePane.querySelectorAll('.craft-bp-card[data-blueprint-type-id]').forEach((card) => {
+        const blueprintTypeId = Number(card.getAttribute('data-blueprint-type-id')) || 0;
         const productTypeId = Number(card.getAttribute('data-product-type-id')) || 0;
-        if (!productTypeId) {
+        if (!productTypeId || !blueprintTypeId) {
             return;
         }
-        const keepVisible = isProductPlannedForProduction(productTypeId);
+        const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
+        const notOwned = String(card.getAttribute('data-blueprint-not-owned') || '').trim().toLowerCase() === 'true';
+        const hasSelectedContracts = getSelectedContractOffersForBlueprint(blueprintTypeId).length > 0;
+        const keepVisible = isPlannedForProduction && !notOwned;
         card.classList.toggle('d-none', !keepVisible);
         const useInput = card.querySelector('input.bp-use-input[data-blueprint-type-id]');
-        if (!keepVisible && useInput && useInput.checked) {
+        if (useInput && useInput.checked && !isPlannedForProduction) {
+            useInput.checked = false;
+            useInput.dataset.contractDriven = 'false';
+            useInput.dispatchEvent(new Event('change', { bubbles: true }));
+        } else if (useInput && useInput.checked && notOwned && !hasSelectedContracts) {
             useInput.checked = false;
             useInput.dataset.contractDriven = 'false';
             useInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -7390,12 +7538,8 @@ function updateFinancialTabFromState() {
         }
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
-    const blueprintDeficitRows = collectBlueprintCopyDeficits().filter(
-        (row) => Number(row?.deficitRuns) > 0
-    );
     const selectedBpcRows = collectSelectedBlueprintContractRows();
-    const missingBpcRows = collectMissingBlueprintCopyRows(blueprintDeficitRows);
-    const sortedItems = [...selectedBpcRows, ...missingBpcRows, ...sortedMaterials];
+    const sortedItems = [...selectedBpcRows, ...sortedMaterials];
 
     const existingRows = new Map();
     tableBody.querySelectorAll('tr[data-type-id]').forEach(row => {
