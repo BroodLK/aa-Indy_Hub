@@ -34,7 +34,7 @@ logger = get_extension_logger(__name__)
 SYNC_LOCK_KEY = "indy_hub:public_jita_contracts:sync_lock:v1"
 SYNC_META_KEY = "indy_hub:public_jita_contracts:sync_meta:v1"
 SYNC_LOCK_TTL_SECONDS = 55 * 60
-SYNC_META_TTL_SECONDS = 6 * 60 * 60
+SYNC_META_TTL_SECONDS = 30 * 24 * 60 * 60
 MIN_SYNC_INTERVAL_SECONDS = PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS
 
 
@@ -84,6 +84,7 @@ def _collect_candidate_contracts(
         "rows_matched": 0,
     }
     empty_pages_seen = 0
+    no_progress_pages = 0
 
     for page in range(1, max(1, int(max_pages)) + 1):
         payload = _fetch_public_contract_page_cached(
@@ -100,6 +101,7 @@ def _collect_candidate_contracts(
 
         stats["pages_scanned"] += 1
         empty_pages_seen = 0
+        matched_before_page = len(candidates)
         for row in payload:
             stats["rows_scanned"] += 1
             if not isinstance(row, dict):
@@ -111,6 +113,13 @@ def _collect_candidate_contracts(
                 continue
             stats["rows_matched"] += 1
             candidates[contract_id] = row
+
+        if len(candidates) == matched_before_page:
+            no_progress_pages += 1
+            if no_progress_pages >= 2:
+                break
+        else:
+            no_progress_pages = 0
 
     return candidates, stats
 

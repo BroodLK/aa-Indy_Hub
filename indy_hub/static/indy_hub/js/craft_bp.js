@@ -6690,9 +6690,9 @@ function recordBuyBpcsFetchTimestamp(cacheTtlSeconds = null, fetchedAtIso = '') 
         CRAFT_BPC_CONTRACT_STATE.cacheTtlSeconds = Math.max(30, Math.floor(parsedTtl));
     }
     const parsedFetchedAt = Date.parse(String(fetchedAtIso || '').trim());
-    CRAFT_BPC_CONTRACT_STATE.lastFetchAtMs = Number.isFinite(parsedFetchedAt) && parsedFetchedAt > 0
-        ? parsedFetchedAt
-        : Date.now();
+    if (Number.isFinite(parsedFetchedAt) && parsedFetchedAt > 0) {
+        CRAFT_BPC_CONTRACT_STATE.lastFetchAtMs = parsedFetchedAt;
+    }
     renderBuyBpcsCacheTimer();
 }
 
@@ -6935,7 +6935,7 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
     try {
         const fetchResult = await fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force });
         if (fetchResult?.fetched) {
-            recordBuyBpcsFetchTimestamp(fetchResult.cacheTtlSeconds, fetchResult.cachedAt || fetchResult.fetchedAt);
+            recordBuyBpcsFetchTimestamp(fetchResult.cacheTtlSeconds, fetchResult.cachedAt);
         }
         const fetchErrorCount = Number(fetchResult?.errorCount) || 0;
         const existingErrorCount = blueprintTypeIds.filter(

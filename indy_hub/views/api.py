@@ -36,7 +36,6 @@ from ..utils.menu_badge import compute_menu_badge_count
 from ..services.public_contracts_store import (
     get_public_jita_bpc_offers,
     get_public_jita_contract_cache_meta,
-    sync_public_jita_contract_cache,
 )
 from ..services.everef import (
     EVERefError,
@@ -524,33 +523,7 @@ def craft_bpc_contracts(request):
         "yes",
     }
 
-    sync_error = ""
-    sync_locked = False
-    if force_refresh:
-        try:
-            sync_result = sync_public_jita_contract_cache(force=True)
-            skip_reason = str(sync_result.get("skipped") or "")
-            if skip_reason in {"locked", "rate_limited"}:
-                sync_locked = True
-            elif not bool(sync_result.get("ok")):
-                sync_error = str(sync_result.get("error") or "sync_failed")[:220]
-        except Exception as exc:
-            sync_error = str(exc)[:220]
-            logger.warning("Unable to force-sync public Jita contract cache: %s", exc)
-
     cache_meta = get_public_jita_contract_cache_meta()
-    if not str(cache_meta.get("cached_at") or "").strip():
-        try:
-            sync_result = sync_public_jita_contract_cache(force=False)
-            skip_reason = str(sync_result.get("skipped") or "")
-            if skip_reason in {"locked", "rate_limited"}:
-                sync_locked = True
-            elif not bool(sync_result.get("ok")):
-                sync_error = str(sync_result.get("error") or "sync_failed")[:220]
-        except Exception as exc:
-            sync_error = str(exc)[:220]
-            logger.warning("Unable to warm public Jita contract cache: %s", exc)
-        cache_meta = get_public_jita_contract_cache_meta()
 
     contracts_by_blueprint: dict[str, list[dict]] = {}
     failures: dict[str, str] = {}
@@ -570,14 +543,6 @@ def craft_bpc_contracts(request):
             offers = []
             failures[str(blueprint_type_id)] = str(exc)[:220]
         contracts_by_blueprint[str(blueprint_type_id)] = offers
-
-    active_contracts = int(cache_meta.get("active_contracts") or 0)
-    if sync_error and active_contracts <= 0:
-        for blueprint_type_id in parsed_ids:
-            failures.setdefault(str(blueprint_type_id), sync_error)
-    elif sync_locked and active_contracts <= 0:
-        for blueprint_type_id in parsed_ids:
-            failures.setdefault(str(blueprint_type_id), "sync_in_progress")
 
     logger.info(
         "craft_bpc_contracts user=%s requested=%s force=%s failures=%s",
