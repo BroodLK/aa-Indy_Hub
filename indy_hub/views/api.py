@@ -857,6 +857,13 @@ def craft_industry_fees(request):
 
     optional_query = _normalize_everef_fee_query_params(optional_query)
 
+    logger.warning(
+        "craft_industry_fees hit user=%s jobs=%s options=%s",
+        request.user.id,
+        len(jobs),
+        sorted(optional_query.keys()),
+    )
+
     response_jobs = []
     errors = []
     total_job_cost = Decimal("0")

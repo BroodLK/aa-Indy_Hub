@@ -5388,6 +5388,9 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
     CRAFT_INDUSTRY_FEE_STATE.loading = true;
     CRAFT_INDUSTRY_FEE_STATE.signature = signature;
     CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = Date.now();
+    if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+        window.CraftBP.pushStatus(__('Calculating industry fees...'), 'info');
+    }
     syncIndustryFeeManualControls();
 
     const params = new URLSearchParams();
@@ -5436,24 +5439,63 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
     if (feeConfig.extra_params) {
         params.set('extra_params', String(feeConfig.extra_params).trim());
     }
+    params.set('_ts', String(Date.now()));
 
     try {
         const requestUrl = `${endpoint}?${params.toString()}`;
+        craftBPDebugLog('[CraftBP] Requesting industry fees', requestUrl);
         const response = await fetch(requestUrl, {
             method: 'GET',
             credentials: 'same-origin',
+            cache: 'no-store',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+            },
         });
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+
+        const responseText = await response.text();
+        let payload = null;
+        try {
+            payload = responseText ? JSON.parse(responseText) : {};
+        } catch (parseError) {
+            const preview = String(responseText || '').slice(0, 220).replace(/\s+/g, ' ').trim();
+            throw new Error(
+                `Non-JSON response from industry fee endpoint (HTTP ${response.status})${preview ? `: ${preview}` : ''}`
+            );
         }
-        const payload = await response.json();
+        if (!response.ok) {
+            const errorMessage = String(payload?.error || payload?.message || `HTTP ${response.status}`).trim();
+            throw new Error(errorMessage || `HTTP ${response.status}`);
+        }
+
         CRAFT_INDUSTRY_FEE_STATE.loaded = true;
         CRAFT_INDUSTRY_FEE_STATE.totalJobCost = Math.max(0, Number(payload?.total_job_cost) || 0);
         CRAFT_INDUSTRY_FEE_STATE.totalApiCost = Math.max(0, Number(payload?.total_api_cost) || 0);
         CRAFT_INDUSTRY_FEE_STATE.jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
         CRAFT_INDUSTRY_FEE_STATE.errors = Array.isArray(payload?.errors) ? payload.errors : [];
-        if (typeof recalcFinancials === 'function') {
-            recalcFinancials();
+        if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+            const jobCount = Array.isArray(CRAFT_INDUSTRY_FEE_STATE.jobs)
+                ? CRAFT_INDUSTRY_FEE_STATE.jobs.length
+                : 0;
+            const errorCount = Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors)
+                ? CRAFT_INDUSTRY_FEE_STATE.errors.length
+                : 0;
+            if (errorCount > 0) {
+                window.CraftBP.pushStatus(
+                    __(`Industry fee request returned ${errorCount} error(s).`),
+                    'warning'
+                );
+            } else if (jobCount > 0) {
+                window.CraftBP.pushStatus(
+                    __(`Industry fees calculated for ${jobCount} item(s).`),
+                    'success'
+                );
+            } else {
+                window.CraftBP.pushStatus(
+                    __('Industry fee request returned no job rows.'),
+                    'warning'
+                );
+            }
         }
     } catch (error) {
         console.error('[CraftBP] Failed loading industry fee estimate', error);
@@ -5462,12 +5504,18 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
         CRAFT_INDUSTRY_FEE_STATE.totalApiCost = 0;
         CRAFT_INDUSTRY_FEE_STATE.jobs = [];
         CRAFT_INDUSTRY_FEE_STATE.errors = [{ error: String(error && error.message ? error.message : error) }];
-        if (typeof recalcFinancials === 'function') {
-            recalcFinancials();
+        if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+            window.CraftBP.pushStatus(
+                String(error && error.message ? error.message : __('Industry fee request failed.')),
+                'danger'
+            );
         }
     } finally {
         CRAFT_INDUSTRY_FEE_STATE.loading = false;
         syncIndustryFeeManualControls();
+        if (typeof recalcFinancials === 'function') {
+            recalcFinancials();
+        }
     }
 }
 
