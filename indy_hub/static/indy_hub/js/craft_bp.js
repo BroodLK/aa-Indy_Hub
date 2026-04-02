@@ -15,8 +15,14 @@ const CRAFT_BPC_CONTRACT_STATE = {
     offersByBlueprintType: new Map(),
     selectedByBlueprintType: new Map(),
     fetchErrorsByBlueprintType: new Map(),
+    coverageByBlueprintType: new Map(),
+    coverageRows: [],
+    coverageSignature: '',
+    lastFetchAtMs: 0,
+    cacheTtlSeconds: 1800,
+    cacheTimerHandle: null,
 };
-const CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS = 1200000;
+const CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS = 180000;
 const CRAFT_INDUSTRY_FEE_STATE = {
     loading: false,
     signature: '',
@@ -104,6 +110,21 @@ function escapeHtml(value) {
 function formatInteger(value) {
     const num = Number(value) || 0;
     return num.toLocaleString();
+}
+
+function formatDateTimeShort(value) {
+    const numeric = Number(value);
+    const parsed = (Number.isFinite(numeric) && numeric > 0)
+        ? numeric
+        : Date.parse(String(value || '').trim());
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+        return __('Unknown');
+    }
+    try {
+        return new Date(parsed).toLocaleString();
+    } catch (error) {
+        return __('Unknown');
+    }
 }
 
 function mapLikeToMap(source) {
@@ -441,6 +462,220 @@ function removeSelectedContractOffer(blueprintTypeId, contractId) {
     return removed;
 }
 
+function getSelectedContractsCoverageSignature() {
+    const tokens = [];
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeIdRaw) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (!blueprintTypeId || !(offerMap instanceof Map) || offerMap.size === 0) {
+            return;
+        }
+        const offerTokens = Array.from(offerMap.values())
+            .map((offer) => {
+                const contractId = Number(offer?.contract_id) || 0;
+                const runs = Math.max(1, Number(offer?.runs) || 1);
+                return `${contractId}:${runs}`;
+            })
+            .sort();
+        tokens.push(`${blueprintTypeId}[${offerTokens.join(',')}]`);
+    });
+    tokens.sort();
+    return tokens.join('|');
+}
+
+function computeBpcCoverageSignature() {
+    const runsInputEl = document.getElementById('runsInput');
+    const runs = runsInputEl ? (Number(runsInputEl.value) || 0) : (Number(window.BLUEPRINT_DATA?.num_runs) || 0);
+
+    const blueprintUseTokens = [];
+    document.querySelectorAll('#configure-pane input.bp-use-input[data-blueprint-type-id]').forEach((input) => {
+        const blueprintTypeId = Number(input.getAttribute('data-blueprint-type-id')) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+        const selected = !input.disabled && Boolean(input.checked);
+        blueprintUseTokens.push(`${blueprintTypeId}:${selected ? 1 : 0}`);
+    });
+    blueprintUseTokens.sort();
+
+    const modeTokens = [];
+    getBlueprintConfigsForFinancialPlanner().forEach((bp) => {
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || 0) || 0;
+        if (!productTypeId) {
+            return;
+        }
+        modeTokens.push(`${productTypeId}:${getTreeSwitchModeForType(productTypeId)}`);
+    });
+    modeTokens.sort();
+
+    return [
+        `runs=${runs}`,
+        `use=${blueprintUseTokens.join(',')}`,
+        `mode=${modeTokens.join(',')}`,
+        `contracts=${getSelectedContractsCoverageSignature()}`,
+    ].join('|');
+}
+
+function rebuildCanonicalBpcCoverageState({ force = false } = {}) {
+    const nextSignature = computeBpcCoverageSignature();
+    if (!force && CRAFT_BPC_CONTRACT_STATE.coverageSignature === nextSignature) {
+        return {
+            rows: CRAFT_BPC_CONTRACT_STATE.coverageRows,
+            byBlueprintType: CRAFT_BPC_CONTRACT_STATE.coverageByBlueprintType,
+        };
+    }
+
+    const blueprintConfigs = getBlueprintConfigsForFinancialPlanner();
+    if (!Array.isArray(blueprintConfigs) || blueprintConfigs.length === 0) {
+        CRAFT_BPC_CONTRACT_STATE.coverageRows = [];
+        CRAFT_BPC_CONTRACT_STATE.coverageByBlueprintType = new Map();
+        CRAFT_BPC_CONTRACT_STATE.coverageSignature = nextSignature;
+        return { rows: [], byBlueprintType: CRAFT_BPC_CONTRACT_STATE.coverageByBlueprintType };
+    }
+
+    const cyclesSummary = getCraftCyclesSummaryForFinancialPlanner();
+    const mainBpInfo = getMainBlueprintInfoForFinancialPlanner();
+    const blueprintNames = getBlueprintNameMapFromConfigPane();
+    const selectedByBlueprintType = getBlueprintUseSelectionFromDom();
+    const runsInputEl = document.getElementById('runsInput');
+
+    const mainBpTypeId = Number(
+        mainBpInfo.type_id
+        || mainBpInfo.typeId
+        || (window.BLUEPRINT_DATA && (window.BLUEPRINT_DATA.bp_type_id || window.BLUEPRINT_DATA.type_id))
+        || 0
+    ) || 0;
+    const mainNumRuns = runsInputEl
+        ? (Number(runsInputEl.value) || 0)
+        : (Number(window.BLUEPRINT_DATA?.num_runs) || 0);
+    const mainAvailableRuns = (mainBpInfo && Boolean(mainBpInfo.is_copy) && mainBpInfo.runs_available != null)
+        ? (Number(mainBpInfo.runs_available) || 0)
+        : null;
+
+    const rows = [];
+    const byBlueprintType = new Map();
+
+    blueprintConfigs.forEach((bp) => {
+        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || blueprintTypeId) || 0;
+        if (!isProductPlannedForProduction(productTypeId)) {
+            return;
+        }
+
+        const cyclesData = cyclesSummary[productTypeId]
+            || cyclesSummary[String(productTypeId)]
+            || cyclesSummary[blueprintTypeId]
+            || cyclesSummary[String(blueprintTypeId)];
+
+        let requiredRuns = cyclesData ? (Number(cyclesData.cycles) || 0) : null;
+        if (requiredRuns === null && mainBpTypeId && blueprintTypeId === mainBpTypeId) {
+            requiredRuns = mainNumRuns;
+        }
+        if (requiredRuns === null) {
+            return;
+        }
+        requiredRuns = Math.max(0, Number(requiredRuns) || 0);
+        if (requiredRuns <= 0) {
+            return;
+        }
+
+        const userOwns = Boolean(
+            bp?.user_owns
+            ?? bp?.userOwns
+            ?? bp?.is_owned
+            ?? bp?.isOwned
+        );
+        const isCopy = Boolean(bp?.is_copy ?? bp?.isCopy);
+        const runsAvailableRaw = bp?.runs_available ?? bp?.runsAvailable;
+        const hasRunsAvailable = runsAvailableRaw !== null && runsAvailableRaw !== undefined && runsAvailableRaw !== '';
+        const hasOriginal = userOwns && !isCopy;
+        const selectedInConfigure = Boolean(selectedByBlueprintType.get(blueprintTypeId));
+
+        let ownedRunsSelected = 0;
+        if (selectedInConfigure) {
+            if (hasOriginal) {
+                ownedRunsSelected = Number.POSITIVE_INFINITY;
+            } else if (userOwns && isCopy && hasRunsAvailable) {
+                ownedRunsSelected = Number(runsAvailableRaw) || 0;
+            }
+        }
+        if (mainBpTypeId && blueprintTypeId === mainBpTypeId && mainAvailableRuns !== null && selectedInConfigure) {
+            ownedRunsSelected = mainAvailableRuns;
+        }
+
+        const selectedContracts = getSelectedContractOffersForBlueprint(blueprintTypeId);
+        const contractRunsSelected = selectedContracts.reduce((total, offer) => {
+            return total + Math.max(1, Number(offer?.runs) || 1);
+        }, 0);
+        const selectedContractIds = selectedContracts
+            .map((offer) => Number(offer?.contract_id) || 0)
+            .filter((id) => id > 0);
+
+        const effectiveAvailableRuns = Number.isFinite(ownedRunsSelected)
+            ? Math.max(0, ownedRunsSelected + contractRunsSelected)
+            : Number.POSITIVE_INFINITY;
+        const remainingRuns = Number.isFinite(effectiveAvailableRuns)
+            ? Math.max(0, Math.ceil(requiredRuns - effectiveAvailableRuns))
+            : 0;
+
+        const fallbackName = String(cyclesData?.type_name || cyclesData?.typeName || '').trim();
+        const blueprintName = String(
+            blueprintNames.get(blueprintTypeId)
+            || bp?.type_name
+            || bp?.typeName
+            || fallbackName
+            || `Blueprint ${blueprintTypeId}`
+        ).trim();
+
+        const entry = {
+            blueprintTypeId,
+            productTypeId,
+            blueprintName,
+            requiredRuns,
+            ownedRuns: Number.isFinite(ownedRunsSelected) ? Math.max(0, Number(ownedRunsSelected) || 0) : Number.POSITIVE_INFINITY,
+            selectedRuns: contractRunsSelected,
+            deficitRuns: remainingRuns,
+            selectedInConfigure,
+            userOwns,
+            isCopy,
+            hasOriginal,
+            required_runs: requiredRuns,
+            owned_runs_selected: Number.isFinite(ownedRunsSelected) ? Math.max(0, Number(ownedRunsSelected) || 0) : Number.POSITIVE_INFINITY,
+            contract_runs_selected: contractRunsSelected,
+            remaining_runs: remainingRuns,
+            selected_contract_ids: selectedContractIds,
+        };
+        rows.push(entry);
+        byBlueprintType.set(blueprintTypeId, entry);
+    });
+
+    rows.sort((left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' }));
+    CRAFT_BPC_CONTRACT_STATE.coverageRows = rows;
+    CRAFT_BPC_CONTRACT_STATE.coverageByBlueprintType = byBlueprintType;
+    CRAFT_BPC_CONTRACT_STATE.coverageSignature = nextSignature;
+
+    return { rows, byBlueprintType };
+}
+
+function getCanonicalBpcCoverageRows({ force = false } = {}) {
+    return rebuildCanonicalBpcCoverageState({ force }).rows;
+}
+
+function getCanonicalBpcCoverageByBlueprintType({ force = false } = {}) {
+    return rebuildCanonicalBpcCoverageState({ force }).byBlueprintType;
+}
+
+function getCanonicalBpcCoverageEntry(blueprintTypeId, { force = false } = {}) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    if (!numericBlueprintTypeId) {
+        return null;
+    }
+    return getCanonicalBpcCoverageByBlueprintType({ force }).get(numericBlueprintTypeId) || null;
+}
+
 function attachPriceInputListener(input) {
     if (!input || input.dataset.priceListenerAttached === 'true') {
         return;
@@ -469,8 +704,12 @@ function refreshTabsAfterStateChange(options = {}) {
     if (!options.keepComputedNeeded) {
         CRAFT_COMPUTED_NEEDED_ROWS = null;
     }
+    rebuildCanonicalBpcCoverageState({ force: true });
     if (typeof syncConfigureVisibilityWithPlan === 'function') {
         syncConfigureVisibilityWithPlan();
+    }
+    if (typeof renderConfigureBoughtBpcsSection === 'function') {
+        renderConfigureBoughtBpcsSection();
     }
     if (typeof updateMaterialsTabFromState === 'function') {
         updateMaterialsTabFromState();
@@ -5561,6 +5800,10 @@ function getDashboardMaterialsOrdering() {
 }
 
 function getFinancialRowKey(item) {
+    const explicitRowKey = String(item?.rowKey || '').trim();
+    if (explicitRowKey) {
+        return explicitRowKey;
+    }
     const rowKind = String(item?.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
     const typeId = Number(item?.typeId ?? item?.type_id) || 0;
     if (!typeId) {
@@ -5603,6 +5846,7 @@ function buildBlueprintUsageContextByProductType() {
     const blueprintConfigs = getBlueprintConfigsForFinancialPlanner();
     const blueprintNames = getBlueprintNameMapFromConfigPane();
     const selectedByBlueprintType = getBlueprintUseSelectionFromDom();
+    const coverageByBlueprintType = getCanonicalBpcCoverageByBlueprintType();
     const byProductType = new Map();
 
     blueprintConfigs.forEach((bp) => {
@@ -5620,6 +5864,15 @@ function buildBlueprintUsageContextByProductType() {
         );
         const hasShared = Boolean(bp?.shared_copies_available ?? bp?.sharedCopiesAvailable);
         const available = userOwns || hasShared;
+        const coverageEntry = coverageByBlueprintType.get(blueprintTypeId) || null;
+        const boughtContractCount = Array.isArray(coverageEntry?.selected_contract_ids)
+            ? coverageEntry.selected_contract_ids.length
+            : 0;
+        const boughtRuns = Number(coverageEntry?.contract_runs_selected) || 0;
+        const ownedRunsSelected = Number(coverageEntry?.owned_runs_selected) || 0;
+        const requiredRuns = Number(coverageEntry?.required_runs) || 0;
+        const remainingRuns = Number(coverageEntry?.remaining_runs) || 0;
+        const availableForPlanning = available || boughtContractCount > 0;
         const defaultSelected = false;
         const selected = selectedByBlueprintType.has(blueprintTypeId)
             ? selectedByBlueprintType.get(blueprintTypeId)
@@ -5640,15 +5893,20 @@ function buildBlueprintUsageContextByProductType() {
             blueprintTypeId,
             productTypeId,
             blueprintName,
-            active: available && selected,
+            active: availableForPlanning && selected,
             selected: Boolean(selected),
-            available: Boolean(available),
+            available: Boolean(availableForPlanning),
             owned: Boolean(userOwns),
-            isCopy: Boolean(bp?.is_copy ?? bp?.isCopy) || (!userOwns && hasShared),
+            isCopy: Boolean(bp?.is_copy ?? bp?.isCopy) || (!userOwns && hasShared) || boughtContractCount > 0,
             me: meValue,
             te: teValue,
             defaultMe: 0,
             defaultTe: 0,
+            boughtContractCount,
+            boughtRuns,
+            ownedRunsSelected,
+            requiredRuns,
+            remainingRuns,
         };
 
         const existing = byProductType.get(productTypeId);
@@ -5675,6 +5933,11 @@ function buildBlueprintUsageContextByProductType() {
             te: Number(payload.te || 0) || 0,
             defaultMe: 0,
             defaultTe: 0,
+            boughtContractCount: 0,
+            boughtRuns: 0,
+            ownedRunsSelected: 0,
+            requiredRuns: 0,
+            remainingRuns: 0,
         });
     }
 
@@ -5712,9 +5975,8 @@ function formatBlueprintContextForPlanItem(typeId, contextsByProductType = null)
         return __('BPC: not selected (BP ME 0 / Default ME 0)');
     }
 
-    const sourceLabel = context.owned
-        ? (context.isCopy ? __('owned copy') : __('owned original'))
-        : __('shared copy');
+    const sourceInfo = getBlueprintSourceInfo(context);
+    const sourceLabel = sourceInfo.label;
     const bpMe = Number(context.me) || 0;
     const defaultMe = Number(context.defaultMe) || 0;
     const meDelta = bpMe - defaultMe;
@@ -5722,21 +5984,80 @@ function formatBlueprintContextForPlanItem(typeId, contextsByProductType = null)
     return `${__('BPC')}: ${context.blueprintName} (${sourceLabel}) | ${__('BP ME')}: ${bpMe} | ${__('Default ME')}: ${defaultMe} | ${__('Delta')}: ${deltaPrefix}${meDelta}`;
 }
 
+function getBlueprintSourceInfo(context) {
+    const boughtContractCount = Number(context?.boughtContractCount) || 0;
+    const boughtRuns = Number(context?.boughtRuns) || 0;
+    const ownedRunsSelected = Number(context?.ownedRunsSelected) || 0;
+    if (boughtContractCount > 0 && ownedRunsSelected > 0) {
+        return {
+            sourceKey: 'mixed',
+            label: `${__('Mixed')} (${formatInteger(boughtContractCount)} ${__('contracts')} / ${formatInteger(boughtRuns)} ${__('runs')})`,
+            badgeClass: 'text-bg-warning',
+        };
+    }
+    if (boughtContractCount > 0) {
+        return {
+            sourceKey: 'bought_bpc',
+            label: `${__('Bought BPC')} (${formatInteger(boughtContractCount)} ${__('contracts')} / ${formatInteger(boughtRuns)} ${__('runs')})`,
+            badgeClass: 'text-bg-warning',
+        };
+    }
+    if (context?.owned) {
+        if (context?.isCopy) {
+            return {
+                sourceKey: 'owned_bpc',
+                label: __('Owned BPC'),
+                badgeClass: 'text-bg-primary',
+            };
+        }
+        return {
+            sourceKey: 'owned_bpo',
+            label: __('Owned BPO'),
+            badgeClass: 'text-bg-info',
+        };
+    }
+    return {
+        sourceKey: 'shared_bpc',
+        label: __('Shared BPC'),
+        badgeClass: 'text-bg-secondary',
+    };
+}
+
+function formatBlueprintCoverageTooltip(context) {
+    if (!context) {
+        return '';
+    }
+    const requiredRuns = Math.max(0, Number(context.requiredRuns) || 0);
+    const ownedRuns = Math.max(0, Number(context.ownedRunsSelected) || 0);
+    const contractRuns = Math.max(0, Number(context.boughtRuns) || 0);
+    const remainingRuns = Math.max(0, Number(context.remainingRuns) || 0);
+    return [
+        `${__('Required runs')}: ${formatInteger(requiredRuns)}`,
+        `${__('Owned selected runs')}: ${formatInteger(ownedRuns)}`,
+        `${__('Bought selected runs')}: ${formatInteger(contractRuns)}`,
+        `${__('Remaining runs')}: ${formatInteger(remainingRuns)}`,
+    ].join(' | ');
+}
+
 function formatBlueprintContextForTreeItem(typeId, contextsByProductType = null) {
     const numericTypeId = Number(typeId) || 0;
     if (!numericTypeId) {
-        return '';
+        return null;
     }
     const context = getBlueprintUsageContextForProductType(numericTypeId, contextsByProductType);
     if (!context || !context.active) {
-        return '';
+        return null;
     }
     const mode = getTreeSwitchModeForType(numericTypeId);
     if (mode !== 'prod') {
-        return '';
+        return null;
     }
-    const kind = context.isCopy ? __('BPC') : __('BPO');
-    return `(${kind} ${__('ME')}: ${Number(context.me) || 0} ${__('TE')}: ${Number(context.te) || 0})`;
+    const sourceInfo = getBlueprintSourceInfo(context);
+    return {
+        text: `${sourceInfo.label} | ${__('ME')} ${Number(context.me) || 0} / ${__('TE')} ${Number(context.te) || 0}`,
+        badgeClass: sourceInfo.badgeClass,
+        tooltip: formatBlueprintCoverageTooltip(context),
+    };
 }
 
 function refreshTreeBlueprintContextLabels() {
@@ -5751,9 +6072,16 @@ function refreshTreeBlueprintContextLabels() {
         if (!contextEl || !typeId) {
             return;
         }
-        const text = formatBlueprintContextForTreeItem(typeId, contextsByProductType);
-        contextEl.textContent = text;
-        contextEl.classList.toggle('d-none', !text);
+        const contextPayload = formatBlueprintContextForTreeItem(typeId, contextsByProductType);
+        if (!contextPayload) {
+            contextEl.textContent = '';
+            contextEl.removeAttribute('title');
+            contextEl.className = 'small text-body-secondary opacity-75 tree-bp-context d-none';
+            return;
+        }
+        contextEl.textContent = contextPayload.text;
+        contextEl.setAttribute('title', contextPayload.tooltip || '');
+        contextEl.className = `small badge ${contextPayload.badgeClass || 'text-bg-secondary'} tree-bp-context`;
     });
 }
 
@@ -5941,118 +6269,107 @@ function syncConfigureVisibilityWithPlan() {
     });
 }
 
-function collectBlueprintCopyDeficits() {
-    const blueprintConfigs = getBlueprintConfigsForFinancialPlanner();
-    if (!Array.isArray(blueprintConfigs) || blueprintConfigs.length === 0) {
-        return [];
+function renderConfigureBoughtBpcsSection() {
+    const sectionEl = document.getElementById('configureBoughtBpcsSection');
+    const emptyEl = document.getElementById('configureBoughtBpcsEmpty');
+    const listEl = document.getElementById('configureBoughtBpcsList');
+    if (!sectionEl || !emptyEl || !listEl) {
+        return;
     }
 
-    const cyclesSummary = getCraftCyclesSummaryForFinancialPlanner();
-    const mainBpInfo = getMainBlueprintInfoForFinancialPlanner();
-    const blueprintNames = getBlueprintNameMapFromConfigPane();
-    const selectedByBlueprintType = getBlueprintUseSelectionFromDom();
-    const runsInputEl = document.getElementById('runsInput');
+    pruneSelectedContractsToCurrentProductionPlan();
 
-    const mainBpTypeId = Number(
-        mainBpInfo.type_id
-        || mainBpInfo.typeId
-        || (window.BLUEPRINT_DATA && (window.BLUEPRINT_DATA.bp_type_id || window.BLUEPRINT_DATA.type_id))
-        || 0
-    ) || 0;
-    const mainNumRuns = runsInputEl
-        ? (Number(runsInputEl.value) || 0)
-        : (Number(window.BLUEPRINT_DATA?.num_runs) || 0);
-    const mainAvailableRuns = (mainBpInfo && Boolean(mainBpInfo.is_copy) && mainBpInfo.runs_available != null)
-        ? (Number(mainBpInfo.runs_available) || 0)
-        : null;
-
-    const deficits = [];
-    blueprintConfigs.forEach((bp) => {
-        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
-        if (!blueprintTypeId) {
+    const blueprintNameMap = getBlueprintNameMapFromConfigPane();
+    const rows = [];
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
+        if (!(offerMap instanceof Map) || offerMap.size === 0) {
             return;
         }
-
-        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || blueprintTypeId) || 0;
-        if (!isProductPlannedForProduction(productTypeId)) {
-            return;
-        }
-
-        const cyclesData = cyclesSummary[productTypeId]
-            || cyclesSummary[String(productTypeId)]
-            || cyclesSummary[blueprintTypeId]
-            || cyclesSummary[String(blueprintTypeId)];
-
-        let requiredRuns = cyclesData ? (Number(cyclesData.cycles) || 0) : null;
-        if (requiredRuns === null && mainBpTypeId && blueprintTypeId === mainBpTypeId) {
-            requiredRuns = mainNumRuns;
-        }
-        if (requiredRuns === null) {
-            return;
-        }
-        requiredRuns = Math.max(0, Number(requiredRuns) || 0);
-        if (requiredRuns <= 0) {
-            return;
-        }
-
-        const userOwns = Boolean(
-            bp?.user_owns
-            ?? bp?.userOwns
-            ?? bp?.is_owned
-            ?? bp?.isOwned
+        const offers = Array.from(offerMap.values()).sort(
+            (left, right) => (Number(left.selected_at) || 0) - (Number(right.selected_at) || 0)
         );
-        const isCopy = Boolean(bp?.is_copy ?? bp?.isCopy);
-        const runsAvailableRaw = bp?.runs_available ?? bp?.runsAvailable;
-        const hasRunsAvailable = runsAvailableRaw !== null && runsAvailableRaw !== undefined && runsAvailableRaw !== '';
-        const hasOriginal = userOwns && !isCopy;
-        const selectedInConfigure = Boolean(selectedByBlueprintType.get(blueprintTypeId));
-
-        let availableRuns = 0;
-        if (selectedInConfigure) {
-            if (hasOriginal) {
-                availableRuns = Number.POSITIVE_INFINITY;
-            } else if (userOwns && isCopy && hasRunsAvailable) {
-                availableRuns = Number(runsAvailableRaw) || 0;
-            }
+        if (offers.length === 0) {
+            return;
         }
-        if (mainBpTypeId && blueprintTypeId === mainBpTypeId && mainAvailableRuns !== null && selectedInConfigure) {
-            availableRuns = mainAvailableRuns;
-        }
-
-        const selectedContractRuns = getSelectedContractRunsForBlueprint(blueprintTypeId);
-        const effectiveAvailableRuns = Number.isFinite(availableRuns)
-            ? Math.max(0, availableRuns + selectedContractRuns)
-            : Number.POSITIVE_INFINITY;
-        const deficitRuns = Number.isFinite(effectiveAvailableRuns)
-            ? Math.max(0, Math.ceil(requiredRuns - effectiveAvailableRuns))
-            : 0;
-
-        const fallbackName = String(cyclesData?.type_name || cyclesData?.typeName || '').trim();
-        const blueprintName = String(
-            blueprintNames.get(blueprintTypeId)
-            || bp?.type_name
-            || bp?.typeName
-            || fallbackName
-            || `Blueprint ${blueprintTypeId}`
-        ).trim();
-
-        deficits.push({
-            blueprintTypeId,
-            productTypeId,
-            blueprintName,
-            requiredRuns,
-            ownedRuns: Number.isFinite(availableRuns) ? Math.max(0, Number(availableRuns) || 0) : Number.POSITIVE_INFINITY,
-            selectedRuns: selectedContractRuns,
-            deficitRuns,
-            selectedInConfigure,
-            userOwns,
-            isCopy,
-            hasOriginal,
+        const totalRuns = offers.reduce((sum, offer) => sum + Math.max(1, Number(offer.runs) || 1), 0);
+        const totalPrice = offers.reduce((sum, offer) => sum + Math.max(0, Number(offer.price_total) || 0), 0);
+        rows.push({
+            blueprintTypeId: Number(blueprintTypeId) || 0,
+            blueprintName: String(blueprintNameMap.get(blueprintTypeId) || `Blueprint ${blueprintTypeId}`).trim(),
+            offers,
+            totalRuns,
+            totalPrice,
         });
     });
 
-    deficits.sort((left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' }));
-    return deficits;
+    rows.sort((left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' }));
+    listEl.innerHTML = '';
+
+    if (rows.length === 0) {
+        emptyEl.classList.remove('d-none');
+        listEl.classList.add('d-none');
+        return;
+    }
+
+    emptyEl.classList.add('d-none');
+    listEl.classList.remove('d-none');
+
+    rows.forEach((entry) => {
+        const wrapper = document.createElement('section');
+        wrapper.className = 'card border-0 bg-body-tertiary';
+        wrapper.innerHTML = `
+            <div class="card-body py-2">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                    <div>
+                        <h6 class="mb-1">${escapeHtml(entry.blueprintName)}</h6>
+                        <div class="small text-muted">
+                            ${escapeHtml(__('Contracts'))}: <strong>${formatInteger(entry.offers.length)}</strong>
+                            - ${escapeHtml(__('Runs'))}: <strong>${formatInteger(entry.totalRuns)}</strong>
+                            - ${escapeHtml(__('Price'))}: <strong>${formatPrice(entry.totalPrice)}</strong>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex flex-column gap-1"></div>
+            </div>
+        `;
+        const offersListEl = wrapper.querySelector('.d-flex.flex-column.gap-1');
+        if (offersListEl) {
+            entry.offers.forEach((offer) => {
+                const contractId = Number(offer.contract_id) || 0;
+                const offerRow = document.createElement('div');
+                offerRow.className = 'd-flex flex-wrap justify-content-between align-items-center gap-2 border rounded px-2 py-1 bg-white';
+                offerRow.innerHTML = `
+                    <div class="small">
+                        <strong>#${contractId}</strong>
+                        <span class="text-muted ms-1">${escapeHtml(__('Runs'))}: ${formatInteger(Number(offer.runs) || 0)}</span>
+                        <span class="text-muted ms-1">ME ${formatInteger(Number(offer.me) || 0)} / TE ${formatInteger(Number(offer.te) || 0)}</span>
+                        <span class="text-muted ms-1">${escapeHtml(__('Price'))}: ${formatPrice(Number(offer.price_total) || 0)}</span>
+                        <span class="text-muted ms-1">${escapeHtml(__('Selected'))}: ${escapeHtml(formatDateTimeShort(Number(offer.selected_at) || 0))}</span>
+                    </div>
+                    <button type="button" class="btn btn-outline-danger btn-sm" data-configure-remove-bpc="1">
+                        ${escapeHtml(__('Remove'))}
+                    </button>
+                `;
+                const removeBtn = offerRow.querySelector('button[data-configure-remove-bpc="1"]');
+                if (removeBtn) {
+                    removeBtn.addEventListener('click', () => {
+                        if (!removeSelectedContractOffer(entry.blueprintTypeId, contractId)) {
+                            return;
+                        }
+                        syncConfigureCardFromSelectedContracts(entry.blueprintTypeId);
+                        saveSelectedBpcContractsToStorage();
+                        refreshTabsAfterStateChange({ forceNeeded: true });
+                    });
+                }
+                offersListEl.appendChild(offerRow);
+            });
+        }
+        listEl.appendChild(wrapper);
+    });
+}
+
+function collectBlueprintCopyDeficits() {
+    return getCanonicalBpcCoverageRows();
 }
 
 function collectMissingBlueprintCopyRows(deficitsOverride = null) {
@@ -6073,18 +6390,22 @@ function collectMissingBlueprintCopyRows(deficitsOverride = null) {
 
 function collectSelectedBlueprintContractRows(deficitsOverride = null) {
     pruneSelectedContractsToCurrentProductionPlan();
-    const deficitRows = Array.isArray(deficitsOverride)
-        ? deficitsOverride
-        : collectBlueprintCopyDeficits().filter((row) => Number(row.deficitRuns) > 0);
-    const neededBlueprintTypeIds = new Set(
-        deficitRows
-            .map((row) => Number(row?.blueprintTypeId) || 0)
-            .filter((id) => id > 0)
-    );
+    const plannedBlueprintTypeIds = new Set();
+    getBlueprintConfigsForFinancialPlanner().forEach((bp) => {
+        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || blueprintTypeId) || 0;
+        if (!blueprintTypeId || !productTypeId) {
+            return;
+        }
+        if (!isProductPlannedForProduction(productTypeId)) {
+            return;
+        }
+        plannedBlueprintTypeIds.add(blueprintTypeId);
+    });
     const rows = [];
     const blueprintNameMap = getBlueprintNameMapFromConfigPane();
     CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
-        if (neededBlueprintTypeIds.size > 0 && !neededBlueprintTypeIds.has(Number(blueprintTypeId) || 0)) {
+        if (plannedBlueprintTypeIds.size > 0 && !plannedBlueprintTypeIds.has(Number(blueprintTypeId) || 0)) {
             return;
         }
         if (!(offerMap instanceof Map) || offerMap.size === 0) {
@@ -6150,13 +6471,13 @@ function getCraftBpcContractsUrl() {
 async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false } = {}) {
     const endpoint = getCraftBpcContractsUrl();
     if (!endpoint) {
-        return { errorCount: 0 };
+        return { errorCount: 0, fetched: false };
     }
     const uniqueIds = Array.from(new Set((Array.isArray(blueprintTypeIds) ? blueprintTypeIds : [])
         .map((id) => Number(id) || 0)
         .filter((id) => id > 0)));
     if (uniqueIds.length === 0) {
-        return { errorCount: 0 };
+        return { errorCount: 0, fetched: false };
     }
 
     const idsToFetch = force
@@ -6166,11 +6487,14 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
                 && !CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(id)
         );
     if (idsToFetch.length === 0) {
-        return { errorCount: 0 };
+        return { errorCount: 0, fetched: false };
     }
 
     const requestUrl = new URL(endpoint, window.location.origin);
     requestUrl.searchParams.set('blueprint_type_ids', idsToFetch.join(','));
+    if (force) {
+        requestUrl.searchParams.set('force', '1');
+    }
 
     const controller = (typeof AbortController === 'function') ? new AbortController() : null;
     const timeoutHandle = controller
@@ -6205,6 +6529,11 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
     const errorsMap = payload && payload.errors && typeof payload.errors === 'object'
         ? payload.errors
         : {};
+    const cacheTtlSeconds = Math.max(0, Number(payload?.cache_ttl_seconds) || 0);
+    const cachedAt = String(payload?.cached_at || payload?.fetched_at || '').trim();
+    const expiresAt = String(payload?.expires_at || '').trim();
+    const fetchedAt = String(payload?.fetched_at || '').trim();
+    const isCached = Boolean(payload?.is_cached);
     let errorCount = 0;
 
     idsToFetch.forEach((blueprintTypeId) => {
@@ -6237,7 +6566,15 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
             CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.delete(blueprintTypeId);
         }
     });
-    return { errorCount };
+    return {
+        errorCount,
+        cacheTtlSeconds,
+        cachedAt,
+        expiresAt,
+        fetchedAt,
+        isCached,
+        fetched: true,
+    };
 }
 
 function getBuyBpcsSortKey() {
@@ -6303,6 +6640,98 @@ function setBuyBpcsStatus(message, variant = 'info') {
     statusEl.textContent = String(message);
 }
 
+function formatBuyBpcsCacheCountdown(totalSeconds) {
+    const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const minutes = Math.floor(safeSeconds / 60);
+    const seconds = safeSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getBuyBpcsCacheRemainingSeconds() {
+    const ttlSeconds = Math.max(0, Number(CRAFT_BPC_CONTRACT_STATE.cacheTtlSeconds) || 0);
+    const lastFetchAtMs = Number(CRAFT_BPC_CONTRACT_STATE.lastFetchAtMs) || 0;
+    if (ttlSeconds <= 0 || lastFetchAtMs <= 0) {
+        return 0;
+    }
+    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - lastFetchAtMs) / 1000));
+    return Math.max(0, ttlSeconds - elapsedSeconds);
+}
+
+function renderBuyBpcsCacheTimer() {
+    const timerEl = document.getElementById('buyBpcsCacheTimer');
+    if (!timerEl) {
+        return;
+    }
+    const ttlSeconds = Math.max(0, Number(CRAFT_BPC_CONTRACT_STATE.cacheTtlSeconds) || 0);
+    const remainingSeconds = getBuyBpcsCacheRemainingSeconds();
+    if (ttlSeconds <= 0 || Number(CRAFT_BPC_CONTRACT_STATE.lastFetchAtMs) <= 0) {
+        timerEl.textContent = '';
+        return;
+    }
+    if (remainingSeconds <= 0) {
+        timerEl.textContent = __('Cache expired');
+        return;
+    }
+    timerEl.textContent = `${__('Cache')}: ${formatBuyBpcsCacheCountdown(remainingSeconds)}`;
+}
+
+function ensureBuyBpcsCacheTimerTicker() {
+    if (CRAFT_BPC_CONTRACT_STATE.cacheTimerHandle) {
+        return;
+    }
+    CRAFT_BPC_CONTRACT_STATE.cacheTimerHandle = window.setInterval(() => {
+        renderBuyBpcsCacheTimer();
+    }, 1000);
+}
+
+function recordBuyBpcsFetchTimestamp(cacheTtlSeconds = null, fetchedAtIso = '') {
+    const parsedTtl = Number(cacheTtlSeconds);
+    if (Number.isFinite(parsedTtl) && parsedTtl > 0) {
+        CRAFT_BPC_CONTRACT_STATE.cacheTtlSeconds = Math.max(30, Math.floor(parsedTtl));
+    }
+    const parsedFetchedAt = Date.parse(String(fetchedAtIso || '').trim());
+    CRAFT_BPC_CONTRACT_STATE.lastFetchAtMs = Number.isFinite(parsedFetchedAt) && parsedFetchedAt > 0
+        ? parsedFetchedAt
+        : Date.now();
+    renderBuyBpcsCacheTimer();
+}
+
+function collectBuyBpcsRows() {
+    const allRows = collectBlueprintCopyDeficits();
+    const rowsByBlueprint = new Map();
+    allRows.forEach((row) => {
+        const blueprintTypeId = Number(row?.blueprintTypeId) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+        rowsByBlueprint.set(blueprintTypeId, row);
+    });
+
+    const rows = [];
+    allRows.forEach((row) => {
+        if (Number(row?.deficitRuns) > 0) {
+            rows.push(row);
+        }
+    });
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeIdRaw) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (!blueprintTypeId || !(offerMap instanceof Map) || offerMap.size === 0) {
+            return;
+        }
+        const existing = rows.find((row) => Number(row?.blueprintTypeId) === blueprintTypeId);
+        if (existing) {
+            return;
+        }
+        const sourceRow = rowsByBlueprint.get(blueprintTypeId);
+        if (sourceRow) {
+            rows.push(sourceRow);
+        }
+    });
+
+    rows.sort((left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' }));
+    return rows;
+}
+
 function renderBuyBpcsTab() {
     const listEl = document.getElementById('buyBpcsList');
     const emptyEl = document.getElementById('buyBpcsEmptyState');
@@ -6312,10 +6741,11 @@ function renderBuyBpcsTab() {
 
     pruneSelectedContractsToCurrentProductionPlan();
 
-    const deficits = collectBlueprintCopyDeficits().filter((row) => Number(row.deficitRuns) > 0);
+    const rows = collectBuyBpcsRows();
+
     listEl.innerHTML = '';
 
-    if (deficits.length === 0) {
+    if (rows.length === 0) {
         emptyEl.classList.remove('d-none');
         return;
     }
@@ -6324,7 +6754,7 @@ function renderBuyBpcsTab() {
     const paneEl = document.getElementById('buy-bpcs-pane');
     const tabIsActive = Boolean(paneEl && paneEl.classList.contains('active'));
     if (tabIsActive && !CRAFT_BPC_CONTRACT_STATE.loading) {
-        const missingOfferIds = deficits
+        const missingOfferIds = rows
             .map((row) => Number(row.blueprintTypeId) || 0)
             .filter((blueprintTypeId) => {
                 if (blueprintTypeId <= 0) {
@@ -6344,12 +6774,37 @@ function renderBuyBpcsTab() {
     }
     const sortKey = getBuyBpcsSortKey();
 
-    deficits.forEach((row) => {
+    rows.forEach((row) => {
         const blueprintTypeId = Number(row.blueprintTypeId) || 0;
-        const offers = CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.get(blueprintTypeId) || [];
+        const requiredRuns = Math.max(0, Number(row.required_runs ?? row.requiredRuns) || 0);
+        const ownedRunsSelected = Math.max(0, Number(row.owned_runs_selected ?? row.ownedRuns) || 0);
+        const contractRunsSelected = Math.max(0, Number(row.contract_runs_selected ?? row.selectedRuns) || 0);
+        const remainingRuns = Math.max(0, Number(row.remaining_runs ?? row.deficitRuns) || 0);
         const selectedOffers = getSelectedContractOffersForBlueprint(blueprintTypeId);
         const selectedIds = new Set(selectedOffers.map((offer) => Number(offer.contract_id) || 0));
-        const sortedOffers = sortBuyBpcOffers(offers, row.deficitRuns, sortKey);
+        const offers = CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.get(blueprintTypeId) || [];
+        const mergedOffersById = new Map();
+        offers.forEach((offer) => {
+            const contractId = Number(offer?.contract_id) || 0;
+            if (!contractId) {
+                return;
+            }
+            mergedOffersById.set(contractId, offer);
+        });
+        selectedOffers.forEach((offer) => {
+            const contractId = Number(offer?.contract_id) || 0;
+            if (!contractId || mergedOffersById.has(contractId)) {
+                return;
+            }
+            mergedOffersById.set(contractId, offer);
+        });
+        const sortedOffers = sortBuyBpcOffers(
+            Array.from(mergedOffersById.values()),
+            Math.max(1, remainingRuns || 1),
+            sortKey
+        );
+        const isCoveredBySelectedContracts = remainingRuns <= 0 && selectedOffers.length > 0;
+        const detailsId = `buy-bpc-offers-${blueprintTypeId}`;
 
         const card = document.createElement('section');
         card.className = 'card border-0 bg-body-tertiary';
@@ -6359,13 +6814,24 @@ function renderBuyBpcsTab() {
                     <div>
                         <h6 class="mb-1">${escapeHtml(row.blueprintName)}</h6>
                         <div class="small text-muted">
-                            ${escapeHtml(__('Required runs'))}: <strong>${formatInteger(row.requiredRuns)}</strong>
-                            - ${escapeHtml(__('Owned/selected'))}: <strong>${formatInteger(Number(row.ownedRuns) || 0)} / ${formatInteger(row.selectedRuns)}</strong>
-                            - ${escapeHtml(__('Missing'))}: <strong class="text-danger">${formatInteger(row.deficitRuns)}</strong>
+                            ${escapeHtml(__('Required runs'))}: <strong>${formatInteger(requiredRuns)}</strong>
+                            - ${escapeHtml(__('Owned runs'))}: <strong>${formatInteger(ownedRunsSelected)}</strong>
+                            - ${escapeHtml(__('Contract runs'))}: <strong>${formatInteger(contractRunsSelected)}</strong>
+                            - ${escapeHtml(__('Remaining'))}: <strong class="${remainingRuns > 0 ? 'text-danger' : 'text-success'}">${formatInteger(remainingRuns)}</strong>
                         </div>
                     </div>
+                    ${isCoveredBySelectedContracts ? `
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bpc-coverage-toggle="${detailsId}">
+                        ${escapeHtml(__('Show offers'))}
+                    </button>
+                    ` : ''}
                 </div>
-                <div class="table-responsive">
+                ${isCoveredBySelectedContracts ? `
+                <div class="alert alert-success py-2 px-3 small mb-2">
+                    <i class="fas fa-check-circle me-1"></i>${escapeHtml(__('Covered by selected contracts. You can still expand and adjust.'))}
+                </div>
+                ` : ''}
+                <div class="table-responsive ${isCoveredBySelectedContracts ? 'd-none' : ''}" data-bpc-offers-table="${detailsId}">
                     <table class="table table-sm align-middle mb-0">
                         <thead>
                             <tr>
@@ -6383,6 +6849,18 @@ function renderBuyBpcsTab() {
                 </div>
             </div>
         `;
+
+        if (isCoveredBySelectedContracts) {
+            const toggleBtn = card.querySelector(`button[data-bpc-coverage-toggle="${detailsId}"]`);
+            const tableWrap = card.querySelector(`div[data-bpc-offers-table="${detailsId}"]`);
+            if (toggleBtn && tableWrap) {
+                toggleBtn.addEventListener('click', () => {
+                    const hidden = tableWrap.classList.contains('d-none');
+                    tableWrap.classList.toggle('d-none', !hidden);
+                    toggleBtn.textContent = hidden ? __('Hide offers') : __('Show offers');
+                });
+            }
+        }
 
         const tbody = card.querySelector('tbody');
         if (!tbody) {
@@ -6402,7 +6880,7 @@ function renderBuyBpcsTab() {
             return;
         }
 
-        sortedOffers.slice(0, 25).forEach((offer) => {
+        sortedOffers.slice(0, 50).forEach((offer) => {
             const contractId = Number(offer.contract_id) || 0;
             const isSelected = selectedIds.has(contractId);
             const tr = document.createElement('tr');
@@ -6444,8 +6922,8 @@ function renderBuyBpcsTab() {
 }
 
 async function refreshBuyBpcsOffers({ force = false } = {}) {
-    const deficits = collectBlueprintCopyDeficits().filter((row) => Number(row.deficitRuns) > 0);
-    const blueprintTypeIds = deficits.map((row) => Number(row.blueprintTypeId) || 0).filter((id) => id > 0);
+    const rows = collectBuyBpcsRows();
+    const blueprintTypeIds = rows.map((row) => Number(row.blueprintTypeId) || 0).filter((id) => id > 0);
     if (blueprintTypeIds.length === 0) {
         setBuyBpcsStatus('', 'info');
         renderBuyBpcsTab();
@@ -6456,6 +6934,9 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
     setBuyBpcsStatus(__('Loading public Jita contracts...'), 'info');
     try {
         const fetchResult = await fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force });
+        if (fetchResult?.fetched) {
+            recordBuyBpcsFetchTimestamp(fetchResult.cacheTtlSeconds, fetchResult.cachedAt || fetchResult.fetchedAt);
+        }
         const fetchErrorCount = Number(fetchResult?.errorCount) || 0;
         const existingErrorCount = blueprintTypeIds.filter(
             (blueprintTypeId) => CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(blueprintTypeId)
@@ -6466,7 +6947,11 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
                 'warning'
             );
         } else {
-            setBuyBpcsStatus('', 'info');
+            if (fetchResult?.fetched && fetchResult?.isCached && !force) {
+                setBuyBpcsStatus(__('Loaded from cache.'), 'info');
+            } else {
+                setBuyBpcsStatus('', 'info');
+            }
         }
     } catch (error) {
         console.error('[CraftBP] Failed loading BPC contract offers', error);
@@ -6490,6 +6975,8 @@ function initializeBuyBpcsTab() {
         return;
     }
     CRAFT_BPC_CONTRACT_STATE.loaded = true;
+    ensureBuyBpcsCacheTimerTicker();
+    renderBuyBpcsCacheTimer();
 
     const sortSelect = document.getElementById('buyBpcsSortSelect');
     if (sortSelect) {
@@ -6516,6 +7003,7 @@ function initializeBuyBpcsTab() {
         syncConfigureCardFromSelectedContracts(blueprintTypeId);
     });
 
+    renderConfigureBoughtBpcsSection();
     renderBuyBpcsTab();
 }
 
@@ -6589,7 +7077,7 @@ function updateFinancialTabFromState() {
     const blueprintDeficitRows = collectBlueprintCopyDeficits().filter(
         (row) => Number(row?.deficitRuns) > 0
     );
-    const selectedBpcRows = collectSelectedBlueprintContractRows(blueprintDeficitRows);
+    const selectedBpcRows = collectSelectedBlueprintContractRows();
     const missingBpcRows = collectMissingBlueprintCopyRows(blueprintDeficitRows);
     const sortedItems = [...selectedBpcRows, ...missingBpcRows, ...sortedMaterials];
 

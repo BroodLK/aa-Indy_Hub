@@ -1136,6 +1136,19 @@
                     <div class="alert alert-info"><i class="fas fa-info-circle me-2"></i>{% trans "No child blueprints require configuration tweaks for this item." %}</div>
                     {% endif %}
                 </section>
+
+                <section class="craft-section mb-4" id="configureBoughtBpcsSection">
+                    <h3 class="craft-section-title">
+                        <i class="fas fa-shopping-basket text-warning"></i> {% trans "Bought BPCs" %}
+                    </h3>
+                    <p class="small text-muted mb-2">
+                        {% trans "Contracts selected in Buy BPCs are listed here. Removing one updates coverage and planner costs immediately." %}
+                    </p>
+                    <div id="configureBoughtBpcsEmpty" class="alert alert-info mb-0">
+                        <i class="fas fa-info-circle me-2"></i>{% trans "No bought BPC contracts selected." %}
+                    </div>
+                    <div id="configureBoughtBpcsList" class="d-flex flex-column gap-2"></div>
+                </section>
             </div>
 
             <!-- ========== BUY BPCS TAB (V2) ========== -->
@@ -1158,6 +1171,7 @@
                             <button id="buyBpcsRefreshBtn" class="btn btn-outline-info btn-sm" type="button">
                                 <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh" %}
                             </button>
+                            <span id="buyBpcsCacheTimer" class="small text-muted ms-1"></span>
                         </div>
                     </div>
                     <p class="small text-muted mt-2 mb-0">

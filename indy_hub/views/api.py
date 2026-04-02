@@ -5,6 +5,7 @@ These views handle API calls, external data fetching, and service integrations.
 """
 
 # Standard Library
+from datetime import datetime as dt_datetime, timedelta, timezone as dt_timezone
 import json
 from decimal import Decimal
 from math import ceil
@@ -15,6 +16,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 
 # Alliance Auth
@@ -33,6 +35,7 @@ from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_type_name
 from ..utils.menu_badge import compute_menu_badge_count
 from ..services.public_contracts import (
+    PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
     PublicContractsError,
     fetch_jita_public_bpc_contracts,
 )
@@ -516,15 +519,36 @@ def craft_bpc_contracts(request):
     parsed_ids = parsed_ids[:20]
     if not parsed_ids:
         return JsonResponse({"contracts_by_blueprint": {}}, status=200)
+    force_refresh = str(request.GET.get("force", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     contracts_by_blueprint: dict[str, list[dict]] = {}
     failures: dict[str, str] = {}
+    cached_at_values: list[str] = []
+    request_cache_hit = not force_refresh
     for blueprint_type_id in parsed_ids:
         try:
-            offers = fetch_jita_public_bpc_contracts(
+            fetch_result = fetch_jita_public_bpc_contracts(
                 blueprint_type_id=blueprint_type_id,
                 blueprint_name=get_type_name(blueprint_type_id),
+                force_refresh=force_refresh,
+                return_metadata=True,
             )
+            if isinstance(fetch_result, dict):
+                offers = fetch_result.get("offers")
+                if not isinstance(offers, list):
+                    offers = []
+                cached_at = str(fetch_result.get("cached_at") or "").strip()
+                if cached_at:
+                    cached_at_values.append(cached_at)
+                if not bool(fetch_result.get("is_cached")):
+                    request_cache_hit = False
+            else:
+                offers = fetch_result if isinstance(fetch_result, list) else []
+                request_cache_hit = False
         except PublicContractsError as exc:
             logger.warning(
                 "Unable to fetch public contracts for blueprint %s: %s",
@@ -533,12 +557,29 @@ def craft_bpc_contracts(request):
             )
             offers = []
             failures[str(blueprint_type_id)] = str(exc)[:220]
+            request_cache_hit = False
         contracts_by_blueprint[str(blueprint_type_id)] = offers
 
+    cached_at_dt = timezone.now()
+    if cached_at_values:
+        parsed_candidates = []
+        for value in cached_at_values:
+            try:
+                parsed_dt = dt_datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if timezone.is_naive(parsed_dt):
+                parsed_dt = timezone.make_aware(parsed_dt, timezone=dt_timezone.utc)
+            parsed_candidates.append(parsed_dt)
+        if parsed_candidates:
+            cached_at_dt = min(parsed_candidates)
+    expires_at_dt = cached_at_dt + timedelta(seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS)
+
     logger.info(
-        "craft_bpc_contracts user=%s requested=%s failures=%s",
+        "craft_bpc_contracts user=%s requested=%s force=%s failures=%s",
         request.user.id,
         parsed_ids,
+        force_refresh,
         failures,
     )
 
@@ -546,6 +587,11 @@ def craft_bpc_contracts(request):
         {
             "contracts_by_blueprint": contracts_by_blueprint,
             "errors": failures,
+            "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
+            "cached_at": cached_at_dt.isoformat(),
+            "expires_at": expires_at_dt.isoformat(),
+            "fetched_at": timezone.now().isoformat(),
+            "is_cached": bool(request_cache_hit and not failures),
         },
         status=200,
     )

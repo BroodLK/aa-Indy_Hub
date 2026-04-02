@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 # Standard Library
+from datetime import datetime, timezone
 from decimal import Decimal
 import inspect
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 from esi.exceptions import HTTPNotModified
+
+# Django
+from django.core.cache import cache
 
 # Local
 from indy_hub.services.cache_utils import get_or_set_cache_with_lock
@@ -26,6 +30,22 @@ PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS = 1800
 
 class PublicContractsError(Exception):
     """Raised when public contract fetching fails."""
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_offers_cache_payload(payload) -> tuple[list[dict], str]:
+    if isinstance(payload, dict):
+        offers = payload.get("offers")
+        cached_at = str(payload.get("cached_at") or "").strip()
+        if isinstance(offers, list):
+            return offers, cached_at
+        return [], cached_at
+    if isinstance(payload, list):
+        return payload, ""
+    return [], ""
 
 
 def _resolve_operation(resource: str, snake_name: str):
@@ -393,7 +413,9 @@ def fetch_jita_public_bpc_contracts(
     max_pages: int = 10,
     max_candidates: int = 160,
     timeout: int = 8,
-) -> list[dict]:
+    force_refresh: bool = False,
+    return_metadata: bool = False,
+) -> list[dict] | dict:
     """Return public Jita contract offers for a specific blueprint copy type."""
     # Kept for API compatibility; OpenAPI client timeout is configured in shared_client.
     _ = timeout
@@ -583,12 +605,47 @@ def fetch_jita_public_bpc_contracts(
         )
         return offers
 
+    if force_refresh:
+        offers = _loader()
+        offers_list = offers if isinstance(offers, list) else []
+        cached_at = _utc_now_iso()
+        cache.set(
+            cache_key,
+            {"offers": offers_list, "cached_at": cached_at},
+            PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
+        )
+        if return_metadata:
+            return {
+                "offers": offers_list,
+                "cached_at": cached_at,
+                "is_cached": False,
+            }
+        return offers_list
+
+    pre_cached_payload = cache.get(cache_key)
+    if pre_cached_payload is not None:
+        cached_offers, cached_at = _normalize_offers_cache_payload(pre_cached_payload)
+        if return_metadata:
+            return {
+                "offers": cached_offers,
+                "cached_at": cached_at or _utc_now_iso(),
+                "is_cached": True,
+            }
+        return cached_offers
+
     result = get_or_set_cache_with_lock(
         cache_key=cache_key,
         ttl_seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
-        loader=_loader,
+        loader=lambda: {"offers": _loader(), "cached_at": _utc_now_iso()},
         lock_ttl_seconds=30,
         wait_timeout_seconds=10.0,
         poll_interval_seconds=0.2,
     )
-    return result if isinstance(result, list) else []
+    offers, cached_at = _normalize_offers_cache_payload(result)
+    if return_metadata:
+        return {
+            "offers": offers,
+            "cached_at": cached_at or _utc_now_iso(),
+            "is_cached": False,
+        }
+    return offers
