@@ -81,6 +81,66 @@ def _parse_optional_float(raw_value) -> float | None:
     return parsed
 
 
+def _normalize_everef_fee_query_params(
+    raw_query: dict[str, object],
+) -> dict[str, object]:
+    """Normalize/guard optional query params before calling EVERef."""
+    normalized = dict(raw_query or {})
+
+    # Guard security to known enum values.
+    security = str(normalized.get("security", "") or "").strip().upper()
+    valid_security = {"HIGH_SEC", "LOW_SEC", "NULL_SEC"}
+    if security in valid_security:
+        normalized["security"] = security
+    else:
+        normalized.pop("security", None)
+
+    # If system_id is present, let EVERef derive security/cost indices from that
+    # system to avoid conflicting parameter combinations.
+    system_id = _parse_optional_int(normalized.get("system_id"))
+    if system_id:
+        normalized["system_id"] = system_id
+        normalized.pop("security", None)
+        for key in (
+            "manufacturing_cost",
+            "invention_cost",
+            "copying_cost",
+            "reaction_cost",
+            "researching_me_cost",
+            "researching_te_cost",
+        ):
+            normalized.pop(key, None)
+    else:
+        normalized.pop("system_id", None)
+
+    # Keep only positive rig IDs and remove duplicates while preserving order.
+    rig_ids = normalized.get("rig_id")
+    if isinstance(rig_ids, list):
+        seen: set[int] = set()
+        clean_rigs: list[int] = []
+        for value in rig_ids:
+            parsed = _parse_optional_int(value)
+            if not parsed or parsed in seen:
+                continue
+            seen.add(parsed)
+            clean_rigs.append(parsed)
+        if clean_rigs:
+            normalized["rig_id"] = clean_rigs
+        else:
+            normalized.pop("rig_id", None)
+
+    # Normalize alpha to literal strings expected by query passthrough.
+    alpha_raw = str(normalized.get("alpha", "") or "").strip().lower()
+    if alpha_raw in {"1", "true", "yes", "on"}:
+        normalized["alpha"] = "true"
+    elif alpha_raw in {"0", "false", "no", "off"}:
+        normalized["alpha"] = "false"
+    else:
+        normalized.pop("alpha", None)
+
+    return normalized
+
+
 @login_required
 @require_http_methods(["GET"])
 def menu_badge_count(request):
@@ -794,6 +854,8 @@ def craft_industry_fees(request):
             if safe_key in optional_query:
                 continue
             optional_query[safe_key] = safe_value
+
+    optional_query = _normalize_everef_fee_query_params(optional_query)
 
     response_jobs = []
     errors = []

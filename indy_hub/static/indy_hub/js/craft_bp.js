@@ -5091,6 +5091,197 @@ function getIndustryFeeTotalCost(context = null) {
     return Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.totalJobCost) || 0);
 }
 
+function getIndustryFeeProductNameMap() {
+    const map = new Map();
+    const payload = window.BLUEPRINT_DATA || {};
+
+    const addName = (typeId, rawName) => {
+        const numericTypeId = Number(typeId) || 0;
+        const name = String(rawName || '').trim();
+        if (!numericTypeId || !name || map.has(numericTypeId)) {
+            return;
+        }
+        map.set(numericTypeId, name);
+    };
+
+    addName(
+        payload.product_type_id || payload.productTypeId || 0,
+        payload.product_name || payload.productName || payload.bp_name || payload.name || ''
+    );
+
+    if (window.SimulationAPI && typeof window.SimulationAPI.getProductionCycles === 'function') {
+        const cycles = window.SimulationAPI.getProductionCycles() || [];
+        cycles.forEach((row) => {
+            addName(
+                row?.typeId || row?.type_id || 0,
+                row?.typeName || row?.type_name || row?.name || ''
+            );
+        });
+    }
+
+    document.querySelectorAll('#financialItemsBody tr[data-type-id]').forEach((row) => {
+        const typeId = Number(row.getAttribute('data-type-id')) || 0;
+        const nameEl = row.querySelector('.craft-planner-item-name');
+        const fallbackCell = row.querySelector('td');
+        const name = String(
+            (nameEl && nameEl.textContent) || (fallbackCell && fallbackCell.textContent) || ''
+        ).trim();
+        addName(typeId, name);
+    });
+
+    return map;
+}
+
+function renderIndustryFeeBreakdown(context = null) {
+    const sectionEl = document.getElementById('industryFeeBreakdownSection');
+    const statusEl = document.getElementById('industryFeeBreakdownStatus');
+    const bodyEl = document.getElementById('industryFeeBreakdownBody');
+    if (!sectionEl || !statusEl || !bodyEl) {
+        return;
+    }
+
+    const totalRunsEl = document.getElementById('industryFeeBreakdownTotalRuns');
+    const totalManufacturingEl = document.getElementById('industryFeeBreakdownTotalManufacturing');
+    const totalInventionEl = document.getElementById('industryFeeBreakdownTotalInvention');
+    const totalCopyingEl = document.getElementById('industryFeeBreakdownTotalCopying');
+    const totalReactionEl = document.getElementById('industryFeeBreakdownTotalReaction');
+    const totalOtherEl = document.getElementById('industryFeeBreakdownTotalOther');
+    const totalFeesEl = document.getElementById('industryFeeBreakdownTotalFees');
+
+    const resetTotals = () => {
+        if (totalRunsEl) totalRunsEl.textContent = '0';
+        if (totalManufacturingEl) totalManufacturingEl.textContent = formatPrice(0);
+        if (totalInventionEl) totalInventionEl.textContent = formatPrice(0);
+        if (totalCopyingEl) totalCopyingEl.textContent = formatPrice(0);
+        if (totalReactionEl) totalReactionEl.textContent = formatPrice(0);
+        if (totalOtherEl) totalOtherEl.textContent = formatPrice(0);
+        if (totalFeesEl) totalFeesEl.textContent = formatPrice(0);
+    };
+
+    const ctx = context || getCurrentIndustryFeeContext();
+    const enabled = Boolean(ctx?.feeConfig?.enabled);
+    const hasJobsRequested = Array.isArray(ctx?.jobs) && ctx.jobs.length > 0;
+    const isCurrent = isIndustryFeeEstimateCurrent(ctx);
+    const hasErrors = isCurrent
+        && Array.isArray(CRAFT_INDUSTRY_FEE_STATE.errors)
+        && CRAFT_INDUSTRY_FEE_STATE.errors.length > 0;
+    const rows = isCurrent && Array.isArray(CRAFT_INDUSTRY_FEE_STATE.jobs)
+        ? CRAFT_INDUSTRY_FEE_STATE.jobs
+        : [];
+
+    bodyEl.innerHTML = '';
+    resetTotals();
+
+    if (!enabled || !hasJobsRequested) {
+        sectionEl.classList.add('d-none');
+        statusEl.textContent = '';
+        return;
+    }
+
+    sectionEl.classList.remove('d-none');
+    if (!isCurrent) {
+        statusEl.textContent = CRAFT_INDUSTRY_FEE_STATE.loading
+            ? __('Calculating fees...')
+            : __('Fees are stale. Click "Calculate Fees".');
+        return;
+    }
+    if (hasErrors) {
+        statusEl.textContent = __('Fee lookup returned errors. Review logs and retry.');
+    } else {
+        statusEl.textContent = __('Itemized job installation fees from EVERef.');
+    }
+
+    if (rows.length === 0) {
+        return;
+    }
+
+    const nameMap = getIndustryFeeProductNameMap();
+    const knownKeys = new Set(['manufacturing', 'invention', 'copying', 'reaction']);
+    const toFee = (value) => Math.max(0, Number(value) || 0);
+
+    let totalRuns = 0;
+    let totalManufacturing = 0;
+    let totalInvention = 0;
+    let totalCopying = 0;
+    let totalReaction = 0;
+    let totalOther = 0;
+    let totalFees = 0;
+
+    const normalizedRows = rows
+        .map((row) => {
+            const productId = Number(row?.product_id) || 0;
+            const runs = Math.max(0, Math.ceil(Number(row?.runs) || 0));
+            const sections = (row?.section_job_costs && typeof row.section_job_costs === 'object')
+                ? row.section_job_costs
+                : {};
+            const manufacturing = toFee(sections.manufacturing);
+            const invention = toFee(sections.invention);
+            const copying = toFee(sections.copying);
+            const reaction = toFee(sections.reaction);
+            let other = 0;
+            Object.entries(sections).forEach(([key, value]) => {
+                if (knownKeys.has(String(key || '').toLowerCase())) {
+                    return;
+                }
+                other += toFee(value);
+            });
+            const total = toFee(row?.total_job_cost);
+            const typeName = nameMap.get(productId) || `${__('Type')} ${productId}`;
+            return {
+                productId,
+                typeName,
+                runs,
+                manufacturing,
+                invention,
+                copying,
+                reaction,
+                other,
+                total,
+            };
+        })
+        .filter((row) => row.productId > 0)
+        .sort((left, right) => {
+            if (right.total !== left.total) {
+                return right.total - left.total;
+            }
+            return left.typeName.localeCompare(right.typeName, undefined, { sensitivity: 'base' });
+        });
+
+    normalizedRows.forEach((row) => {
+        totalRuns += row.runs;
+        totalManufacturing += row.manufacturing;
+        totalInvention += row.invention;
+        totalCopying += row.copying;
+        totalReaction += row.reaction;
+        totalOther += row.other;
+        totalFees += row.total;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>
+                <div class="fw-semibold">${escapeHtml(row.typeName)}</div>
+                <div class="text-muted text-xs">Type ID ${row.productId}</div>
+            </td>
+            <td class="text-end">${formatInteger(row.runs)}</td>
+            <td class="text-end">${formatPrice(row.manufacturing)}</td>
+            <td class="text-end">${formatPrice(row.invention)}</td>
+            <td class="text-end">${formatPrice(row.copying)}</td>
+            <td class="text-end">${formatPrice(row.reaction)}</td>
+            <td class="text-end">${formatPrice(row.other)}</td>
+            <td class="text-end fw-semibold">${formatPrice(row.total)}</td>
+        `;
+        bodyEl.appendChild(tr);
+    });
+
+    if (totalRunsEl) totalRunsEl.textContent = formatInteger(totalRuns);
+    if (totalManufacturingEl) totalManufacturingEl.textContent = formatPrice(totalManufacturing);
+    if (totalInventionEl) totalInventionEl.textContent = formatPrice(totalInvention);
+    if (totalCopyingEl) totalCopyingEl.textContent = formatPrice(totalCopying);
+    if (totalReactionEl) totalReactionEl.textContent = formatPrice(totalReaction);
+    if (totalOtherEl) totalOtherEl.textContent = formatPrice(totalOther);
+    if (totalFeesEl) totalFeesEl.textContent = formatPrice(totalFees);
+}
+
 function syncIndustryFeeManualControls() {
     const button = document.getElementById('calculateIndustryFeesBtn');
     if (!button) {
@@ -5557,6 +5748,7 @@ function recalcFinancials() {
         heroUpdatedEl.setAttribute('title', now.toLocaleString());
     }
 
+    renderIndustryFeeBreakdown(industryFeeContext);
     syncIndustryFeeManualControls();
 }
 

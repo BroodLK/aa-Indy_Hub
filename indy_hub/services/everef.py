@@ -61,6 +61,25 @@ def fetch_industry_cost(
         if not isinstance(payload, dict):
             raise EVERefError("Unexpected payload format")
         return payload
+    except requests.HTTPError as exc:
+        status_code = getattr(exc.response, "status_code", None)
+        url = getattr(exc.response, "url", EVEREF_INDUSTRY_COST_URL)
+        body = ""
+        try:
+            body = str(getattr(exc.response, "text", "") or "").strip()
+        except Exception:
+            body = ""
+        body_preview = body[:600]
+        logger.warning(
+            "EVERef industry API request failed: status=%s url=%s body=%s",
+            status_code,
+            url,
+            body_preview or "<empty>",
+        )
+        detail = f"HTTP {status_code} for url: {url}"
+        if body_preview:
+            detail = f"{detail} body={body_preview}"
+        raise EVERefError(detail) from exc
     except requests.RequestException as exc:
         logger.warning("EVERef industry API request failed: %s", exc)
         raise EVERefError(str(exc)) from exc
