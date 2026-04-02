@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Standard Library
 import re
+from decimal import Decimal
 
 # Django
 from django.core.cache import cache
@@ -174,6 +175,61 @@ def _resolve_operation(resource: str, snake_name: str):
     return operation if callable(operation) else None
 
 
+def _coerce_openapi_value(value, *, _depth: int = 0):
+    if _depth > 8:
+        return None
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _coerce_openapi_value(item, _depth=_depth + 1)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [
+            _coerce_openapi_value(item, _depth=_depth + 1)
+            for item in value
+        ]
+
+    for attr in ("model_dump", "dict", "to_dict"):
+        converter = getattr(value, attr, None)
+        if callable(converter):
+            try:
+                converted = converter()
+            except Exception:
+                converted = None
+            if converted is not None:
+                return _coerce_openapi_value(converted, _depth=_depth + 1)
+
+    object_dict = getattr(value, "__dict__", None)
+    if isinstance(object_dict, dict) and object_dict:
+        return {
+            str(key): _coerce_openapi_value(item, _depth=_depth + 1)
+            for key, item in object_dict.items()
+            if not str(key).startswith("_")
+        }
+
+    return str(value)
+
+
+def _normalize_openapi_rows(payload) -> list[dict]:
+    base_payload = payload
+    if isinstance(payload, tuple) and len(payload) > 0:
+        base_payload = payload[0]
+
+    coerced = _coerce_openapi_value(base_payload)
+    if not isinstance(coerced, list):
+        return []
+
+    rows: list[dict] = []
+    for item in coerced:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
 def _fetch_esi_industry_system_rows() -> list[dict]:
     cache_key = "indy_hub:craft_env:esi_industry_systems:v2"
 
@@ -193,7 +249,10 @@ def _fetch_esi_industry_system_rows() -> list[dict]:
             )
             payload = []
 
-        return payload if isinstance(payload, list) else []
+        rows = _normalize_openapi_rows(payload)
+        if rows:
+            return rows
+        return []
 
     rows = get_or_set_cache_with_lock(
         cache_key=cache_key,
@@ -225,7 +284,10 @@ def _fetch_esi_industry_facility_rows() -> list[dict]:
             )
             payload = []
 
-        return payload if isinstance(payload, list) else []
+        rows = _normalize_openapi_rows(payload)
+        if rows:
+            return rows
+        return []
 
     rows = get_or_set_cache_with_lock(
         cache_key=cache_key,
