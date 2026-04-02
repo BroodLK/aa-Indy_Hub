@@ -5560,6 +5560,32 @@ function formatNumber(num) {
 function recalcFinancials() {
     let costTotal = 0;
     let revTotal = 0;
+    const ownedInputEl = document.getElementById('ownedMaterialsInput');
+    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
+    const ownedLookup = buildOwnedTypeLookupFromPayload(
+        ownedData.byName,
+        ownedData.labelsByName
+    );
+    const remainingOwnedByType = new Map(ownedLookup.byType || []);
+    const remainingOwnedByName = new Map();
+    ownedData.byName.forEach((qty, normalizedName) => {
+        if (!normalizedName) {
+            return;
+        }
+        if (ownedLookup.matchedNames && ownedLookup.matchedNames.has(normalizedName)) {
+            return;
+        }
+        remainingOwnedByName.set(normalizedName, Math.max(0, Number(qty) || 0));
+    });
+
+    const resolveRowTypeName = (row) => {
+        const badge = row.querySelector('.craft-planner-item-name');
+        if (badge && badge.textContent) {
+            return String(badge.textContent).trim();
+        }
+        const firstCell = row.querySelector('td');
+        return String(firstCell && firstCell.textContent ? firstCell.textContent : '').trim();
+    };
 
     document.querySelectorAll('#financialItemsBody tr').forEach(tr => {
         const qtyCell = tr.querySelector('[data-qty]');
@@ -5584,6 +5610,71 @@ function recalcFinancials() {
 
         if (costInput) {
             const typeId = Number(tr.getAttribute('data-type-id')) || 0;
+            const rowKind = String(tr.getAttribute('data-row-kind') || 'material').toLowerCase();
+            let requiredQty = qty;
+            let payableQty = qty;
+            let ownedApplied = 0;
+
+            const hasPresetPay = qtyCell && qtyCell.dataset && qtyCell.dataset.qtyPay !== undefined;
+            const hasPresetRequired = qtyCell && qtyCell.dataset && qtyCell.dataset.qtyRequired !== undefined;
+            if (hasPresetPay && hasPresetRequired) {
+                const presetRequired = Number(qtyCell.dataset.qtyRequired);
+                const presetPayable = Number(qtyCell.dataset.qtyPay);
+                const presetOwned = Number(qtyCell.dataset.qtyOwned || 0);
+                requiredQty = Number.isFinite(presetRequired)
+                    ? Math.max(0, Math.ceil(presetRequired))
+                    : qty;
+                payableQty = Number.isFinite(presetPayable)
+                    ? Math.max(0, Math.ceil(presetPayable))
+                    : qty;
+                ownedApplied = Number.isFinite(presetOwned)
+                    ? Math.max(0, Math.ceil(presetOwned))
+                    : Math.max(0, requiredQty - payableQty);
+            } else if (rowKind !== 'bpc') {
+                const availableOwnedByType = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
+                const coveredByType = Math.min(requiredQty, availableOwnedByType);
+                if (coveredByType > 0) {
+                    remainingOwnedByType.set(typeId, availableOwnedByType - coveredByType);
+                    ownedApplied += coveredByType;
+                }
+
+                const remainingRequiredAfterType = Math.max(0, requiredQty - ownedApplied);
+                if (remainingRequiredAfterType > 0) {
+                    const normalizedRowName = normalizeOwnedMaterialName(resolveRowTypeName(tr));
+                    if (normalizedRowName) {
+                        const availableOwnedByName = Math.max(
+                            0,
+                            Number(remainingOwnedByName.get(normalizedRowName) || 0)
+                        );
+                        const coveredByName = Math.min(remainingRequiredAfterType, availableOwnedByName);
+                        if (coveredByName > 0) {
+                            remainingOwnedByName.set(normalizedRowName, availableOwnedByName - coveredByName);
+                            ownedApplied += coveredByName;
+                        }
+                    }
+                }
+                payableQty = Math.max(0, requiredQty - ownedApplied);
+            }
+
+            let ownedNoteEl = tr.querySelector('.financial-owned-note');
+            if (!ownedNoteEl) {
+                const qtyCellContainer = qtyCell.closest('td');
+                if (qtyCellContainer) {
+                    ownedNoteEl = document.createElement('div');
+                    ownedNoteEl.className = 'text-muted text-xs mt-1 financial-owned-note d-none';
+                    qtyCellContainer.appendChild(ownedNoteEl);
+                }
+            }
+            if (ownedNoteEl) {
+                if (ownedApplied > 0 && rowKind !== 'bpc') {
+                    ownedNoteEl.classList.remove('d-none');
+                    ownedNoteEl.textContent = `${__('Owned')}: ${formatInteger(ownedApplied)} / ${__('Need')}: ${formatInteger(requiredQty)}`;
+                } else {
+                    ownedNoteEl.classList.add('d-none');
+                    ownedNoteEl.textContent = '';
+                }
+            }
+
             let unitCost = parseFloat(costInput.value) || 0;
 
             // If real price is 0, fall back to fuzzwork.
@@ -5597,7 +5688,7 @@ function recalcFinancials() {
                 }
             }
 
-            const cost = unitCost * qty;
+            const cost = unitCost * payableQty;
             const totalCostEl = tr.querySelector('.total-cost');
             if (totalCostEl) {
                 totalCostEl.textContent = formatPrice(cost);
