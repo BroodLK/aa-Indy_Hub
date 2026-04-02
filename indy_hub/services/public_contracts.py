@@ -23,9 +23,11 @@ logger = get_extension_logger(__name__)
 ESI_DATASOURCE = "tranquility"
 THE_FORGE_REGION_ID = 10000002
 JITA_STATION_ID = 60003760
+JITA_SYSTEM_ID = 30000142
 PUBLIC_CONTRACTS_ROUTE_CACHE_TTL_SECONDS = 1800
 PUBLIC_CONTRACT_ITEMS_ROUTE_CACHE_TTL_SECONDS = 1800
 PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS = 1800
+PUBLIC_LOCATION_FILTER_CACHE_TTL_SECONDS = 1800
 
 
 class PublicContractsError(Exception):
@@ -34,6 +36,19 @@ class PublicContractsError(Exception):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_esi_datetime(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _format_openapi_exception_details(exc: Exception) -> str:
@@ -425,7 +440,65 @@ def _row_value(row: dict, *keys: str):
 def _is_jita_contract(contract: dict) -> bool:
     start_location_id = int(_row_value(contract, "start_location_id") or 0)
     end_location_id = int(_row_value(contract, "end_location_id") or 0)
-    return start_location_id == JITA_STATION_ID or end_location_id == JITA_STATION_ID
+    return _is_jita_location_id(start_location_id) or _is_jita_location_id(
+        end_location_id
+    )
+
+
+def _is_jita_location_id(location_id: int) -> bool:
+    try:
+        location_id = int(location_id or 0)
+    except (TypeError, ValueError):
+        return False
+    if location_id <= 0:
+        return False
+    if location_id == JITA_STATION_ID:
+        return True
+
+    cache_key = f"indy_hub:public_contracts:jita_location:v1:{location_id}"
+    cached = cache.get(cache_key)
+    if isinstance(cached, bool):
+        return cached
+
+    in_jita = False
+
+    # NPC station ids can be resolved via /universe/stations/{station_id}
+    if location_id < 100_000_000:
+        station_operation = _resolve_operation(
+            "Universe",
+            "get_universe_stations_station_id",
+        )
+        if callable(station_operation):
+            try:
+                payload = _run_openapi_operation(
+                    station_operation,
+                    prefer_disable_etag=True,
+                    station_id=location_id,
+                    datasource=ESI_DATASOURCE,
+                )
+                station_row = _coerce_openapi_value(payload)
+                if isinstance(station_row, dict):
+                    station_system_id = int(station_row.get("system_id") or 0)
+                    station_name = str(station_row.get("name") or "").strip().lower()
+                    in_jita = station_system_id == JITA_SYSTEM_ID or "jita" in station_name
+            except Exception:
+                in_jita = False
+    elif location_id <= 2_147_483_647:
+        # Public universe names endpoint can resolve many non-station IDs.
+        try:
+            name_map = shared_client.resolve_ids_to_names([location_id])
+            resolved_name = str(name_map.get(location_id) or "").strip().lower()
+            if resolved_name:
+                in_jita = "jita" in resolved_name
+        except Exception:
+            in_jita = False
+    else:
+        # Upwell structure IDs are not publicly resolvable without auth in many cases.
+        # We allow them here so we don't drop valid Jita structure contracts.
+        in_jita = True
+
+    cache.set(cache_key, bool(in_jita), PUBLIC_LOCATION_FILTER_CACHE_TTL_SECONDS)
+    return bool(in_jita)
 
 
 def _extract_price(contract: dict) -> Decimal:
@@ -469,8 +542,8 @@ def fetch_jita_public_bpc_contracts(
     *,
     blueprint_type_id: int,
     blueprint_name: str,
-    max_pages: int = 10,
-    max_candidates: int = 160,
+    max_pages: int = 50,
+    max_candidates: int = 1000,
     timeout: int = 8,
     force_refresh: bool = False,
     return_metadata: bool = False,
@@ -512,9 +585,11 @@ def fetch_jita_public_bpc_contracts(
                 "scanned": 0,
                 "type_filtered": 0,
                 "status_filtered": 0,
+                "expired_filtered": 0,
                 "location_filtered": 0,
                 "title_filtered": 0,
             }
+            now_utc = datetime.now(timezone.utc)
             for page in range(1, max(1, pages) + 1):
                 payload = _fetch_public_contract_page_cached(
                     get_public_contracts=get_public_contracts,
@@ -538,6 +613,12 @@ def fetch_jita_public_bpc_contracts(
                     status = str(_row_value(contract, "status") or "").strip().lower()
                     if status and status != "outstanding":
                         stats["status_filtered"] += 1
+                        continue
+                    expires_at_dt = _parse_esi_datetime(
+                        _row_value(contract, "date_expired")
+                    )
+                    if expires_at_dt is not None and expires_at_dt <= now_utc:
+                        stats["expired_filtered"] += 1
                         continue
                     if not _is_jita_contract(contract):
                         stats["location_filtered"] += 1
@@ -646,7 +727,7 @@ def fetch_jita_public_bpc_contracts(
             (
                 "Public BPC contracts lookup bp=%s name='%s' "
                 "scanned=%s candidates=%s checked=%s matched_contracts=%s matched_rows=%s offers=%s fallback_scan=%s "
-                "filtered(type=%s status=%s location=%s title=%s)"
+                "filtered(type=%s status=%s expired=%s location=%s title=%s)"
             ),
             blueprint_type_id,
             blueprint_name,
@@ -659,6 +740,7 @@ def fetch_jita_public_bpc_contracts(
             used_fallback_candidate_scan,
             int(candidate_stats.get("type_filtered") or 0),
             int(candidate_stats.get("status_filtered") or 0),
+            int(candidate_stats.get("expired_filtered") or 0),
             int(candidate_stats.get("location_filtered") or 0),
             int(candidate_stats.get("title_filtered") or 0),
         )
