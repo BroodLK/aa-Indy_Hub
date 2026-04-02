@@ -3631,6 +3631,18 @@ function initializeFinancialCalculations() {
     if (computeButton) {
         computeButton.addEventListener('click', computeNeededPurchases);
     }
+    const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
+    if (ownedMaterialsInput && ownedMaterialsInput.dataset.financialBound !== 'true') {
+        const handleOwnedInputChange = () => {
+            CRAFT_COMPUTED_NEEDED_ROWS = null;
+            if (typeof updateFinancialTabFromState === 'function') {
+                updateFinancialTabFromState();
+            }
+        };
+        ownedMaterialsInput.addEventListener('input', handleOwnedInputChange);
+        ownedMaterialsInput.addEventListener('change', handleOwnedInputChange);
+        ownedMaterialsInput.dataset.financialBound = 'true';
+    }
 
     // Initialize Configure tab change handlers (ME/TE/BP usage/build environment)
     initializeMETEHandlers();
@@ -6025,6 +6037,10 @@ function buildFinancialRow(item, pricesMap) {
     const qtyBadgeClass = isBpc ? 'bg-warning text-dark' : 'bg-primary text-white';
     const fixedUnitPrice = Number(item.unitPrice);
     const hasFixedUnitPrice = Number.isFinite(fixedUnitPrice) && fixedUnitPrice > 0;
+    const requiredQty = Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.quantity) || 0));
+    const ownedQty = Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
+    const payableQty = Math.max(0, Math.ceil(Number(item.quantity) || 0));
+    const showOwnedNote = !isBpc && ownedQty > 0;
 
     const row = document.createElement('tr');
     row.setAttribute('data-type-id', String(item.typeId));
@@ -6042,7 +6058,10 @@ function buildFinancialRow(item, pricesMap) {
             </div>
         </td>
         <td class="text-end">
-            <span class="badge ${qtyBadgeClass}" data-qty="${item.quantity}">${formatInteger(item.quantity)}</span>
+            <span class="badge ${qtyBadgeClass}" data-qty="${payableQty}" data-qty-pay="${payableQty}" data-qty-required="${requiredQty}" data-qty-owned="${ownedQty}">${formatInteger(payableQty)}</span>
+            <div class="text-muted text-xs mt-1 financial-owned-note ${showOwnedNote ? '' : 'd-none'}">
+                ${escapeHtml(__('Owned'))}: ${formatInteger(ownedQty)} / ${escapeHtml(__('Need'))}: ${formatInteger(requiredQty)}
+            </div>
         </td>
         <td class="text-end">
             <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light" data-type-id="${item.typeId}" value="0" readonly>
@@ -6113,6 +6132,9 @@ function updateFinancialRow(row, item) {
     const itemTypeName = String(item.typeName || item.name || item.type_id || item.typeId || '');
     const fixedUnitPrice = Number(item.unitPrice);
     const hasFixedUnitPrice = Number.isFinite(fixedUnitPrice) && fixedUnitPrice > 0;
+    const requiredQty = Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.quantity) || 0));
+    const ownedQty = Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
+    const payableQty = Math.max(0, Math.ceil(Number(item.quantity) || 0));
 
     row.setAttribute('data-type-id', String(item.typeId));
     row.setAttribute('data-row-kind', rowKind);
@@ -6143,14 +6165,32 @@ function updateFinancialRow(row, item) {
 
     const qtyBadge = row.querySelector('span.badge[data-qty]');
     if (qtyBadge) {
-        qtyBadge.dataset.qty = String(item.quantity);
-        qtyBadge.textContent = formatInteger(item.quantity);
+        qtyBadge.dataset.qty = String(payableQty);
+        qtyBadge.dataset.qtyPay = String(payableQty);
+        qtyBadge.dataset.qtyRequired = String(requiredQty);
+        qtyBadge.dataset.qtyOwned = String(ownedQty);
+        qtyBadge.textContent = formatInteger(payableQty);
         qtyBadge.classList.remove('bg-primary', 'text-white', 'bg-warning', 'text-dark');
         if (isBpc) {
             qtyBadge.classList.add('bg-warning', 'text-dark');
         } else {
             qtyBadge.classList.add('bg-primary', 'text-white');
         }
+    }
+
+    let ownedNoteEl = row.querySelector('.financial-owned-note');
+    if (!ownedNoteEl) {
+        const qtyCell = qtyBadge ? qtyBadge.closest('td') : null;
+        if (qtyCell) {
+            ownedNoteEl = document.createElement('div');
+            ownedNoteEl.className = 'text-muted text-xs mt-1 financial-owned-note d-none';
+            qtyCell.appendChild(ownedNoteEl);
+        }
+    }
+    if (ownedNoteEl) {
+        const showOwnedNote = !isBpc && ownedQty > 0;
+        ownedNoteEl.classList.toggle('d-none', !showOwnedNote);
+        ownedNoteEl.textContent = `${__('Owned')}: ${formatInteger(ownedQty)} / ${__('Need')}: ${formatInteger(requiredQty)}`;
     }
 
     const realInput = row.querySelector('.real-price');
@@ -7778,8 +7818,38 @@ function updateFinancialTabFromState() {
         }
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
-    const selectedBpcRows = collectSelectedBlueprintContractRows();
-    const sortedItems = [...selectedBpcRows, ...sortedMaterials];
+
+    const ownedInputEl = document.getElementById('ownedMaterialsInput');
+    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
+    const ownedLookup = buildOwnedTypeLookupFromPayload(
+        ownedData.byName,
+        ownedData.labelsByName
+    );
+    const remainingOwnedByType = new Map(ownedLookup.byType || []);
+
+    const materialsWithOwnedCoverage = sortedMaterials.map((item) => {
+        const typeId = Number(item.typeId || item.type_id) || 0;
+        const requiredQty = Math.max(0, Math.ceil(Number(item.quantity || item.qty || 0) || 0));
+        const availableOwned = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
+        const ownedQty = Math.min(requiredQty, availableOwned);
+        if (ownedQty > 0) {
+            remainingOwnedByType.set(typeId, availableOwned - ownedQty);
+        }
+        const payableQty = Math.max(0, requiredQty - ownedQty);
+        return {
+            ...item,
+            requiredQuantity: requiredQty,
+            ownedQuantity: ownedQty,
+            quantity: payableQty,
+        };
+    });
+
+    const selectedBpcRows = collectSelectedBlueprintContractRows().map((row) => ({
+        ...row,
+        requiredQuantity: Math.max(0, Math.ceil(Number(row.quantity) || 0)),
+        ownedQuantity: 0,
+    }));
+    const sortedItems = [...selectedBpcRows, ...materialsWithOwnedCoverage];
 
     const existingRows = new Map();
     tableBody.querySelectorAll('tr[data-type-id]').forEach(row => {
