@@ -35,6 +35,7 @@ from .tasks.notifications import (  # noqa: F401
     dispatch_job_notification_digests,
     notify_recently_completed_jobs,
 )
+from .tasks.public_contracts import sync_public_jita_contracts  # noqa: F401
 from .tasks.user import (  # noqa: F401
     update_character_roles_for_character,
     update_user_roles_snapshots,

@@ -4155,6 +4155,97 @@ class ESIContractItem(models.Model):
         return f"Contract {self.contract_id} - Item {self.type_id} x{self.quantity}"
 
 
+class PublicJitaContract(models.Model):
+    """Cached public contracts scoped to Jita for blueprint-copy discovery."""
+
+    contract_id = models.BigIntegerField(primary_key=True, unique=True)
+    region_id = models.IntegerField(default=10000002, db_index=True)
+
+    contract_type = models.CharField(max_length=50, db_index=True, blank=True)
+    status = models.CharField(max_length=50, db_index=True, blank=True)
+    title = models.TextField(blank=True)
+
+    issuer_id = models.BigIntegerField(default=0, db_index=True)
+    issuer_corporation_id = models.BigIntegerField(default=0)
+    for_corporation = models.BooleanField(default=False)
+
+    start_location_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    end_location_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    is_jita = models.BooleanField(default=False, db_index=True)
+
+    price = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    reward = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    collateral = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+    buyout = models.DecimalField(max_digits=20, decimal_places=2, default=0)
+
+    date_issued = models.DateTimeField(null=True, blank=True, db_index=True)
+    date_expired = models.DateTimeField(null=True, blank=True, db_index=True)
+
+    is_active = models.BooleanField(default=True, db_index=True)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_synced = models.DateTimeField(auto_now=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Public Jita Contract")
+        verbose_name_plural = _("Public Jita Contracts")
+        default_permissions = ()
+        ordering = ["-date_issued", "-contract_id"]
+        indexes = [
+            models.Index(fields=["is_active", "date_expired"]),
+            models.Index(fields=["region_id", "is_jita", "is_active"]),
+            models.Index(fields=["contract_type", "status", "is_jita"]),
+            models.Index(fields=["last_seen_at"]),
+            models.Index(fields=["-date_issued"]),
+        ]
+
+    def __str__(self):
+        return f"Public contract {self.contract_id} ({self.contract_type or 'unknown'})"
+
+
+class PublicJitaContractItem(models.Model):
+    """Cached items for PublicJitaContract rows."""
+
+    contract = models.ForeignKey(
+        PublicJitaContract,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    record_id = models.BigIntegerField()
+    type_id = models.IntegerField(db_index=True)
+
+    quantity = models.BigIntegerField(default=0)
+    runs = models.IntegerField(default=0)
+
+    is_included = models.BooleanField(default=False, db_index=True)
+    is_blueprint_copy = models.BooleanField(default=False, db_index=True)
+    is_singleton = models.BooleanField(default=False)
+    material_efficiency = models.IntegerField(default=0)
+    time_efficiency = models.IntegerField(default=0)
+
+    last_synced = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Public Jita Contract Item")
+        verbose_name_plural = _("Public Jita Contract Items")
+        default_permissions = ()
+        unique_together = [["contract", "record_id"]]
+        indexes = [
+            models.Index(fields=["contract", "type_id"]),
+            models.Index(
+                fields=[
+                    "type_id",
+                    "is_included",
+                    "is_blueprint_copy",
+                ]
+            ),
+        ]
+
+    def __str__(self):
+        return f"Public contract {self.contract_id} item {self.type_id} x{self.quantity}"
+
+
 class SdeIndustryActivityMaterial(models.Model):
     """Industry materials for SDE blueprints (manufacturing/reactions)."""
 

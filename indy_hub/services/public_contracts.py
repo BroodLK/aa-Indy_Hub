@@ -26,7 +26,7 @@ JITA_STATION_ID = 60003760
 JITA_SYSTEM_ID = 30000142
 PUBLIC_CONTRACTS_ROUTE_CACHE_TTL_SECONDS = 1800
 PUBLIC_CONTRACT_ITEMS_ROUTE_CACHE_TTL_SECONDS = 1800
-PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS = 1800
+PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS = 3600
 PUBLIC_LOCATION_FILTER_CACHE_TTL_SECONDS = 1800
 
 
@@ -253,6 +253,10 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
                 return _invoke(attempt_kwargs, disable_etag=True)
             return _invoke(attempt_kwargs)
         except Exception as exc:
+            if isinstance(exc, ValueError) or "ResponseDecodingError" in type(exc).__name__:
+                raise PublicContractsError(
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
             status_code = getattr(exc, "status_code", None)
             if status_code == 404:
                 return None
@@ -483,7 +487,7 @@ def _is_jita_location_id(location_id: int) -> bool:
                     in_jita = station_system_id == JITA_SYSTEM_ID or "jita" in station_name
             except Exception:
                 in_jita = False
-    elif location_id <= 2_147_483_647:
+    elif location_id > 0:
         # Public universe names endpoint can resolve many non-station IDs.
         try:
             name_map = shared_client.resolve_ids_to_names([location_id])
@@ -492,10 +496,6 @@ def _is_jita_location_id(location_id: int) -> bool:
                 in_jita = "jita" in resolved_name
         except Exception:
             in_jita = False
-    else:
-        # Upwell structure IDs are not publicly resolvable without auth in many cases.
-        # We allow them here so we don't drop valid Jita structure contracts.
-        in_jita = True
 
     cache.set(cache_key, bool(in_jita), PUBLIC_LOCATION_FILTER_CACHE_TTL_SECONDS)
     return bool(in_jita)
@@ -542,8 +542,8 @@ def fetch_jita_public_bpc_contracts(
     *,
     blueprint_type_id: int,
     blueprint_name: str,
-    max_pages: int = 50,
-    max_candidates: int = 1000,
+    max_pages: int = 12,
+    max_candidates: int = 220,
     timeout: int = 8,
     force_refresh: bool = False,
     return_metadata: bool = False,
@@ -662,9 +662,15 @@ def fetch_jita_public_bpc_contracts(
 
         offers: list[dict] = []
         checked_contracts = 0
+        checked_contracts_limit = min(
+            max(40, int(max_candidates)),
+            260,
+        )
         matched_contracts = 0
         matched_item_rows = 0
         for contract in candidates:
+            if checked_contracts >= checked_contracts_limit:
+                break
             contract_id = int(_row_value(contract, "contract_id") or 0)
             if not contract_id:
                 continue
@@ -726,7 +732,7 @@ def fetch_jita_public_bpc_contracts(
         logger.info(
             (
                 "Public BPC contracts lookup bp=%s name='%s' "
-                "scanned=%s candidates=%s checked=%s matched_contracts=%s matched_rows=%s offers=%s fallback_scan=%s "
+                "scanned=%s candidates=%s checked=%s/%s matched_contracts=%s matched_rows=%s offers=%s fallback_scan=%s "
                 "filtered(type=%s status=%s expired=%s location=%s title=%s)"
             ),
             blueprint_type_id,
@@ -734,6 +740,7 @@ def fetch_jita_public_bpc_contracts(
             int(candidate_stats.get("scanned") or 0),
             len(candidates),
             checked_contracts,
+            checked_contracts_limit,
             matched_contracts,
             matched_item_rows,
             len(offers),

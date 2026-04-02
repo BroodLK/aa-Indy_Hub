@@ -47,6 +47,12 @@ INDY_HUB_BEAT_SCHEDULE = {
         "options": {"priority": 7},
         "apply_offset": True,
     },
+    "indy-hub-sync-public-jita-contracts": {
+        "task": "indy_hub.tasks.public_contracts.sync_public_jita_contracts",
+        "schedule": crontab(minute=12, hour="*"),  # Hourly
+        "options": {"priority": 6},
+        "apply_offset": True,
+    },
     # Buyback combined cycle: sync -> validate -> check completed
     "indy-hub-material-exchange-cycle": {
         "task": "indy_hub.tasks.material_exchange_contracts.run_material_exchange_cycle",

@@ -5,7 +5,6 @@ These views handle API calls, external data fetching, and service integrations.
 """
 
 # Standard Library
-from datetime import datetime as dt_datetime, timedelta, timezone as dt_timezone
 import json
 from decimal import Decimal
 from math import ceil
@@ -34,10 +33,10 @@ from ..models import (
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_type_name
 from ..utils.menu_badge import compute_menu_badge_count
-from ..services.public_contracts import (
-    PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
-    PublicContractsError,
-    fetch_jita_public_bpc_contracts,
+from ..services.public_contracts_store import (
+    get_public_jita_bpc_offers,
+    get_public_jita_contract_cache_meta,
+    sync_public_jita_contract_cache,
 )
 from ..services.everef import (
     EVERefError,
@@ -525,55 +524,60 @@ def craft_bpc_contracts(request):
         "yes",
     }
 
+    sync_error = ""
+    sync_locked = False
+    if force_refresh:
+        try:
+            sync_result = sync_public_jita_contract_cache(force=True)
+            skip_reason = str(sync_result.get("skipped") or "")
+            if skip_reason in {"locked", "rate_limited"}:
+                sync_locked = True
+            elif not bool(sync_result.get("ok")):
+                sync_error = str(sync_result.get("error") or "sync_failed")[:220]
+        except Exception as exc:
+            sync_error = str(exc)[:220]
+            logger.warning("Unable to force-sync public Jita contract cache: %s", exc)
+
+    cache_meta = get_public_jita_contract_cache_meta()
+    if not str(cache_meta.get("cached_at") or "").strip():
+        try:
+            sync_result = sync_public_jita_contract_cache(force=False)
+            skip_reason = str(sync_result.get("skipped") or "")
+            if skip_reason in {"locked", "rate_limited"}:
+                sync_locked = True
+            elif not bool(sync_result.get("ok")):
+                sync_error = str(sync_result.get("error") or "sync_failed")[:220]
+        except Exception as exc:
+            sync_error = str(exc)[:220]
+            logger.warning("Unable to warm public Jita contract cache: %s", exc)
+        cache_meta = get_public_jita_contract_cache_meta()
+
     contracts_by_blueprint: dict[str, list[dict]] = {}
     failures: dict[str, str] = {}
-    cached_at_values: list[str] = []
-    request_cache_hit = not force_refresh
+
     for blueprint_type_id in parsed_ids:
         try:
-            fetch_result = fetch_jita_public_bpc_contracts(
+            offers = get_public_jita_bpc_offers(
                 blueprint_type_id=blueprint_type_id,
-                blueprint_name=get_type_name(blueprint_type_id),
-                force_refresh=force_refresh,
-                return_metadata=True,
+                max_offers=500,
             )
-            if isinstance(fetch_result, dict):
-                offers = fetch_result.get("offers")
-                if not isinstance(offers, list):
-                    offers = []
-                cached_at = str(fetch_result.get("cached_at") or "").strip()
-                if cached_at:
-                    cached_at_values.append(cached_at)
-                if not bool(fetch_result.get("is_cached")):
-                    request_cache_hit = False
-            else:
-                offers = fetch_result if isinstance(fetch_result, list) else []
-                request_cache_hit = False
-        except PublicContractsError as exc:
+        except Exception as exc:
             logger.warning(
-                "Unable to fetch public contracts for blueprint %s: %s",
+                "Unable to fetch DB-cached public contracts for blueprint %s: %s",
                 blueprint_type_id,
                 exc,
             )
             offers = []
             failures[str(blueprint_type_id)] = str(exc)[:220]
-            request_cache_hit = False
         contracts_by_blueprint[str(blueprint_type_id)] = offers
 
-    cached_at_dt = timezone.now()
-    if cached_at_values:
-        parsed_candidates = []
-        for value in cached_at_values:
-            try:
-                parsed_dt = dt_datetime.fromisoformat(value.replace("Z", "+00:00"))
-            except ValueError:
-                continue
-            if timezone.is_naive(parsed_dt):
-                parsed_dt = timezone.make_aware(parsed_dt, timezone=dt_timezone.utc)
-            parsed_candidates.append(parsed_dt)
-        if parsed_candidates:
-            cached_at_dt = min(parsed_candidates)
-    expires_at_dt = cached_at_dt + timedelta(seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS)
+    active_contracts = int(cache_meta.get("active_contracts") or 0)
+    if sync_error and active_contracts <= 0:
+        for blueprint_type_id in parsed_ids:
+            failures.setdefault(str(blueprint_type_id), sync_error)
+    elif sync_locked and active_contracts <= 0:
+        for blueprint_type_id in parsed_ids:
+            failures.setdefault(str(blueprint_type_id), "sync_in_progress")
 
     logger.info(
         "craft_bpc_contracts user=%s requested=%s force=%s failures=%s",
@@ -587,11 +591,11 @@ def craft_bpc_contracts(request):
         {
             "contracts_by_blueprint": contracts_by_blueprint,
             "errors": failures,
-            "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
-            "cached_at": cached_at_dt.isoformat(),
-            "expires_at": expires_at_dt.isoformat(),
+            "cache_ttl_seconds": int(cache_meta.get("cache_ttl_seconds") or 3600),
+            "cached_at": str(cache_meta.get("cached_at") or ""),
+            "expires_at": str(cache_meta.get("expires_at") or ""),
             "fetched_at": timezone.now().isoformat(),
-            "is_cached": bool(request_cache_hit and not failures),
+            "is_cached": bool(cache_meta.get("is_cached")),
         },
         status=200,
     )
