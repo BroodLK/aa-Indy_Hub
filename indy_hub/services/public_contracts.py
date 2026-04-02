@@ -253,7 +253,13 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
                 return _invoke(attempt_kwargs, disable_etag=True)
             return _invoke(attempt_kwargs)
         except Exception as exc:
-            if isinstance(exc, ValueError) or "ResponseDecodingError" in type(exc).__name__:
+            if isinstance(exc, ValueError):
+                # Some django-esi/openapi variants reject datasource as an unknown query
+                # parameter for public routes. Do not fail fast; continue to fallback
+                # attempts (notably the same call without datasource).
+                last_error = exc
+                continue
+            if "ResponseDecodingError" in type(exc).__name__:
                 raise PublicContractsError(
                     f"{type(exc).__name__}: {exc}"
                 ) from exc
