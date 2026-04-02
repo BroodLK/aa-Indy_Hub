@@ -324,31 +324,50 @@ def _normalize_title(value: object) -> str:
     return str(value or "").strip().lower()
 
 
+def _snake_to_camel(name: str) -> str:
+    parts = str(name or "").split("_")
+    if not parts:
+        return str(name or "")
+    return parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+
+def _row_value(row: dict, *keys: str):
+    if not isinstance(row, dict):
+        return None
+    for key in keys:
+        if key in row:
+            return row.get(key)
+        camel_key = _snake_to_camel(key)
+        if camel_key in row:
+            return row.get(camel_key)
+    return None
+
+
 def _is_jita_contract(contract: dict) -> bool:
-    start_location_id = int(contract.get("start_location_id") or 0)
-    end_location_id = int(contract.get("end_location_id") or 0)
+    start_location_id = int(_row_value(contract, "start_location_id") or 0)
+    end_location_id = int(_row_value(contract, "end_location_id") or 0)
     return start_location_id == JITA_STATION_ID or end_location_id == JITA_STATION_ID
 
 
 def _extract_price(contract: dict) -> Decimal:
-    price = Decimal(str(contract.get("price") or 0))
-    reward = Decimal(str(contract.get("reward") or 0))
+    price = Decimal(str(_row_value(contract, "price") or 0))
+    reward = Decimal(str(_row_value(contract, "reward") or 0))
     return price + reward
 
 
 def _extract_matching_bpc_items(items: list[dict], *, blueprint_type_id: int) -> list[dict]:
     matches: list[dict] = []
     for item in items:
-        if int(item.get("type_id") or 0) != blueprint_type_id:
+        if int(_row_value(item, "type_id") or 0) != blueprint_type_id:
             continue
-        if not bool(item.get("is_included", False)):
+        if not bool(_row_value(item, "is_included") or False):
             continue
 
-        runs = int(item.get("runs") or 0)
-        copies = max(1, int(item.get("quantity") or 1))
-        me = int(item.get("material_efficiency") or 0)
-        te = int(item.get("time_efficiency") or 0)
-        is_copy = bool(item.get("is_blueprint_copy", False)) or runs > 0
+        runs = int(_row_value(item, "runs") or 0)
+        copies = max(1, int(_row_value(item, "quantity") or 1))
+        me = int(_row_value(item, "material_efficiency") or 0)
+        te = int(_row_value(item, "time_efficiency") or 0)
+        is_copy = bool(_row_value(item, "is_blueprint_copy") or False) or runs > 0
         if not is_copy:
             continue
 
@@ -371,8 +390,8 @@ def fetch_jita_public_bpc_contracts(
     *,
     blueprint_type_id: int,
     blueprint_name: str,
-    max_pages: int = 8,
-    max_candidates: int = 120,
+    max_pages: int = 10,
+    max_candidates: int = 160,
     timeout: int = 8,
 ) -> list[dict]:
     """Return public Jita contract offers for a specific blueprint copy type."""
@@ -395,7 +414,7 @@ def fetch_jita_public_bpc_contracts(
         raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
 
     cache_key = (
-        f"indy_hub:craft_bpc_offers:v7:"
+        f"indy_hub:craft_bpc_offers:v8:"
         f"blueprint:{int(blueprint_type_id)}:"
         f"pages:{int(max_pages)}:candidates:{int(max_candidates)}"
     )
@@ -428,14 +447,14 @@ def fetch_jita_public_bpc_contracts(
 
                     # ESI public contracts commonly uses "type", while some wrappers expose "contract_type".
                     contract_type = str(
-                        contract.get("contract_type") or contract.get("type") or ""
+                        _row_value(contract, "contract_type", "type") or ""
                     ).strip().lower()
                     if contract_type and contract_type != "item_exchange":
                         stats["type_filtered"] += 1
                         continue
 
                     # Some payload variants do not include status for public contracts.
-                    status = str(contract.get("status") or "").strip().lower()
+                    status = str(_row_value(contract, "status") or "").strip().lower()
                     if status and status != "outstanding":
                         stats["status_filtered"] += 1
                         continue
@@ -444,8 +463,12 @@ def fetch_jita_public_bpc_contracts(
                         continue
 
                     if require_title_hint and normalized_name:
-                        title = _normalize_title(contract.get("title"))
-                        if title and normalized_name not in title and "bpc" not in title:
+                        title = _normalize_title(_row_value(contract, "title"))
+                        short_name = normalized_name.replace(" blueprint", "").strip()
+                        if (
+                            not title
+                            or (normalized_name not in title and (not short_name or short_name not in title))
+                        ):
                             stats["title_filtered"] += 1
                             continue
 
@@ -476,10 +499,14 @@ def fetch_jita_public_bpc_contracts(
             used_fallback_candidate_scan = True
 
         offers: list[dict] = []
+        checked_contracts = 0
+        matched_contracts = 0
+        matched_item_rows = 0
         for contract in candidates:
-            contract_id = int(contract.get("contract_id") or 0)
+            contract_id = int(_row_value(contract, "contract_id") or 0)
             if not contract_id:
                 continue
+            checked_contracts += 1
 
             items_payload = _fetch_public_contract_items_cached(
                 get_public_contract_items=get_public_contract_items,
@@ -494,10 +521,12 @@ def fetch_jita_public_bpc_contracts(
             )
             if not matches:
                 continue
+            matched_contracts += 1
+            matched_item_rows += len(matches)
 
             total_price = _extract_price(contract)
-            issued_at = str(contract.get("date_issued") or "")
-            expires_at = str(contract.get("date_expired") or "")
+            issued_at = str(_row_value(contract, "date_issued") or "")
+            expires_at = str(_row_value(contract, "date_expired") or "")
             runs = max(1, sum(max(1, int(match.get("runs") or 1)) for match in matches))
             copies = max(1, sum(max(1, int(match.get("copies") or 1)) for match in matches))
             me_values = [int(match.get("me") or 0) for match in matches]
@@ -509,10 +538,10 @@ def fetch_jita_public_bpc_contracts(
             offers.append(
                 {
                     "contract_id": contract_id,
-                    "title": str(contract.get("title") or "").strip(),
-                    "issuer_id": int(contract.get("issuer_id") or 0),
-                    "start_location_id": int(contract.get("start_location_id") or 0),
-                    "end_location_id": int(contract.get("end_location_id") or 0),
+                    "title": str(_row_value(contract, "title") or "").strip(),
+                    "issuer_id": int(_row_value(contract, "issuer_id") or 0),
+                    "start_location_id": int(_row_value(contract, "start_location_id") or 0),
+                    "end_location_id": int(_row_value(contract, "end_location_id") or 0),
                     "price_total": total_price_float,
                     "price_per_run": (total_price_float / runs) if runs > 0 else total_price_float,
                     "runs": runs,
@@ -535,13 +564,16 @@ def fetch_jita_public_bpc_contracts(
         logger.info(
             (
                 "Public BPC contracts lookup bp=%s name='%s' "
-                "scanned=%s candidates=%s offers=%s fallback_scan=%s "
+                "scanned=%s candidates=%s checked=%s matched_contracts=%s matched_rows=%s offers=%s fallback_scan=%s "
                 "filtered(type=%s status=%s location=%s title=%s)"
             ),
             blueprint_type_id,
             blueprint_name,
             int(candidate_stats.get("scanned") or 0),
             len(candidates),
+            checked_contracts,
+            matched_contracts,
+            matched_item_rows,
             len(offers),
             used_fallback_candidate_scan,
             int(candidate_stats.get("type_filtered") or 0),
