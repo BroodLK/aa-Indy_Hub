@@ -36,6 +36,38 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _format_openapi_exception_details(exc: Exception) -> str:
+    parts: list[str] = []
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+
+    response = getattr(exc, "response", None)
+    if response is not None:
+        resp_status = getattr(response, "status_code", None)
+        if resp_status is not None:
+            parts.append(f"response_status={resp_status}")
+        headers = getattr(response, "headers", None)
+        if headers:
+            try:
+                content_type = headers.get("content-type")
+            except Exception:
+                content_type = None
+            if content_type:
+                parts.append(f"content_type={content_type}")
+        body_text = None
+        try:
+            body_text = getattr(response, "text", None)
+        except Exception:
+            body_text = None
+        if body_text:
+            body_snippet = str(body_text).strip().replace("\n", " ")[:220]
+            if body_snippet:
+                parts.append(f"body='{body_snippet}'")
+
+    return " | ".join(parts)
+
+
 def _normalize_offers_cache_payload(payload) -> tuple[list[dict], str]:
     if isinstance(payload, dict):
         offers = payload.get("offers")
@@ -207,6 +239,14 @@ def _run_openapi_operation(operation, **kwargs):
             status_code = getattr(exc, "status_code", None)
             if status_code == 404:
                 return None
+            exc_details = _format_openapi_exception_details(exc)
+            logger.debug(
+                "OpenAPI call failed for %s (%s): %s%s",
+                getattr(operation, "__name__", repr(operation)),
+                attempt_kwargs,
+                type(exc).__name__,
+                f" [{exc_details}]" if exc_details else "",
+            )
             if _is_not_modified_error(exc):
                 saw_not_modified = True
                 try:
@@ -313,11 +353,26 @@ def _fetch_public_contract_items_cached(
     )
 
     def _loader() -> list[dict]:
-        payload = _run_openapi_operation(
-            get_public_contract_items,
-            contract_id=int(contract_id),
-            datasource=ESI_DATASOURCE,
-        )
+        try:
+            payload = _run_openapi_operation(
+                get_public_contract_items,
+                contract_id=int(contract_id),
+                datasource=ESI_DATASOURCE,
+            )
+        except PublicContractsError as exc:
+            logger.debug(
+                "Skipping public contract items contract_id=%s due to fetch/decoding error: %s",
+                contract_id,
+                exc,
+            )
+            return []
+        except Exception as exc:  # Defensive: never let a single bad contract poison all lookups.
+            logger.debug(
+                "Skipping public contract items contract_id=%s due to unexpected error: %s",
+                contract_id,
+                exc,
+            )
+            return []
         rows = _normalize_openapi_rows(payload)
         if rows:
             return rows
