@@ -3629,7 +3629,13 @@ function initializeFinancialCalculations() {
     // Initialize purchase list computation
     const computeButton = document.getElementById('compute-needed');
     if (computeButton) {
-        computeButton.addEventListener('click', computeNeededPurchases);
+        computeButton.addEventListener('click', () => {
+            CRAFT_COMPUTED_NEEDED_ROWS = null;
+            if (typeof updateFinancialTabFromState === 'function') {
+                updateFinancialTabFromState();
+            }
+            computeNeededPurchases();
+        });
     }
     const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
     if (ownedMaterialsInput && ownedMaterialsInput.dataset.financialBound !== 'true') {
@@ -5272,7 +5278,6 @@ function renderIndustryFeeBreakdown(context = null) {
         tr.innerHTML = `
             <td>
                 <div class="fw-semibold">${escapeHtml(row.typeName)}</div>
-                <div class="text-muted text-xs">Type ID ${row.productId}</div>
             </td>
             <td class="text-end">${formatInteger(row.runs)}</td>
             <td class="text-end">${formatPrice(row.manufacturing)}</td>
@@ -7826,14 +7831,39 @@ function updateFinancialTabFromState() {
         ownedData.labelsByName
     );
     const remainingOwnedByType = new Map(ownedLookup.byType || []);
+    const unmatchedOwnedByName = new Map();
+    ownedData.byName.forEach((qty, normalizedName) => {
+        if (!normalizedName) {
+            return;
+        }
+        if (ownedLookup.matchedNames && ownedLookup.matchedNames.has(normalizedName)) {
+            return;
+        }
+        unmatchedOwnedByName.set(normalizedName, Math.max(0, Number(qty) || 0));
+    });
 
     const materialsWithOwnedCoverage = sortedMaterials.map((item) => {
         const typeId = Number(item.typeId || item.type_id) || 0;
         const requiredQty = Math.max(0, Math.ceil(Number(item.quantity || item.qty || 0) || 0));
         const availableOwned = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
-        const ownedQty = Math.min(requiredQty, availableOwned);
+        let ownedQty = Math.min(requiredQty, availableOwned);
         if (ownedQty > 0) {
             remainingOwnedByType.set(typeId, availableOwned - ownedQty);
+        }
+
+        const remainingRequiredAfterType = Math.max(0, requiredQty - ownedQty);
+        if (remainingRequiredAfterType > 0) {
+            const normalizedTypeName = normalizeOwnedMaterialName(
+                item.typeName || item.type_name || item.name || ''
+            );
+            if (normalizedTypeName) {
+                const availableByName = Math.max(0, Number(unmatchedOwnedByName.get(normalizedTypeName) || 0));
+                const coveredByName = Math.min(remainingRequiredAfterType, availableByName);
+                if (coveredByName > 0) {
+                    unmatchedOwnedByName.set(normalizedTypeName, availableByName - coveredByName);
+                    ownedQty += coveredByName;
+                }
+            }
         }
         const payableQty = Math.max(0, requiredQty - ownedQty);
         return {
