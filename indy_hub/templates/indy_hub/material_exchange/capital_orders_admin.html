@@ -332,7 +332,7 @@
                                     {% csrf_token %}
                                     <div class="col-md-3">
                                         <label class="form-label small mb-1">{% trans "Price (ISK)" %}</label>
-                                        <input type="number" step="0.01" min="0.01" name="offer_price_isk" class="form-control form-control-sm" required data-cap-offer-price>
+                                        <input type="text" inputmode="decimal" name="offer_price_isk" class="form-control form-control-sm" required data-cap-offer-price>
                                     </div>
                                     <div class="col-md-2">
                                         <label class="form-label small mb-1">{% trans "ETA Min" %}</label>
@@ -534,6 +534,28 @@
                 });
             }
 
+            function stripThousands(value) {
+                return String(value || '').replace(/,/g, '').trim();
+            }
+
+            function formatIskInputValue(value) {
+                const normalized = stripThousands(value);
+                if (!normalized) {
+                    return '';
+                }
+                const negative = normalized.startsWith('-');
+                const unsigned = negative ? normalized.slice(1) : normalized;
+                const parts = unsigned.split('.');
+                const integerPart = (parts[0] || '').replace(/\D/g, '');
+                const decimalPart = parts.length > 1 ? parts.slice(1).join('').replace(/\D/g, '') : '';
+                if (!integerPart && !decimalPart) {
+                    return '';
+                }
+                const formattedInteger = (integerPart || '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                const formatted = decimalPart ? `${formattedInteger}.${decimalPart}` : formattedInteger;
+                return negative ? `-${formatted}` : formatted;
+            }
+
             function bindTrigger(triggerEl) {
                 triggerEl.addEventListener('click', function () {
                     const status = String(triggerEl.dataset.orderStatus || '').trim();
@@ -565,7 +587,7 @@
                     setVisible(declinedNotesRow, Boolean(declinedDetailsText && declinedNotesText));
 
                     if (offerPriceInput) {
-                        offerPriceInput.value = triggerEl.dataset.offerPrice || '';
+                        offerPriceInput.value = formatIskInputValue(triggerEl.dataset.offerPrice || '');
                     }
                     if (offerEtaMinInput) {
                         offerEtaMinInput.value = triggerEl.dataset.offerEtaMin || '';
@@ -650,6 +672,27 @@
                             }
                         };
                     }
+                });
+            }
+
+            if (offerPriceInput) {
+                offerPriceInput.addEventListener('input', function () {
+                    const cursor = offerPriceInput.selectionStart || 0;
+                    const fromRight = offerPriceInput.value.length - cursor;
+                    offerPriceInput.value = formatIskInputValue(offerPriceInput.value);
+                    const nextPos = Math.max(0, offerPriceInput.value.length - fromRight);
+                    offerPriceInput.setSelectionRange(nextPos, nextPos);
+                });
+                offerPriceInput.addEventListener('blur', function () {
+                    offerPriceInput.value = formatIskInputValue(offerPriceInput.value);
+                });
+            }
+            if (formOffer) {
+                formOffer.addEventListener('submit', function () {
+                    if (!offerPriceInput) {
+                        return;
+                    }
+                    offerPriceInput.value = stripThousands(offerPriceInput.value);
                 });
             }
 
