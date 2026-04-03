@@ -4248,6 +4248,24 @@ def handle_capital_ship_order_created(order_id):
         f"Reason: {order.get_reason_display()}\n"
         f"Status: {order.get_status_display()}"
     )
+    webhook = NotificationWebhook.get_material_exchange_webhook()
+    if webhook and webhook.webhook_url:
+        try:
+            send_discord_webhook(
+                webhook.webhook_url,
+                title,
+                message,
+                level="info",
+                link="/indy_hub/material-exchange/capital-orders/admin/",
+                embed_title=f"{title}",
+                mention_everyone=bool(getattr(webhook, "ping_here", False)),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed sending webhook for capital order %s: %s",
+                order.id,
+                exc,
+            )
     _notify_capital_order_managers(
         order,
         title,

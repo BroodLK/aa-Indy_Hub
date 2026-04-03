@@ -38,6 +38,7 @@ from indy_hub.models import (
     MaterialExchangeConfig,
     MaterialExchangeSellOrder,
     MaterialExchangeSellOrderItem,
+    NotificationWebhook,
     SDESyncCompatState,
     UserOnboardingProgress,
 )
@@ -3350,6 +3351,32 @@ class CapitalOrderAdminActionsTests(TestCase):
         self.client.force_login(other_manager)
         allowed_chat = self.client.get(chat_url)
         self.assertEqual(allowed_chat.status_code, 200)
+
+    @patch("indy_hub.tasks.material_exchange_contracts.send_discord_webhook")
+    def test_capital_order_created_sends_material_exchange_webhook(
+        self,
+        mock_send_discord_webhook,
+    ) -> None:
+        mock_send_discord_webhook.return_value = True
+        NotificationWebhook.objects.create(
+            name="Buyback Hook",
+            webhook_type=NotificationWebhook.TYPE_MATERIAL_EXCHANGE,
+            webhook_url="https://discord.example/webhook",
+            is_active=True,
+        )
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+
+        from indy_hub.tasks.material_exchange_contracts import (
+            handle_capital_ship_order_created,
+        )
+
+        handle_capital_ship_order_created(order.id)
+
+        self.assertTrue(mock_send_discord_webhook.called)
+        call_args = mock_send_discord_webhook.call_args.args
+        self.assertEqual(str(call_args[0]), "https://discord.example/webhook")
+        self.assertIn("Capital Order Created", str(call_args[1]))
+        self.assertIn(order.order_reference, str(call_args[2]))
 
     def test_admin_view_counts_down_definitive_eta(self) -> None:
         order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
