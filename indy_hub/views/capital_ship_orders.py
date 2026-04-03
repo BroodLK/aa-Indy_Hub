@@ -75,7 +75,6 @@ _VIEWER_TO_ROLE = {
 _CAPITAL_MANAGER_PERMISSION = "indy_hub.can_manage_capital_orders"
 _PRE_PRODUCTION_STATUSES = {
     CapitalShipOrder.Status.WAITING,
-    CapitalShipOrder.Status.GATHERING_MATERIALS,
 }
 
 
@@ -701,12 +700,54 @@ def _can_manage_capital_orders(user: User | None) -> bool:
     return bool(user and user.has_perm(_CAPITAL_MANAGER_PERMISSION))
 
 
-def _is_chat_locked_to_in_producer(order: CapitalShipOrder) -> bool:
+def _resolve_locked_capital_manager_id(order: CapitalShipOrder) -> int:
+    """Resolve the manager currently claiming this order."""
     try:
-        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
+        in_production_by_id = int(getattr(order, "in_production_by_id", 0) or 0)
     except (TypeError, ValueError):
-        producer_id = 0
-    if producer_id <= 0:
+        in_production_by_id = 0
+    if in_production_by_id > 0:
+        return int(in_production_by_id)
+
+    try:
+        gathering_materials_by_id = int(
+            getattr(order, "gathering_materials_by_id", 0) or 0
+        )
+    except (TypeError, ValueError):
+        gathering_materials_by_id = 0
+    if gathering_materials_by_id <= 0:
+        return 0
+
+    status = str(getattr(order, "status", "") or "")
+    if status == CapitalShipOrder.Status.GATHERING_MATERIALS:
+        return int(gathering_materials_by_id)
+    if status not in _PRE_PRODUCTION_STATUSES:
+        return int(gathering_materials_by_id)
+    return 0
+
+
+def _resolve_locked_capital_manager(order: CapitalShipOrder) -> User | None:
+    manager_id = _resolve_locked_capital_manager_id(order)
+    if manager_id <= 0:
+        return None
+    in_production_manager = getattr(order, "in_production_by", None)
+    if (
+        in_production_manager is not None
+        and int(getattr(in_production_manager, "id", 0) or 0) == manager_id
+    ):
+        return in_production_manager
+    gathering_manager = getattr(order, "gathering_materials_by", None)
+    if (
+        gathering_manager is not None
+        and int(getattr(gathering_manager, "id", 0) or 0) == manager_id
+    ):
+        return gathering_manager
+    return User.objects.filter(id=manager_id).first()
+
+
+def _is_chat_locked_to_in_producer(order: CapitalShipOrder) -> bool:
+    manager_id = _resolve_locked_capital_manager_id(order)
+    if manager_id <= 0:
         return False
     return str(getattr(order, "status", "") or "") not in _PRE_PRODUCTION_STATUSES
 
@@ -717,7 +758,7 @@ def _can_act_as_capital_manager_for_order(order: CapitalShipOrder, user: User) -
     if not _is_chat_locked_to_in_producer(order):
         return True
     try:
-        return int(getattr(order, "in_production_by_id", 0) or 0) == int(
+        return _resolve_locked_capital_manager_id(order) == int(
             getattr(user, "id", 0) or 0
         )
     except (TypeError, ValueError):
@@ -733,12 +774,9 @@ def _notify_capital_managers(
     link: str = "/indy_hub/material-exchange/capital-orders/admin/",
 ) -> None:
     if order and _is_chat_locked_to_in_producer(order):
-        producer = getattr(order, "in_production_by", None)
-        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
-        if producer is None and producer_id > 0:
-            producer = User.objects.filter(id=producer_id).first()
-        if producer and bool(getattr(producer, "is_active", False)):
-            notify_user(producer, title, body, level=level, link=link)
+        manager = _resolve_locked_capital_manager(order)
+        if manager and bool(getattr(manager, "is_active", False)):
+            notify_user(manager, title, body, level=level, link=link)
             return
 
     managers = User.objects.filter(is_active=True).filter(
@@ -752,6 +790,44 @@ def _notify_capital_managers(
         )
     ).distinct()
     notify_multi(managers, title, body, level=level, link=link)
+
+
+def _get_capital_manager_users() -> list[User]:
+    return list(
+        User.objects.filter(is_active=True)
+        .filter(
+            Q(
+                user_permissions__codename="can_manage_capital_orders",
+                user_permissions__content_type__app_label="indy_hub",
+            )
+            | Q(
+                groups__permissions__codename="can_manage_capital_orders",
+                groups__permissions__content_type__app_label="indy_hub",
+            )
+        )
+        .distinct()
+    )
+
+
+def _build_capital_manager_transfer_options() -> list[dict[str, object]]:
+    options: list[dict[str, object]] = []
+    for manager in _get_capital_manager_users():
+        main_character_name = _resolve_main_character_name(manager).strip()
+        username = str(getattr(manager, "username", "") or "").strip()
+        if main_character_name and username and main_character_name != username:
+            label = f"{main_character_name} ({username})"
+        else:
+            label = main_character_name or username
+        if not label:
+            continue
+        options.append(
+            {
+                "user_id": int(manager.id),
+                "label": label,
+                "username": username,
+            }
+        )
+    return sorted(options, key=lambda row: str(row.get("label") or "").lower())
 
 
 def _record_capital_event(
@@ -789,6 +865,26 @@ def _can_access_chat(order: CapitalShipOrder, user: User) -> bool:
     if int(getattr(user, "id", 0) or 0) == int(order.requester_id):
         return True
     return _can_act_as_capital_manager_for_order(order, user)
+
+
+def _require_order_update_access_as_manager(
+    request, order: CapitalShipOrder
+) -> bool:
+    if _can_act_as_capital_manager_for_order(order, request.user):
+        return True
+    locked_manager = _resolve_locked_capital_manager(order)
+    locked_manager_name = str(getattr(locked_manager, "username", "") or "").strip()
+    if locked_manager_name:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is currently claimed by {locked_manager_name}.",
+        )
+    else:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is currently claimed by another manager.",
+        )
+    return False
 
 
 def _resolve_chat_internal_role(
@@ -1308,6 +1404,7 @@ def capital_ship_orders_admin(request):
     context = {
         "orders": orders,
         "include_completed": include_completed,
+        "capital_manager_transfer_options": _build_capital_manager_transfer_options(),
     }
     if auto_open_chat_id:
         context["auto_open_chat_id"] = auto_open_chat_id
@@ -1808,6 +1905,8 @@ def capital_ship_order_refresh_guideline(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
     if order.is_terminal:
         messages.warning(
             request,
@@ -1832,6 +1931,8 @@ def capital_ship_order_set_gathering_materials(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
     if order.status != CapitalShipOrder.Status.WAITING:
         messages.warning(
             request,
@@ -1895,6 +1996,8 @@ def capital_ship_order_set_in_production(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
 
     if order.status not in {
         CapitalShipOrder.Status.WAITING,
@@ -1962,12 +2065,142 @@ def capital_ship_order_set_in_production(request, order_id: int):
 @indy_hub_permission_required("can_access_indy_hub")
 @indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
+def capital_ship_order_transfer_manager(request, order_id: int):
+    emit_view_analytics_event(
+        view_name="capital_ship_orders.transfer_manager",
+        request=request,
+    )
+    order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
+    if order.is_terminal:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is already closed.",
+        )
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    current_manager_id = _resolve_locked_capital_manager_id(order)
+    if current_manager_id <= 0:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is not currently claimed by a manager.",
+        )
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    target_manager_id = _parse_positive_int(
+        request.POST.get("transfer_manager_user_id"),
+        minimum=1,
+    )
+    if target_manager_id is None:
+        messages.error(request, "Select a capital manager to transfer this order.")
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    manager_by_id = {
+        int(user.id): user
+        for user in _get_capital_manager_users()
+    }
+    target_manager = manager_by_id.get(int(target_manager_id))
+    if target_manager is None:
+        messages.error(request, "Selected user is not an active capital order manager.")
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    if int(target_manager.id) == int(current_manager_id):
+        messages.info(
+            request,
+            f"Order {order.order_reference} is already assigned to {target_manager.username}.",
+        )
+        return redirect("indy_hub:capital_ship_orders_admin")
+
+    previous_manager = _resolve_locked_capital_manager(order)
+    previous_manager_name = str(getattr(previous_manager, "username", "") or "").strip()
+    target_manager_name = str(getattr(target_manager, "username", "") or "").strip()
+    status = str(getattr(order, "status", "") or "")
+    update_fields = ["notes", "updated_at"]
+
+    if status == CapitalShipOrder.Status.GATHERING_MATERIALS:
+        order.gathering_materials_by = target_manager
+        update_fields.append("gathering_materials_by")
+    elif status in {
+        CapitalShipOrder.Status.IN_PRODUCTION,
+        CapitalShipOrder.Status.CONTRACT_CREATED,
+        CapitalShipOrder.Status.ANOMALY,
+    }:
+        order.in_production_by = target_manager
+        update_fields.append("in_production_by")
+    elif int(getattr(order, "in_production_by_id", 0) or 0) > 0:
+        order.in_production_by = target_manager
+        update_fields.append("in_production_by")
+    else:
+        order.gathering_materials_by = target_manager
+        update_fields.append("gathering_materials_by")
+
+    now_text = timezone.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+    from_text = previous_manager_name or "unknown"
+    to_text = target_manager_name or "unknown"
+    _append_order_note(
+        order,
+        (
+            f"Order manager transferred from {from_text} to {to_text} by "
+            f"{request.user.username} at {now_text}"
+        ),
+    )
+    order.save(update_fields=list(dict.fromkeys(update_fields)))
+    _create_chat_system_message(
+        order,
+        _(
+            "Order manager transferred from %(from_manager)s to %(to_manager)s by %(actor)s."
+        )
+        % {
+            "from_manager": from_text,
+            "to_manager": to_text,
+            "actor": request.user.username,
+        },
+    )
+    notify_user(
+        order.requester,
+        _("Capital Order Update"),
+        _(
+            "Order %(ref)s was transferred to another capital manager."
+        )
+        % {"ref": order.order_reference},
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/",
+    )
+    _notify_capital_managers(
+        title=_("Capital Order Transferred"),
+        body=_(
+            "%(actor)s transferred capital order %(ref)s from %(from_manager)s to %(to_manager)s."
+        )
+        % {
+            "actor": request.user.username,
+            "ref": order.order_reference,
+            "from_manager": from_text,
+            "to_manager": to_text,
+        },
+        order=order,
+        level="info",
+        link="/indy_hub/material-exchange/capital-orders/admin/",
+    )
+    messages.success(
+        request,
+        f"Order {order.order_reference} transferred to {target_manager_name}.",
+    )
+    return redirect("indy_hub:capital_ship_orders_admin")
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
+@require_POST
 def capital_ship_order_update_offer(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.update_offer",
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
     if order.is_terminal:
         messages.warning(
             request,
@@ -2092,6 +2325,8 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
     if order.status not in {
         CapitalShipOrder.Status.GATHERING_MATERIALS,
         CapitalShipOrder.Status.IN_PRODUCTION,
@@ -2159,6 +2394,8 @@ def _close_capital_order(
     task_name: str,
 ):
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
     current_status = str(order.status or "")
 
     if current_status == str(target_status):
@@ -2292,6 +2529,8 @@ def capital_ship_order_uncancel(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return redirect("indy_hub:capital_ship_orders_admin")
     current_status = str(order.status or "").strip().lower()
     if current_status != CapitalShipOrder.Status.CANCELLED:
         messages.warning(
@@ -2699,4 +2938,3 @@ def capital_ship_order_chat_decide(request, order_id: int):
         link=f"/indy_hub/material-exchange/capital-orders/admin/?open_chat={chat.id}",
     )
     return JsonResponse({"status": "rejected"})
-

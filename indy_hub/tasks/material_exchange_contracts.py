@@ -120,7 +120,6 @@ _REPROCESSING_ACCEPTED_STATUSES = {
 }
 _CAPITAL_ORDER_PRE_PRODUCTION_STATUSES = {
     CapitalShipOrder.Status.WAITING,
-    CapitalShipOrder.Status.GATHERING_MATERIALS,
 }
 _CAPITAL_ORDER_ACTIVE_STATUSES = {
     CapitalShipOrder.Status.WAITING,
@@ -4052,12 +4051,53 @@ def _get_capital_manager_users() -> list[User]:
     )
 
 
-def _is_capital_order_locked_to_producer(order: CapitalShipOrder) -> bool:
+def _resolve_locked_capital_manager_id(order: CapitalShipOrder) -> int:
     try:
-        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
+        in_production_by_id = int(getattr(order, "in_production_by_id", 0) or 0)
     except (TypeError, ValueError):
-        producer_id = 0
-    if producer_id <= 0:
+        in_production_by_id = 0
+    if in_production_by_id > 0:
+        return int(in_production_by_id)
+
+    try:
+        gathering_materials_by_id = int(
+            getattr(order, "gathering_materials_by_id", 0) or 0
+        )
+    except (TypeError, ValueError):
+        gathering_materials_by_id = 0
+    if gathering_materials_by_id <= 0:
+        return 0
+
+    status = str(getattr(order, "status", "") or "")
+    if status == CapitalShipOrder.Status.GATHERING_MATERIALS:
+        return int(gathering_materials_by_id)
+    if status not in _CAPITAL_ORDER_PRE_PRODUCTION_STATUSES:
+        return int(gathering_materials_by_id)
+    return 0
+
+
+def _resolve_locked_capital_manager(order: CapitalShipOrder) -> User | None:
+    manager_id = _resolve_locked_capital_manager_id(order)
+    if manager_id <= 0:
+        return None
+    in_production_manager = getattr(order, "in_production_by", None)
+    if (
+        in_production_manager is not None
+        and int(getattr(in_production_manager, "id", 0) or 0) == manager_id
+    ):
+        return in_production_manager
+    gathering_manager = getattr(order, "gathering_materials_by", None)
+    if (
+        gathering_manager is not None
+        and int(getattr(gathering_manager, "id", 0) or 0) == manager_id
+    ):
+        return gathering_manager
+    return User.objects.filter(id=manager_id).first()
+
+
+def _is_capital_order_locked_to_producer(order: CapitalShipOrder) -> bool:
+    manager_id = _resolve_locked_capital_manager_id(order)
+    if manager_id <= 0:
         return False
     return (
         str(getattr(order, "status", "") or "")
@@ -4075,12 +4115,9 @@ def _notify_capital_order_managers(
 ) -> None:
     recipients: list[User] = []
     if _is_capital_order_locked_to_producer(order):
-        producer = getattr(order, "in_production_by", None)
-        producer_id = int(getattr(order, "in_production_by_id", 0) or 0)
-        if producer is None and producer_id > 0:
-            producer = User.objects.filter(id=producer_id).first()
-        if producer and bool(getattr(producer, "is_active", False)):
-            recipients = [producer]
+        manager = _resolve_locked_capital_manager(order)
+        if manager and bool(getattr(manager, "is_active", False)):
+            recipients = [manager]
 
     if not recipients:
         recipients = _get_capital_manager_users()

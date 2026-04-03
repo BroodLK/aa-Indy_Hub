@@ -60,6 +60,7 @@ try:
         capital_ship_order_set_definitive_eta,
         capital_ship_order_set_gathering_materials,
         capital_ship_order_set_in_production,
+        capital_ship_order_transfer_manager,
         capital_ship_order_update_offer,
         capital_ship_orders_config,
         capital_ship_orders,
@@ -79,6 +80,7 @@ except ModuleNotFoundError:
     capital_ship_order_set_gathering_materials = _capital_orders_module_missing
     capital_ship_order_refresh_guideline = _capital_orders_module_missing
     capital_ship_order_update_offer = _capital_orders_module_missing
+    capital_ship_order_transfer_manager = _capital_orders_module_missing
     capital_ship_orders_config = _capital_orders_module_missing
     capital_ship_order_set_definitive_eta = _capital_orders_module_missing
     capital_ship_order_reject = _capital_orders_module_missing
@@ -539,6 +541,11 @@ urlpatterns = [
         "material-exchange/capital-orders/<int:order_id>/update-offer/",
         capital_ship_order_update_offer,
         name="capital_ship_order_update_offer",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/transfer-manager/",
+        capital_ship_order_transfer_manager,
+        name="capital_ship_order_transfer_manager",
     ),
     path(
         "material-exchange/capital-orders/<int:order_id>/set-definitive-eta/",

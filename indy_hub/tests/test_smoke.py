@@ -3209,6 +3209,148 @@ class CapitalOrderAdminActionsTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
 
+    def test_gathering_materials_claim_locks_chat_to_claiming_manager(self) -> None:
+        other_manager = User.objects.create_user("capmanager2", password="secret123")
+        assign_main_character(other_manager, character_id=2025003)
+        grant_indy_permissions(other_manager, "can_manage_capital_orders")
+
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        set_gathering_url = reverse(
+            "indy_hub:capital_ship_order_set_gathering_materials",
+            args=[order.id],
+        )
+        chat_url = reverse("indy_hub:capital_ship_order_chat_history", args=[order.id])
+
+        response = self.client.post(set_gathering_url)
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.GATHERING_MATERIALS)
+        self.assertEqual(int(order.gathering_materials_by_id or 0), int(self.manager.id))
+
+        self.client.force_login(other_manager)
+        denied = self.client.get(chat_url)
+        self.assertEqual(denied.status_code, 403)
+
+        self.client.force_login(self.manager)
+        allowed = self.client.get(chat_url)
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_gathering_materials_claim_locks_update_actions_to_claiming_manager(self) -> None:
+        other_manager = User.objects.create_user("capmanager3", password="secret123")
+        assign_main_character(other_manager, character_id=2025004)
+        grant_indy_permissions(other_manager, "can_manage_capital_orders")
+
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        order.ensure_chat()
+        set_gathering_url = reverse(
+            "indy_hub:capital_ship_order_set_gathering_materials",
+            args=[order.id],
+        )
+        update_offer_url = reverse(
+            "indy_hub:capital_ship_order_update_offer",
+            args=[order.id],
+        )
+        update_payload = {
+            "offer_price_isk": "111111111.11",
+            "offer_eta_min_days": "7",
+            "offer_eta_max_days": "14",
+            "lead_time_days": "1",
+            "offer_notes": "claimed-lock-test",
+        }
+
+        response = self.client.post(set_gathering_url)
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.GATHERING_MATERIALS)
+        self.assertEqual(int(order.gathering_materials_by_id or 0), int(self.manager.id))
+
+        self.client.force_login(other_manager)
+        denied = self.client.post(update_offer_url, update_payload)
+        self.assertEqual(denied.status_code, 302)
+        order.refresh_from_db()
+        self.assertIsNone(order.offer_price_isk)
+        self.assertIsNone(order.offer_updated_by_id)
+
+        self.client.force_login(self.manager)
+        allowed = self.client.post(update_offer_url, update_payload)
+        self.assertEqual(allowed.status_code, 302)
+        order.refresh_from_db()
+        self.assertIsNotNone(order.offer_price_isk)
+        self.assertEqual(int(order.offer_updated_by_id or 0), int(self.manager.id))
+
+    def test_admin_modal_includes_transfer_controls_and_manager_dropdown(self) -> None:
+        other_manager = User.objects.create_user("capmanager4", password="secret123")
+        assign_main_character(other_manager, character_id=2025005)
+        grant_indy_permissions(other_manager, "can_manage_capital_orders")
+
+        order = self._create_order(status=CapitalShipOrder.Status.GATHERING_MATERIALS)
+        order.gathering_materials_by = self.manager
+        order.save(update_fields=["gathering_materials_by", "updated_at"])
+
+        response = self.client.get(reverse("indy_hub:capital_ship_orders_admin"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Transfer Order")
+        self.assertContains(response, 'data-cap-action-form="transfer"')
+        self.assertContains(
+            response,
+            reverse("indy_hub:capital_ship_order_transfer_manager", args=[order.id]),
+        )
+        self.assertContains(response, "Pilot 2025005")
+
+    def test_claiming_manager_can_transfer_claim_to_another_manager(self) -> None:
+        other_manager = User.objects.create_user("capmanager5", password="secret123")
+        assign_main_character(other_manager, character_id=2025006)
+        grant_indy_permissions(other_manager, "can_manage_capital_orders")
+
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        set_gathering_url = reverse(
+            "indy_hub:capital_ship_order_set_gathering_materials",
+            args=[order.id],
+        )
+        transfer_url = reverse(
+            "indy_hub:capital_ship_order_transfer_manager",
+            args=[order.id],
+        )
+        chat_url = reverse("indy_hub:capital_ship_order_chat_history", args=[order.id])
+        update_offer_url = reverse(
+            "indy_hub:capital_ship_order_update_offer",
+            args=[order.id],
+        )
+
+        response = self.client.post(set_gathering_url)
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(int(order.gathering_materials_by_id or 0), int(self.manager.id))
+
+        transfer_response = self.client.post(
+            transfer_url,
+            {"transfer_manager_user_id": str(other_manager.id)},
+        )
+        self.assertEqual(transfer_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(
+            int(order.gathering_materials_by_id or 0),
+            int(other_manager.id),
+        )
+
+        self.client.force_login(self.manager)
+        denied_chat = self.client.get(chat_url)
+        self.assertEqual(denied_chat.status_code, 403)
+        denied_update = self.client.post(
+            update_offer_url,
+            {
+                "offer_price_isk": "123456789.00",
+                "offer_eta_min_days": "5",
+                "offer_eta_max_days": "10",
+                "lead_time_days": "1",
+            },
+        )
+        self.assertEqual(denied_update.status_code, 302)
+
+        self.client.force_login(other_manager)
+        allowed_chat = self.client.get(chat_url)
+        self.assertEqual(allowed_chat.status_code, 200)
+
     def test_admin_view_counts_down_definitive_eta(self) -> None:
         order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
         order.definitive_eta_min_days = 7
