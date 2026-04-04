@@ -3542,13 +3542,18 @@ def _contract_items_match_order_db(contract, order):
     # Only validate included items (not requested)
     included_items = contract.items.filter(is_included=True)
     if not included_items.exists():
-        # Finished contracts may no longer expose items via ESI; allow match
-        # based on other criteria (title/location/price) in that case.
-        return contract.status in [
+        # Some contracts can temporarily return no items from ESI even while
+        # still outstanding/in-progress. When that happens, keep the same
+        # fallback behavior we already apply to finished contracts and rely on
+        # title/location/price checks in the caller.
+        normalized_status = str(getattr(contract, "status", "") or "").strip().lower()
+        return normalized_status in {
+            "outstanding",
+            "in_progress",
             "finished",
             "finished_issuer",
             "finished_contractor",
-        ]
+        }
 
     order_items = list(order.items.all())
     expected_by_type: dict[int, int] = {}

@@ -3604,3 +3604,70 @@ class CapitalOrderAdminActionsTests(TestCase):
         self.assertEqual(order.status, CapitalShipOrder.Status.COMPLETED)
         self.assertEqual(int(order.esi_contract_id or 0), int(contract.contract_id))
         self.assertIsNotNone(order.contract_completed_at)
+
+
+class MaterialExchangeContractValidationHeuristicsTests(TestCase):
+    def setUp(self) -> None:
+        self.seller = User.objects.create_user("valseller", password="secret123")
+        assign_main_character(self.seller, character_id=2027001)
+        grant_indy_permissions(self.seller)
+        self.config = MaterialExchangeConfig.objects.create(
+            corporation_id=1234,
+            structure_id=60003760,
+            is_active=True,
+        )
+
+    def _create_contract(self, *, status: str) -> ESIContract:
+        return ESIContract.objects.create(
+            contract_id=992_000_001 if status == "outstanding" else 992_000_002,
+            issuer_id=123,
+            issuer_corporation_id=1234,
+            assignee_id=1234,
+            acceptor_id=0,
+            contract_type="item_exchange",
+            status=status,
+            title="INDY-TEST",
+            date_issued=timezone.now() - timedelta(minutes=5),
+            date_expired=timezone.now() + timedelta(days=7),
+            corporation_id=1234,
+        )
+
+    def test_contract_items_match_order_allows_outstanding_without_items(self) -> None:
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1000,
+            unit_price=Decimal("5.00"),
+            total_price=Decimal("5000.00"),
+        )
+        contract = self._create_contract(status="outstanding")
+
+        from indy_hub.tasks.material_exchange_contracts import _contract_items_match_order_db
+
+        self.assertTrue(_contract_items_match_order_db(contract, order))
+
+    def test_contract_items_match_order_rejects_empty_items_for_unknown_status(self) -> None:
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1000,
+            unit_price=Decimal("5.00"),
+            total_price=Decimal("5000.00"),
+        )
+        contract = self._create_contract(status="deleted")
+
+        from indy_hub.tasks.material_exchange_contracts import _contract_items_match_order_db
+
+        self.assertFalse(_contract_items_match_order_db(contract, order))
