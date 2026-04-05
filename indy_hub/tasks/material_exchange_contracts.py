@@ -161,6 +161,11 @@ _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
 _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
 
 
+def _build_contract_state_webhook_line(actor_name: str, state: str) -> str:
+    normalized_state = "validated" if str(state).strip().lower() == "validated" else "completed"
+    return f"Contract from {actor_name} has {normalized_state}."
+
+
 def _floor_isk_amount(value: Decimal | str | int | float | None) -> Decimal:
     try:
         parsed = Decimal(str(value or 0))
@@ -763,17 +768,19 @@ def _set_reprocessing_request_anomaly(
     )
     notify_user(
         service_request.requester,
-        _("Reprocessing contract anomaly"),
+        _("Reprocessing Request Anomaly"),
         _(message),
         level="warning",
         link=detail_link,
+        link_label=_("Review your requests"),
     )
     notify_user(
         service_request.processor_user,
-        _("Reprocessing contract anomaly"),
+        _("Reprocessing Request Anomaly"),
         _(message),
         level="warning",
         link=detail_link,
+        link_label=_("Open processing queue"),
     )
 
 
@@ -1039,7 +1046,7 @@ def _process_reprocessing_request_contracts(
             )
             notify_user(
                 service_request.processor_user,
-                _("Inbound reprocessing contract sent"),
+                _("Reprocessing Request - Inbound Contract Sent"),
                 _(
                     "Requester %(character)s sent contract *%(contract)s* for *%(reference)s*.\n\n%(validation)s"
                 )
@@ -1052,6 +1059,7 @@ def _process_reprocessing_request_contracts(
                 },
                 level="info",
                 link=detail_link,
+                link_label=_("Open processing queue"),
             )
             if _reprocessing_add_note_marker(service_request, sent_marker):
                 updated_fields.add("notes")
@@ -1076,7 +1084,7 @@ def _process_reprocessing_request_contracts(
             if not _reprocessing_has_note_marker(service_request, accepted_marker):
                 notify_user(
                     service_request.requester,
-                    _("Inbound reprocessing contract accepted"),
+                    _("Reprocessing Request - Inbound Contract Accepted"),
                     _(
                         "Inbound contract %(contract)s for %(reference)s was accepted by %(processor)s."
                     )
@@ -1088,6 +1096,7 @@ def _process_reprocessing_request_contracts(
                     },
                     level="success",
                     link=detail_link,
+                    link_label=_("Review your requests"),
                 )
                 if _reprocessing_add_note_marker(service_request, accepted_marker):
                     updated_fields.add("notes")
@@ -1144,7 +1153,7 @@ def _process_reprocessing_request_contracts(
         )
         notify_user(
             service_request.requester,
-            _("Return reprocessing contract sent"),
+            _("Reprocessing Request - Return Contract Sent"),
             _(
                 "Reprocessor %(processor)s sent return contract %(contract)s for %(reference)s.\n%(validation)s"
             )
@@ -1157,6 +1166,7 @@ def _process_reprocessing_request_contracts(
             },
             level="success",
             link=detail_link,
+            link_label=_("Review your requests"),
         )
         if _reprocessing_add_note_marker(service_request, return_sent_marker):
             updated_fields.add("notes")
@@ -1815,11 +1825,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             _notify_material_exchange_admins(
                 config,
                 _("Sell Order Validated by In-Game Acceptance"),
-                _(
-                    f"{order.seller.username}'s anomalous order {order_ref} has been accepted in-game via contract #{normalized_contract_id}.\n"
-                    f"Order moved to validated status."
-                    + (f"\nLocation: {contract_location}" if contract_location else "")
-                ),
+                _(_build_contract_state_webhook_line(order.seller.username, "validated")),
                 level="info",
                 link=(
                     f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
@@ -1856,14 +1862,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         _notify_material_exchange_admins(
             config,
             _("Sell Order Validated"),
-            _(
-                f"{order.seller.username} has created a contract and it has been validated as correct.\n"
-                f"Total: {order.total_price:,.0f} ISK\n"
-                f"Contract #{normalized_contract_id} verified from database.\n"
-                + (f"Location: {contract_location}\n" if contract_location else "")
-                + "\n"
-                f"Awaiting corporation to accept the contract."
-            ),
+            _(_build_contract_state_webhook_line(order.seller.username, "validated")),
             level="success",
             link=(
                 f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
@@ -1950,7 +1949,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
-                    f"Please contact user {order.seller.username} regarding this anomaly: seller has no linked EVE character."
+                    "Reason: seller has no linked EVE character.\n"
+                    f"User: {order.seller.username}"
                 ),
                 level="warning",
                 link=(
@@ -2146,7 +2146,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
-                    f"Please contact user {order.seller.username} regarding this anomaly: wrong contract location."
+                    "Reason: wrong contract location.\n"
+                    f"User: {order.seller.username}"
                 ),
                 level="warning",
                 link=admin_link,
@@ -2246,7 +2247,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
-                    f"Please contact user {order.seller.username} regarding this anomaly: contract price mismatch."
+                    "Reason: contract price mismatch.\n"
+                    f"User: {order.seller.username}"
                 ),
                 level="warning",
                 link=admin_link,
@@ -2387,7 +2389,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _("Hub Order Requires Intervention"),
                 _(
                     f"Order {order_ref} requires your intervention.\n"
-                    f"Please contact user {order.seller.username} regarding this anomaly: contract items mismatch."
+                    "Reason: contract items mismatch.\n"
+                    f"User: {order.seller.username}"
                     + (
                         f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}"
                         if contract_with_correct_ref_items_mismatch.get("details")
@@ -2466,10 +2469,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     config,
                     _("Hub Order Requires Intervention"),
                     _(
-                        f"Order {order_ref} has a near-match contract #{contract_id} with wrong reference in title.\n"
+                        f"Order {order_ref} has a near-match contract #{contract_id}.\n"
+                        "Reason: wrong contract reference in title.\n"
                         f"Found title: {title_display}\n"
                         f"Expected reference: {order_ref}\n"
-                        f"Please contact user {order.seller.username}."
+                        f"User: {order.seller.username}"
                     ),
                     level="warning",
                     link=(
@@ -2659,11 +2663,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _notify_material_exchange_admins(
                 config,
                 _("Buy Order Validated by In-Game Acceptance"),
-                _(
-                    f"{order.buyer.username}'s anomalous buy order {order_ref} has been accepted in-game via contract #{normalized_contract_id}.\n"
-                    f"Order moved to validated status."
-                    + (f"\n\n{override_details}" if override_details else "")
-                ),
+                _(_build_contract_state_webhook_line(order.buyer.username, "validated")),
                 level="info",
                 link=(
                     f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
@@ -2699,12 +2699,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         _notify_material_exchange_admins(
             config,
             _("Buy Contract Created"),
-            _(
-                f"Buy contract created for {order.buyer.username}.\n"
-                f"Order: {order.order_reference}\n"
-                f"Contract: #{normalized_contract_id}\n"
-                f"Total: {order.total_price:,.0f} ISK\n\n"
-            ),
+            _(_build_contract_state_webhook_line(order.buyer.username, "validated")),
             level="success",
             link=(
                 f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
@@ -2887,6 +2882,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _("Buy Order Contract Issue Detected"),
             _(
                 f"Buy order {order.order_reference} has a contract mismatch.\n"
+                "Reason: contract mismatch.\n"
                 f"Buyer: {order.buyer.username}\n"
                 f"Required location: {expected_buy_location_label}\n"
                 f"Expected price: {order.total_price:,.0f} ISK"
@@ -2928,6 +2924,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _("Buy Order Pending: contract mismatch"),
             _(
                 f"Buy order {order.order_reference} has no matching contract yet.\n"
+                "Reason: contract mismatch.\n"
                 f"Buyer: {order.buyer.username}\n"
                 f"Required location: {expected_buy_location_label}\n"
                 f"Expected price: {order.total_price:,.0f} ISK"
@@ -3857,7 +3854,7 @@ def handle_material_exchange_buy_order_created(order_id):
             f"{order.buyer.username} created a buy order {order.order_reference}.\n"
             f"Items: {len(items)} (qty: {total_qty:,})\n"
             f"Total: {total_price:,.2f} ISK\n\n"
-            f"Preview:\n{preview}\n\n"
+            f"Items being bought:\n{preview}\n\n"
             f"Review and approve to proceed with delivery."
         )
         link = (
@@ -3998,7 +3995,7 @@ def handle_material_exchange_sell_order_created(order_id):
             f"Items: {len(items)} (qty: {total_qty:,})\n"
             f"Total: {total_price:,.2f} ISK"
             + (f"\nLocation: {source_location}" if source_location else "")
-            + f"\n\nPreview:\n{preview}\n\n"
+            + f"\n\nItems being sold:\n{preview}\n\n"
             f"Review and approve to start contract validation."
         )
         link = (
@@ -5343,9 +5340,7 @@ def check_completed_material_exchange_contracts():
             _notify_material_exchange_admins(
                 config,
                 _("Sell Order Completed"),
-                _(
-                    f"{order.seller.username}'s sell order {order.order_reference} is completed.\n"
-                ),
+                _(_build_contract_state_webhook_line(order.seller.username, "completed")),
                 level="success",
                 link=(
                     f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
@@ -5479,9 +5474,7 @@ def check_completed_material_exchange_contracts():
             _notify_material_exchange_admins(
                 config,
                 _("Buy Order Completed"),
-                _(
-                    f"{order.buyer.username}'s buy order {order.order_reference} is completed.\n"
-                ),
+                _(_build_contract_state_webhook_line(order.buyer.username, "completed")),
                 level="success",
                 link=(
                     f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"

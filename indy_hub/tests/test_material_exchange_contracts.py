@@ -23,6 +23,7 @@ from indy_hub.models import (
     MaterialExchangeSellOrderItem,
 )
 from indy_hub.tasks.material_exchange_contracts import (
+    _build_contract_state_webhook_line,
     _extract_contract_id,
     _get_effective_contract_location_id,
     _log_buy_order_transactions,
@@ -30,6 +31,8 @@ from indy_hub.tasks.material_exchange_contracts import (
     _validate_buy_order_from_db,
     _validate_sell_order_from_db,
     check_completed_material_exchange_contracts,
+    handle_material_exchange_buy_order_created,
+    handle_material_exchange_sell_order_created,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
 )
@@ -1018,7 +1021,10 @@ class BuyOrderValidationTaskTest(TestCase):
         admin_title = str(mock_notify_admins.call_args[0][1])
         admin_message = str(mock_notify_admins.call_args[0][2])
         self.assertIn("Completed", admin_title)
-        self.assertIn(self.buy_order.order_reference, admin_message)
+        self.assertEqual(
+            admin_message,
+            f"Contract from {self.buy_order.buyer.username} has completed.",
+        )
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -1080,7 +1086,10 @@ class BuyOrderValidationTaskTest(TestCase):
         admin_title = str(mock_notify_admins.call_args[0][1])
         admin_message = str(mock_notify_admins.call_args[0][2])
         self.assertIn("Completed", admin_title)
-        self.assertIn(sell_order.order_reference, admin_message)
+        self.assertEqual(
+            admin_message,
+            f"Contract from {sell_order.seller.username} has completed.",
+        )
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
@@ -1467,6 +1476,7 @@ class BuyOrderValidationTaskTest(TestCase):
         admin_title = mock_notify_admins.call_args[0][1]
         admin_message = mock_notify_admins.call_args[0][2]
         self.assertIn("Buy Order Contract Issue Detected", admin_title)
+        self.assertIn("Reason: contract mismatch.", admin_message)
         self.assertIn("Issue(s): items mismatch", admin_message)
 
 
@@ -1782,6 +1792,79 @@ class BuyOrderSignalTest(TestCase):
             args=(sell_order.id,),
             countdown=2,
             expires=300,
+        )
+
+
+class MaterialExchangeWebhookMessageFormatTest(TestCase):
+    def setUp(self):
+        self.config = MaterialExchangeConfig.objects.create(
+            corporation_id=22334455,
+            structure_id=60003760,
+            structure_name="Test Structure",
+            is_active=True,
+        )
+        self.buyer = User.objects.create_user(username="webhook_buyer")
+        self.seller = User.objects.create_user(username="webhook_seller")
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_buy_order_created_lists_items_being_bought(self, mock_notify_multi):
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.buyer,
+            order_reference="INDY-BUY-WEBHOOK-1",
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1200,
+            unit_price=6.0,
+            total_price=7200,
+            stock_available_at_creation=9999,
+        )
+
+        handle_material_exchange_buy_order_created(order.id)
+
+        self.assertTrue(mock_notify_multi.called)
+        title = str(mock_notify_multi.call_args[0][1])
+        message = str(mock_notify_multi.call_args[0][2])
+        self.assertIn("New Buy Order", title)
+        self.assertIn("Items being bought:", message)
+        self.assertIn("Tritanium", message)
+
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    def test_sell_order_created_lists_items_being_sold(self, mock_notify_admins):
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            order_reference="INDY-SELL-WEBHOOK-1",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=35,
+            type_name="Pyerite",
+            quantity=500,
+            unit_price=8.0,
+            total_price=4000,
+        )
+
+        handle_material_exchange_sell_order_created(order.id)
+
+        self.assertTrue(mock_notify_admins.called)
+        title = str(mock_notify_admins.call_args[0][1])
+        message = str(mock_notify_admins.call_args[0][2])
+        self.assertIn("New Sell Order", title)
+        self.assertIn("Items being sold:", message)
+        self.assertIn("Pyerite", message)
+
+    def test_contract_state_webhook_line_is_one_line(self):
+        self.assertEqual(
+            _build_contract_state_webhook_line("pilot_x", "validated"),
+            "Contract from pilot_x has validated.",
+        )
+        self.assertEqual(
+            _build_contract_state_webhook_line("pilot_x", "completed"),
+            "Contract from pilot_x has completed.",
         )
 
 

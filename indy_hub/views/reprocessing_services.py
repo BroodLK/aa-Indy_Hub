@@ -3010,20 +3010,21 @@ def reprocessing_request_create(request, profile_id: int):
             detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
             notify_user(
                 request.user,
-                _("Reprocessing request submitted"),
+                _("Reprocessing Request Submitted"),
                 _(
-                    "Your request %(reference)s has been submitted. \n\nFollow the contract instructions on the details page."
+                    "Your reprocessing request %(reference)s was submitted.\n\nFollow the contract instructions on the detail page."
                 )
                 % {"reference": service_request.request_reference},
                 level="success",
                 link=detail_link,
+                link_label=_("Review your requests"),
             )
             notify_user(
                 profile.user,
-                _("Incoming reprocessing request"),
+                _("Reprocessing Request - Incoming"),
                 _(
-                    "%(character)s sent a new reprocessing request %(reference)s.\n\n"
-                    "Follow the return instructions on the request detail page."
+                    "%(character)s submitted reprocessing request %(reference)s.\n\n"
+                    "Follow the return-contract instructions on the detail page."
                 )
                 % {
                     "character": selected_requester_character_name,
@@ -3031,6 +3032,7 @@ def reprocessing_request_create(request, profile_id: int):
                 },
                 level="info",
                 link=detail_link,
+                link_label=_("Open processing queue"),
             )
             messages.success(
                 request,
@@ -3347,23 +3349,25 @@ def reprocessing_request_verify_inbound(request, request_id: int):
     detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
     notify_user(
         service_request.processor_user,
-        _("Inbound contract verified"),
+        _("Reprocessing Request - Inbound Contract Verified"),
         _(
-            "Inbound contract for request %(reference)s is verified. You can now start processing and prepare the return contract."
+            "Inbound contract verified for request %(reference)s.\n\nYou can now start processing and prepare the return contract."
         )
         % {"reference": service_request.request_reference},
         level="success",
         link=detail_link,
+        link_label=_("Open processing queue"),
     )
     notify_user(
         service_request.requester,
-        _("Inbound contract verified"),
+        _("Reprocessing Request - Inbound Contract Verified"),
         _(
-            "Inbound contract for request %(reference)s has been verified."
+            "Inbound contract verified for request %(reference)s."
         )
         % {"reference": service_request.request_reference},
         level="success",
         link=detail_link,
+        link_label=_("Review your requests"),
     )
     messages.success(request, _("Inbound contract verified successfully."))
     return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
@@ -3516,23 +3520,25 @@ def reprocessing_request_verify_return(request, request_id: int):
     detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
     notify_user(
         service_request.requester,
-        _("Reprocessing request completed"),
+        _("Reprocessing Request Completed"),
         _(
-            "Return contract for request %(reference)s has been verified and the request is complete."
+            "Return contract verified for request %(reference)s.\n\nThis request is now complete."
         )
         % {"reference": service_request.request_reference},
         level="success",
         link=detail_link,
+        link_label=_("Review your requests"),
     )
     notify_user(
         service_request.processor_user,
-        _("Reprocessing request completed"),
+        _("Reprocessing Request Completed"),
         _(
-            "Request %(reference)s is now marked complete."
+            "Request %(reference)s is now complete."
         )
         % {"reference": service_request.request_reference},
         level="success",
         link=detail_link,
+        link_label=_("Open processing queue"),
     )
     messages.success(request, _("Return contract verified. Request completed."))
     return redirect("indy_hub:reprocessing_request_detail", request_id=service_request.id)
@@ -3562,13 +3568,14 @@ def reprocessing_request_cancel(request, request_id: int):
     if processor_user and processor_user.id != request.user.id:
         notify_user(
             processor_user,
-            _("Reprocessing request cancelled"),
+            _("Reprocessing Request Cancelled"),
             _(
-                "Request %(reference)s was cancelled by the requester and removed."
+                "Request %(reference)s was cancelled by the requester."
             )
             % {"reference": request_reference},
             level="warning",
             link=browse_link,
+            link_label=_("Open processing queue"),
         )
 
     messages.success(request, _("Request cancelled and removed."))
@@ -3604,23 +3611,31 @@ def reprocessing_request_dispute(request, request_id: int):
     detail_link = reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
     notify_user(
         service_request.requester,
-        _("Reprocessing request anomaly"),
+        _("Reprocessing Request Anomaly"),
         _(
-            "Request %(reference)s has been marked as a contract anomaly."
+            "Request %(reference)s has been marked as an anomaly.\n\nReason: %(reason)s"
         )
-        % {"reference": service_request.request_reference},
+        % {
+            "reference": service_request.request_reference,
+            "reason": dispute_reason,
+        },
         level="warning",
         link=detail_link,
+        link_label=_("Review your requests"),
     )
     notify_user(
         service_request.processor_user,
-        _("Reprocessing request anomaly"),
+        _("Reprocessing Request Anomaly"),
         _(
-            "Request %(reference)s has been marked as a contract anomaly."
+            "Request %(reference)s has been marked as an anomaly.\n\nReason: %(reason)s"
         )
-        % {"reference": service_request.request_reference},
+        % {
+            "reference": service_request.request_reference,
+            "reason": dispute_reason,
+        },
         level="warning",
         link=detail_link,
+        link_label=_("Open processing queue"),
     )
     _notify_material_exchange_admins(
         title="Reprocessing request anomaly",

@@ -921,7 +921,7 @@ class ReprocessingAutomationTaskTests(TestCase):
         )
         self.assertTrue(
             any(
-                call.args[1] == "Inbound reprocessing contract sent"
+                call.args[1] == "Reprocessing Request - Inbound Contract Sent"
                 for call in mock_notify_user.call_args_list
             )
         )
@@ -937,7 +937,7 @@ class ReprocessingAutomationTaskTests(TestCase):
         self.assertIsNotNone(self.request.inbound_contract_verified_at)
         self.assertTrue(
             any(
-                call.args[1] == "Inbound reprocessing contract accepted"
+                call.args[1] == "Reprocessing Request - Inbound Contract Accepted"
                 for call in mock_notify_user.call_args_list
             )
         )
@@ -967,7 +967,7 @@ class ReprocessingAutomationTaskTests(TestCase):
         self.assertIsNotNone(self.request.completed_at)
         self.assertTrue(
             any(
-                call.args[1] == "Return reprocessing contract sent"
+                call.args[1] == "Reprocessing Request - Return Contract Sent"
                 for call in mock_notify_user.call_args_list
             )
         )
@@ -1000,7 +1000,7 @@ class ReprocessingAutomationTaskTests(TestCase):
         self.assertIn("expected 100, actual 99", self.request.dispute_reason)
         self.assertGreaterEqual(mock_notify_user.call_count, 2)
         titles = [call.args[1] for call in mock_notify_user.call_args_list]
-        self.assertTrue(all(title == "Reprocessing contract anomaly" for title in titles))
+        self.assertTrue(all(title == "Reprocessing Request Anomaly" for title in titles))
 
 
 class ReprocessingCharacterContractSyncTests(TestCase):
