@@ -437,6 +437,8 @@ function upsertSelectedContractOffer(blueprintTypeId, offer) {
         offerMap = new Map();
         CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.set(numericBlueprintTypeId, offerMap);
     }
+    const existingOffer = offerMap.get(contractId) || null;
+    const selectedAtCandidate = Number(offer?.selected_at) || 0;
     offerMap.set(contractId, {
         blueprint_type_id: numericBlueprintTypeId,
         contract_id: contractId,
@@ -449,7 +451,7 @@ function upsertSelectedContractOffer(blueprintTypeId, offer) {
         te: Number(offer.te) || 0,
         issued_at: String(offer.issued_at || ''),
         expires_at: String(offer.expires_at || ''),
-        selected_at: Date.now(),
+        selected_at: selectedAtCandidate || Number(existingOffer?.selected_at) || Date.now(),
     });
     return true;
 }
@@ -469,6 +471,155 @@ function removeSelectedContractOffer(blueprintTypeId, contractId) {
         CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.delete(numericBlueprintTypeId);
     }
     return removed;
+}
+
+function getPlannedBlueprintTypeIdsForContracts() {
+    const plannedTypeIds = new Set();
+    getBlueprintConfigsForFinancialPlanner().forEach((bp) => {
+        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
+        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || blueprintTypeId) || 0;
+        if (!blueprintTypeId || !productTypeId) {
+            return;
+        }
+        if (!isProductPlannedForProduction(productTypeId)) {
+            return;
+        }
+        plannedTypeIds.add(blueprintTypeId);
+    });
+    return plannedTypeIds;
+}
+
+function getKnownOfferForBlueprintContract(blueprintTypeId, contractId) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    const numericContractId = Number(contractId) || 0;
+    if (!numericBlueprintTypeId || !numericContractId) {
+        return null;
+    }
+
+    const liveOffers = CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.get(numericBlueprintTypeId) || [];
+    const liveOffer = Array.isArray(liveOffers)
+        ? liveOffers.find((offer) => Number(offer?.contract_id) === numericContractId)
+        : null;
+    if (liveOffer) {
+        return {
+            ...liveOffer,
+            blueprint_type_id: numericBlueprintTypeId,
+            contract_id: numericContractId,
+        };
+    }
+
+    const selectedOfferMap = CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.get(numericBlueprintTypeId);
+    if (selectedOfferMap instanceof Map && selectedOfferMap.has(numericContractId)) {
+        const selectedOffer = selectedOfferMap.get(numericContractId);
+        return {
+            ...selectedOffer,
+            blueprint_type_id: numericBlueprintTypeId,
+            contract_id: numericContractId,
+        };
+    }
+    return null;
+}
+
+function getRelatedOffersForContract(contractId, sourceBlueprintTypeId = 0, sourceOffer = null) {
+    const numericContractId = Number(contractId) || 0;
+    const numericSourceTypeId = Number(sourceBlueprintTypeId) || 0;
+    if (!numericContractId) {
+        return [];
+    }
+
+    const candidateBlueprintTypeIds = getPlannedBlueprintTypeIdsForContracts();
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((_offerMap, blueprintTypeIdRaw) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (blueprintTypeId > 0) {
+            candidateBlueprintTypeIds.add(blueprintTypeId);
+        }
+    });
+    CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.forEach((_offers, blueprintTypeIdRaw) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (blueprintTypeId > 0) {
+            candidateBlueprintTypeIds.add(blueprintTypeId);
+        }
+    });
+    if (numericSourceTypeId > 0) {
+        candidateBlueprintTypeIds.add(numericSourceTypeId);
+    }
+
+    const related = [];
+    candidateBlueprintTypeIds.forEach((blueprintTypeId) => {
+        const offer = getKnownOfferForBlueprintContract(blueprintTypeId, numericContractId);
+        if (!offer) {
+            return;
+        }
+        related.push({
+            ...offer,
+            blueprint_type_id: blueprintTypeId,
+            contract_id: numericContractId,
+        });
+    });
+
+    if (numericSourceTypeId > 0) {
+        const sourceRuns = Math.max(1, Number(sourceOffer?.runs) || 1);
+        const sourcePresent = related.some(
+            (offer) => Number(offer?.blueprint_type_id) === numericSourceTypeId
+        );
+        if (!sourcePresent && Number(sourceRuns) > 0) {
+            related.push({
+                blueprint_type_id: numericSourceTypeId,
+                contract_id: numericContractId,
+                title: String(sourceOffer?.title || '').trim(),
+                price_total: Number(sourceOffer?.price_total) || 0,
+                price_per_run: Number(sourceOffer?.price_per_run) || 0,
+                runs: sourceRuns,
+                copies: Math.max(1, Number(sourceOffer?.copies) || 1),
+                me: Number(sourceOffer?.me) || 0,
+                te: Number(sourceOffer?.te) || 0,
+                issued_at: String(sourceOffer?.issued_at || ''),
+                expires_at: String(sourceOffer?.expires_at || ''),
+            });
+        }
+    }
+
+    return related;
+}
+
+function selectContractPackFromOffer(blueprintTypeId, offer) {
+    const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+    const contractId = Number(offer?.contract_id) || 0;
+    if (!numericBlueprintTypeId || !contractId) {
+        return [];
+    }
+
+    const relatedOffers = getRelatedOffersForContract(contractId, numericBlueprintTypeId, offer);
+    const affectedBlueprintTypeIds = new Set();
+    relatedOffers.forEach((relatedOffer) => {
+        const relatedTypeId = Number(relatedOffer?.blueprint_type_id) || 0;
+        if (!relatedTypeId) {
+            return;
+        }
+        if (upsertSelectedContractOffer(relatedTypeId, relatedOffer)) {
+            affectedBlueprintTypeIds.add(relatedTypeId);
+        }
+    });
+    return Array.from(affectedBlueprintTypeIds);
+}
+
+function removeSelectedContractPack(contractId) {
+    const numericContractId = Number(contractId) || 0;
+    if (!numericContractId) {
+        return [];
+    }
+
+    const affectedBlueprintTypeIds = [];
+    Array.from(CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.keys()).forEach((blueprintTypeIdRaw) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (!blueprintTypeId) {
+            return;
+        }
+        if (removeSelectedContractOffer(blueprintTypeId, numericContractId)) {
+            affectedBlueprintTypeIds.push(blueprintTypeId);
+        }
+    });
+    return affectedBlueprintTypeIds;
 }
 
 function getSelectedContractsCoverageSignature() {
@@ -7103,29 +7254,72 @@ function renderConfigureBoughtBpcsSection() {
     pruneSelectedContractsToCurrentProductionPlan();
 
     const blueprintNameMap = getBlueprintNameMapFromConfigPane();
-    const rows = [];
+    const bundlesByContractId = new Map();
     CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
         if (!(offerMap instanceof Map) || offerMap.size === 0) {
             return;
         }
-        const offers = Array.from(offerMap.values()).sort(
-            (left, right) => (Number(left.selected_at) || 0) - (Number(right.selected_at) || 0)
-        );
-        if (offers.length === 0) {
-            return;
-        }
-        const totalRuns = offers.reduce((sum, offer) => sum + Math.max(1, Number(offer.runs) || 1), 0);
-        const totalPrice = offers.reduce((sum, offer) => sum + Math.max(0, Number(offer.price_total) || 0), 0);
-        rows.push({
-            blueprintTypeId: Number(blueprintTypeId) || 0,
-            blueprintName: String(blueprintNameMap.get(blueprintTypeId) || `Blueprint ${blueprintTypeId}`).trim(),
-            offers,
-            totalRuns,
-            totalPrice,
+        const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+        const blueprintName = String(
+            blueprintNameMap.get(numericBlueprintTypeId) || `Blueprint ${numericBlueprintTypeId}`
+        ).trim();
+        offerMap.forEach((offer) => {
+            const contractId = Number(offer?.contract_id) || 0;
+            if (!contractId) {
+                return;
+            }
+            if (!bundlesByContractId.has(contractId)) {
+                bundlesByContractId.set(contractId, {
+                    contractId,
+                    title: String(offer?.title || '').trim(),
+                    totalPrice: Math.max(0, Number(offer?.price_total) || 0),
+                    totalRuns: 0,
+                    selectedAt: Number(offer?.selected_at) || 0,
+                    componentsByBlueprintType: new Map(),
+                });
+            }
+
+            const bundle = bundlesByContractId.get(contractId);
+            const runs = Math.max(1, Number(offer?.runs) || 1);
+            bundle.totalRuns += runs;
+            if (bundle.totalPrice <= 0 && Number(offer?.price_total) > 0) {
+                bundle.totalPrice = Math.max(0, Number(offer?.price_total) || 0);
+            }
+            const selectedAt = Number(offer?.selected_at) || 0;
+            if (selectedAt > 0 && (bundle.selectedAt <= 0 || selectedAt < bundle.selectedAt)) {
+                bundle.selectedAt = selectedAt;
+            }
+            bundle.componentsByBlueprintType.set(numericBlueprintTypeId, {
+                blueprintTypeId: numericBlueprintTypeId,
+                blueprintName,
+                runs,
+                me: Number(offer?.me) || 0,
+                te: Number(offer?.te) || 0,
+            });
         });
     });
 
-    rows.sort((left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' }));
+    const rows = Array.from(bundlesByContractId.values()).map((bundle) => {
+        const components = Array.from(bundle.componentsByBlueprintType.values()).sort(
+            (left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' })
+        );
+        const coverageSummary = components
+            .map((component) => `${component.blueprintName} (${formatInteger(component.runs)}r, ME ${formatInteger(component.me)}, TE ${formatInteger(component.te)})`)
+            .join(', ');
+        return {
+            ...bundle,
+            components,
+            coverageSummary,
+        };
+    });
+    rows.sort((left, right) => {
+        const leftSelectedAt = Number(left.selectedAt) || 0;
+        const rightSelectedAt = Number(right.selectedAt) || 0;
+        if (leftSelectedAt !== rightSelectedAt) {
+            return leftSelectedAt - rightSelectedAt;
+        }
+        return Number(left.contractId) - Number(right.contractId);
+    });
     listEl.innerHTML = '';
 
     if (rows.length === 0) {
@@ -7142,49 +7336,40 @@ function renderConfigureBoughtBpcsSection() {
         wrapper.className = 'card border-0 bg-body-tertiary';
         wrapper.innerHTML = `
             <div class="card-body py-2">
-                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
                     <div>
-                        <h6 class="mb-1">${escapeHtml(entry.blueprintName)}</h6>
+                        <h6 class="mb-1">${escapeHtml(__('Contract'))} #${formatInteger(entry.contractId)}</h6>
                         <div class="small text-muted">
-                            ${escapeHtml(__('Contracts'))}: <strong>${formatInteger(entry.offers.length)}</strong>
+                            ${escapeHtml(__('BPC types'))}: <strong>${formatInteger(entry.components.length)}</strong>
                             - ${escapeHtml(__('Runs'))}: <strong>${formatInteger(entry.totalRuns)}</strong>
                             - ${escapeHtml(__('Price'))}: <strong>${formatPrice(entry.totalPrice)}</strong>
                         </div>
-                    </div>
-                </div>
-                <div class="d-flex flex-column gap-1"></div>
-            </div>
-        `;
-        const offersListEl = wrapper.querySelector('.d-flex.flex-column.gap-1');
-        if (offersListEl) {
-            entry.offers.forEach((offer) => {
-                const contractId = Number(offer.contract_id) || 0;
-                const offerRow = document.createElement('div');
-                offerRow.className = 'd-flex flex-wrap justify-content-between align-items-center gap-2 border rounded px-2 py-1 bg-white';
-                offerRow.innerHTML = `
-                    <div class="small">
-                        <strong>#${contractId}</strong>
-                        <span class="text-muted ms-1">${escapeHtml(__('Runs'))}: ${formatInteger(Number(offer.runs) || 0)}</span>
-                        <span class="text-muted ms-1">ME ${formatInteger(Number(offer.me) || 0)} / TE ${formatInteger(Number(offer.te) || 0)}</span>
-                        <span class="text-muted ms-1">${escapeHtml(__('Price'))}: ${formatPrice(Number(offer.price_total) || 0)}</span>
-                        <span class="text-muted ms-1">${escapeHtml(__('Selected'))}: ${escapeHtml(formatDateTimeShort(Number(offer.selected_at) || 0))}</span>
+                        ${entry.title ? `<div class="small text-muted mt-1">${escapeHtml(entry.title)}</div>` : ''}
+                        <div class="small text-muted mt-1">
+                            ${escapeHtml(__('Covers'))}: ${escapeHtml(entry.coverageSummary || '-')}
+                        </div>
+                        <div class="small text-muted mt-1">
+                            ${escapeHtml(__('Selected'))}: ${escapeHtml(formatDateTimeShort(Number(entry.selectedAt) || 0))}
+                        </div>
                     </div>
                     <button type="button" class="btn btn-outline-danger btn-sm" data-configure-remove-bpc="1">
                         ${escapeHtml(__('Remove'))}
                     </button>
-                `;
-                const removeBtn = offerRow.querySelector('button[data-configure-remove-bpc="1"]');
-                if (removeBtn) {
-                    removeBtn.addEventListener('click', () => {
-                        if (!removeSelectedContractOffer(entry.blueprintTypeId, contractId)) {
-                            return;
-                        }
-                        syncConfigureCardFromSelectedContracts(entry.blueprintTypeId);
-                        saveSelectedBpcContractsToStorage();
-                        refreshTabsAfterStateChange({ forceNeeded: true });
-                    });
+                </div>
+            </div>
+        `;
+        const removeBtn = wrapper.querySelector('button[data-configure-remove-bpc="1"]');
+        if (removeBtn) {
+            removeBtn.addEventListener('click', () => {
+                const affectedBlueprintTypeIds = removeSelectedContractPack(entry.contractId);
+                if (affectedBlueprintTypeIds.length === 0) {
+                    return;
                 }
-                offersListEl.appendChild(offerRow);
+                Array.from(new Set(affectedBlueprintTypeIds)).forEach((affectedTypeId) => {
+                    syncConfigureCardFromSelectedContracts(affectedTypeId);
+                });
+                saveSelectedBpcContractsToStorage();
+                refreshTabsAfterStateChange({ forceNeeded: true });
             });
         }
         listEl.appendChild(wrapper);
@@ -7213,47 +7398,92 @@ function collectMissingBlueprintCopyRows(deficitsOverride = null) {
 
 function collectSelectedBlueprintContractRows(deficitsOverride = null) {
     pruneSelectedContractsToCurrentProductionPlan();
-    const plannedBlueprintTypeIds = new Set();
-    getBlueprintConfigsForFinancialPlanner().forEach((bp) => {
-        const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
-        const productTypeId = Number(bp?.product_type_id || bp?.productTypeId || blueprintTypeId) || 0;
-        if (!blueprintTypeId || !productTypeId) {
-            return;
-        }
-        if (!isProductPlannedForProduction(productTypeId)) {
-            return;
-        }
-        plannedBlueprintTypeIds.add(blueprintTypeId);
-    });
+    const plannedBlueprintTypeIds = getPlannedBlueprintTypeIdsForContracts();
     const rows = [];
     const blueprintNameMap = getBlueprintNameMapFromConfigPane();
+    const bundlesByContractId = new Map();
+
     CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
-        if (plannedBlueprintTypeIds.size > 0 && !plannedBlueprintTypeIds.has(Number(blueprintTypeId) || 0)) {
+        const numericBlueprintTypeId = Number(blueprintTypeId) || 0;
+        if (plannedBlueprintTypeIds.size > 0 && !plannedBlueprintTypeIds.has(numericBlueprintTypeId)) {
             return;
         }
         if (!(offerMap instanceof Map) || offerMap.size === 0) {
             return;
         }
-        const blueprintName = String(
-            blueprintNameMap.get(blueprintTypeId)
-            || `Blueprint ${blueprintTypeId}`
-        ).trim();
 
         offerMap.forEach((offer, contractId) => {
+            const numericContractId = Number(contractId) || 0;
+            if (!numericContractId) {
+                return;
+            }
+            const blueprintName = String(
+                blueprintNameMap.get(numericBlueprintTypeId)
+                || `Blueprint ${numericBlueprintTypeId}`
+            ).trim();
             const runs = Math.max(1, Number(offer.runs) || 1);
             const totalPrice = Math.max(0, Number(offer.price_total) || 0);
-            const unitPrice = runs > 0 ? (totalPrice / runs) : totalPrice;
-            rows.push({
-                typeId: blueprintTypeId,
-                typeName: `${blueprintName} (Contract #${contractId}, ME ${Number(offer.me) || 0}, TE ${Number(offer.te) || 0})`,
-                quantity: runs,
-                marketGroup: __('Blueprint Copies'),
-                rowKind: 'bpc',
-                rowKey: `bpc-contract:${blueprintTypeId}:${contractId}`,
-                unitPrice,
+            if (!bundlesByContractId.has(numericContractId)) {
+                bundlesByContractId.set(numericContractId, {
+                    contractId: numericContractId,
+                    title: String(offer?.title || '').trim(),
+                    totalPrice,
+                    selectedAt: Number(offer?.selected_at) || 0,
+                    totalRuns: 0,
+                    representativeTypeId: numericBlueprintTypeId,
+                    byBlueprintType: new Map(),
+                });
+            }
+
+            const bundle = bundlesByContractId.get(numericContractId);
+            bundle.totalRuns += runs;
+            if (totalPrice > 0 && bundle.totalPrice <= 0) {
+                bundle.totalPrice = totalPrice;
+            }
+            const offerSelectedAt = Number(offer?.selected_at) || 0;
+            if (offerSelectedAt > 0 && (bundle.selectedAt <= 0 || offerSelectedAt < bundle.selectedAt)) {
+                bundle.selectedAt = offerSelectedAt;
+            }
+            if (!bundle.representativeTypeId) {
+                bundle.representativeTypeId = numericBlueprintTypeId;
+            }
+            bundle.byBlueprintType.set(numericBlueprintTypeId, {
+                blueprintTypeId: numericBlueprintTypeId,
+                blueprintName,
+                runs,
+                me: Number(offer.me) || 0,
+                te: Number(offer.te) || 0,
             });
         });
     });
+
+    Array.from(bundlesByContractId.values()).forEach((bundle) => {
+        const components = Array.from(bundle.byBlueprintType.values()).sort(
+            (left, right) => String(left.blueprintName).localeCompare(String(right.blueprintName), undefined, { sensitivity: 'base' })
+        );
+        if (components.length === 0) {
+            return;
+        }
+
+        const componentNames = components.map((component) => component.blueprintName);
+        const previewNames = componentNames.slice(0, 2).join(', ');
+        const moreCount = Math.max(0, componentNames.length - 2);
+        const componentSuffix = moreCount > 0
+            ? `${previewNames} (+${moreCount})`
+            : previewNames;
+        const typeName = `${__('Contract')} #${bundle.contractId} (${componentSuffix})`;
+
+        rows.push({
+            typeId: Number(bundle.representativeTypeId) || Number(components[0].blueprintTypeId) || 0,
+            typeName,
+            quantity: 1,
+            marketGroup: __('Blueprint Copies'),
+            rowKind: 'bpc',
+            rowKey: `bpc-contract:${bundle.contractId}`,
+            unitPrice: Math.max(0, Number(bundle.totalPrice) || 0),
+        });
+    });
+
     rows.sort((left, right) => String(left.typeName).localeCompare(String(right.typeName), undefined, { sensitivity: 'base' }));
     return rows;
 }
@@ -7744,12 +7974,18 @@ function renderBuyBpcsTab() {
             const button = tr.querySelector('button[data-bpc-offer-toggle="1"]');
             if (button) {
                 button.addEventListener('click', () => {
+                    let affectedBlueprintTypeIds = [];
                     if (isSelected) {
-                        removeSelectedContractOffer(blueprintTypeId, contractId);
+                        affectedBlueprintTypeIds = removeSelectedContractPack(contractId);
                     } else {
-                        upsertSelectedContractOffer(blueprintTypeId, offer);
+                        affectedBlueprintTypeIds = selectContractPackFromOffer(blueprintTypeId, offer);
                     }
-                    syncConfigureCardFromSelectedContracts(blueprintTypeId);
+                    if (affectedBlueprintTypeIds.length === 0) {
+                        affectedBlueprintTypeIds = [blueprintTypeId];
+                    }
+                    Array.from(new Set(affectedBlueprintTypeIds)).forEach((affectedTypeId) => {
+                        syncConfigureCardFromSelectedContracts(affectedTypeId);
+                    });
                     saveSelectedBpcContractsToStorage();
                     refreshTabsAfterStateChange({ forceNeeded: true });
                 });
