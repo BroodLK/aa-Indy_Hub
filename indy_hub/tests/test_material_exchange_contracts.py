@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
-from django.core.cache import cache
 from django.db import transaction
 from django.test import TestCase
 from django.utils import timezone
@@ -24,7 +23,6 @@ from indy_hub.models import (
     MaterialExchangeSellOrderItem,
 )
 from indy_hub.tasks.material_exchange_contracts import (
-    _build_contract_state_notification_cache_key,
     _build_contract_state_webhook_line,
     _extract_contract_id,
     _get_effective_contract_location_id,
@@ -895,7 +893,6 @@ class BuyOrderValidationTaskTest(TestCase):
     """Tests for buy order validation task behavior."""
 
     def setUp(self):
-        cache.clear()
         self.config = MaterialExchangeConfig.objects.create(
             corporation_id=123456789,
             structure_id=60003760,
@@ -1026,7 +1023,7 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Completed", admin_title)
         self.assertEqual(
             admin_message,
-            f"Contract for {self.buy_order.buyer.username} has been completed.",
+            f"Contract for {self.buy_order.buyer.username} has completed.",
         )
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")
@@ -1065,117 +1062,6 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIsNotNone(self.buy_order.delivered_at)
         mock_notify_user.assert_called_once()
         mock_notify_admins.assert_called_once()
-
-    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
-    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
-    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_check_completed_buy_order_replays_notifications_when_markers_missing(
-        self,
-        mock_client,
-        mock_get_char,
-        mock_notify_admins,
-        mock_notify_user,
-    ):
-        now = timezone.now()
-        self.buy_order.status = MaterialExchangeBuyOrder.Status.COMPLETED
-        self.buy_order.esi_contract_id = 227079455
-        self.buy_order.delivered_at = now
-        self.buy_order.save(
-            update_fields=["status", "esi_contract_id", "delivered_at", "updated_at"]
-        )
-
-        mock_get_char.return_value = 999999999
-        mock_client.fetch_corporation_contracts.return_value = [
-            {
-                "contract_id": 227079455,
-                "status": "finished",
-                "date_completed": now,
-            }
-        ]
-
-        check_completed_material_exchange_contracts()
-
-        mock_notify_user.assert_called_once()
-        mock_notify_admins.assert_called_once()
-        self.assertIsNotNone(
-            cache.get(
-                _build_contract_state_notification_cache_key(
-                    order_kind="buy",
-                    order_id=self.buy_order.id,
-                    contract_id=227079455,
-                    state="completed",
-                    channel="user",
-                )
-            )
-        )
-        self.assertIsNotNone(
-            cache.get(
-                _build_contract_state_notification_cache_key(
-                    order_kind="buy",
-                    order_id=self.buy_order.id,
-                    contract_id=227079455,
-                    state="completed",
-                    channel="admins",
-                )
-            )
-        )
-
-    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
-    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
-    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_check_completed_buy_order_does_not_re_notify_when_markers_present(
-        self,
-        mock_client,
-        mock_get_char,
-        mock_notify_admins,
-        mock_notify_user,
-    ):
-        now = timezone.now()
-        contract_id = 227079556
-        self.buy_order.status = MaterialExchangeBuyOrder.Status.COMPLETED
-        self.buy_order.esi_contract_id = contract_id
-        self.buy_order.delivered_at = now
-        self.buy_order.save(
-            update_fields=["status", "esi_contract_id", "delivered_at", "updated_at"]
-        )
-        cache.set(
-            _build_contract_state_notification_cache_key(
-                order_kind="buy",
-                order_id=self.buy_order.id,
-                contract_id=contract_id,
-                state="completed",
-                channel="user",
-            ),
-            now.timestamp(),
-            60 * 60,
-        )
-        cache.set(
-            _build_contract_state_notification_cache_key(
-                order_kind="buy",
-                order_id=self.buy_order.id,
-                contract_id=contract_id,
-                state="completed",
-                channel="admins",
-            ),
-            now.timestamp(),
-            60 * 60,
-        )
-
-        mock_get_char.return_value = 999999999
-        mock_client.fetch_corporation_contracts.return_value = [
-            {
-                "contract_id": contract_id,
-                "status": "finished",
-                "date_completed": now,
-            }
-        ]
-
-        check_completed_material_exchange_contracts()
-
-        mock_notify_user.assert_not_called()
-        mock_notify_admins.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -1239,7 +1125,7 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Completed", admin_title)
         self.assertEqual(
             admin_message,
-            f"Contract from {sell_order.seller.username} has been completed.",
+            f"Contract from {sell_order.seller.username} has completed.",
         )
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -2035,7 +1921,6 @@ class NotificationDeduplicationTest(TestCase):
     """Ensure periodic material exchange cycle does not re-send identical alerts."""
 
     def setUp(self):
-        cache.clear()
         self.config = MaterialExchangeConfig.objects.create(
             corporation_id=123456789,
             structure_id=60003760,
@@ -2434,28 +2319,6 @@ class NotificationDeduplicationTest(TestCase):
             notes=f"Contract validated: {contract.contract_id} @ {sell_order.total_price:,.0f} ISK",
             updated_at=now,
         )
-        cache.set(
-            _build_contract_state_notification_cache_key(
-                order_kind="sell",
-                order_id=sell_order.id,
-                contract_id=contract.contract_id,
-                state="validated",
-                channel="user",
-            ),
-            now.timestamp(),
-            60 * 60,
-        )
-        cache.set(
-            _build_contract_state_notification_cache_key(
-                order_kind="sell",
-                order_id=sell_order.id,
-                contract_id=contract.contract_id,
-                state="validated",
-                channel="admins",
-            ),
-            now.timestamp(),
-            60 * 60,
-        )
 
         contracts = ESIContract.objects.filter(
             corporation_id=self.config.corporation_id,
@@ -2535,28 +2398,6 @@ class NotificationDeduplicationTest(TestCase):
             notes=f"Contract validated: {contract.contract_id} @ {buy_order.total_price:,.0f} ISK",
             updated_at=now,
         )
-        cache.set(
-            _build_contract_state_notification_cache_key(
-                order_kind="buy",
-                order_id=buy_order.id,
-                contract_id=contract.contract_id,
-                state="validated",
-                channel="user",
-            ),
-            now.timestamp(),
-            60 * 60,
-        )
-        cache.set(
-            _build_contract_state_notification_cache_key(
-                order_kind="buy",
-                order_id=buy_order.id,
-                contract_id=contract.contract_id,
-                state="validated",
-                channel="admins",
-            ),
-            now.timestamp(),
-            60 * 60,
-        )
 
         contracts = ESIContract.objects.filter(
             corporation_id=self.config.corporation_id,
@@ -2566,211 +2407,6 @@ class NotificationDeduplicationTest(TestCase):
 
         mock_notify_user.assert_not_called()
         mock_notify_admins.assert_not_called()
-
-        buy_item.refresh_from_db()
-        self.assertTrue(buy_item.esi_contract_validated)
-        self.assertEqual(buy_item.esi_contract_id, contract.contract_id)
-
-    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
-    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
-    def test_sell_validation_re_notifies_when_marker_missing(
-        self,
-        mock_get_character_ids,
-        mock_notify_user,
-        mock_notify_admins,
-    ):
-        # Standard Library
-        from datetime import timedelta
-
-        # Django
-        from django.utils import timezone
-
-        # AA Example App
-        from indy_hub.models import ESIContract, ESIContractItem
-
-        seller_char_id = 998877665
-        mock_get_character_ids.return_value = [seller_char_id]
-
-        sell_order = MaterialExchangeSellOrder.objects.create(
-            config=self.config,
-            seller=self.seller,
-            status=MaterialExchangeSellOrder.Status.DRAFT,
-            order_reference="INDY-VALIDATED-REPLAY-SELL-1",
-        )
-        MaterialExchangeSellOrderItem.objects.create(
-            order=sell_order,
-            type_id=34,
-            type_name="Tritanium",
-            quantity=100,
-            unit_price=10,
-            total_price=1000,
-        )
-
-        contract = ESIContract.objects.create(
-            contract_id=990003,
-            corporation_id=self.config.corporation_id,
-            contract_type="item_exchange",
-            issuer_id=seller_char_id,
-            issuer_corporation_id=self.config.corporation_id,
-            assignee_id=self.config.corporation_id,
-            start_location_id=self.config.structure_id,
-            end_location_id=self.config.structure_id,
-            status="outstanding",
-            price=sell_order.total_price,
-            title=sell_order.order_reference,
-            date_issued=timezone.now(),
-            date_expired=timezone.now() + timedelta(days=30),
-        )
-        ESIContractItem.objects.create(
-            contract=contract,
-            record_id=990301,
-            type_id=34,
-            quantity=100,
-            is_included=True,
-        )
-
-        stale_order = MaterialExchangeSellOrder.objects.get(pk=sell_order.pk)
-        now = timezone.now()
-        MaterialExchangeSellOrder.objects.filter(pk=sell_order.pk).update(
-            status=MaterialExchangeSellOrder.Status.VALIDATED,
-            esi_contract_id=contract.contract_id,
-            contract_validated_at=now,
-            notes=f"Contract validated: {contract.contract_id} @ {sell_order.total_price:,.0f} ISK",
-            updated_at=now,
-        )
-
-        contracts = ESIContract.objects.filter(
-            corporation_id=self.config.corporation_id,
-            contract_type="item_exchange",
-        ).prefetch_related("items")
-        _validate_sell_order_from_db(self.config, stale_order, contracts, esi_client=None)
-
-        mock_notify_user.assert_called_once()
-        mock_notify_admins.assert_called_once()
-        self.assertIsNotNone(
-            cache.get(
-                _build_contract_state_notification_cache_key(
-                    order_kind="sell",
-                    order_id=sell_order.id,
-                    contract_id=contract.contract_id,
-                    state="validated",
-                    channel="user",
-                )
-            )
-        )
-        self.assertIsNotNone(
-            cache.get(
-                _build_contract_state_notification_cache_key(
-                    order_kind="sell",
-                    order_id=sell_order.id,
-                    contract_id=contract.contract_id,
-                    state="validated",
-                    channel="admins",
-                )
-            )
-        )
-
-    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
-    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
-    def test_buy_validation_re_notifies_when_marker_missing(
-        self,
-        mock_get_character_ids,
-        mock_notify_user,
-        mock_notify_admins,
-    ):
-        # Standard Library
-        from datetime import timedelta
-
-        # Django
-        from django.utils import timezone
-
-        # AA Example App
-        from indy_hub.models import ESIContract, ESIContractItem
-
-        buyer_char_id = 554433221
-        mock_get_character_ids.return_value = [buyer_char_id]
-
-        buy_order = MaterialExchangeBuyOrder.objects.create(
-            config=self.config,
-            buyer=self.buyer,
-            status=MaterialExchangeBuyOrder.Status.DRAFT,
-            order_reference="INDY-VALIDATED-REPLAY-BUY-1",
-        )
-        buy_item = MaterialExchangeBuyOrderItem.objects.create(
-            order=buy_order,
-            type_id=34,
-            type_name="Tritanium",
-            quantity=100,
-            unit_price=10,
-            total_price=1000,
-            stock_available_at_creation=500,
-        )
-
-        contract = ESIContract.objects.create(
-            contract_id=990004,
-            corporation_id=self.config.corporation_id,
-            contract_type="item_exchange",
-            issuer_id=self.config.corporation_id,
-            issuer_corporation_id=self.config.corporation_id,
-            assignee_id=buyer_char_id,
-            start_location_id=self.config.structure_id,
-            end_location_id=self.config.structure_id,
-            status="outstanding",
-            price=buy_order.total_price,
-            title=buy_order.order_reference,
-            date_issued=timezone.now(),
-            date_expired=timezone.now() + timedelta(days=30),
-        )
-        ESIContractItem.objects.create(
-            contract=contract,
-            record_id=990401,
-            type_id=34,
-            quantity=100,
-            is_included=True,
-        )
-
-        stale_order = MaterialExchangeBuyOrder.objects.get(pk=buy_order.pk)
-        now = timezone.now()
-        MaterialExchangeBuyOrder.objects.filter(pk=buy_order.pk).update(
-            status=MaterialExchangeBuyOrder.Status.VALIDATED,
-            esi_contract_id=contract.contract_id,
-            contract_validated_at=now,
-            notes=f"Contract validated: {contract.contract_id} @ {buy_order.total_price:,.0f} ISK",
-            updated_at=now,
-        )
-
-        contracts = ESIContract.objects.filter(
-            corporation_id=self.config.corporation_id,
-            contract_type="item_exchange",
-        ).prefetch_related("items")
-        _validate_buy_order_from_db(self.config, stale_order, contracts, esi_client=None)
-
-        mock_notify_user.assert_called_once()
-        mock_notify_admins.assert_called_once()
-        self.assertIsNotNone(
-            cache.get(
-                _build_contract_state_notification_cache_key(
-                    order_kind="buy",
-                    order_id=buy_order.id,
-                    contract_id=contract.contract_id,
-                    state="validated",
-                    channel="user",
-                )
-            )
-        )
-        self.assertIsNotNone(
-            cache.get(
-                _build_contract_state_notification_cache_key(
-                    order_kind="buy",
-                    order_id=buy_order.id,
-                    contract_id=contract.contract_id,
-                    state="validated",
-                    channel="admins",
-                )
-            )
-        )
 
         buy_item.refresh_from_db()
         self.assertTrue(buy_item.esi_contract_validated)

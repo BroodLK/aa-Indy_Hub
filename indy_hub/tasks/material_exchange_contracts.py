@@ -159,17 +159,6 @@ _BUY_ORDER_VALIDATION_SOURCE_STATUSES = (
 )
 _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
 _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
-_CONTRACT_STATE_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 45
-_CONTRACT_SYNC_STATE_TTL_SECONDS = 60 * 60 * 6
-_CORPTOOLS_CONTRACT_GAP_ALERT_TTL_SECONDS = 60 * 60 * 6
-_COMPLETION_NOTIFICATION_REPLAY_WINDOW_DAYS = 14
-_CORPTOOLS_CONTRACT_CANDIDATE_STATUSES = {
-    "outstanding",
-    "in_progress",
-    "finished",
-    "finished_issuer",
-    "finished_contractor",
-}
 
 
 def _build_contract_state_webhook_line(
@@ -180,268 +169,6 @@ def _build_contract_state_webhook_line(
     if normalized_relation not in {"from", "for"}:
         normalized_relation = "from"
     return f"Contract {normalized_relation} {actor_name} has {normalized_state}."
-
-
-def _build_contract_state_notification_cache_key(
-    *,
-    order_kind: str,
-    order_id: int,
-    contract_id: int,
-    state: str,
-    channel: str,
-) -> str:
-    normalized_kind = "sell" if str(order_kind).strip().lower() == "sell" else "buy"
-    normalized_state = (
-        "validated" if str(state).strip().lower() == "validated" else "completed"
-    )
-    normalized_channel = "user" if str(channel).strip().lower() == "user" else "admins"
-    return (
-        f"material_exchange:{normalized_kind}:order:{int(order_id)}:"
-        f"contract:{int(contract_id)}:state:{normalized_state}:notified:{normalized_channel}"
-    )
-
-
-def _contract_state_notification_sent(
-    *,
-    order_kind: str,
-    order_id: int,
-    contract_id: int,
-    state: str,
-    channel: str,
-) -> bool:
-    try:
-        normalized_contract_id = int(contract_id or 0)
-    except (TypeError, ValueError):
-        normalized_contract_id = 0
-    if normalized_contract_id <= 0:
-        return False
-    key = _build_contract_state_notification_cache_key(
-        order_kind=order_kind,
-        order_id=int(order_id),
-        contract_id=normalized_contract_id,
-        state=state,
-        channel=channel,
-    )
-    return cache.get(key) is not None
-
-
-def _mark_contract_state_notification_sent(
-    *,
-    order_kind: str,
-    order_id: int,
-    contract_id: int,
-    state: str,
-    channel: str,
-) -> None:
-    try:
-        normalized_contract_id = int(contract_id or 0)
-    except (TypeError, ValueError):
-        normalized_contract_id = 0
-    if normalized_contract_id <= 0:
-        return
-    key = _build_contract_state_notification_cache_key(
-        order_kind=order_kind,
-        order_id=int(order_id),
-        contract_id=normalized_contract_id,
-        state=state,
-        channel=channel,
-    )
-    cache.set(
-        key,
-        timezone.now().timestamp(),
-        _CONTRACT_STATE_NOTIFY_SENT_TTL_SECONDS,
-    )
-
-
-def _contract_sync_state_cache_key(corporation_id: int) -> str:
-    return f"material_exchange:contracts_sync:corp:{int(corporation_id)}:state"
-
-
-def _set_contract_sync_state(
-    *, corporation_id: int, state: str, contracts_count: int | None = None
-) -> None:
-    payload = {
-        "state": str(state or "").strip().lower(),
-        "contracts_count": int(contracts_count or 0),
-        "updated_at": timezone.now().isoformat(),
-    }
-    cache.set(
-        _contract_sync_state_cache_key(int(corporation_id)),
-        payload,
-        _CONTRACT_SYNC_STATE_TTL_SECONDS,
-    )
-
-
-def _get_contract_sync_state(corporation_id: int) -> str:
-    payload = cache.get(_contract_sync_state_cache_key(int(corporation_id)))
-    if not isinstance(payload, dict):
-        return ""
-    return str(payload.get("state") or "").strip().lower()
-
-
-def _find_corptools_corporate_contract_for_order(
-    *,
-    corporation_id: int,
-    side: str,
-    order_reference: str,
-    participant_character_ids: list[int],
-) -> dict | None:
-    normalized_reference = str(order_reference or "").strip()
-    if not normalized_reference:
-        return None
-
-    normalized_ids: list[int] = []
-    for raw_id in participant_character_ids or []:
-        try:
-            character_id = int(raw_id or 0)
-        except (TypeError, ValueError):
-            continue
-        if character_id <= 0 or character_id in normalized_ids:
-            continue
-        normalized_ids.append(character_id)
-    if not normalized_ids:
-        return None
-
-    try:
-        # Corptools
-        from corptools.models.contracts import CorporateContract
-    except Exception:
-        return None
-
-    try:
-        queryset = CorporateContract.objects.filter(
-            corporation__corporation__corporation_id=int(corporation_id),
-            contract_type="item_exchange",
-            status__in=sorted(_CORPTOOLS_CONTRACT_CANDIDATE_STATUSES),
-            title__icontains=normalized_reference,
-        )
-        if str(side).strip().lower() == "sell":
-            queryset = queryset.filter(issuer_id__in=normalized_ids)
-        else:
-            queryset = queryset.filter(assignee_id__in=normalized_ids)
-        snapshot = (
-            queryset.order_by("-date_issued")
-            .values(
-                "contract_id",
-                "status",
-                "title",
-                "date_issued",
-                "date_completed",
-            )
-            .first()
-        )
-    except Exception as exc:
-        logger.warning(
-            "Corptools contract lookup failed for %s order ref %s: %s",
-            side,
-            normalized_reference,
-            exc,
-            exc_info=True,
-        )
-        return None
-
-    if not snapshot:
-        return None
-    return dict(snapshot)
-
-
-def _notify_corptools_contract_gap(
-    *,
-    config: MaterialExchangeConfig,
-    side: str,
-    order,
-    contract_snapshot: dict | None,
-) -> None:
-    if not isinstance(contract_snapshot, dict):
-        return
-
-    try:
-        contract_id = int(contract_snapshot.get("contract_id") or 0)
-    except (TypeError, ValueError):
-        contract_id = 0
-    if contract_id <= 0:
-        return
-
-    if ESIContract.objects.filter(
-        corporation_id=int(config.corporation_id),
-        contract_id=contract_id,
-    ).exists():
-        return
-
-    contract_status = str(contract_snapshot.get("status") or "").strip().lower() or "unknown"
-    order_kind = "sell" if str(side).strip().lower() == "sell" else "buy"
-    cache_key = (
-        f"material_exchange:{order_kind}:order:{int(order.id)}:"
-        f"corptools_contract_gap:{contract_id}:{contract_status}"
-    )
-    if not cache.add(cache_key, timezone.now().timestamp(), _CORPTOOLS_CONTRACT_GAP_ALERT_TTL_SECONDS):
-        return
-
-    actor = order.seller if order_kind == "sell" else order.buyer
-    actor_label = "seller" if order_kind == "sell" else "buyer"
-    relation = "from" if order_kind == "sell" else "for"
-    order_link = f"/indy_hub/material-exchange/my-orders/{order_kind}/{order.id}/"
-
-    try:
-        _notify_material_exchange_admins(
-            config,
-            _("Contract Cache Gap Detected"),
-            _(
-                f"Corptools shows contract #{contract_id} ({contract_status}) for {order_kind} order {order.order_reference}, "
-                f"but Indy Hub cache did not include this contract during validation.\n"
-                f"Expected {actor_label}: {actor.username}\n"
-                f"Contract title: {contract_snapshot.get('title') or '(empty)'}\n"
-                + _build_contract_state_webhook_line(
-                    actor.username, "validated", relation=relation
-                )
-                + "\nPotential cause: stale ESI cache/304 path or title filtering mismatch."
-            ),
-            level="warning",
-            link=f"{order_link}?next=/indy_hub/material-exchange/%23admin-panel",
-        )
-    except Exception as exc:
-        logger.exception(
-            "Failed to send Corptools contract-gap admin notification for %s order %s: %s",
-            order_kind,
-            order.id,
-            exc,
-        )
-
-    logger.warning(
-        "Corptools contract gap detected for %s order %s: contract %s status=%s missing from Indy cache",
-        order_kind,
-        order.id,
-        contract_id,
-        contract_status,
-    )
-    emit_analytics_event(
-        task=f"material_exchange.{order_kind}_order_corptools_gap",
-        label=contract_status,
-        result="warning",
-    )
-
-
-def _probe_corptools_for_contract_gap(
-    *,
-    config: MaterialExchangeConfig,
-    side: str,
-    order,
-    participant_character_ids: list[int],
-) -> None:
-    snapshot = _find_corptools_corporate_contract_for_order(
-        corporation_id=int(config.corporation_id),
-        side=side,
-        order_reference=str(order.order_reference or f"INDY-{order.id}"),
-        participant_character_ids=participant_character_ids,
-    )
-    if not snapshot:
-        return
-    _notify_corptools_contract_gap(
-        config=config,
-        side=side,
-        order=order,
-        contract_snapshot=snapshot,
-    )
 
 
 def _floor_isk_amount(value: Decimal | str | int | float | None) -> Decimal:
@@ -1582,11 +1309,6 @@ def _sync_contracts_for_corporation(corporation_id: int):
         )
 
     except ESITokenError as exc:
-        _set_contract_sync_state(
-            corporation_id=corporation_id,
-            state="token_error",
-            contracts_count=0,
-        )
         logger.warning(
             "Cannot sync contracts for corporation %s - missing ESI scope: %s",
             corporation_id,
@@ -1594,26 +1316,12 @@ def _sync_contracts_for_corporation(corporation_id: int):
         )
         return
     except ESIUnmodifiedError:
-        cached_contract_count = ESIContract.objects.filter(
-            corporation_id=corporation_id
-        ).count()
-        _set_contract_sync_state(
-            corporation_id=corporation_id,
-            state="not_modified",
-            contracts_count=cached_contract_count,
-        )
-        logger.info(
-            "Contracts returned 304 Not Modified for corporation %s; using %s cached contracts for downstream validation",
+        logger.debug(
+            "Contracts not modified for corporation %s; skipping sync",
             corporation_id,
-            cached_contract_count,
         )
         return
     except ESIRateLimitError as exc:
-        _set_contract_sync_state(
-            corporation_id=corporation_id,
-            state="rate_limited",
-            contracts_count=0,
-        )
         logger.warning(
             "ESI rate limit reached while syncing contracts for corporation %s: %s",
             corporation_id,
@@ -1621,11 +1329,6 @@ def _sync_contracts_for_corporation(corporation_id: int):
         )
         raise
     except (ESIClientError, ESIForbiddenError) as exc:
-        _set_contract_sync_state(
-            corporation_id=corporation_id,
-            state="esi_error",
-            contracts_count=0,
-        )
         logger.error(
             "Failed to fetch contracts from ESI for corporation %s: %s",
             corporation_id,
@@ -1792,11 +1495,6 @@ def _sync_contracts_for_corporation(corporation_id: int):
         len(contracts),
         corporation_id,
     )
-    _set_contract_sync_state(
-        corporation_id=corporation_id,
-        state="refreshed",
-        contracts_count=indy_contracts_count,
-    )
 
 
 @shared_task(
@@ -1844,12 +1542,6 @@ def validate_material_exchange_sell_orders():
             MaterialExchangeSellOrder.Status.ANOMALY_REJECTED,
         ],
     )
-    sync_state = _get_contract_sync_state(int(config.corporation_id))
-    if sync_state == "not_modified":
-        logger.info(
-            "Sell validation is using cached contracts after 304 Not Modified for corporation %s",
-            config.corporation_id,
-        )
 
     if not pending_orders.exists():
         logger.debug("No pending sell orders to validate")
@@ -1868,18 +1560,6 @@ def validate_material_exchange_sell_orders():
             "Run sync_esi_contracts task first.",
             config.corporation_id,
         )
-        if sync_state == "not_modified":
-            logger.warning(
-                "Latest contract sync for corporation %s returned 304 Not Modified, but cache is empty",
-                config.corporation_id,
-            )
-            for order in pending_orders:
-                _probe_corptools_for_contract_gap(
-                    config=config,
-                    side="sell",
-                    order=order,
-                    participant_character_ids=_get_user_character_ids(order.seller),
-                )
         return
 
     logger.info(
@@ -1898,13 +1578,7 @@ def validate_material_exchange_sell_orders():
     # Process each pending order
     for order in pending_orders:
         try:
-            _validate_sell_order_from_db(
-                config,
-                order,
-                contracts,
-                esi_client,
-                sync_state=sync_state,
-            )
+            _validate_sell_order_from_db(config, order, contracts, esi_client)
         except Exception as exc:
             logger.error(
                 "Error validating sell order %s: %s",
@@ -1957,12 +1631,6 @@ def validate_material_exchange_buy_orders():
             MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
         ],
     )
-    sync_state = _get_contract_sync_state(int(config.corporation_id))
-    if sync_state == "not_modified":
-        logger.info(
-            "Buy validation is using cached contracts after 304 Not Modified for corporation %s",
-            config.corporation_id,
-        )
 
     if not pending_orders.exists():
         logger.debug("No pending buy orders to validate")
@@ -2005,18 +1673,6 @@ def validate_material_exchange_buy_orders():
             "Run sync_esi_contracts task first.",
             config.corporation_id,
         )
-        if sync_state == "not_modified":
-            logger.warning(
-                "Latest contract sync for corporation %s returned 304 Not Modified, but cache is empty",
-                config.corporation_id,
-            )
-            for order in pending_orders:
-                _probe_corptools_for_contract_gap(
-                    config=config,
-                    side="buy",
-                    order=order,
-                    participant_character_ids=_get_user_character_ids(order.buyer),
-                )
         return
 
     logger.info(
@@ -2033,13 +1689,7 @@ def validate_material_exchange_buy_orders():
 
     for order in pending_orders:
         try:
-            _validate_buy_order_from_db(
-                config,
-                order,
-                contracts,
-                esi_client,
-                sync_state=sync_state,
-            )
+            _validate_buy_order_from_db(config, order, contracts, esi_client)
         except Exception as exc:
             logger.error(
                 "Error validating buy order %s: %s",
@@ -2049,14 +1699,7 @@ def validate_material_exchange_buy_orders():
             )
 
 
-def _validate_sell_order_from_db(
-    config,
-    order,
-    contracts,
-    esi_client=None,
-    *,
-    sync_state: str = "",
-):
+def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     """
     Validate a single sell order against cached database contracts.
 
@@ -2146,121 +1789,58 @@ def _validate_sell_order_from_db(
             notes=notes,
             updated_at=now,
         )
-        status_transitioned = rows_updated > 0
-        if not status_transitioned:
+        if rows_updated == 0:
             order.refresh_from_db(fields=["status", "esi_contract_id"])
             current_contract_id = int(order.esi_contract_id or 0)
-            already_validated_same_contract = (
+            if (
                 order.status == MaterialExchangeSellOrder.Status.VALIDATED
                 and current_contract_id == normalized_contract_id
-            )
-            if not already_validated_same_contract:
+            ):
                 logger.info(
-                    "Skipping sell validation for order %s due to current status=%s",
+                    "Skipping duplicate sell validation notification for order %s (contract %s)",
                     order.id,
-                    order.status,
+                    normalized_contract_id,
                 )
                 return
-
-        user_notified = _contract_state_notification_sent(
-            order_kind="sell",
-            order_id=order.id,
-            contract_id=normalized_contract_id,
-            state="validated",
-            channel="user",
-        )
-        admin_notified = _contract_state_notification_sent(
-            order_kind="sell",
-            order_id=order.id,
-            contract_id=normalized_contract_id,
-            state="validated",
-            channel="admins",
-        )
-        if not status_transitioned and user_notified and admin_notified:
             logger.info(
-                "Skipping duplicate sell validation notifications for order %s (contract %s) because both channels are already marked sent",
+                "Skipping sell validation for order %s due to current status=%s",
                 order.id,
-                normalized_contract_id,
+                order.status,
             )
             return
 
-        if not status_transitioned:
-            logger.warning(
-                "Sell order %s already validated for contract %s but notification markers are incomplete (user=%s admin=%s); replaying missing notifications",
-                order.id,
-                normalized_contract_id,
-                user_notified,
-                admin_notified,
-            )
-        else:
-            order.status = MaterialExchangeSellOrder.Status.VALIDATED
-            order.contract_validated_at = now
-            order.esi_contract_id = normalized_contract_id
-            order.notes = notes
+        order.status = MaterialExchangeSellOrder.Status.VALIDATED
+        order.contract_validated_at = now
+        order.esi_contract_id = normalized_contract_id
+        order.notes = notes
 
         if override:
-            if not user_notified:
-                try:
-                    notify_user(
-                        order.seller,
-                        _("Sell Order Accepted In-Game"),
-                        _(
-                            f"Your sell order {order.order_reference} was in anomaly, but the corporation accepted contract #{normalized_contract_id} in-game. "
-                            f"The order has been moved back to validated status."
-                            + (
-                                f"\nLocation: {contract_location}"
-                                if contract_location
-                                else ""
-                            )
-                        ),
-                        level="success",
-                        link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send sell validation user notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="sell",
-                        order_id=order.id,
-                        contract_id=normalized_contract_id,
-                        state="validated",
-                        channel="user",
-                    )
+            notify_user(
+                order.seller,
+                _("Sell Order Accepted In-Game"),
+                _(
+                    f"Your sell order {order.order_reference} was in anomaly, but the corporation accepted contract #{normalized_contract_id} in-game. "
+                    f"The order has been moved back to validated status."
+                    + (f"\nLocation: {contract_location}" if contract_location else "")
+                ),
+                level="success",
+                link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
+            )
 
-            if not admin_notified:
-                try:
-                    _notify_material_exchange_admins(
-                        config,
-                        _("Sell Order Validated by In-Game Acceptance"),
-                        _(
-                            _build_contract_state_webhook_line(
-                                order.seller.username, "validated", relation="from"
-                            )
-                        ),
-                        level="info",
-                        link=(
-                            f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-                            f"?next=/indy_hub/material-exchange/%23admin-panel"
-                        ),
+            _notify_material_exchange_admins(
+                config,
+                _("Sell Order Validated by In-Game Acceptance"),
+                _(
+                    _build_contract_state_webhook_line(
+                        order.seller.username, "validated", relation="from"
                     )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send sell validation admin/webhook notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="sell",
-                        order_id=order.id,
-                        contract_id=normalized_contract_id,
-                        state="validated",
-                        channel="admins",
-                    )
+                ),
+                level="info",
+                link=(
+                    f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                    f"?next=/indy_hub/material-exchange/%23admin-panel"
+                ),
+            )
 
             logger.info(
                 "Sell order %s validated by in-game acceptance of anomalous contract %s",
@@ -2274,66 +1854,34 @@ def _validate_sell_order_from_db(
             )
             return
 
-        if not user_notified:
-            try:
-                notify_user(
-                    order.seller,
-                    _("Sell Order Validated"),
-                    _(
-                        f"Your sell order {order.order_reference} has been validated!\n"
-                        f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
-                        + (f"Location: {contract_location}\n" if contract_location else "")
-                        + f"Status: Awaiting corporation to accept the contract.\n"
-                        f"Once accepted, you will receive payment."
-                    ),
-                    level="success",
-                    link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send sell validation user notification for order %s: %s",
-                    order.id,
-                    exc,
-                )
-            else:
-                _mark_contract_state_notification_sent(
-                    order_kind="sell",
-                    order_id=order.id,
-                    contract_id=normalized_contract_id,
-                    state="validated",
-                    channel="user",
-                )
+        notify_user(
+            order.seller,
+            _("Sell Order Validated"),
+            _(
+                f"Your sell order {order.order_reference} has been validated!\n"
+                f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
+                + (f"Location: {contract_location}\n" if contract_location else "")
+                + f"Status: Awaiting corporation to accept the contract.\n"
+                f"Once accepted, you will receive payment."
+            ),
+            level="success",
+            link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
+        )
 
-        if not admin_notified:
-            try:
-                _notify_material_exchange_admins(
-                    config,
-                    _("Sell Order Validated"),
-                    _(
-                        _build_contract_state_webhook_line(
-                            order.seller.username, "validated", relation="from"
-                        )
-                    ),
-                    level="success",
-                    link=(
-                        f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-                        f"?next=/indy_hub/material-exchange/%23admin-panel"
-                    ),
+        _notify_material_exchange_admins(
+            config,
+            _("Sell Order Validated"),
+            _(
+                _build_contract_state_webhook_line(
+                    order.seller.username, "validated", relation="from"
                 )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send sell validation admin/webhook notification for order %s: %s",
-                    order.id,
-                    exc,
-                )
-            else:
-                _mark_contract_state_notification_sent(
-                    order_kind="sell",
-                    order_id=order.id,
-                    contract_id=normalized_contract_id,
-                    state="validated",
-                    channel="admins",
-                )
+            ),
+            level="success",
+            link=(
+                f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                f"?next=/indy_hub/material-exchange/%23admin-panel"
+            ),
+        )
 
         logger.info(
             "Sell order %s validated: contract %s verified",
@@ -3001,25 +2549,10 @@ def _validate_sell_order_from_db(
                 link=delete_link,
             )
 
-        if sync_state == "not_modified":
-            _probe_corptools_for_contract_gap(
-                config=config,
-                side="sell",
-                order=order,
-                participant_character_ids=seller_character_ids,
-            )
-
         logger.info("Sell order %s pending: no matching contract yet", order.id)
 
 
-def _validate_buy_order_from_db(
-    config,
-    order,
-    contracts,
-    esi_client=None,
-    *,
-    sync_state: str = "",
-):
+def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     """Validate a single buy order against cached database contracts."""
 
     order_ref = order.order_reference or f"INDY-{order.id}"
@@ -3114,101 +2647,46 @@ def _validate_buy_order_from_db(
             esi_validation_checked_at=now,
         )
 
-        user_notified = _contract_state_notification_sent(
-            order_kind="buy",
-            order_id=order.id,
-            contract_id=normalized_contract_id,
-            state="validated",
-            channel="user",
-        )
-        admin_notified = _contract_state_notification_sent(
-            order_kind="buy",
-            order_id=order.id,
-            contract_id=normalized_contract_id,
-            state="validated",
-            channel="admins",
-        )
-        if not status_transitioned and user_notified and admin_notified:
+        if not status_transitioned:
             logger.info(
-                "Skipping duplicate buy validation notifications for order %s (contract %s) because both channels are already marked sent",
+                "Skipping duplicate buy validation notification for order %s (contract %s)",
                 order.id,
                 normalized_contract_id,
             )
             return
 
-        if not status_transitioned:
-            logger.warning(
-                "Buy order %s already validated for contract %s but notification markers are incomplete (user=%s admin=%s); replaying missing notifications",
-                order.id,
-                normalized_contract_id,
-                user_notified,
-                admin_notified,
-            )
-        else:
-            order.status = MaterialExchangeBuyOrder.Status.VALIDATED
-            order.contract_validated_at = now
-            order.esi_contract_id = normalized_contract_id
-            order.notes = notes
+        order.status = MaterialExchangeBuyOrder.Status.VALIDATED
+        order.contract_validated_at = now
+        order.esi_contract_id = normalized_contract_id
+        order.notes = notes
 
         if override:
-            if not user_notified:
-                try:
-                    notify_user(
-                        order.buyer,
-                        _("Buy Order Accepted In-Game"),
-                        _(
-                            f"Your buy order {order.order_reference} had a validation anomaly, but contract #{normalized_contract_id} was accepted in-game. "
-                            f"The order has been moved back to validated status and completion sync will follow."
-                            + (f"\n\n{override_details}" if override_details else "")
-                        ),
-                        level="success",
-                        link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send buy validation user notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="buy",
-                        order_id=order.id,
-                        contract_id=normalized_contract_id,
-                        state="validated",
-                        channel="user",
-                    )
+            notify_user(
+                order.buyer,
+                _("Buy Order Accepted In-Game"),
+                _(
+                    f"Your buy order {order.order_reference} had a validation anomaly, but contract #{normalized_contract_id} was accepted in-game. "
+                    f"The order has been moved back to validated status and completion sync will follow."
+                    + (f"\n\n{override_details}" if override_details else "")
+                ),
+                level="success",
+                link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
+            )
 
-            if not admin_notified:
-                try:
-                    _notify_material_exchange_admins(
-                        config,
-                        _("Buy Order Validated by In-Game Acceptance"),
-                        _(
-                            _build_contract_state_webhook_line(
-                                order.buyer.username, "validated", relation="for"
-                            )
-                        ),
-                        level="info",
-                        link=(
-                            f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-                            f"?next=/indy_hub/material-exchange/%23admin-panel"
-                        ),
+            _notify_material_exchange_admins(
+                config,
+                _("Buy Order Validated by In-Game Acceptance"),
+                _(
+                    _build_contract_state_webhook_line(
+                        order.buyer.username, "validated", relation="for"
                     )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send buy validation admin/webhook notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="buy",
-                        order_id=order.id,
-                        contract_id=normalized_contract_id,
-                        state="validated",
-                        channel="admins",
-                    )
+                ),
+                level="info",
+                link=(
+                    f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                    f"?next=/indy_hub/material-exchange/%23admin-panel"
+                ),
+            )
 
             logger.info(
                 "Buy order %s validated by in-game acceptance of anomalous contract %s (%s)",
@@ -3223,64 +2701,32 @@ def _validate_buy_order_from_db(
             )
             return
 
-        if not user_notified:
-            try:
-                notify_user(
-                    order.buyer,
-                    _("Buy Contract Created"),
-                    _(
-                        f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
-                        f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
-                        f"Next step: accept the in-game contract to receive your items.\n"
-                        f"You will receive another notification once delivery is completed."
-                    ),
-                    level="success",
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send buy validation user notification for order %s: %s",
-                    order.id,
-                    exc,
-                )
-            else:
-                _mark_contract_state_notification_sent(
-                    order_kind="buy",
-                    order_id=order.id,
-                    contract_id=normalized_contract_id,
-                    state="validated",
-                    channel="user",
-                )
+        notify_user(
+            order.buyer,
+            _("Buy Contract Created"),
+            _(
+                f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
+                f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
+                f"Next step: accept the in-game contract to receive your items.\n"
+                f"You will receive another notification once delivery is completed."
+            ),
+            level="success",
+        )
 
-        if not admin_notified:
-            try:
-                _notify_material_exchange_admins(
-                    config,
-                    _("Buy Contract Created"),
-                    _(
-                        _build_contract_state_webhook_line(
-                            order.buyer.username, "validated", relation="for"
-                        )
-                    ),
-                    level="success",
-                    link=(
-                        f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-                        f"?next=/indy_hub/material-exchange/%23admin-panel"
-                    ),
+        _notify_material_exchange_admins(
+            config,
+            _("Buy Contract Created"),
+            _(
+                _build_contract_state_webhook_line(
+                    order.buyer.username, "validated", relation="for"
                 )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send buy validation admin/webhook notification for order %s: %s",
-                    order.id,
-                    exc,
-                )
-            else:
-                _mark_contract_state_notification_sent(
-                    order_kind="buy",
-                    order_id=order.id,
-                    contract_id=normalized_contract_id,
-                    state="validated",
-                    channel="admins",
-                )
+            ),
+            level="success",
+            link=(
+                f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                f"?next=/indy_hub/material-exchange/%23admin-panel"
+            ),
+        )
 
         logger.info(
             "Buy order %s validated: contract %s verified",
@@ -3520,14 +2966,6 @@ def _validate_buy_order_from_db(
             task="material_exchange.buy_order_pending_mismatch",
             label="issues_present" if issues else "no_issues",
             result="warning",
-        )
-
-    if sync_state == "not_modified":
-        _probe_corptools_for_contract_gap(
-            config=config,
-            side="buy",
-            order=order,
-            participant_character_ids=buyer_character_ids,
         )
 
     logger.info("Buy order %s pending: no matching contract yet", order.id)
@@ -4438,7 +3876,7 @@ def handle_material_exchange_buy_order_created(order_id):
             f"Items: {len(items)} (qty: {total_qty:,})\n"
             f"Total: {total_price:,.2f} ISK\n\n"
             f"Items being bought:\n{preview}\n\n"
-            f"Review and create the contract to proceed with delivery."
+            f"Review and approve to proceed with delivery."
         )
         link = (
             f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
@@ -4579,7 +4017,7 @@ def handle_material_exchange_sell_order_created(order_id):
             f"Total: {total_price:,.2f} ISK"
             + (f"\nLocation: {source_location}" if source_location else "")
             + f"\n\nItems being sold:\n{preview}\n\n"
-            f"Contract will automatically be validated once ESI syncs."
+            f"Review and approve to start contract validation."
         )
         link = (
             f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
@@ -5812,15 +5250,9 @@ def check_completed_material_exchange_contracts():
     if not config:
         return
 
-    completion_replay_cutoff = timezone.now() - timedelta(
-        days=_COMPLETION_NOTIFICATION_REPLAY_WINDOW_DAYS
-    )
-    approved_orders = MaterialExchangeSellOrder.objects.filter(config=config).filter(
-        Q(status=MaterialExchangeSellOrder.Status.VALIDATED)
-        | Q(
-            status=MaterialExchangeSellOrder.Status.COMPLETED,
-            payment_verified_at__gte=completion_replay_cutoff,
-        )
+    approved_orders = MaterialExchangeSellOrder.objects.filter(
+        config=config,
+        status=MaterialExchangeSellOrder.Status.VALIDATED,
     )
 
     try:
@@ -5848,11 +5280,6 @@ def check_completed_material_exchange_contracts():
                 config.corporation_id,
             )
             return
-        logger.info(
-            "Completion check using %s cached contracts after 304 Not Modified for corporation %s",
-            len(contracts),
-            config.corporation_id,
-        )
     except ESIRateLimitError as exc:
         delay = get_retry_after_seconds(exc)
         logger.warning(
@@ -5875,11 +5302,6 @@ def check_completed_material_exchange_contracts():
                     config.corporation_id,
                 )
                 return
-            logger.info(
-                "Completion check using %s cached contracts after 304-equivalent response for corporation %s",
-                len(contracts),
-                config.corporation_id,
-            )
         else:
             logger.error("Failed to check contract status: %s", exc)
             return
@@ -5902,43 +5324,24 @@ def check_completed_material_exchange_contracts():
 
         # Contract completed successfully
         if contract_status in ["finished", "finished_issuer", "finished_contractor"]:
-            status_transitioned = (
-                order.status != MaterialExchangeSellOrder.Status.COMPLETED
+            order.status = MaterialExchangeSellOrder.Status.COMPLETED
+            order.payment_verified_at = timezone.now()
+            order.save(
+                update_fields=[
+                    "status",
+                    "payment_verified_at",
+                    "updated_at",
+                ]
             )
-            if status_transitioned:
-                order.status = MaterialExchangeSellOrder.Status.COMPLETED
-                order.payment_verified_at = timezone.now()
-                order.save(
-                    update_fields=[
-                        "status",
-                        "payment_verified_at",
-                        "updated_at",
-                    ]
+
+            try:
+                _log_sell_order_transactions(order)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to log completed sell order transactions for order %s: %s",
+                    order.id,
+                    exc,
                 )
-
-                try:
-                    _log_sell_order_transactions(order)
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to log completed sell order transactions for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-
-            user_notified = _contract_state_notification_sent(
-                order_kind="sell",
-                order_id=order.id,
-                contract_id=contract_id,
-                state="completed",
-                channel="user",
-            )
-            admin_notified = _contract_state_notification_sent(
-                order_kind="sell",
-                order_id=order.id,
-                contract_id=contract_id,
-                state="completed",
-                channel="admins",
-            )
             sell_items = list(order.items.all())
             sell_items_preview = "\n".join(
                 f"- {item.type_name}: {item.quantity:,}x"
@@ -5947,84 +5350,62 @@ def check_completed_material_exchange_contracts():
             if len(sell_items) > 8:
                 sell_items_preview += "\n- ..."
 
-            if not user_notified:
-                try:
-                    notify_user(
-                        order.seller,
-                        _("Sell Order Completed"),
-                        _(
-                            f"Your sell order {order.order_reference} is complete.\n"
-                            f"Contract #{contract_id} has been accepted by the corporation."
-                            + (
-                                f"\n\nItems received:\n{sell_items_preview}"
-                                if sell_items_preview
-                                else ""
-                            )
-                        ),
-                        level="success",
-                        link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send seller completion notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="sell",
-                        order_id=order.id,
-                        contract_id=contract_id,
-                        state="completed",
-                        channel="user",
-                    )
-
-            if not admin_notified:
-                try:
-                    _notify_material_exchange_admins(
-                        config,
-                        _("Sell Order Completed"),
-                        _(
-                            _build_contract_state_webhook_line(
-                                order.seller.username, "completed", relation="from"
-                            )
-                        ),
-                        level="success",
-                        link=(
-                            f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-                            f"?next=/indy_hub/material-exchange/%23admin-panel"
-                        ),
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send sell-order completion admin/webhook notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="sell",
-                        order_id=order.id,
-                        contract_id=contract_id,
-                        state="completed",
-                        channel="admins",
-                    )
-
-            if status_transitioned or (not user_notified) or (not admin_notified):
-                logger.info(
-                    "Sell order %s completion processed: contract %s status=%s (transitioned=%s user_notified=%s admin_notified=%s)",
+            try:
+                notify_user(
+                    order.seller,
+                    _("Sell Order Completed"),
+                    _(
+                        f"Your sell order {order.order_reference} is complete.\n"
+                        f"Contract #{contract_id} has been accepted by the corporation."
+                        + (
+                            f"\n\nItems received:\n{sell_items_preview}"
+                            if sell_items_preview
+                            else ""
+                        )
+                    ),
+                    level="success",
+                    link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send seller completion notification for order %s: %s",
                     order.id,
-                    contract_id,
-                    contract_status,
-                    status_transitioned,
-                    user_notified,
-                    admin_notified,
+                    exc,
                 )
-                emit_analytics_event(
-                    task="material_exchange.sell_order_completed",
-                    label=contract_status,
-                    result="success",
+
+            try:
+                _notify_material_exchange_admins(
+                    config,
+                    _("Sell Order Completed"),
+                    _(
+                        _build_contract_state_webhook_line(
+                            order.seller.username, "completed", relation="from"
+                        )
+                    ),
+                    level="success",
+                    link=(
+                        f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                        f"?next=/indy_hub/material-exchange/%23admin-panel"
+                    ),
                 )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send sell-order completion admin/webhook notification for order %s: %s",
+                    order.id,
+                    exc,
+                )
+
+            logger.info(
+                "Sell order %s completed: contract %s accepted (status: %s)",
+                order.id,
+                contract_id,
+                contract_status,
+            )
+            emit_analytics_event(
+                task="material_exchange.sell_order_completed",
+                label=contract_status,
+                result="success",
+            )
 
         # Contract cancelled, rejected, failed, expired or deleted
         elif contract_status in [
@@ -6080,12 +5461,9 @@ def check_completed_material_exchange_contracts():
             )
 
     # Process validated buy orders (corp -> member)
-    validated_buy_orders = MaterialExchangeBuyOrder.objects.filter(config=config).filter(
-        Q(status=MaterialExchangeBuyOrder.Status.VALIDATED)
-        | Q(
-            status=MaterialExchangeBuyOrder.Status.COMPLETED,
-            delivered_at__gte=completion_replay_cutoff,
-        )
+    validated_buy_orders = MaterialExchangeBuyOrder.objects.filter(
+        config=config,
+        status=MaterialExchangeBuyOrder.Status.VALIDATED,
     )
 
     if not validated_buy_orders.exists():
@@ -6108,127 +5486,86 @@ def check_completed_material_exchange_contracts():
 
         # Contract completed successfully
         if contract_status in ["finished", "finished_issuer", "finished_contractor"]:
-            status_transitioned = (
-                order.status != MaterialExchangeBuyOrder.Status.COMPLETED
+            order.status = MaterialExchangeBuyOrder.Status.COMPLETED
+            order.delivered_at = contract.get("date_completed") or timezone.now()
+            order.save(
+                update_fields=[
+                    "status",
+                    "delivered_at",
+                    "updated_at",
+                ]
             )
-            if status_transitioned:
-                order.status = MaterialExchangeBuyOrder.Status.COMPLETED
-                order.delivered_at = contract.get("date_completed") or timezone.now()
-                order.save(
-                    update_fields=[
-                        "status",
-                        "delivered_at",
-                        "updated_at",
-                    ]
+
+            try:
+                _log_buy_order_transactions(order)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to log completed buy order transactions for order %s: %s",
+                    order.id,
+                    exc,
                 )
-
-                try:
-                    _log_buy_order_transactions(order)
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to log completed buy order transactions for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-
-            user_notified = _contract_state_notification_sent(
-                order_kind="buy",
-                order_id=order.id,
-                contract_id=contract_id,
-                state="completed",
-                channel="user",
-            )
-            admin_notified = _contract_state_notification_sent(
-                order_kind="buy",
-                order_id=order.id,
-                contract_id=contract_id,
-                state="completed",
-                channel="admins",
-            )
             buy_items = list(order.items.all())
             buy_items_preview = "\n".join(
                 f"- {item.type_name}: {item.quantity:,}x" for item in buy_items[:8]
             )
             if len(buy_items) > 8:
                 buy_items_preview += "\n- ..."
-            if not user_notified:
-                try:
-                    notify_user(
-                        order.buyer,
-                        _("Buy Order Completed"),
-                        _(
-                            f"Your buy order {order.order_reference} is complete.\n"
-                            f"Contract #{contract_id} has been accepted in-game and your delivery is marked as received."
-                            + (
-                                f"\n\nItems delivered:\n{buy_items_preview}"
-                                if buy_items_preview
-                                else ""
-                            )
-                        ),
-                        level="success",
-                        link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send buyer completion notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="buy",
-                        order_id=order.id,
-                        contract_id=contract_id,
-                        state="completed",
-                        channel="user",
-                    )
-
-            if not admin_notified:
-                try:
-                    _notify_material_exchange_admins(
-                        config,
-                        _("Buy Order Completed"),
-                        _(
-                            _build_contract_state_webhook_line(
-                                order.buyer.username, "completed", relation="for"
-                            )
-                        ),
-                        level="success",
-                        link=(
-                            f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-                            f"?next=/indy_hub/material-exchange/%23admin-panel"
-                        ),
-                    )
-                except Exception as exc:
-                    logger.exception(
-                        "Failed to send buy-order completion admin/webhook notification for order %s: %s",
-                        order.id,
-                        exc,
-                    )
-                else:
-                    _mark_contract_state_notification_sent(
-                        order_kind="buy",
-                        order_id=order.id,
-                        contract_id=contract_id,
-                        state="completed",
-                        channel="admins",
-                    )
-
-            if status_transitioned or (not user_notified) or (not admin_notified):
-                logger.info(
-                    "Buy order %s completion processed: contract %s status=%s (transitioned=%s user_notified=%s admin_notified=%s)",
+            try:
+                notify_user(
+                    order.buyer,
+                    _("Buy Order Completed"),
+                    _(
+                        f"Your buy order {order.order_reference} is complete.\n"
+                        f"Contract #{contract_id} has been accepted in-game and your delivery is marked as received."
+                        + (
+                            f"\n\nItems delivered:\n{buy_items_preview}"
+                            if buy_items_preview
+                            else ""
+                        )
+                    ),
+                    level="success",
+                    link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send buyer completion notification for order %s: %s",
                     order.id,
-                    contract_id,
-                    contract_status,
-                    status_transitioned,
-                    user_notified,
-                    admin_notified,
+                    exc,
                 )
-                emit_analytics_event(
-                    task="material_exchange.buy_order_completed",
-                    label=contract_status,
-                    result="success",
+
+            try:
+                _notify_material_exchange_admins(
+                    config,
+                    _("Buy Order Completed"),
+                    _(
+                        _build_contract_state_webhook_line(
+                            order.buyer.username, "completed", relation="for"
+                        )
+                    ),
+                    level="success",
+                    link=(
+                        f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                        f"?next=/indy_hub/material-exchange/%23admin-panel"
+                    ),
                 )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send buy-order completion admin/webhook notification for order %s: %s",
+                    order.id,
+                    exc,
+                )
+
+            logger.info(
+                "Buy order %s completed: contract %s accepted (status: %s)",
+                order.id,
+                contract_id,
+                contract_status,
+            )
+            emit_analytics_event(
+                task="material_exchange.buy_order_completed",
+                label=contract_status,
+                result="success",
+            )
 
         # Contract cancelled, rejected, failed, expired or deleted
         elif contract_status in [

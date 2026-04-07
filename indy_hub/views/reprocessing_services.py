@@ -2119,7 +2119,7 @@ def reprocessing_become(request):
         if skills_error or clones_error:
             scope_error = _(
                 "Unable to read character skills/clones from corptools cache. "
-                "Confirm corptools character sync has been completed for this character."
+                "Confirm corptools character sync has completed for this character."
             )
 
     if selected_corporation_id:
