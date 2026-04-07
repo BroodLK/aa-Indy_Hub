@@ -81,9 +81,14 @@
             <h5 class="me-hub-action-title">{% trans "Sell to Hub" %}</h5>
             <span class="me-hub-action-badge">{{ pending_sell_orders|intcomma }} {% trans "pending" %}</span>
             <p class="me-hub-action-desc">{% trans "Sell your materials to the Hub, prices based on Jita." %}</p>
-            <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success me-hub-action-btn">
-                <i class="fas fa-coins me-1"></i>{% trans "Start Selling" %}
-            </a>
+            <div class="d-flex flex-wrap justify-content-center gap-2">
+                <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success me-hub-action-btn">
+                    <i class="fas fa-coins me-1"></i>{% trans "Start Selling" %}
+                </a>
+                <button type="button" class="btn btn-outline-light me-hub-action-btn" data-buyback-estimate-trigger="true" data-bs-toggle="modal" data-bs-target="#sellEstimateModal">
+                    <i class="fas fa-calculator me-1"></i>{% trans "Get an Estimate" %}
+                </button>
+            </div>
         </article>
 
         <article class="me-hub-action-card" data-accent="info">
@@ -360,5 +365,6 @@
     {% endif %}
 
 </div>
+{% include "indy_hub/material_exchange/includes/sell_estimate_modal.html" %}
 {% endblock content %}
 

@@ -103,6 +103,7 @@ from .views.material_exchange import (
     material_exchange_reject_buy,
     material_exchange_reject_sell,
     material_exchange_sell,
+    material_exchange_sell_estimate,
     material_exchange_sell_assets_refresh_status,
     material_exchange_stats_history,
     material_exchange_sync_prices,
@@ -444,6 +445,11 @@ urlpatterns = [
         "material-exchange/api/sell-assets-refresh-status/",
         material_exchange_sell_assets_refresh_status,
         name="material_exchange_sell_assets_refresh_status",
+    ),
+    path(
+        "material-exchange/api/sell-estimate/",
+        material_exchange_sell_estimate,
+        name="material_exchange_sell_estimate",
     ),
     path(
         "material-exchange/buy/",

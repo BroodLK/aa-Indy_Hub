@@ -1,0 +1,300 @@
+{% load i18n %}
+
+<style>
+.sell-estimate-modal {
+    --se-surface: var(--bs-body-bg);
+    --se-elevated: var(--bs-tertiary-bg);
+    --se-border: var(--bs-border-color);
+}
+
+.sell-estimate-modal .modal-dialog {
+    max-width: 1100px;
+}
+
+.sell-estimate-modal .modal-content {
+    border: 1px solid var(--se-border);
+    border-radius: 0.95rem;
+}
+
+.sell-estimate-modal .modal-body {
+    max-height: calc(100vh - 8rem);
+    overflow-y: auto;
+}
+
+.sell-estimate-modal .contract-check-help {
+    border: 1px solid var(--se-border);
+    background: var(--se-elevated);
+    border-radius: 0.85rem;
+}
+
+.sell-estimate-modal .contract-check-summary {
+    border: 1px solid var(--se-border);
+    background: var(--se-elevated);
+    border-radius: 0.85rem;
+    padding: 0.65rem 0.85rem;
+}
+
+.sell-estimate-modal .contract-check-summary-pending {
+    border-color: rgba(59, 130, 246, 0.45);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.sell-estimate-modal .contract-check-summary-ok {
+    border-color: rgba(34, 197, 94, 0.5);
+    background: rgba(34, 197, 94, 0.12);
+}
+
+.sell-estimate-modal .contract-check-summary-ko {
+    border-color: rgba(239, 68, 68, 0.55);
+    background: rgba(239, 68, 68, 0.12);
+}
+
+.sell-estimate-modal .contract-check-listbox {
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--se-border);
+    border-radius: 0.65rem;
+    background: rgba(127, 127, 127, 0.08);
+}
+
+.sell-estimate-modal .estimate-results-table td,
+.sell-estimate-modal .estimate-results-table th {
+    vertical-align: top;
+}
+
+.sell-estimate-modal .estimate-locations {
+    margin: 0;
+    padding-left: 1rem;
+}
+
+.sell-estimate-modal .estimate-status-ok {
+    color: var(--bs-success);
+}
+
+.sell-estimate-modal .estimate-status-warn {
+    color: var(--bs-warning-text-emphasis);
+}
+
+.sell-estimate-modal .estimate-status-error {
+    color: var(--bs-danger);
+}
+</style>
+
+<div class="modal fade contract-check-modal sell-estimate-modal" id="sellEstimateModal" tabindex="-1" aria-labelledby="sellEstimateModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="sellEstimateModalLabel">
+                    <i class="fas fa-calculator me-2"></i>{% trans "Get a Sell Estimate" %}
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+            </div>
+            <form id="sellEstimateForm" method="post">
+                <div class="modal-body">
+                    {% csrf_token %}
+                    <div class="card border-0 mb-3 shadow-sm contract-check-help">
+                        <div class="card-body py-2">
+                            <div class="d-flex align-items-start gap-2">
+                                <div class="text-primary fs-5">
+                                    <i class="fas fa-circle-info"></i>
+                                </div>
+                                <div>
+                                    <div class="fw-semibold small mb-1">{% trans "Paste format" %}</div>
+                                    <div class="small text-muted mb-0 lh-sm">
+                                        {% trans "One line per item: item name + tab + quantity, or item name + space + quantity." %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold" for="sellEstimateTextarea">{% trans "Paste items to estimate" %}</label>
+                        <textarea class="form-control" id="sellEstimateTextarea" name="estimate_text" rows="8" placeholder="{% trans 'Example: Tritanium 50000' %}" required></textarea>
+                    </div>
+
+                    <div class="d-flex justify-content-end mb-3">
+                        <button type="submit" class="btn btn-primary btn-sm" id="sellEstimateSubmit">
+                            <i class="fas fa-calculator me-1"></i>{% trans "Estimate" %}
+                        </button>
+                    </div>
+
+                    <div id="sellEstimateResult" class="d-none"></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const modalEl = document.getElementById('sellEstimateModal');
+    const form = document.getElementById('sellEstimateForm');
+    const textarea = document.getElementById('sellEstimateTextarea');
+    const resultEl = document.getElementById('sellEstimateResult');
+    const submitBtn = document.getElementById('sellEstimateSubmit');
+
+    if (!modalEl || !form || !textarea || !resultEl || !submitBtn) {
+        return;
+    }
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatIsk(value) {
+        const parsed = Number(value || 0);
+        if (!Number.isFinite(parsed)) {
+            return '0.00';
+        }
+        return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function renderRows(items) {
+        return (items || []).map((item) => {
+            const statusClass = item.status === 'ok'
+                ? 'estimate-status-ok'
+                : (item.status === 'not_accepted' ? 'estimate-status-warn' : 'estimate-status-error');
+            const statusLabel = item.status === 'ok'
+                ? '{% trans "Quoteable" %}'
+                : (item.status === 'not_accepted' ? '{% trans "Not accepted" %}' : '{% trans "No price" %}');
+            const locations = Array.isArray(item.accepted_locations) && item.accepted_locations.length
+                ? `<ul class="estimate-locations">${item.accepted_locations.map((locationName) => `<li>${escapeHtml(locationName)}</li>`).join('')}</ul>`
+                : `<span class="text-muted">{% trans "None" %}</span>`;
+
+            return `
+                <tr>
+                    <td><strong>${escapeHtml(item.type_name)}</strong></td>
+                    <td class="text-end">${escapeHtml(item.quantity)}</td>
+                    <td class="text-end">${formatIsk(item.unit_price)} ISK</td>
+                    <td class="text-end">${formatIsk(item.total_price)} ISK</td>
+                    <td>${locations}</td>
+                    <td>
+                        <div class="${statusClass} fw-semibold">${statusLabel}</div>
+                        ${item.reason ? `<div class="small text-muted">${escapeHtml(item.reason)}</div>` : ''}
+                    </td>
+                </tr>`;
+        }).join('');
+    }
+
+    function renderEstimate(payload) {
+        const invalidLines = Array.isArray(payload.invalid_lines) ? payload.invalid_lines : [];
+        const instructions = Array.isArray(payload.instructions) ? payload.instructions : [];
+        const invalidHtml = invalidLines.length
+            ? `
+                <div class="contract-check-summary contract-check-summary-ko small mt-2">
+                    <div class="fw-semibold mb-1">{% trans "Lines not parsed" %}</div>
+                    <ul class="mb-0 ps-3">${invalidLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
+                </div>`
+            : '';
+        const instructionHtml = instructions.length
+            ? `
+                <div class="contract-check-help p-3 mt-3">
+                    <div class="fw-semibold small mb-2">{% trans "How to actually sell these items" %}</div>
+                    <ol class="small mb-0 ps-3">${instructions.map((entry) => `<li>${escapeHtml(entry)}</li>`).join('')}</ol>
+                </div>`
+            : '';
+
+        resultEl.classList.remove('d-none');
+        resultEl.innerHTML = `
+            <div class="contract-check-summary contract-check-summary-ok small" role="alert">
+                <div class="fw-semibold mb-1">{% trans "Estimate ready" %}</div>
+                <div>${escapeHtml(payload.summary || '')}</div>
+                <div class="mt-1">
+                    <strong>{% trans "Estimated payout" %}:</strong> ${formatIsk(payload.estimated_total)} ISK
+                    <span class="text-muted">({% trans "rounded order total" %}: ${escapeHtml(payload.rounded_estimated_total || '0')} ISK)</span>
+                </div>
+            </div>
+            ${invalidHtml}
+            <div class="table-responsive mt-3">
+                <table class="table table-sm table-hover estimate-results-table">
+                    <thead>
+                        <tr>
+                            <th>{% trans "Item" %}</th>
+                            <th class="text-end">{% trans "Qty" %}</th>
+                            <th class="text-end">{% trans "Unit" %}</th>
+                            <th class="text-end">{% trans "Total" %}</th>
+                            <th>{% trans "Accepted sell citadels" %}</th>
+                            <th>{% trans "Status" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>${renderRows(payload.items || [])}</tbody>
+                </table>
+            </div>
+            ${instructionHtml}
+        `;
+    }
+
+    async function requestEstimate() {
+        const formData = new FormData(form);
+        submitBtn.disabled = true;
+        textarea.readOnly = true;
+
+        resultEl.classList.remove('d-none');
+        resultEl.innerHTML = `
+            <div class="contract-check-summary contract-check-summary-pending small" role="alert">
+                <div class="fw-semibold mb-1">{% trans "Estimating..." %}</div>
+                <div>{% trans "Applying current Buyback pricing and location rules." %}</div>
+            </div>`;
+
+        try {
+            const response = await fetch('{% url "indy_hub:material_exchange_sell_estimate" %}', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                credentials: 'same-origin'
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                resultEl.innerHTML = `
+                    <div class="contract-check-summary contract-check-summary-ko small" role="alert">
+                        <div class="fw-semibold mb-1">{% trans "Estimate failed" %}</div>
+                        <div>${escapeHtml(payload.summary || '{% trans "Unable to calculate estimate." %}')}</div>
+                    </div>`;
+                if (Array.isArray(payload.invalid_lines) && payload.invalid_lines.length) {
+                    resultEl.innerHTML += `
+                        <div class="contract-check-listbox mt-2">
+                            <ul class="mb-0 ps-3">${payload.invalid_lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>
+                        </div>`;
+                }
+                return;
+            }
+            renderEstimate(payload);
+        } catch (error) {
+            resultEl.innerHTML = `
+                <div class="contract-check-summary contract-check-summary-ko small" role="alert">
+                    <div class="fw-semibold mb-1">{% trans "Estimate failed" %}</div>
+                    <div>${escapeHtml(error && error.message ? error.message : 'Unknown error')}</div>
+                </div>`;
+        } finally {
+            submitBtn.disabled = false;
+            textarea.readOnly = false;
+            textarea.focus();
+        }
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        await requestEstimate();
+    });
+
+    textarea.addEventListener('paste', () => {
+        window.setTimeout(() => {
+            if (textarea.value.trim()) {
+                form.requestSubmit();
+            }
+        }, 0);
+    });
+
+    modalEl.addEventListener('shown.bs.modal', () => {
+        textarea.focus();
+        textarea.select();
+    });
+});
+</script>

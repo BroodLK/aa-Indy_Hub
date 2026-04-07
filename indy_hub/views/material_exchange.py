@@ -3,7 +3,9 @@
 # Standard Library
 from datetime import datetime, time
 import hashlib
+import re
 from decimal import ROUND_CEILING, Decimal
+import unicodedata
 
 # Django
 from django.contrib import messages
@@ -12,7 +14,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Permission
 from django.core.cache import cache
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Count, Max, Min, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.http import JsonResponse
@@ -95,6 +97,7 @@ User = get_user_model()
 
 _PRODUCTION_IDS_CACHE: set[int] | None = None
 _INDUSTRY_MARKET_GROUP_IDS_CACHE: set[int] | None = None
+_SELL_ESTIMATE_TYPE_LOOKUP_CACHE: dict[str, int] = {}
 
 _ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
     MaterialExchangeBuyOrder.Status.DRAFT,
@@ -1224,6 +1227,248 @@ def _parse_submitted_sell_item_quantities(post_data) -> list[dict[str, object]]:
             }
         )
     return entries
+
+
+def _normalize_sell_estimate_item_text(value: str | None) -> str:
+    """Normalize user-pasted item text before matching a type."""
+
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = (
+        text.replace("\u00A0", " ")
+        .replace("\u202F", " ")
+        .replace("\u2009", " ")
+        .replace("\u2010", "-")
+        .replace("\u2011", "-")
+        .replace("\u2012", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace("\u2212", "-")
+    )
+    text = re.sub(r"\s*-\s*", "-", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _parse_sell_estimate_positive_quantity(raw_value: str | int | None) -> int | None:
+    """Parse positive integer quantities from pasted estimate lines."""
+
+    text_value = str(raw_value or "").strip()
+    if not text_value:
+        return None
+    normalized = (
+        text_value.replace("\u00A0", " ")
+        .replace("\u202F", " ")
+        .replace("\u2009", " ")
+        .replace("_", "")
+        .replace("'", "")
+    )
+    compact = normalized.replace(" ", "")
+    if compact.isdigit():
+        parsed = int(compact)
+        return parsed if parsed > 0 else None
+    if re.match(r"^\d{1,3}(?:[.,]\d{3})+$", compact):
+        parsed = int(compact.replace(",", "").replace(".", ""))
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _resolve_type_id_from_sell_estimate_text(type_text: str) -> int | None:
+    """Resolve type ID from pasted estimate item text."""
+
+    normalized = _normalize_sell_estimate_item_text(type_text)
+    if not normalized:
+        return None
+    if normalized.isdigit():
+        value = int(normalized)
+        return value if value > 0 else None
+
+    cache_key = normalized.casefold()
+    if cache_key in _SELL_ESTIMATE_TYPE_LOOKUP_CACHE:
+        return _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key]
+
+    candidates: list[str] = [normalized]
+    if "-" in normalized:
+        candidates.append(normalized.replace("-", " "))
+    grade_dash = re.sub(r"(?i)\b([ivx]+)\s+grade\b", r"\1-Grade", normalized)
+    grade_space = re.sub(r"(?i)\b([ivx]+)-grade\b", r"\1 Grade", normalized)
+    candidates.extend([grade_dash, grade_space])
+
+    deduped_candidates: list[str] = []
+    seen_candidate_keys: set[str] = set()
+    for candidate in candidates:
+        candidate_norm = _normalize_sell_estimate_item_text(candidate)
+        if not candidate_norm:
+            continue
+        candidate_key = candidate_norm.casefold()
+        if candidate_key in seen_candidate_keys:
+            continue
+        seen_candidate_keys.add(candidate_key)
+        deduped_candidates.append(candidate_norm)
+
+    resolved_type_id: int | None = None
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        for candidate in deduped_candidates:
+            exact_match = (
+                ItemType.objects.filter(name__iexact=candidate)
+                .values_list("id", flat=True)
+                .first()
+            )
+            if exact_match:
+                resolved_type_id = int(exact_match)
+                break
+    except Exception:
+        resolved_type_id = None
+
+    if not resolved_type_id:
+        try:
+            with connection.cursor() as cursor:
+                for candidate in deduped_candidates:
+                    cursor.execute(
+                        "SELECT id FROM eve_sde_itemtype WHERE lower(name)=lower(%s) LIMIT 1",
+                        [candidate],
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        resolved_type_id = int(row[0])
+                        break
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM eve_sde_itemtype
+                        WHERE lower(
+                            replace(
+                                replace(
+                                    replace(
+                                        replace(name, %s, '-'),
+                                        %s,
+                                        '-'
+                                    ),
+                                    %s,
+                                    '-'
+                                ),
+                                %s,
+                                '-'
+                            )
+                        ) = lower(%s)
+                        LIMIT 1
+                        """,
+                        ["\u2011", "\u2013", "\u2014", "\u2212", candidate],
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        resolved_type_id = int(row[0])
+                        break
+        except Exception:
+            resolved_type_id = None
+
+    if resolved_type_id:
+        _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key] = resolved_type_id
+    return resolved_type_id
+
+
+def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], list[str]]:
+    """Parse pasted estimate lines into normalized type/quantity rows."""
+
+    rows_by_type: dict[int, int] = {}
+    invalid_lines: list[str] = []
+
+    for raw_line in str(raw_text or "").splitlines():
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
+
+        item_part = ""
+        quantity: int | None = None
+
+        tab_parts = [
+            str(part or "").strip()
+            for part in line.split("\t")
+            if str(part or "").strip()
+        ]
+        if len(tab_parts) >= 2:
+            item_part = tab_parts[0]
+            for quantity_candidate in tab_parts[1:]:
+                quantity = _parse_sell_estimate_positive_quantity(quantity_candidate)
+                if quantity is not None:
+                    break
+
+        if not item_part or quantity is None:
+            normalized_line = (
+                line.replace("\u00A0", " ")
+                .replace("\u202F", " ")
+                .replace("\u2009", " ")
+                .strip()
+            )
+            match = re.match(r"^(.*\S)[ \t]+([0-9][0-9\s,._']*)$", normalized_line)
+            if match:
+                item_part = str(match.group(1) or "").strip()
+                quantity = _parse_sell_estimate_positive_quantity(match.group(2))
+
+        item_part = str(item_part or "").strip()
+        if not item_part or quantity is None:
+            invalid_lines.append(line)
+            continue
+
+        type_id = _resolve_type_id_from_sell_estimate_text(item_part)
+        if not type_id:
+            invalid_lines.append(line)
+            continue
+
+        rows_by_type[type_id] = rows_by_type.get(type_id, 0) + int(quantity)
+
+    rows = [
+        {"type_id": int(type_id), "quantity": int(quantity)}
+        for type_id, quantity in sorted(
+            rows_by_type.items(),
+            key=lambda pair: get_type_name(int(pair[0])).lower(),
+        )
+    ]
+    return rows, invalid_lines
+
+
+def _get_effective_sell_structure_ids(config: MaterialExchangeConfig) -> list[int]:
+    """Return configured sell structure IDs with a safe primary fallback."""
+
+    sell_structure_ids = [int(sid) for sid in (config.get_sell_structure_ids() or [])]
+    if sell_structure_ids:
+        return sell_structure_ids
+    try:
+        primary_id = int(config.structure_id or 0)
+    except (TypeError, ValueError):
+        primary_id = 0
+    return [primary_id] if primary_id > 0 else []
+
+
+def _get_estimate_accepting_sell_locations(
+    *,
+    config: MaterialExchangeConfig,
+    type_id: int,
+    sell_structure_ids: list[int],
+    sell_structure_name_map: dict[int, str],
+    allowed_type_ids_cache: dict[int, set[int] | None],
+) -> list[str]:
+    """Return configured sell locations that accept the given type."""
+
+    accepted_locations: list[str] = []
+    for structure_id in sell_structure_ids:
+        if structure_id not in allowed_type_ids_cache:
+            allowed_type_ids_cache[structure_id] = _get_allowed_type_ids_for_config(
+                config,
+                "sell",
+                structure_id=int(structure_id),
+            )
+        allowed_type_ids = allowed_type_ids_cache[structure_id]
+        if allowed_type_ids is None or int(type_id) in allowed_type_ids:
+            accepted_locations.append(
+                str(
+                    sell_structure_name_map.get(int(structure_id))
+                    or f"Structure {int(structure_id)}"
+                )
+            )
+    return accepted_locations
 
 
 def _build_price_override_entry(
@@ -3623,6 +3868,181 @@ def material_exchange_index(request):
     )
 
     return render(request, "indy_hub/material_exchange/index.html", context)
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@require_http_methods(["POST"])
+def material_exchange_sell_estimate(request):
+    """Estimate sell payout from pasted item rows and configured Buyback rules."""
+
+    emit_view_analytics_event(
+        view_name="material_exchange.sell_estimate",
+        request=request,
+    )
+
+    if not _is_material_exchange_enabled():
+        return JsonResponse(
+            {"ok": False, "summary": _("Buyback is disabled.")},
+            status=400,
+        )
+
+    config = _get_material_exchange_config()
+    if not config:
+        return JsonResponse(
+            {"ok": False, "summary": _("Buyback is not configured.")},
+            status=400,
+        )
+
+    sell_structure_ids = _get_effective_sell_structure_ids(config)
+    if not sell_structure_ids:
+        return JsonResponse(
+            {"ok": False, "summary": _("Sell locations are not configured.")},
+            status=400,
+        )
+
+    raw_text = str(request.POST.get("estimate_text") or "").strip()
+    parsed_rows, invalid_lines = _parse_sell_estimate_input(raw_text)
+    if not parsed_rows:
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _(
+                    "No valid lines were detected. Use: item name <tab> qty or item name <space> qty."
+                ),
+                "invalid_lines": invalid_lines,
+            },
+            status=400,
+        )
+
+    type_ids = [int(row["type_id"]) for row in parsed_rows]
+    price_data = _fetch_fuzzwork_prices(type_ids)
+    sell_override_map, _buy_override_map = _get_item_price_override_maps(config)
+    sell_market_group_override_map, _buy_market_group_override_map = (
+        _get_market_group_price_override_maps(config)
+    )
+    sell_container_override, _buy_container_override = (
+        _get_container_price_override_maps(config)
+    )
+    type_market_group_path_map = _get_type_market_group_path_map(type_ids)
+
+    sell_structure_name_map = config.get_sell_structure_name_map()
+    allowed_type_ids_cache: dict[int, set[int] | None] = {}
+
+    def format_decimal(value: Decimal) -> str:
+        return format(value.quantize(Decimal("0.01")), ".2f")
+
+    estimate_rows: list[dict[str, object]] = []
+    quoteable_count = 0
+    not_accepted_count = 0
+    no_price_count = 0
+    estimated_total = Decimal("0")
+
+    for row in parsed_rows:
+        type_id = int(row["type_id"])
+        quantity = max(int(row["quantity"]), 0)
+        type_name = get_type_name(type_id)
+        accepted_locations = _get_estimate_accepting_sell_locations(
+            config=config,
+            type_id=type_id,
+            sell_structure_ids=sell_structure_ids,
+            sell_structure_name_map=sell_structure_name_map,
+            allowed_type_ids_cache=allowed_type_ids_cache,
+        )
+
+        fuzz_prices = price_data.get(type_id, {})
+        jita_buy = Decimal(fuzz_prices.get("buy") or 0)
+        jita_sell = Decimal(fuzz_prices.get("sell") or 0)
+        unit_price, _default_unit_price, _has_override = _compute_effective_sell_unit_price(
+            config=config,
+            type_id=type_id,
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+            sell_override_map=sell_override_map,
+            sell_market_group_override_map=sell_market_group_override_map,
+            type_market_group_path_map=type_market_group_path_map,
+            sell_container_override=sell_container_override,
+            in_container=False,
+        )
+
+        can_quote = bool(accepted_locations) and unit_price > 0
+        total_price = (unit_price * quantity) if can_quote else Decimal("0")
+        status = "ok"
+        reason = ""
+        if not accepted_locations:
+            status = "not_accepted"
+            not_accepted_count += 1
+            reason = _("Not accepted in any configured sell citadel.")
+        elif unit_price <= 0:
+            status = "no_price"
+            no_price_count += 1
+            reason = _("No valid market price found with current pricing settings.")
+        else:
+            quoteable_count += 1
+            estimated_total += total_price
+
+        estimate_rows.append(
+            {
+                "type_id": type_id,
+                "type_name": type_name,
+                "quantity": quantity,
+                "unit_price": format_decimal(unit_price if can_quote else Decimal("0")),
+                "total_price": format_decimal(total_price),
+                "accepted_locations": accepted_locations,
+                "status": status,
+                "reason": str(reason),
+            }
+        )
+
+    rounded_estimated_total = estimated_total.quantize(
+        Decimal("1"), rounding=ROUND_CEILING
+    )
+    summary_parts = [
+        _("%(count)s valid line(s) parsed.")
+        % {"count": int(len(parsed_rows))},
+        _("%(count)s line(s) quoteable.")
+        % {"count": int(quoteable_count)},
+    ]
+    if not_accepted_count:
+        summary_parts.append(
+            _("%(count)s line(s) not accepted in configured sell locations.")
+            % {"count": int(not_accepted_count)}
+        )
+    if no_price_count:
+        summary_parts.append(
+            _("%(count)s line(s) missing price data.") % {"count": int(no_price_count)}
+        )
+    if invalid_lines:
+        summary_parts.append(
+            _("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)}
+        )
+
+    instructions = [
+        _(
+            "Click Start Selling, then pick a sell location that accepts your items."
+        ),
+        _(
+            "Enter the same quantities, submit the sell order, and copy the generated order reference."
+        ),
+        _(
+            "Create an in-game Item Exchange contract to the listed corporation at the order location."
+        ),
+        _(
+            "Use the exact order reference in the contract title/description, then use Paste & Check on the order page before finalizing."
+        ),
+    ]
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "summary": " ".join(summary_parts),
+            "items": estimate_rows,
+            "invalid_lines": invalid_lines,
+            "estimated_total": format_decimal(estimated_total),
+            "rounded_estimated_total": str(rounded_estimated_total),
+            "instructions": instructions,
+        }
+    )
 
 
 @login_required
