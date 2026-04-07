@@ -161,9 +161,14 @@ _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
 _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
 
 
-def _build_contract_state_webhook_line(actor_name: str, state: str) -> str:
+def _build_contract_state_webhook_line(
+    actor_name: str, state: str, *, relation: str = "from"
+) -> str:
     normalized_state = "validated" if str(state).strip().lower() == "validated" else "completed"
-    return f"Contract from {actor_name} has {normalized_state}."
+    normalized_relation = str(relation or "from").strip().lower()
+    if normalized_relation not in {"from", "for"}:
+        normalized_relation = "from"
+    return f"Contract {normalized_relation} {actor_name} has {normalized_state}."
 
 
 def _floor_isk_amount(value: Decimal | str | int | float | None) -> Decimal:
@@ -1825,7 +1830,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             _notify_material_exchange_admins(
                 config,
                 _("Sell Order Validated by In-Game Acceptance"),
-                _(_build_contract_state_webhook_line(order.seller.username, "validated")),
+                _(
+                    _build_contract_state_webhook_line(
+                        order.seller.username, "validated", relation="from"
+                    )
+                ),
                 level="info",
                 link=(
                     f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
@@ -1862,7 +1871,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         _notify_material_exchange_admins(
             config,
             _("Sell Order Validated"),
-            _(_build_contract_state_webhook_line(order.seller.username, "validated")),
+            _(
+                _build_contract_state_webhook_line(
+                    order.seller.username, "validated", relation="from"
+                )
+            ),
             level="success",
             link=(
                 f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
@@ -2663,7 +2676,11 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _notify_material_exchange_admins(
                 config,
                 _("Buy Order Validated by In-Game Acceptance"),
-                _(_build_contract_state_webhook_line(order.buyer.username, "validated")),
+                _(
+                    _build_contract_state_webhook_line(
+                        order.buyer.username, "validated", relation="for"
+                    )
+                ),
                 level="info",
                 link=(
                     f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
@@ -2699,7 +2716,11 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         _notify_material_exchange_admins(
             config,
             _("Buy Contract Created"),
-            _(_build_contract_state_webhook_line(order.buyer.username, "validated")),
+            _(
+                _build_contract_state_webhook_line(
+                    order.buyer.username, "validated", relation="for"
+                )
+            ),
             level="success",
             link=(
                 f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
@@ -5313,7 +5334,14 @@ def check_completed_material_exchange_contracts():
                 ]
             )
 
-            _log_sell_order_transactions(order)
+            try:
+                _log_sell_order_transactions(order)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to log completed sell order transactions for order %s: %s",
+                    order.id,
+                    exc,
+                )
             sell_items = list(order.items.all())
             sell_items_preview = "\n".join(
                 f"- {item.type_name}: {item.quantity:,}x"
@@ -5322,31 +5350,50 @@ def check_completed_material_exchange_contracts():
             if len(sell_items) > 8:
                 sell_items_preview += "\n- ..."
 
-            notify_user(
-                order.seller,
-                _("Sell Order Completed"),
-                _(
-                    f"Your sell order {order.order_reference} is complete.\n"
-                    f"Contract #{contract_id} has been accepted by the corporation."
-                    + (
-                        f"\n\nItems received:\n{sell_items_preview}"
-                        if sell_items_preview
-                        else ""
-                    )
-                ),
-                level="success",
-                link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
-            )
-            _notify_material_exchange_admins(
-                config,
-                _("Sell Order Completed"),
-                _(_build_contract_state_webhook_line(order.seller.username, "completed")),
-                level="success",
-                link=(
-                    f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-                    f"?next=/indy_hub/material-exchange/%23admin-panel"
-                ),
-            )
+            try:
+                notify_user(
+                    order.seller,
+                    _("Sell Order Completed"),
+                    _(
+                        f"Your sell order {order.order_reference} is complete.\n"
+                        f"Contract #{contract_id} has been accepted by the corporation."
+                        + (
+                            f"\n\nItems received:\n{sell_items_preview}"
+                            if sell_items_preview
+                            else ""
+                        )
+                    ),
+                    level="success",
+                    link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send seller completion notification for order %s: %s",
+                    order.id,
+                    exc,
+                )
+
+            try:
+                _notify_material_exchange_admins(
+                    config,
+                    _("Sell Order Completed"),
+                    _(
+                        _build_contract_state_webhook_line(
+                            order.seller.username, "completed", relation="from"
+                        )
+                    ),
+                    level="success",
+                    link=(
+                        f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                        f"?next=/indy_hub/material-exchange/%23admin-panel"
+                    ),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send sell-order completion admin/webhook notification for order %s: %s",
+                    order.id,
+                    exc,
+                )
 
             logger.info(
                 "Sell order %s completed: contract %s accepted (status: %s)",
@@ -5449,38 +5496,64 @@ def check_completed_material_exchange_contracts():
                 ]
             )
 
-            _log_buy_order_transactions(order)
+            try:
+                _log_buy_order_transactions(order)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to log completed buy order transactions for order %s: %s",
+                    order.id,
+                    exc,
+                )
             buy_items = list(order.items.all())
             buy_items_preview = "\n".join(
                 f"- {item.type_name}: {item.quantity:,}x" for item in buy_items[:8]
             )
             if len(buy_items) > 8:
                 buy_items_preview += "\n- ..."
-            notify_user(
-                order.buyer,
-                _("Buy Order Completed"),
-                _(
-                    f"Your buy order {order.order_reference} is complete.\n"
-                    f"Contract #{contract_id} has been accepted in-game and your delivery is marked as received."
-                    + (
-                        f"\n\nItems delivered:\n{buy_items_preview}"
-                        if buy_items_preview
-                        else ""
-                    )
-                ),
-                level="success",
-                link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
-            )
-            _notify_material_exchange_admins(
-                config,
-                _("Buy Order Completed"),
-                _(_build_contract_state_webhook_line(order.buyer.username, "completed")),
-                level="success",
-                link=(
-                    f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-                    f"?next=/indy_hub/material-exchange/%23admin-panel"
-                ),
-            )
+            try:
+                notify_user(
+                    order.buyer,
+                    _("Buy Order Completed"),
+                    _(
+                        f"Your buy order {order.order_reference} is complete.\n"
+                        f"Contract #{contract_id} has been accepted in-game and your delivery is marked as received."
+                        + (
+                            f"\n\nItems delivered:\n{buy_items_preview}"
+                            if buy_items_preview
+                            else ""
+                        )
+                    ),
+                    level="success",
+                    link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send buyer completion notification for order %s: %s",
+                    order.id,
+                    exc,
+                )
+
+            try:
+                _notify_material_exchange_admins(
+                    config,
+                    _("Buy Order Completed"),
+                    _(
+                        _build_contract_state_webhook_line(
+                            order.buyer.username, "completed", relation="for"
+                        )
+                    ),
+                    level="success",
+                    link=(
+                        f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                        f"?next=/indy_hub/material-exchange/%23admin-panel"
+                    ),
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to send buy-order completion admin/webhook notification for order %s: %s",
+                    order.id,
+                    exc,
+                )
 
             logger.info(
                 "Buy order %s completed: contract %s accepted (status: %s)",

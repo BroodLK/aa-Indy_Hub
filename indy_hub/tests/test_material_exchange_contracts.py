@@ -1023,8 +1023,45 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Completed", admin_title)
         self.assertEqual(
             admin_message,
-            f"Contract from {self.buy_order.buyer.username} has completed.",
+            f"Contract for {self.buy_order.buyer.username} has completed.",
         )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    def test_check_completed_buy_order_still_notifies_when_tx_logging_fails(
+        self,
+        mock_client,
+        mock_get_char,
+        mock_notify_admins,
+        mock_notify_user,
+        mock_log_buy_tx,
+    ):
+        """Transaction logging failure must not suppress buy completion notifications."""
+        now = timezone.now()
+        self.buy_order.status = MaterialExchangeBuyOrder.Status.VALIDATED
+        self.buy_order.esi_contract_id = 227079355
+        self.buy_order.save(update_fields=["status", "esi_contract_id", "updated_at"])
+
+        mock_get_char.return_value = 999999999
+        mock_client.fetch_corporation_contracts.return_value = [
+            {
+                "contract_id": 227079355,
+                "status": "finished",
+                "date_completed": now,
+            }
+        ]
+        mock_log_buy_tx.side_effect = RuntimeError("simulated buy tx logging failure")
+
+        check_completed_material_exchange_contracts()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED)
+        self.assertIsNotNone(self.buy_order.delivered_at)
+        mock_notify_user.assert_called_once()
+        mock_notify_admins.assert_called_once()
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -1865,6 +1902,18 @@ class MaterialExchangeWebhookMessageFormatTest(TestCase):
         self.assertEqual(
             _build_contract_state_webhook_line("pilot_x", "completed"),
             "Contract from pilot_x has completed.",
+        )
+        self.assertEqual(
+            _build_contract_state_webhook_line(
+                "pilot_x", "validated", relation="for"
+            ),
+            "Contract for pilot_x has validated.",
+        )
+        self.assertEqual(
+            _build_contract_state_webhook_line(
+                "pilot_x", "completed", relation="for"
+            ),
+            "Contract for pilot_x has completed.",
         )
 
 
