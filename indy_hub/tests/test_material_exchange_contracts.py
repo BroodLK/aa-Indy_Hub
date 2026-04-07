@@ -983,7 +983,7 @@ class BuyOrderValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_check_completed_buy_order_notifies_buyer(
+    def test_check_completed_buy_order_notifies_admins_only(
         self,
         mock_client,
         mock_get_char,
@@ -991,7 +991,7 @@ class BuyOrderValidationTaskTest(TestCase):
         mock_notify_user,
         _mock_log_buy_tx,
     ):
-        """When corp contract is finished, buyer should get a completion notification."""
+        """When corp contract is finished, completion should notify admins/webhook only."""
         now = timezone.now()
         self.buy_order.status = MaterialExchangeBuyOrder.Status.VALIDATED
         self.buy_order.esi_contract_id = 227079244
@@ -1011,12 +1011,7 @@ class BuyOrderValidationTaskTest(TestCase):
         self.buy_order.refresh_from_db()
         self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED)
         self.assertIsNotNone(self.buy_order.delivered_at)
-        mock_notify_user.assert_called()
-        user_title = str(mock_notify_user.call_args[0][1])
-        user_message = str(mock_notify_user.call_args[0][2])
-        self.assertIn("Completed", user_title)
-        self.assertIn("is complete", user_message)
-        self.assertIn("227079244", user_message)
+        mock_notify_user.assert_not_called()
         mock_notify_admins.assert_called()
         admin_title = str(mock_notify_admins.call_args[0][1])
         admin_message = str(mock_notify_admins.call_args[0][2])
@@ -1060,7 +1055,7 @@ class BuyOrderValidationTaskTest(TestCase):
         self.buy_order.refresh_from_db()
         self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED)
         self.assertIsNotNone(self.buy_order.delivered_at)
-        mock_notify_user.assert_called_once()
+        mock_notify_user.assert_not_called()
         mock_notify_admins.assert_called_once()
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
@@ -1068,7 +1063,7 @@ class BuyOrderValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_check_completed_sell_order_notifies_seller(
+    def test_check_completed_sell_order_notifies_admins_only(
         self,
         mock_client,
         mock_get_char,
@@ -1076,7 +1071,7 @@ class BuyOrderValidationTaskTest(TestCase):
         mock_notify_user,
         _mock_log_sell_tx,
     ):
-        """When sell contract is finished, seller and admins should be notified."""
+        """When sell contract is finished, completion should notify admins/webhook only."""
         # AA Example App
         from indy_hub.models import (
             MaterialExchangeSellOrder,
@@ -1113,12 +1108,7 @@ class BuyOrderValidationTaskTest(TestCase):
             sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
         )
         self.assertIsNotNone(sell_order.payment_verified_at)
-        mock_notify_user.assert_called()
-        user_title = str(mock_notify_user.call_args[0][1])
-        user_message = str(mock_notify_user.call_args[0][2])
-        self.assertIn("Completed", user_title)
-        self.assertIn("accepted by the corporation", user_message)
-        self.assertIn("Tritanium", user_message)
+        mock_notify_user.assert_not_called()
         mock_notify_admins.assert_called()
         admin_title = str(mock_notify_admins.call_args[0][1])
         admin_message = str(mock_notify_admins.call_args[0][2])

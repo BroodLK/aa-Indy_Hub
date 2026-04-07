@@ -5237,7 +5237,7 @@ def process_capital_ship_orders():
 def check_completed_material_exchange_contracts():
     """
     Check if corp contracts for approved sell orders have been completed.
-    Update order status and notify users when payment is verified.
+    Update order status and send admin/webhook notifications when payment is verified.
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
@@ -5339,36 +5339,6 @@ def check_completed_material_exchange_contracts():
             except Exception as exc:
                 logger.exception(
                     "Failed to log completed sell order transactions for order %s: %s",
-                    order.id,
-                    exc,
-                )
-            sell_items = list(order.items.all())
-            sell_items_preview = "\n".join(
-                f"- {item.type_name}: {item.quantity:,}x"
-                for item in sell_items[:8]
-            )
-            if len(sell_items) > 8:
-                sell_items_preview += "\n- ..."
-
-            try:
-                notify_user(
-                    order.seller,
-                    _("Sell Order Completed"),
-                    _(
-                        f"Your sell order {order.order_reference} is complete.\n"
-                        f"Contract #{contract_id} has been accepted by the corporation."
-                        + (
-                            f"\n\nItems received:\n{sell_items_preview}"
-                            if sell_items_preview
-                            else ""
-                        )
-                    ),
-                    level="success",
-                    link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send seller completion notification for order %s: %s",
                     order.id,
                     exc,
                 )
@@ -5501,34 +5471,6 @@ def check_completed_material_exchange_contracts():
             except Exception as exc:
                 logger.exception(
                     "Failed to log completed buy order transactions for order %s: %s",
-                    order.id,
-                    exc,
-                )
-            buy_items = list(order.items.all())
-            buy_items_preview = "\n".join(
-                f"- {item.type_name}: {item.quantity:,}x" for item in buy_items[:8]
-            )
-            if len(buy_items) > 8:
-                buy_items_preview += "\n- ..."
-            try:
-                notify_user(
-                    order.buyer,
-                    _("Buy Order Completed"),
-                    _(
-                        f"Your buy order {order.order_reference} is complete.\n"
-                        f"Contract #{contract_id} has been accepted in-game and your delivery is marked as received."
-                        + (
-                            f"\n\nItems delivered:\n{buy_items_preview}"
-                            if buy_items_preview
-                            else ""
-                        )
-                    ),
-                    level="success",
-                    link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send buyer completion notification for order %s: %s",
                     order.id,
                     exc,
                 )
