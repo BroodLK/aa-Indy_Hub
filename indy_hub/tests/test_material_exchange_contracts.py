@@ -1174,6 +1174,62 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_validate_buy_order_active_wrong_reference_validates(
+        self, mock_multi, mock_user
+    ):
+        """Outstanding near-match with wrong title reference should validate without waiting for finished status."""
+        # Standard Library
+        from datetime import timedelta
+
+        # Django
+        from django.utils import timezone
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        buyer_char_id = 999999999
+
+        contract = ESIContract.objects.create(
+            contract_id=227079145,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=0,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            title="NO-REF-HERE",
+            price=self.buy_order.total_price,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=145,
+            type_id=self.buy_item.type_id,
+            quantity=self.buy_item.quantity,
+            is_included=True,
+        )
+
+        with patch(
+            "indy_hub.tasks.material_exchange_contracts._get_user_character_ids",
+            return_value=[buyer_char_id],
+        ):
+            validate_material_exchange_buy_orders()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(
+            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
+        )
+        self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
+        self.assertIn("Contract validated", self.buy_order.notes)
+
+        mock_user.assert_called()
+        mock_multi.assert_called()
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
     def test_validate_buy_order_finished_contract_items_mismatch_force_validates(
         self, mock_multi, mock_user
     ):

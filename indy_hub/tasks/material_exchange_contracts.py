@@ -1354,7 +1354,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
             if not contract_id:
                 continue
 
-            # Filter: process Indy Hub contract titles for buyback, reprocessing, and capitals.
+            contract_type = str(contract_payload.get("type") or "").strip().lower()
             contract_title = contract_payload.get("title", "")
             contract_title_upper = str(contract_title or "").upper()
             if not any(
@@ -1376,7 +1376,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
                     ),
                     "assignee_id": contract_payload.get("assignee_id", 0),
                     "acceptor_id": contract_payload.get("acceptor_id", 0),
-                    "contract_type": contract_payload.get("type", "unknown"),
+                    "contract_type": contract_type or "unknown",
                     "status": contract_payload.get("status", "unknown"),
                     "title": contract_payload.get("title", ""),
                     "start_location_id": contract_payload.get("start_location_id"),
@@ -1396,7 +1396,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
             # Only fetch items for contracts where items are accessible (outstanding/in_progress)
             # Completed/expired contracts return 404 for items endpoint
             contract_status = contract_payload.get("status", "")
-            if contract_payload.get("type") == "item_exchange" and contract_status in [
+            if contract_type == "item_exchange" and contract_status in [
                 "outstanding",
                 "in_progress",
             ]:
@@ -2556,6 +2556,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     """Validate a single buy order against cached database contracts."""
 
     order_ref = order.order_reference or f"INDY-{order.id}"
+    active_validation_statuses = {"outstanding", "in_progress"}
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
     (
         expected_buy_location_ids,
@@ -2583,6 +2584,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     )
 
     matching_contract = None
+    active_contract_ref_mismatch = None
     finished_contract_ref_mismatch = None
     finished_contract_items_mismatch = None
     finished_contract_price_mismatch = None
@@ -2762,6 +2764,12 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 if price_ok_without_ref:
                     contract_status = str(contract.status or "").lower()
                     if (
+                        contract_status in active_validation_statuses
+                        and active_contract_ref_mismatch is None
+                    ):
+                        active_contract_ref_mismatch = contract
+                        last_reason = "wrong contract reference"
+                    if (
                         contract_status in finished_statuses
                         and finished_contract_ref_mismatch is None
                     ):
@@ -2822,6 +2830,10 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
     if matching_contract:
         _set_buy_order_validated(matching_contract, override=False)
+        return
+
+    if active_contract_ref_mismatch:
+        _set_buy_order_validated(active_contract_ref_mismatch, override=False)
         return
 
     if finished_contract_ref_mismatch:
