@@ -14,9 +14,9 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Permission
 from django.core.cache import cache
 from django.core.paginator import Paginator
-from django.db import connection, transaction
-from django.db.models import Count, Max, Min, Q, Sum
-from django.db.models.functions import TruncMonth
+from django.db import transaction
+from django.db.models import Count, Max, Min, Q, Sum, Value
+from django.db.models.functions import Lower, Replace, TruncMonth
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -97,7 +97,8 @@ User = get_user_model()
 
 _PRODUCTION_IDS_CACHE: set[int] | None = None
 _INDUSTRY_MARKET_GROUP_IDS_CACHE: set[int] | None = None
-_SELL_ESTIMATE_TYPE_LOOKUP_CACHE: dict[str, int] = {}
+_SELL_ESTIMATE_TYPE_LOOKUP_CACHE: dict[str, int | None] = {}
+MAX_ESTIMATE_LIVE_PRICE_LOOKUPS = 400
 
 _ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
     MaterialExchangeBuyOrder.Status.DRAFT,
@@ -1125,6 +1126,36 @@ def _get_group_map(type_ids: list[int]) -> dict[int, str]:
         return {}
 
 
+def _get_type_name_map(type_ids: list[int]) -> dict[int, str]:
+    """Return mapping type_id -> type name with minimal database round-trips."""
+
+    cleaned_type_ids: set[int] = set()
+    for raw_type_id in type_ids or []:
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id > 0:
+            cleaned_type_ids.add(type_id)
+    if not cleaned_type_ids:
+        return {}
+
+    type_name_map: dict[int, str] = {}
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list("id", "name")
+        type_name_map = {int(raw_id): str(raw_name or "") for raw_id, raw_name in rows}
+    except Exception:
+        type_name_map = {}
+
+    for type_id in cleaned_type_ids:
+        if type_id not in type_name_map or not str(type_name_map[type_id]).strip():
+            type_name_map[type_id] = get_type_name(type_id)
+    return type_name_map
+
+
 def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]:
     """Batch fetch Jita buy/sell prices from Fuzzwork for given type IDs."""
     # Local
@@ -1133,11 +1164,34 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
     if not type_ids:
         return {}
 
-    try:
-        return fetch_fuzzwork_prices(type_ids, timeout=15)
-    except FuzzworkError as exc:  # pragma: no cover - defensive
-        logger.warning("material_exchange: failed to fetch fuzzwork prices: %s", exc)
+    unique_id_set: set[int] = set()
+    for raw_type_id in type_ids:
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id > 0:
+            unique_id_set.add(type_id)
+    unique_ids: list[int] = sorted(unique_id_set)
+    if not unique_ids:
         return {}
+
+    price_map: dict[int, dict[str, Decimal]] = {}
+    batch_size = 200
+    for batch_start in range(0, len(unique_ids), batch_size):
+        batch_ids = unique_ids[batch_start : batch_start + batch_size]
+        try:
+            batch_prices = fetch_fuzzwork_prices(batch_ids, timeout=12)
+        except FuzzworkError as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "material_exchange: failed to fetch fuzzwork prices for batch %s-%s: %s",
+                batch_start,
+                batch_start + len(batch_ids) - 1,
+                exc,
+            )
+            continue
+        price_map.update(batch_prices)
+    return price_map
 
 
 def _get_stock_jita_price_map(
@@ -1218,8 +1272,6 @@ def _upsert_stock_jita_prices(
             stock_row.jita_buy_price = buy_price
             stock_row.jita_sell_price = sell_price
             stock_row.last_price_update = now
-            if not str(stock_row.type_name or "").strip():
-                stock_row.type_name = get_type_name(type_id)
             rows_to_update.append(stock_row)
             continue
 
@@ -1227,7 +1279,7 @@ def _upsert_stock_jita_prices(
             MaterialExchangeStock(
                 config=config,
                 type_id=type_id,
-                type_name=get_type_name(type_id),
+                type_name="",
                 quantity=0,
                 jita_buy_price=buy_price,
                 jita_sell_price=sell_price,
@@ -1377,101 +1429,132 @@ def _parse_sell_estimate_positive_quantity(raw_value: str | int | None) -> int |
     return None
 
 
+def _build_sell_estimate_candidate_keys(normalized_text: str) -> list[str]:
+    """Return normalized lowercase candidate keys for type-name matching."""
+
+    candidates: list[str] = [normalized_text]
+    if "-" in normalized_text:
+        candidates.append(normalized_text.replace("-", " "))
+    grade_dash = re.sub(r"(?i)\b([ivx]+)\s+grade\b", r"\1-Grade", normalized_text)
+    grade_space = re.sub(r"(?i)\b([ivx]+)-grade\b", r"\1 Grade", normalized_text)
+    candidates.extend([grade_dash, grade_space])
+
+    deduped_keys: list[str] = []
+    seen_keys: set[str] = set()
+    for candidate in candidates:
+        candidate_norm = _normalize_sell_estimate_item_text(candidate)
+        if not candidate_norm:
+            continue
+        candidate_key = candidate_norm.casefold()
+        if candidate_key in seen_keys:
+            continue
+        seen_keys.add(candidate_key)
+        deduped_keys.append(candidate_key)
+    return deduped_keys
+
+
+def _resolve_type_ids_for_sell_estimate_texts(
+    type_texts: list[str],
+) -> dict[str, int | None]:
+    """Resolve many pasted item texts at once. Result keys are normalized lowercase names."""
+
+    resolved_by_cache_key: dict[str, int | None] = {}
+    unresolved_candidate_keys: dict[str, list[str]] = {}
+
+    for raw_text in type_texts:
+        normalized = _normalize_sell_estimate_item_text(raw_text)
+        if not normalized:
+            continue
+        cache_key = normalized.casefold()
+
+        if normalized.isdigit():
+            parsed_id = int(normalized)
+            resolved_by_cache_key[cache_key] = parsed_id if parsed_id > 0 else None
+            continue
+
+        if cache_key in _SELL_ESTIMATE_TYPE_LOOKUP_CACHE:
+            resolved_by_cache_key[cache_key] = _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key]
+            continue
+
+        unresolved_candidate_keys[cache_key] = _build_sell_estimate_candidate_keys(
+            normalized
+        )
+
+    if not unresolved_candidate_keys:
+        return resolved_by_cache_key
+
+    candidate_keys: set[str] = {
+        candidate_key
+        for keys in unresolved_candidate_keys.values()
+        for candidate_key in keys
+    }
+    resolved_candidate_map: dict[str, int] = {}
+
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        exact_rows = (
+            ItemType.objects.annotate(name_lookup_key=Lower("name"))
+            .filter(name_lookup_key__in=candidate_keys)
+            .values_list("id", "name_lookup_key")
+        )
+        for raw_type_id, raw_lookup_key in exact_rows:
+            if raw_lookup_key not in resolved_candidate_map:
+                resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+
+        unresolved_lookup_keys = {
+            key for key in candidate_keys if key not in resolved_candidate_map
+        }
+        if unresolved_lookup_keys:
+            normalized_rows = (
+                ItemType.objects.annotate(
+                    name_lookup_key=Lower(
+                        Replace(
+                            Replace(
+                                Replace(
+                                    Replace("name", Value("\u2011"), Value("-")),
+                                    Value("\u2013"),
+                                    Value("-"),
+                                ),
+                                Value("\u2014"),
+                                Value("-"),
+                            ),
+                            Value("\u2212"),
+                            Value("-"),
+                        )
+                    )
+                )
+                .filter(name_lookup_key__in=unresolved_lookup_keys)
+                .values_list("id", "name_lookup_key")
+            )
+            for raw_type_id, raw_lookup_key in normalized_rows:
+                if raw_lookup_key not in resolved_candidate_map:
+                    resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+    except Exception:
+        resolved_candidate_map = {}
+
+    for cache_key, lookup_keys in unresolved_candidate_keys.items():
+        resolved_type_id: int | None = None
+        for lookup_key in lookup_keys:
+            resolved_type_id = resolved_candidate_map.get(lookup_key)
+            if resolved_type_id:
+                break
+        resolved_by_cache_key[cache_key] = resolved_type_id
+        _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key] = resolved_type_id
+
+    return resolved_by_cache_key
+
+
 def _resolve_type_id_from_sell_estimate_text(type_text: str) -> int | None:
     """Resolve type ID from pasted estimate item text."""
 
     normalized = _normalize_sell_estimate_item_text(type_text)
     if not normalized:
         return None
-    if normalized.isdigit():
-        value = int(normalized)
-        return value if value > 0 else None
-
     cache_key = normalized.casefold()
-    if cache_key in _SELL_ESTIMATE_TYPE_LOOKUP_CACHE:
-        return _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key]
-
-    candidates: list[str] = [normalized]
-    if "-" in normalized:
-        candidates.append(normalized.replace("-", " "))
-    grade_dash = re.sub(r"(?i)\b([ivx]+)\s+grade\b", r"\1-Grade", normalized)
-    grade_space = re.sub(r"(?i)\b([ivx]+)-grade\b", r"\1 Grade", normalized)
-    candidates.extend([grade_dash, grade_space])
-
-    deduped_candidates: list[str] = []
-    seen_candidate_keys: set[str] = set()
-    for candidate in candidates:
-        candidate_norm = _normalize_sell_estimate_item_text(candidate)
-        if not candidate_norm:
-            continue
-        candidate_key = candidate_norm.casefold()
-        if candidate_key in seen_candidate_keys:
-            continue
-        seen_candidate_keys.add(candidate_key)
-        deduped_candidates.append(candidate_norm)
-
-    resolved_type_id: int | None = None
-    try:
-        # Alliance Auth (External Libs)
-        from eve_sde.models import ItemType
-
-        for candidate in deduped_candidates:
-            exact_match = (
-                ItemType.objects.filter(name__iexact=candidate)
-                .values_list("id", flat=True)
-                .first()
-            )
-            if exact_match:
-                resolved_type_id = int(exact_match)
-                break
-    except Exception:
-        resolved_type_id = None
-
-    if not resolved_type_id:
-        try:
-            with connection.cursor() as cursor:
-                for candidate in deduped_candidates:
-                    cursor.execute(
-                        "SELECT id FROM eve_sde_itemtype WHERE lower(name)=lower(%s) LIMIT 1",
-                        [candidate],
-                    )
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        resolved_type_id = int(row[0])
-                        break
-                    cursor.execute(
-                        """
-                        SELECT id
-                        FROM eve_sde_itemtype
-                        WHERE lower(
-                            replace(
-                                replace(
-                                    replace(
-                                        replace(name, %s, '-'),
-                                        %s,
-                                        '-'
-                                    ),
-                                    %s,
-                                    '-'
-                                ),
-                                %s,
-                                '-'
-                            )
-                        ) = lower(%s)
-                        LIMIT 1
-                        """,
-                        ["\u2011", "\u2013", "\u2014", "\u2212", candidate],
-                    )
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        resolved_type_id = int(row[0])
-                        break
-        except Exception:
-            resolved_type_id = None
-
-    if resolved_type_id:
-        _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key] = resolved_type_id
-    return resolved_type_id
+    resolved = _resolve_type_ids_for_sell_estimate_texts([normalized]).get(cache_key)
+    return int(resolved) if resolved else None
 
 
 def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], list[str]]:
@@ -1479,6 +1562,7 @@ def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], lis
 
     rows_by_type: dict[int, int] = {}
     invalid_lines: list[str] = []
+    parsed_lines: list[tuple[str, str, int]] = []
 
     for raw_line in str(raw_text or "").splitlines():
         line = str(raw_line or "").strip()
@@ -1517,18 +1601,25 @@ def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], lis
             invalid_lines.append(line)
             continue
 
-        type_id = _resolve_type_id_from_sell_estimate_text(item_part)
+        parsed_lines.append((line, item_part, int(quantity)))
+
+    resolved_type_ids = _resolve_type_ids_for_sell_estimate_texts(
+        [item_text for _line, item_text, _qty in parsed_lines]
+    )
+    for line, item_part, quantity in parsed_lines:
+        item_cache_key = _normalize_sell_estimate_item_text(item_part).casefold()
+        type_id = resolved_type_ids.get(item_cache_key)
         if not type_id:
             invalid_lines.append(line)
             continue
 
-        rows_by_type[type_id] = rows_by_type.get(type_id, 0) + int(quantity)
+        rows_by_type[int(type_id)] = rows_by_type.get(int(type_id), 0) + int(quantity)
 
     rows = [
         {"type_id": int(type_id), "quantity": int(quantity)}
         for type_id, quantity in sorted(
             rows_by_type.items(),
-            key=lambda pair: get_type_name(int(pair[0])).lower(),
+            key=lambda pair: int(pair[0]),
         )
     ]
     return rows, invalid_lines
@@ -4036,8 +4127,12 @@ def material_exchange_sell_estimate(request):
 
     fetched_price_data: dict[int, dict[str, Decimal]] = {}
     prices_backfilled = 0
-    if missing_price_type_ids:
-        fetched_price_data = _fetch_fuzzwork_prices(missing_price_type_ids)
+    live_lookup_type_ids = missing_price_type_ids[:MAX_ESTIMATE_LIVE_PRICE_LOOKUPS]
+    deferred_live_lookup_count = max(
+        0, len(missing_price_type_ids) - len(live_lookup_type_ids)
+    )
+    if live_lookup_type_ids:
+        fetched_price_data = _fetch_fuzzwork_prices(live_lookup_type_ids)
         if fetched_price_data:
             prices_backfilled = _upsert_stock_jita_prices(
                 config=config,
@@ -4052,6 +4147,7 @@ def material_exchange_sell_estimate(request):
         _get_container_price_override_maps(config)
     )
     type_market_group_path_map = _get_type_market_group_path_map(type_ids)
+    type_name_map = _get_type_name_map(type_ids)
 
     sell_structure_name_map = config.get_sell_structure_name_map()
     allowed_type_ids_cache: dict[int, set[int] | None] = {}
@@ -4068,7 +4164,7 @@ def material_exchange_sell_estimate(request):
     for row in parsed_rows:
         type_id = int(row["type_id"])
         quantity = max(int(row["quantity"]), 0)
-        type_name = get_type_name(type_id)
+        type_name = type_name_map.get(type_id) or str(type_id)
         accepted_locations = _get_estimate_accepting_sell_locations(
             config=config,
             type_id=type_id,
@@ -4172,6 +4268,7 @@ def material_exchange_sell_estimate(request):
                 "missing_requested": int(len(missing_price_type_ids)),
                 "fetched_live": int(len(fetched_price_data)),
                 "backfilled_rows": int(prices_backfilled),
+                "deferred_live_lookups": int(deferred_live_lookup_count),
             },
         }
     )

@@ -77,10 +77,10 @@ class MaterialExchangeSellEstimateTests(TestCase):
     @patch("indy_hub.views.material_exchange._compute_effective_sell_unit_price")
     @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange.get_type_name")
-    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
     def test_estimate_endpoint_returns_itemized_rows_with_accepting_locations(
         self,
-        mock_resolve_type_id,
+        mock_resolve_type_ids,
         mock_get_type_name,
         mock_fetch_prices,
         mock_compute_sell_price,
@@ -88,13 +88,17 @@ class MaterialExchangeSellEstimateTests(TestCase):
     ):
         type_name_map = {34: "Tritanium", 35: "Pyerite"}
 
-        def resolve_type_side_effect(value: str):
-            normalized = str(value).strip().lower()
-            if normalized == "tritanium":
-                return 34
-            if normalized == "pyerite":
-                return 35
-            return None
+        def resolve_type_side_effect(values: list[str]):
+            resolved = {}
+            for raw_value in values:
+                normalized = str(raw_value).strip().lower()
+                if normalized == "tritanium":
+                    resolved[normalized] = 34
+                elif normalized == "pyerite":
+                    resolved[normalized] = 35
+                else:
+                    resolved[normalized] = None
+            return resolved
 
         def allowed_side_effect(config, mode, structure_id=None):
             if mode != "sell":
@@ -113,7 +117,7 @@ class MaterialExchangeSellEstimateTests(TestCase):
                 return Decimal("8.00"), Decimal("8.00"), False
             return Decimal("0"), Decimal("0"), False
 
-        mock_resolve_type_id.side_effect = resolve_type_side_effect
+        mock_resolve_type_ids.side_effect = resolve_type_side_effect
         mock_get_type_name.side_effect = lambda type_id: type_name_map.get(
             int(type_id), f"Type {type_id}"
         )
@@ -154,21 +158,24 @@ class MaterialExchangeSellEstimateTests(TestCase):
         self.assertEqual(rows_by_type[35]["unit_price"], "8.00")
         self.assertEqual(rows_by_type[35]["total_price"], "40.00")
 
-    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
     @patch("indy_hub.views.material_exchange.get_type_name")
     def test_parse_sell_estimate_input_supports_tab_and_space_format(
         self,
         mock_get_type_name,
-        mock_resolve_type_id,
+        mock_resolve_type_ids,
     ):
         mock_get_type_name.side_effect = lambda type_id: {
             34: "Tritanium",
             35: "Pyerite",
         }.get(int(type_id), f"Type {type_id}")
-        mock_resolve_type_id.side_effect = lambda value: {
-            "tritanium": 34,
-            "pyerite": 35,
-        }.get(str(value).strip().lower())
+        mock_resolve_type_ids.side_effect = lambda values: {
+            str(value).strip().lower(): {
+                "tritanium": 34,
+                "pyerite": 35,
+            }.get(str(value).strip().lower())
+            for value in values
+        }
 
         rows, invalid_lines = _parse_sell_estimate_input(
             "Tritanium\t10\nTritanium 15\nPyerite 3\nInvalidLine"
@@ -181,17 +188,20 @@ class MaterialExchangeSellEstimateTests(TestCase):
     @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
     @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange.get_type_name")
-    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
     def test_estimate_endpoint_uses_cached_db_prices(
         self,
-        mock_resolve_type_id,
+        mock_resolve_type_ids,
         mock_get_type_name,
         mock_fetch_prices,
         mock_allowed_ids,
     ):
-        mock_resolve_type_id.side_effect = lambda value: {
-            "tritanium": 34,
-        }.get(str(value).strip().lower())
+        mock_resolve_type_ids.side_effect = lambda values: {
+            str(value).strip().lower(): {
+                "tritanium": 34,
+            }.get(str(value).strip().lower())
+            for value in values
+        }
         mock_get_type_name.side_effect = lambda type_id: {
             34: "Tritanium",
         }.get(int(type_id), f"Type {type_id}")
@@ -231,17 +241,20 @@ class MaterialExchangeSellEstimateTests(TestCase):
     @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
     @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange.get_type_name")
-    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
     def test_estimate_endpoint_fetches_and_backfills_missing_prices(
         self,
-        mock_resolve_type_id,
+        mock_resolve_type_ids,
         mock_get_type_name,
         mock_fetch_prices,
         mock_allowed_ids,
     ):
-        mock_resolve_type_id.side_effect = lambda value: {
-            "tritanium": 34,
-        }.get(str(value).strip().lower())
+        mock_resolve_type_ids.side_effect = lambda values: {
+            str(value).strip().lower(): {
+                "tritanium": 34,
+            }.get(str(value).strip().lower())
+            for value in values
+        }
         mock_get_type_name.side_effect = lambda type_id: {
             34: "Tritanium",
         }.get(int(type_id), f"Type {type_id}")
@@ -267,15 +280,15 @@ class MaterialExchangeSellEstimateTests(TestCase):
             config=self.config,
             type_id=34,
         )
-        self.assertEqual(stock_row.type_name, "Tritanium")
+        self.assertEqual(stock_row.type_name, "")
         self.assertEqual(stock_row.jita_buy_price, Decimal("5.00"))
         self.assertEqual(stock_row.jita_sell_price, Decimal("6.00"))
         self.assertIsNotNone(stock_row.last_price_update)
         mock_fetch_prices.assert_called_once()
 
-    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
-    def test_estimate_endpoint_returns_400_when_no_valid_lines(self, mock_resolve_type_id):
-        mock_resolve_type_id.return_value = None
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
+    def test_estimate_endpoint_returns_400_when_no_valid_lines(self, mock_resolve_type_ids):
+        mock_resolve_type_ids.return_value = {"unknown item": None}
 
         response = self.client.post(
             reverse("indy_hub:material_exchange_sell_estimate"),

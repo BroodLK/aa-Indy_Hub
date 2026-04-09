@@ -188,6 +188,23 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderEstimate(payload) {
         const invalidLines = Array.isArray(payload.invalid_lines) ? payload.invalid_lines : [];
         const instructions = Array.isArray(payload.instructions) ? payload.instructions : [];
+        const pricingMeta = payload && typeof payload.pricing === 'object' ? payload.pricing : {};
+        const pricingDetails = [];
+        if (Number(pricingMeta.missing_requested || 0) > 0) {
+            pricingDetails.push(`${Number(pricingMeta.missing_requested)} {% trans "missing cached price(s) detected" %}`);
+        }
+        if (Number(pricingMeta.fetched_live || 0) > 0) {
+            pricingDetails.push(`${Number(pricingMeta.fetched_live)} {% trans "fetched from live market API" %}`);
+        }
+        if (Number(pricingMeta.backfilled_rows || 0) > 0) {
+            pricingDetails.push(`${Number(pricingMeta.backfilled_rows)} {% trans "saved to local cache" %}`);
+        }
+        if (Number(pricingMeta.deferred_live_lookups || 0) > 0) {
+            pricingDetails.push(`${Number(pricingMeta.deferred_live_lookups)} {% trans "deferred for later lookup" %}`);
+        }
+        const pricingMetaHtml = pricingDetails.length
+            ? `<div class="small text-muted mt-1">${pricingDetails.join(' • ')}</div>`
+            : '';
         const invalidHtml = invalidLines.length
             ? `
                 <div class="contract-check-summary contract-check-summary-ko small mt-2">
@@ -212,6 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <strong>{% trans "Estimated payout" %}:</strong> ${formatIsk(payload.estimated_total)} ISK
                     <span class="text-muted">({% trans "rounded order total" %}: ${escapeHtml(payload.rounded_estimated_total || '0')} ISK)</span>
                 </div>
+                ${pricingMetaHtml}
             </div>
             ${invalidHtml}
             <div class="table-responsive mt-3">
