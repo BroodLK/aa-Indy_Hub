@@ -77,6 +77,10 @@
 .sell-estimate-modal .estimate-status-error {
     color: var(--bs-danger);
 }
+
+.sell-estimate-modal .estimate-progress {
+    height: 0.65rem;
+}
 </style>
 
 <div class="modal fade contract-check-modal sell-estimate-modal" id="sellEstimateModal" tabindex="-1" aria-labelledby="sellEstimateModalLabel" aria-hidden="true">
@@ -229,17 +233,88 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
     }
 
-    async function requestEstimate() {
-        const formData = new FormData(form);
-        submitBtn.disabled = true;
-        textarea.readOnly = true;
-
+    function setPendingEstimateState() {
         resultEl.classList.remove('d-none');
         resultEl.innerHTML = `
             <div class="contract-check-summary contract-check-summary-pending small" role="alert">
                 <div class="fw-semibold mb-1">{% trans "Estimating..." %}</div>
                 <div>{% trans "Applying current Buyback pricing and location rules." %}</div>
+                <div class="progress mt-2 estimate-progress" aria-label="{% trans 'Estimate progress' %}">
+                    <div
+                        class="progress-bar progress-bar-striped progress-bar-animated"
+                        data-estimate-progress-bar
+                        role="progressbar"
+                        style="width: 8%"
+                        aria-valuemin="0"
+                        aria-valuemax="100"
+                        aria-valuenow="8"
+                    >8%</div>
+                </div>
+                <div class="text-muted mt-2" data-estimate-progress-message>{% trans "Reading pasted lines." %}</div>
             </div>`;
+    }
+
+    function createPendingProgressController() {
+        const progressBar = resultEl.querySelector('[data-estimate-progress-bar]');
+        const progressMessage = resultEl.querySelector('[data-estimate-progress-message]');
+        const stages = [
+            { percent: 18, message: '{% trans "Reading pasted lines." %}' },
+            { percent: 35, message: '{% trans "Checking cached prices." %}' },
+            { percent: 58, message: '{% trans "Fetching missing prices (if needed)." %}' },
+            { percent: 78, message: '{% trans "Applying pricing and location rules." %}' },
+            { percent: 92, message: '{% trans "Finalizing estimate output." %}' },
+        ];
+        let stageIndex = 0;
+        let timerId = null;
+
+        function applyState(percent, message) {
+            if (progressBar) {
+                progressBar.style.width = `${percent}%`;
+                progressBar.setAttribute('aria-valuenow', String(percent));
+                progressBar.textContent = `${percent}%`;
+            }
+            if (progressMessage && message) {
+                progressMessage.textContent = message;
+            }
+        }
+
+        return {
+            start() {
+                applyState(8, '{% trans "Reading pasted lines." %}');
+                timerId = window.setInterval(() => {
+                    if (stageIndex >= stages.length) {
+                        return;
+                    }
+                    const stage = stages[stageIndex];
+                    stageIndex += 1;
+                    applyState(stage.percent, stage.message);
+                }, 900);
+            },
+            complete(message) {
+                if (timerId) {
+                    window.clearInterval(timerId);
+                    timerId = null;
+                }
+                applyState(100, message || '{% trans "Estimate complete." %}');
+            },
+            fail(message) {
+                if (timerId) {
+                    window.clearInterval(timerId);
+                    timerId = null;
+                }
+                applyState(100, message || '{% trans "Estimate failed." %}');
+            }
+        };
+    }
+
+    async function requestEstimate() {
+        const formData = new FormData(form);
+        submitBtn.disabled = true;
+        textarea.readOnly = true;
+
+        setPendingEstimateState();
+        const progress = createPendingProgressController();
+        progress.start();
 
         try {
             const response = await fetch('{% url "indy_hub:material_exchange_sell_estimate" %}', {
@@ -250,8 +325,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 credentials: 'same-origin'
             });
-            const payload = await response.json();
+            const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+            let payload = null;
+            if (contentType.includes('application/json')) {
+                payload = await response.json();
+            } else {
+                const rawText = await response.text();
+                const snippet = String(rawText || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+                throw new Error(`Server returned ${response.status}${snippet ? `: ${snippet}` : ''}`);
+            }
             if (!response.ok || !payload.ok) {
+                progress.fail('{% trans "Estimate failed." %}');
                 resultEl.innerHTML = `
                     <div class="contract-check-summary contract-check-summary-ko small" role="alert">
                         <div class="fw-semibold mb-1">{% trans "Estimate failed" %}</div>
@@ -265,8 +349,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 return;
             }
+            progress.complete('{% trans "Estimate complete." %}');
             renderEstimate(payload);
         } catch (error) {
+            progress.fail('{% trans "Estimate failed." %}');
             resultEl.innerHTML = `
                 <div class="contract-check-summary contract-check-summary-ko small" role="alert">
                     <div class="fw-semibold mb-1">{% trans "Estimate failed" %}</div>

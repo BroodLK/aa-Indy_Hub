@@ -1140,6 +1140,111 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
         return {}
 
 
+def _get_stock_jita_price_map(
+    *, config: MaterialExchangeConfig, type_ids: list[int]
+) -> dict[int, dict[str, Decimal]]:
+    """Return cached Jita buy/sell prices from MaterialExchangeStock for a config."""
+
+    cleaned_type_ids: set[int] = set()
+    for raw_type_id in type_ids or []:
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id > 0:
+            cleaned_type_ids.add(type_id)
+    if not cleaned_type_ids:
+        return {}
+
+    rows = MaterialExchangeStock.objects.filter(
+        config=config,
+        type_id__in=cleaned_type_ids,
+    ).values("type_id", "jita_buy_price", "jita_sell_price")
+
+    price_map: dict[int, dict[str, Decimal]] = {}
+    for row in rows:
+        try:
+            type_id = int(row.get("type_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+        price_map[type_id] = {
+            "buy": Decimal(str(row.get("jita_buy_price") or 0)),
+            "sell": Decimal(str(row.get("jita_sell_price") or 0)),
+        }
+    return price_map
+
+
+def _upsert_stock_jita_prices(
+    *,
+    config: MaterialExchangeConfig,
+    price_data: dict[int, dict[str, Decimal]],
+) -> int:
+    """Persist fetched Jita prices into MaterialExchangeStock for this config."""
+
+    normalized_prices: dict[int, tuple[Decimal, Decimal]] = {}
+    for raw_type_id, raw_info in (price_data or {}).items():
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0:
+            continue
+        info = raw_info or {}
+        normalized_prices[type_id] = (
+            Decimal(str(info.get("buy") or 0)),
+            Decimal(str(info.get("sell") or 0)),
+        )
+    if not normalized_prices:
+        return 0
+
+    now = timezone.now()
+    type_ids = list(normalized_prices.keys())
+    existing_rows = {
+        int(row.type_id): row
+        for row in MaterialExchangeStock.objects.filter(
+            config=config,
+            type_id__in=type_ids,
+        )
+    }
+
+    rows_to_update: list[MaterialExchangeStock] = []
+    rows_to_create: list[MaterialExchangeStock] = []
+
+    for type_id, (buy_price, sell_price) in normalized_prices.items():
+        stock_row = existing_rows.get(type_id)
+        if stock_row is not None:
+            stock_row.jita_buy_price = buy_price
+            stock_row.jita_sell_price = sell_price
+            stock_row.last_price_update = now
+            if not str(stock_row.type_name or "").strip():
+                stock_row.type_name = get_type_name(type_id)
+            rows_to_update.append(stock_row)
+            continue
+
+        rows_to_create.append(
+            MaterialExchangeStock(
+                config=config,
+                type_id=type_id,
+                type_name=get_type_name(type_id),
+                quantity=0,
+                jita_buy_price=buy_price,
+                jita_sell_price=sell_price,
+                last_price_update=now,
+            )
+        )
+
+    if rows_to_create:
+        MaterialExchangeStock.objects.bulk_create(rows_to_create, ignore_conflicts=True)
+    if rows_to_update:
+        MaterialExchangeStock.objects.bulk_update(
+            rows_to_update,
+            ["type_name", "jita_buy_price", "jita_sell_price", "last_price_update"],
+        )
+    return len(rows_to_create) + len(rows_to_update)
+
+
 def _parse_submitted_quantities(post_data) -> dict[int, int]:
     """Parse `qty_*` POST fields and return summed quantities by type_id."""
 
@@ -3916,7 +4021,29 @@ def material_exchange_sell_estimate(request):
         )
 
     type_ids = [int(row["type_id"]) for row in parsed_rows]
-    price_data = _fetch_fuzzwork_prices(type_ids)
+    price_data = _get_stock_jita_price_map(config=config, type_ids=type_ids)
+
+    missing_price_type_ids: list[int] = []
+    for type_id in type_ids:
+        info = price_data.get(int(type_id))
+        if not info:
+            missing_price_type_ids.append(int(type_id))
+            continue
+        buy_price = Decimal(str(info.get("buy") or 0))
+        sell_price = Decimal(str(info.get("sell") or 0))
+        if buy_price <= 0 and sell_price <= 0:
+            missing_price_type_ids.append(int(type_id))
+
+    fetched_price_data: dict[int, dict[str, Decimal]] = {}
+    prices_backfilled = 0
+    if missing_price_type_ids:
+        fetched_price_data = _fetch_fuzzwork_prices(missing_price_type_ids)
+        if fetched_price_data:
+            prices_backfilled = _upsert_stock_jita_prices(
+                config=config,
+                price_data=fetched_price_data,
+            )
+            price_data.update(fetched_price_data)
     sell_override_map, _buy_override_map = _get_item_price_override_maps(config)
     sell_market_group_override_map, _buy_market_group_override_map = (
         _get_market_group_price_override_maps(config)
@@ -4041,6 +4168,11 @@ def material_exchange_sell_estimate(request):
             "estimated_total": format_decimal(estimated_total),
             "rounded_estimated_total": str(rounded_estimated_total),
             "instructions": instructions,
+            "pricing": {
+                "missing_requested": int(len(missing_price_type_ids)),
+                "fetched_live": int(len(fetched_price_data)),
+                "backfilled_rows": int(prices_backfilled),
+            },
         }
     )
 

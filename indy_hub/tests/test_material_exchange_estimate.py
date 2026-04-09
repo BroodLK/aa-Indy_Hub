@@ -12,7 +12,11 @@ from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
 # AA Example App
-from indy_hub.models import MaterialExchangeConfig, MaterialExchangeSettings
+from indy_hub.models import (
+    MaterialExchangeConfig,
+    MaterialExchangeSettings,
+    MaterialExchangeStock,
+)
 from indy_hub.views.material_exchange import _parse_sell_estimate_input
 
 
@@ -173,6 +177,101 @@ class MaterialExchangeSellEstimateTests(TestCase):
         rows_by_type = {int(row["type_id"]): int(row["quantity"]) for row in rows}
         self.assertEqual(rows_by_type, {34: 25, 35: 3})
         self.assertEqual(invalid_lines, ["InvalidLine"])
+
+    @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
+    @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
+    @patch("indy_hub.views.material_exchange.get_type_name")
+    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
+    def test_estimate_endpoint_uses_cached_db_prices(
+        self,
+        mock_resolve_type_id,
+        mock_get_type_name,
+        mock_fetch_prices,
+        mock_allowed_ids,
+    ):
+        mock_resolve_type_id.side_effect = lambda value: {
+            "tritanium": 34,
+        }.get(str(value).strip().lower())
+        mock_get_type_name.side_effect = lambda type_id: {
+            34: "Tritanium",
+        }.get(int(type_id), f"Type {type_id}")
+        mock_allowed_ids.return_value = {34}
+        mock_fetch_prices.side_effect = AssertionError(
+            "estimate endpoint should not call live Fuzzwork"
+        )
+
+        MaterialExchangeStock.objects.create(
+            config=self.config,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1,
+            jita_buy_price=Decimal("4.00"),
+            jita_sell_price=Decimal("4.20"),
+        )
+
+        response = self.client.post(
+            reverse("indy_hub:material_exchange_sell_estimate"),
+            {"estimate_text": "Tritanium 10"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["estimated_total"], "40.00")
+        self.assertEqual(payload["rounded_estimated_total"], "40")
+
+        rows_by_type = {
+            int(row["type_id"]): row for row in payload.get("items", [])
+        }
+        self.assertEqual(rows_by_type[34]["unit_price"], "4.00")
+        self.assertEqual(rows_by_type[34]["total_price"], "40.00")
+        self.assertEqual(rows_by_type[34]["status"], "ok")
+        mock_fetch_prices.assert_not_called()
+
+    @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
+    @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
+    @patch("indy_hub.views.material_exchange.get_type_name")
+    @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
+    def test_estimate_endpoint_fetches_and_backfills_missing_prices(
+        self,
+        mock_resolve_type_id,
+        mock_get_type_name,
+        mock_fetch_prices,
+        mock_allowed_ids,
+    ):
+        mock_resolve_type_id.side_effect = lambda value: {
+            "tritanium": 34,
+        }.get(str(value).strip().lower())
+        mock_get_type_name.side_effect = lambda type_id: {
+            34: "Tritanium",
+        }.get(int(type_id), f"Type {type_id}")
+        mock_allowed_ids.return_value = {34}
+        mock_fetch_prices.return_value = {
+            34: {"buy": Decimal("5.00"), "sell": Decimal("6.00")}
+        }
+
+        response = self.client.post(
+            reverse("indy_hub:material_exchange_sell_estimate"),
+            {"estimate_text": "Tritanium 10"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["estimated_total"], "50.00")
+        self.assertEqual(payload["rounded_estimated_total"], "50")
+        self.assertEqual(payload["pricing"]["missing_requested"], 1)
+        self.assertEqual(payload["pricing"]["fetched_live"], 1)
+
+        stock_row = MaterialExchangeStock.objects.get(
+            config=self.config,
+            type_id=34,
+        )
+        self.assertEqual(stock_row.type_name, "Tritanium")
+        self.assertEqual(stock_row.jita_buy_price, Decimal("5.00"))
+        self.assertEqual(stock_row.jita_sell_price, Decimal("6.00"))
+        self.assertIsNotNone(stock_row.last_price_update)
+        mock_fetch_prices.assert_called_once()
 
     @patch("indy_hub.views.material_exchange._resolve_type_id_from_sell_estimate_text")
     def test_estimate_endpoint_returns_400_when_no_valid_lines(self, mock_resolve_type_id):
