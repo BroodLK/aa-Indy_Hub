@@ -146,3 +146,43 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         self.assertTrue(any(g["label"] == "Advanced Components" for g in components_node["children"]))
         self.assertTrue(any(g["label"] == "Minerals" for g in materials_node["children"]))
         self.assertTrue(any(g["label"] == "Datacores" for g in research_node["children"]))
+
+    @patch("indy_hub.views.material_exchange_config._build_market_group_index")
+    def test_manufacture_research_tree_recurses_beyond_grandchildren(self, mock_build_market_group_index):
+        mock_build_market_group_index.return_value = {
+            1: {"id": 1, "name": "Root", "parent_market_group_id": None},
+            200: {"id": 200, "name": "Manufacture & Research", "parent_market_group_id": 1},
+            211: {"id": 211, "name": "Materials", "parent_market_group_id": 200},
+            311: {"id": 311, "name": "Planetary Materials", "parent_market_group_id": 211},
+            411: {"id": 411, "name": "Raw Planetary Materials", "parent_market_group_id": 311},
+            412: {"id": 412, "name": "Refined Planetary Materials", "parent_market_group_id": 311},
+        }
+
+        tree = _get_market_group_tree()
+        manufacture_node = next(
+            node for node in tree if node.get("label") == "Manufacture & Research"
+        )
+        materials_node = next(
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Materials"
+        )
+        planetary_materials_node = next(
+            child
+            for child in (materials_node.get("children") or [])
+            if child.get("label") == "Planetary Materials"
+        )
+
+        self.assertTrue(planetary_materials_node["expandable"])
+        self.assertTrue(
+            any(
+                child["label"] == "Raw Planetary Materials"
+                for child in planetary_materials_node["children"]
+            )
+        )
+        self.assertTrue(
+            any(
+                child["label"] == "Refined Planetary Materials"
+                for child in planetary_materials_node["children"]
+            )
+        )

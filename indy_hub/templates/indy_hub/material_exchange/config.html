@@ -691,9 +691,19 @@
                                     </h5>
                                 </div>
                                 <div class="mb-2">
-                                    <div class="d-flex align-items-center justify-content-between gap-2">
-                                        <label class="form-label fw-semibold mb-0" for="marketGroupSearch">{% trans "Search everything" %}</label>
-                                        <button type="button" class="btn btn-link btn-sm p-0" id="toggleGranularChoices">{% trans "Granular choices" %}</button>
+                                    <div class="me-market-toolbar">
+                                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                            <label class="form-label fw-semibold mb-0" for="marketGroupSearch">{% trans "Search everything" %}</label>
+                                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                                <span class="me-market-mode-badge" id="marketGroupModeBadge">{% trans "Overview mode" %}</span>
+                                                <button type="button" class="btn btn-sm me-market-mode-btn" id="toggleGranularChoices">
+                                                    {% trans "Enable deep drill-down" %}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="form-text me-market-toolbar-text">
+                                            {% trans "Overview mode selects a whole branch. Deep drill-down lets you stop at specific sub-branches like Manufacture & Research / Materials / Planetary Materials / Raw Planetary Materials." %}
+                                        </div>
                                     </div>
                                     <input
                                         type="text"
@@ -717,7 +727,11 @@
                                                 id="allowedMarketGroupsSellByStructureJson">
                                             <input type="hidden" name="allowed_market_groups_sell_json" id="allowedMarketGroupsSellJson">
                                             <input type="hidden" name="allowed_market_groups_buy_json" id="allowedMarketGroupsBuyJson">
-                                            <label class="form-label fw-semibold"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span></label>
+                                            <div class="me-market-panel me-market-panel-sell">
+                                                <div class="me-market-panel-header">
+                                                    <label class="form-label fw-semibold mb-0"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span></label>
+                                                    <span class="me-market-selection-summary" id="sellMarketGroupSummary">{% trans "No location selected" %}</span>
+                                                </div>
                                             <div class="mb-2">
                                                 <label class="form-label fw-semibold mb-1" for="sellMarketGroupStructureSelect">{% trans "Sell Location" %}</label>
                                                 <select class="form-select form-select-sm" id="sellMarketGroupStructureSelect"></select>
@@ -735,11 +749,17 @@
                                                 </div>
                                             </div>
                                             <div class="me-market-tree" id="sellMarketGroupTree"></div>
+                                            </div>
                                         </div>
                                         <div class="col-lg-6 me-dual-list-block">
-                                            <label class="form-label fw-semibold"><span class="me-pill-success"><i class="fas fa-arrow-left"></i> {% trans "BUY - Market Groups" %}</span></label>
-                                            <div class="form-text mb-2">{% trans "Granular mode applies to both SELL and BUY trees." %}</div>
-                                            <div class="me-market-tree" id="buyMarketGroupTree"></div>
+                                            <div class="me-market-panel me-market-panel-buy">
+                                                <div class="me-market-panel-header">
+                                                    <label class="form-label fw-semibold mb-0"><span class="me-pill-success"><i class="fas fa-arrow-left"></i> {% trans "BUY - Market Groups" %}</span></label>
+                                                    <span class="me-market-selection-summary" id="buyMarketGroupSummary">{% trans "No groups selected" %}</span>
+                                                </div>
+                                                <div class="form-text mb-2">{% trans "Granular mode applies to both SELL and BUY trees." %}</div>
+                                                <div class="me-market-tree" id="buyMarketGroupTree"></div>
+                                            </div>
                                         </div>
                                     </div>
                                 {% endif %}
@@ -1853,6 +1873,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const sellTreeContainer = document.getElementById('sellMarketGroupTree');
     const buyTreeContainer = document.getElementById('buyMarketGroupTree');
     const granularToggleBtn = document.getElementById('toggleGranularChoices');
+    const modeBadgeEl = document.getElementById('marketGroupModeBadge');
+    const sellSummaryEl = document.getElementById('sellMarketGroupSummary');
+    const buySummaryEl = document.getElementById('buyMarketGroupSummary');
 
     if (
         !searchInput ||
@@ -1956,7 +1979,7 @@ document.addEventListener('DOMContentLoaded', function() {
         return descendants;
     };
 
-    const nodeMatchesSearch = (node, query) => {
+    const nodeMatchesOwnSearch = (node, query) => {
         if (!query) {
             return true;
         }
@@ -1966,17 +1989,17 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         const nodePayload = searchIndex[String(node.id)] || searchIndex[node.id] || {};
         const nodeItems = Array.isArray(nodePayload.items) ? nodePayload.items : [];
-        if (nodeItems.some(item => String(item).toLowerCase().includes(q))) {
+        return nodeItems.some(item => String(item).toLowerCase().includes(q));
+    };
+
+    const nodeMatchesSearch = (node, query) => {
+        if (!query) {
             return true;
         }
-        return (node.children || []).some(child => {
-            if (String(child.label || '').toLowerCase().includes(q)) {
-                return true;
-            }
-            const childPayload = searchIndex[String(child.id)] || searchIndex[child.id] || {};
-            const childItems = Array.isArray(childPayload.items) ? childPayload.items : [];
-            return childItems.some(item => String(item).toLowerCase().includes(q));
-        });
+        if (nodeMatchesOwnSearch(node, query)) {
+            return true;
+        }
+        return (node.children || []).some(child => nodeMatchesSearch(child, query));
     };
 
     const expandSelectedGroupIdsToGranularChildren = (rawGroupIds) => {
@@ -1990,19 +2013,6 @@ document.addEventListener('DOMContentLoaded', function() {
         };
         marketTree.forEach(node => walk(node));
         return Array.from(expanded).sort((a, b) => a - b);
-    };
-
-    const nodeMatchesOwnSearch = (node, query) => {
-        if (!query) {
-            return true;
-        }
-        const q = query.toLowerCase();
-        if (String(node.label || '').toLowerCase().includes(q)) {
-            return true;
-        }
-        const nodePayload = searchIndex[String(node.id)] || searchIndex[node.id] || {};
-        const nodeItems = Array.isArray(nodePayload.items) ? nodePayload.items : [];
-        return nodeItems.some(item => String(item).toLowerCase().includes(q));
     };
 
     let sellGroupsByStructure = normalizeSellGroupMap(initialSellGroupMap);
@@ -2046,13 +2056,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     };
 
+    const getSelectedStructureName = (structureId) => {
+        const selectedStructures = getSelectedSellStructures();
+        const matched = selectedStructures.find(item => item.id === String(structureId));
+        return matched ? matched.name : '';
+    };
+
+    const formatSelectionSummary = (count) => {
+        if (!count) {
+            return "{% trans 'No groups selected' %}";
+        }
+        if (count === 1) {
+            return "{% trans '1 specific branch' %}";
+        }
+        return `${count} {% trans 'specific branches' %}`;
+    };
+
+    const updateSelectionSummaries = () => {
+        if (sellSummaryEl) {
+            if (!activeSellStructureId) {
+                sellSummaryEl.textContent = "{% trans 'No location selected' %}";
+            } else if (sellAllowAllToggle && sellAllowAllToggle.checked) {
+                const structureName = getSelectedStructureName(activeSellStructureId);
+                sellSummaryEl.textContent = structureName
+                    ? `${structureName} - {% trans 'all groups accepted' %}`
+                    : "{% trans 'All groups accepted' %}";
+            } else {
+                const selectedCount = getActiveSellSelectionSet().size;
+                const structureName = getSelectedStructureName(activeSellStructureId);
+                const baseSummary = formatSelectionSummary(selectedCount);
+                sellSummaryEl.textContent = structureName
+                    ? `${structureName} - ${baseSummary}`
+                    : baseSummary;
+            }
+        }
+
+        if (buySummaryEl) {
+            buySummaryEl.textContent = formatSelectionSummary(
+                normalizeGroupIdList(buySelectedGroupIds).length
+            );
+        }
+    };
+
     const setGranularButtonLabel = () => {
         if (!granularToggleBtn) {
             return;
         }
         granularToggleBtn.textContent = granularMode
-            ? "{% trans 'Granular choices: On' %}"
-            : "{% trans 'Granular choices' %}";
+            ? "{% trans 'Return to overview' %}"
+            : "{% trans 'Enable deep drill-down' %}";
+        granularToggleBtn.classList.toggle('is-active', granularMode);
+        if (modeBadgeEl) {
+            modeBadgeEl.textContent = granularMode
+                ? "{% trans 'Deep drill-down' %}"
+                : "{% trans 'Overview mode' %}";
+            modeBadgeEl.classList.toggle('is-granular', granularMode);
+        }
     };
 
     const getSelectedSellStructures = () => {
@@ -2080,6 +2139,7 @@ document.addEventListener('DOMContentLoaded', function() {
         disableSelection = false,
         showExpandToggle = false,
         isExpanded = false,
+        pathLabels = [],
     }) => {
         const row = document.createElement('div');
         row.className = depth > 0 ? 'me-market-tree-row me-market-tree-row-child' : 'me-market-tree-row';
@@ -2088,7 +2148,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         const rowContent = document.createElement('div');
-        rowContent.className = 'd-flex align-items-center gap-2';
+        rowContent.className = 'me-market-tree-row-content d-flex align-items-start gap-2';
 
         if (showExpandToggle) {
             const expandToggle = document.createElement('button');
@@ -2119,10 +2179,10 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         const labelWrap = document.createElement('label');
-        labelWrap.className = 'form-check mb-0 d-flex align-items-center gap-2';
+        labelWrap.className = 'form-check mb-0 d-flex align-items-start gap-2 flex-grow-1';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
-        checkbox.className = 'form-check-input mt-0';
+        checkbox.className = 'form-check-input mt-1';
 
         const nodeId = parseInt(node.id, 10);
         const descendants = getNodeDescendantIds(node);
@@ -2153,12 +2213,41 @@ document.addEventListener('DOMContentLoaded', function() {
             onToggle(nextSet);
         });
 
+        const labelBody = document.createElement('span');
+        labelBody.className = 'me-market-tree-label-body';
+
+        const titleRow = document.createElement('span');
+        titleRow.className = 'me-market-tree-title-row';
         const label = document.createElement('span');
         label.className = depth > 0 ? 'me-market-tree-label me-market-tree-label-child' : 'me-market-tree-label';
         label.textContent = node.label || String(node.id);
+        titleRow.appendChild(label);
+        labelBody.appendChild(titleRow);
+
+        if (pathLabels.length > 0) {
+            const path = document.createElement('span');
+            path.className = 'me-market-tree-path';
+            path.textContent = pathLabels.join(' / ');
+            labelBody.appendChild(path);
+        }
+
+        const meta = document.createElement('span');
+        meta.className = 'me-market-tree-meta';
+        const childCount = Array.isArray(node.children) ? node.children.length : 0;
+        const branchChip = document.createElement('span');
+        branchChip.className = 'me-market-tree-chip';
+        if (childCount > 0) {
+            branchChip.textContent = childCount === 1
+                ? "{% trans '1 subgroup' %}"
+                : `${childCount} {% trans 'subgroups' %}`;
+        } else {
+            branchChip.textContent = "{% trans 'Leaf group' %}";
+        }
+        meta.appendChild(branchChip);
+        labelBody.appendChild(meta);
 
         labelWrap.appendChild(checkbox);
-        labelWrap.appendChild(label);
+        labelWrap.appendChild(labelBody);
         rowContent.appendChild(labelWrap);
         row.appendChild(rowContent);
         return row;
@@ -2177,7 +2266,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const renderNode = (node, depth = 0) => {
+        const renderNode = (node, depth = 0, ancestorLabels = []) => {
             const nodeWrapper = document.createElement('div');
             nodeWrapper.className = 'me-market-tree-node';
             const canExpand = !!node.expandable && nodeHasChildren(node);
@@ -2191,6 +2280,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     disableSelection,
                     showExpandToggle: granularMode && canExpand,
                     isExpanded,
+                    pathLabels: ancestorLabels,
                 })
             );
 
@@ -2202,7 +2292,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (query && !nodeOwnMatch && !nodeMatchesSearch(child, query)) {
                         return;
                     }
-                    childWrapper.appendChild(renderNode(child, depth + 1));
+                    childWrapper.appendChild(
+                        renderNode(child, depth + 1, [...ancestorLabels, String(node.label || '')])
+                    );
                 });
                 if (childWrapper.children.length > 0) {
                     nodeWrapper.appendChild(childWrapper);
@@ -2246,6 +2338,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 renderSellTree();
             },
         });
+        updateSelectionSummaries();
     };
 
     const renderBuyTree = () => {
@@ -2258,6 +2351,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 renderBuyTree();
             },
         });
+        updateSelectionSummaries();
     };
 
     const rebuildSellStructureRules = () => {
@@ -2288,6 +2382,7 @@ document.addEventListener('DOMContentLoaded', function() {
             sellTreeContainer.innerHTML = '';
             serializeSellGroupMap();
             serializeSellUnionGroups();
+            updateSelectionSummaries();
             return;
         }
 
@@ -2319,6 +2414,7 @@ document.addEventListener('DOMContentLoaded', function() {
         serializeSellGroupMap();
         serializeSellUnionGroups();
         renderSellTree();
+        updateSelectionSummaries();
     };
 
     if (granularToggleBtn) {
@@ -2363,6 +2459,7 @@ document.addEventListener('DOMContentLoaded', function() {
         serializeSellGroupMap();
         serializeSellUnionGroups();
         renderSellTree();
+        updateSelectionSummaries();
     });
 
     if (sellAllowAllToggle) {
@@ -2378,6 +2475,7 @@ document.addEventListener('DOMContentLoaded', function() {
             serializeSellGroupMap();
             serializeSellUnionGroups();
             renderSellTree();
+            updateSelectionSummaries();
         });
     }
 
@@ -2399,6 +2497,7 @@ document.addEventListener('DOMContentLoaded', function() {
     serializeBuyGroups();
     rebuildSellStructureRules();
     renderBuyTree();
+    updateSelectionSummaries();
 });
 
 function requestDivisionsToken() {
@@ -2615,4 +2714,3 @@ document.addEventListener('DOMContentLoaded', function() {
 
 </script>
 {% endblock content %}
-

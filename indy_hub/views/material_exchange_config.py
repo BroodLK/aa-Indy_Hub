@@ -207,44 +207,6 @@ MARKET_GROUP_GRANULAR_CHILDREN: dict[str, list[str]] = {
         "Unknown Components",
     ],
 }
-MARKET_GROUP_GRANULAR_GRANDCHILDREN: dict[str, dict[str, list[str]]] = {
-    "Manufacture & Research": {
-        "Components": [
-            "Advanced Capital Components",
-            "Advanced Components",
-            "Fuel Blocks",
-            "Protective Components",
-            "R.A.M.",
-            "Standard Capital Ship Components",
-            "Structure Components",
-            "Subsystem Components",
-        ],
-        "Materials": [
-            "Advanced Protective Technology",
-            "Atavum",
-            "Colony Reagents",
-            "Faction Materials",
-            "Gas Clouds Materials",
-            "Ice Products",
-            "Infomorph Systems",
-            "Minerals",
-            "Molecular-Forging Tools",
-            "Named Components",
-            "Planetary Materials",
-            "Raw Materials",
-            "Reaction Materials",
-            "Salvage Materials",
-        ],
-        "Research Equipment": [
-            "Ancient Relics",
-            "Datacores",
-            "Decryptors",
-            "R.Db",
-        ],
-    }
-}
-
-
 def _normalize_market_group_name(raw_value: str) -> str:
     return " ".join(str(raw_value or "").replace("&amp;", "&").split()).strip().casefold()
 
@@ -301,10 +263,88 @@ def payload_parent_id_is_none(parent_id) -> bool:
     return parent_id in (None, "", 0, "0")
 
 
+def _get_market_group_children_lookup(
+    all_groups: dict[int, dict[str, str | int | None]],
+) -> dict[int | None, list[int]]:
+    """Return sorted market-group child IDs keyed by parent ID."""
+
+    children_lookup: dict[int | None, list[int]] = {}
+    for raw_group_id, payload in (all_groups or {}).items():
+        try:
+            group_id = int(raw_group_id)
+        except (TypeError, ValueError):
+            continue
+        if group_id <= 0:
+            continue
+
+        parent_id = payload.get("parent_market_group_id", None)
+        if payload_parent_id_is_none(parent_id):
+            parent_key: int | None = None
+        else:
+            try:
+                parent_key = int(parent_id)
+            except (TypeError, ValueError):
+                parent_key = None
+
+        children_lookup.setdefault(parent_key, []).append(group_id)
+
+    for parent_key, child_ids in children_lookup.items():
+        children_lookup[parent_key] = sorted(
+            child_ids,
+            key=lambda group_id: _normalize_market_group_name(
+                all_groups.get(int(group_id), {}).get("name", "")
+            ),
+        )
+
+    return children_lookup
+
+
+def _build_market_group_tree_node(
+    *,
+    group_id: int,
+    all_groups: dict[int, dict[str, str | int | None]],
+    children_lookup: dict[int | None, list[int]],
+    label: str | None = None,
+    visited_ids: set[int] | None = None,
+) -> dict[str, object] | None:
+    """Build a recursive market-group tree node from SDE hierarchy."""
+
+    try:
+        group_id = int(group_id)
+    except (TypeError, ValueError):
+        return None
+    if group_id <= 0:
+        return None
+
+    lineage = set(visited_ids or set())
+    if group_id in lineage:
+        return None
+    lineage.add(group_id)
+
+    payload = all_groups.get(group_id, {})
+    child_nodes: list[dict[str, object]] = []
+    for child_group_id in children_lookup.get(group_id, []):
+        child_node = _build_market_group_tree_node(
+            group_id=int(child_group_id),
+            all_groups=all_groups,
+            children_lookup=children_lookup,
+            visited_ids=lineage,
+        )
+        if child_node is not None:
+            child_nodes.append(child_node)
+
+    return {
+        "id": int(group_id),
+        "label": str(label or payload.get("name") or f"Group {group_id}"),
+        "expandable": bool(child_nodes),
+        "children": child_nodes,
+    }
+
+
 def _get_market_group_tree() -> list[dict[str, object]]:
     """Return curated market-group tree for config UI."""
 
-    cache_key = "indy_hub:material_exchange:market_group_tree:v2"
+    cache_key = "indy_hub:material_exchange:market_group_tree:v3"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -315,6 +355,7 @@ def _get_market_group_tree() -> list[dict[str, object]]:
         cache.set(cache_key, tree, 3600)
         return tree
 
+    children_lookup = _get_market_group_children_lookup(all_groups)
     for major_label in MARKET_GROUP_MAJOR_ORDER:
         major_group_id = _find_market_group_id_by_name(
             all_groups=all_groups,
@@ -326,9 +367,6 @@ def _get_market_group_tree() -> list[dict[str, object]]:
 
         children: list[dict[str, object]] = []
         if major_label not in NON_EXPANDABLE_GRANULAR_GROUPS:
-            major_grandchild_map = MARKET_GROUP_GRANULAR_GRANDCHILDREN.get(
-                major_label, {}
-            )
             for child_label in MARKET_GROUP_GRANULAR_CHILDREN.get(major_label, []):
                 child_group_id = _find_market_group_id_by_name(
                     all_groups=all_groups,
@@ -338,32 +376,21 @@ def _get_market_group_tree() -> list[dict[str, object]]:
                 if not child_group_id:
                     continue
 
-                grand_children: list[dict[str, object]] = []
-                for grandchild_label in major_grandchild_map.get(child_label, []):
-                    grandchild_group_id = _find_market_group_id_by_name(
-                        all_groups=all_groups,
-                        group_name=grandchild_label,
-                        parent_id=int(child_group_id),
-                    )
-                    if not grandchild_group_id:
-                        continue
-                    grand_children.append(
+                child_node = _build_market_group_tree_node(
+                    group_id=int(child_group_id),
+                    all_groups=all_groups,
+                    children_lookup=children_lookup,
+                    label=str(child_label),
+                )
+                if child_node is not None:
+                    children.append(
                         {
-                            "id": int(grandchild_group_id),
-                            "label": str(grandchild_label),
-                            "expandable": False,
-                            "children": [],
+                            "id": int(child_node["id"]),
+                            "label": str(child_node["label"]),
+                            "expandable": bool(child_node.get("children")),
+                            "children": list(child_node.get("children", [])),
                         }
                     )
-
-                children.append(
-                    {
-                        "id": int(child_group_id),
-                        "label": str(child_label),
-                        "expandable": bool(grand_children),
-                        "children": grand_children,
-                    }
-                )
 
         tree.append(
             {
