@@ -60,6 +60,12 @@ INDY_HUB_BEAT_SCHEDULE = {
         "options": {"priority": 4},
         "apply_offset": True,
     },
+    "indy-hub-material-exchange-daily-snapshots": {
+        "task": "indy_hub.tasks.material_exchange.snapshot_material_exchange_daily_holdings",
+        "schedule": crontab(hour=4, minute=45),  # Daily
+        "options": {"priority": 7},
+        "apply_offset": True,
+    },
     # Removed: indy-hub-refresh-production-items - now using indy_hub SDE industry tables
 }
 

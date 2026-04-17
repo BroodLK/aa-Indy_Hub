@@ -1,7 +1,7 @@
 """Buyback views for Indy Hub."""
 
 # Standard Library
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import hashlib
 import re
 from decimal import ROUND_CEILING, Decimal
@@ -49,6 +49,7 @@ from ..models import (
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
+    MaterialExchangeDailySnapshot,
     MaterialExchangeItemPriceOverride,
     MaterialExchangeSellOrder,
     MaterialExchangeSellOrderItem,
@@ -3001,6 +3002,18 @@ def _get_corp_blueprint_variant_by_item_id(
     }
 
 
+def _normalize_stock_asset_quantity(raw_asset: dict) -> int:
+    """Normalize corp-asset quantities using stock-sync semantics."""
+
+    try:
+        quantity = int(raw_asset.get("quantity", 0) or 0)
+    except (TypeError, ValueError):
+        quantity = 0
+    if quantity <= 0:
+        quantity = 1 if raw_asset.get("is_singleton") else 0
+    return max(int(quantity), 0)
+
+
 def _get_buy_location_scoped_corp_assets(
     *,
     config: MaterialExchangeConfig,
@@ -3127,6 +3140,144 @@ def _get_buy_location_scoped_corp_assets(
         scoped_assets.append(asset)
 
     return scoped_assets
+
+
+def _build_current_buy_hangar_inventory_snapshot(
+    *,
+    configs: list[MaterialExchangeConfig] | tuple[MaterialExchangeConfig, ...],
+) -> dict[str, object]:
+    """Return current on-hand inventory stats for configured buy hangars."""
+
+    snapshot: dict[str, object] = {
+        "value": Decimal("0"),
+        "item_count": 0,
+        "type_count": 0,
+        "priced_type_count": 0,
+        "location_count": 0,
+        "hangar_count": 0,
+        "assets_scope_missing": False,
+    }
+
+    selected_configs: list[MaterialExchangeConfig] = []
+    configured_structure_ids: set[int] = set()
+    configured_hangar_keys: set[tuple[int, int]] = set()
+    corporation_id = 0
+
+    for config in configs or []:
+        if not config:
+            continue
+        if not bool(getattr(config, "buy_enabled", True)):
+            continue
+        try:
+            buy_structure_ids = [int(sid) for sid in config.get_buy_structure_ids() or []]
+        except Exception:
+            buy_structure_ids = []
+        if not buy_structure_ids:
+            continue
+
+        try:
+            hangar_division = int(getattr(config, "hangar_division", 0) or 0)
+        except (TypeError, ValueError):
+            hangar_division = 0
+        if hangar_division not in range(1, 8):
+            continue
+
+        if corporation_id <= 0:
+            try:
+                corporation_id = int(getattr(config, "corporation_id", 0) or 0)
+            except (TypeError, ValueError):
+                corporation_id = 0
+
+        selected_configs.append(config)
+        configured_structure_ids.update(buy_structure_ids)
+        configured_hangar_keys.update(
+            {(int(structure_id), int(hangar_division)) for structure_id in buy_structure_ids}
+        )
+
+    snapshot["location_count"] = len(configured_structure_ids)
+    snapshot["hangar_count"] = len(configured_hangar_keys)
+
+    if not selected_configs or corporation_id <= 0:
+        return snapshot
+
+    try:
+        corp_assets, assets_scope_missing = get_corp_assets_cached(
+            int(corporation_id),
+            allow_refresh=False,
+        )
+    except Exception:
+        corp_assets = []
+        assets_scope_missing = False
+
+    snapshot["assets_scope_missing"] = bool(assets_scope_missing)
+    if not corp_assets:
+        return snapshot
+
+    aggregated_quantities: dict[int, int] = {}
+    seen_item_ids: set[int] = set()
+    for config in selected_configs:
+        scoped_assets = _get_buy_location_scoped_corp_assets(
+            config=config,
+            corp_assets=corp_assets,
+        )
+        for raw_asset in scoped_assets:
+            try:
+                item_id = int(raw_asset.get("item_id") or 0)
+            except (TypeError, ValueError):
+                item_id = 0
+            if item_id > 0:
+                if item_id in seen_item_ids:
+                    continue
+                seen_item_ids.add(item_id)
+
+            try:
+                type_id = int(raw_asset.get("type_id") or 0)
+            except (TypeError, ValueError):
+                type_id = 0
+            if type_id <= 0:
+                continue
+
+            quantity = _normalize_stock_asset_quantity(raw_asset)
+            if quantity <= 0:
+                continue
+
+            aggregated_quantities[type_id] = aggregated_quantities.get(type_id, 0) + quantity
+
+    if not aggregated_quantities:
+        return snapshot
+
+    stock_price_rows = (
+        MaterialExchangeStock.objects.filter(
+            config_id__in=[int(config.id) for config in selected_configs if int(config.id or 0) > 0],
+            type_id__in=list(aggregated_quantities.keys()),
+        )
+        .values("type_id")
+        .annotate(jita_sell_price=Max("jita_sell_price"))
+    )
+    price_map = {
+        int(row["type_id"]): Decimal(str(row.get("jita_sell_price") or 0))
+        for row in stock_price_rows
+        if int(row.get("type_id") or 0) > 0
+    }
+
+    total_value = Decimal("0")
+    priced_type_count = 0
+    for type_id, quantity in aggregated_quantities.items():
+        jita_sell_price = Decimal(price_map.get(int(type_id)) or 0)
+        if jita_sell_price <= 0:
+            continue
+        total_value += (jita_sell_price * Decimal(str(quantity))).quantize(Decimal("0.01"))
+        priced_type_count += 1
+
+    snapshot.update(
+        {
+            "value": total_value,
+            "item_count": int(sum(aggregated_quantities.values())),
+            "type_count": len(aggregated_quantities),
+            "priced_type_count": int(priced_type_count),
+        }
+    )
+    return snapshot
 
 
 def _format_buy_stock_type_name(type_name: str, blueprint_variant: str) -> str:
@@ -6633,6 +6784,7 @@ def material_exchange_stats_history(request):
     selected_period = request.GET.get("period", "all")
     if selected_period not in {key for key, _ in period_options}:
         selected_period = "all"
+    selected_period_label = dict(period_options).get(selected_period, _("All time"))
 
     start_date_raw = str(request.GET.get("start_date") or "").strip()
     end_date_raw = str(request.GET.get("end_date") or "").strip()
@@ -6651,6 +6803,8 @@ def material_exchange_stats_history(request):
         messages.warning(request, _("Invalid end date; expected YYYY-MM-DD."))
     if custom_start_date and custom_end_date and custom_start_date > custom_end_date:
         custom_start_date, custom_end_date = custom_end_date, custom_start_date
+    if custom_start_date or custom_end_date:
+        selected_period_label = _("Custom range")
 
     def _to_decimal(raw_value) -> Decimal:
         try:
@@ -6775,6 +6929,7 @@ def material_exchange_stats_history(request):
         wallet_division_names = {}
 
     corptools_division_balance = Decimal("0")
+    wallet_division_balance_available = False
     if (
         CorporationWalletDivision is not None
         and int(chosen_corporation_id or 0) > 0
@@ -6799,6 +6954,7 @@ def material_exchange_stats_history(request):
                         wallet_division_names[division_idx] = division_name
                     if division_idx == int(chosen_wallet_division):
                         corptools_division_balance = _to_decimal(row.get("balance"))
+                        wallet_division_balance_available = True
         except Exception as exc:
             logger.warning(
                 "Failed to read Corptools wallet divisions for corp %s: %s",
@@ -6813,6 +6969,13 @@ def material_exchange_stats_history(request):
         }
         for idx in range(1, 8)
     ]
+    chosen_corporation_name = (
+        get_corporation_name(int(chosen_corporation_id)) or str(chosen_corporation_id)
+    )
+    chosen_wallet_division_name = str(
+        wallet_division_names.get(int(chosen_wallet_division))
+        or f"Wallet Division {int(chosen_wallet_division)}"
+    )
 
     period_start = None
     filter_start = None
@@ -6847,6 +7010,9 @@ def material_exchange_stats_history(request):
         ).values_list("id", flat=True)
     )
     selected_config_ids = list(corp_config_ids)
+    selected_configs = list(
+        MaterialExchangeConfig.objects.filter(id__in=selected_config_ids)
+    )
     stats_scope_mode = "corp"
     stats_scope_note = ""
     if not selected_config_ids:
@@ -6854,6 +7020,9 @@ def material_exchange_stats_history(request):
         stats_scope_note = _(
             "No Buyback configs found for this corporation yet."
         )
+    current_buy_hangar_inventory = _build_current_buy_hangar_inventory_snapshot(
+        configs=selected_configs
+    )
     buy_orders_qs = MaterialExchangeBuyOrder.objects.filter(
         config_id__in=selected_config_ids
     )
@@ -6998,7 +7167,7 @@ def material_exchange_stats_history(request):
                     chosen_wallet_division,
                     exc,
                 )
-        else:
+    else:
             wallet_data_source = "esi"
             try:
                 wallet_character_id = _get_character_for_scope(
@@ -7039,6 +7208,8 @@ def material_exchange_stats_history(request):
                     chosen_corporation_id,
                     exc,
                 )
+
+    wallet_journal_rows_all = list(wallet_journal_rows or [])
 
     wallet_activity_count = 0
     wallet_inflow_total = Decimal("0")
@@ -7942,6 +8113,123 @@ def material_exchange_stats_history(request):
         "open_order_value": wallet_open_order_value,
     }
 
+    snapshot_start_date = custom_start_date or (period_start.date() if period_start else None)
+    snapshot_end_date = custom_end_date or (filter_end.date() if filter_end else None)
+
+    capital_trend_rows: list[dict[str, object]] = []
+    capital_trend_wallet_label = _("Wallet Balance")
+    capital_trend_note = _(
+        "Historical total-value rows come from saved daily snapshots of on-hand inventory plus the selected wallet division. Days without a saved snapshot are omitted."
+    )
+    snapshot_qs = MaterialExchangeDailySnapshot.objects.filter(
+        corporation_id=int(chosen_corporation_id or 0),
+        wallet_division=int(chosen_wallet_division or 0),
+    ).order_by("snapshot_date")
+    if snapshot_start_date:
+        snapshot_qs = snapshot_qs.filter(snapshot_date__gte=snapshot_start_date)
+    if snapshot_end_date:
+        snapshot_qs = snapshot_qs.filter(snapshot_date__lte=snapshot_end_date)
+
+    previous_total_asset_value: Decimal | None = None
+    for row in snapshot_qs.values(
+        "snapshot_date",
+        "inventory_market_value",
+        "inventory_item_count",
+        "inventory_type_count",
+        "inventory_priced_type_count",
+        "inventory_location_count",
+        "inventory_hangar_count",
+        "wallet_balance",
+        "wallet_balance_available",
+        "total_asset_value",
+        "assets_scope_missing",
+    ):
+        snapshot_date = row.get("snapshot_date")
+        if not snapshot_date:
+            continue
+
+        total_asset_value = row.get("total_asset_value")
+        total_asset_delta = None
+        if total_asset_value is not None and previous_total_asset_value is not None:
+            total_asset_delta = (
+                _to_decimal(total_asset_value) - previous_total_asset_value
+            ).quantize(Decimal("0.01"))
+        if total_asset_value is not None:
+            previous_total_asset_value = _to_decimal(total_asset_value)
+
+        capital_trend_rows.append(
+            {
+                "month": snapshot_date.isoformat(),
+                "snapshot_date": snapshot_date,
+                "wallet_balance": (
+                    _to_decimal(row.get("wallet_balance"))
+                    if row.get("wallet_balance") is not None
+                    else None
+                ),
+                "inventory_market_value": _to_decimal(row.get("inventory_market_value")),
+                "inventory_item_count": int(row.get("inventory_item_count") or 0),
+                "inventory_type_count": int(row.get("inventory_type_count") or 0),
+                "inventory_priced_type_count": int(
+                    row.get("inventory_priced_type_count") or 0
+                ),
+                "inventory_location_count": int(row.get("inventory_location_count") or 0),
+                "inventory_hangar_count": int(row.get("inventory_hangar_count") or 0),
+                "total_asset_value": (
+                    _to_decimal(total_asset_value)
+                    if total_asset_value is not None
+                    else None
+                ),
+                "total_asset_delta": total_asset_delta,
+                "wallet_balance_available": bool(
+                    row.get("wallet_balance_available")
+                ),
+                "assets_scope_missing": bool(row.get("assets_scope_missing")),
+            }
+        )
+
+    capital_trend_chart_labels = [str(row.get("month") or "") for row in capital_trend_rows]
+    capital_trend_wallet_values = [
+        float(_to_decimal(row.get("wallet_balance")))
+        if row.get("wallet_balance") is not None
+        else None
+        for row in capital_trend_rows
+    ]
+    capital_trend_inventory_values = [
+        float(_to_decimal(row.get("inventory_market_value")))
+        if row.get("inventory_market_value") is not None
+        else None
+        for row in capital_trend_rows
+    ]
+    capital_trend_total_values = [
+        float(_to_decimal(row.get("total_asset_value")))
+        if row.get("total_asset_value") is not None
+        else None
+        for row in capital_trend_rows
+    ]
+    current_total_asset_value = (
+        current_buy_hangar_inventory["value"] + _to_decimal(corptools_division_balance)
+    ).quantize(Decimal("0.01"))
+    current_total_asset_value_partial = not wallet_division_balance_available
+    capital_trend_wallet_history_available = bool(capital_trend_rows) and all(
+        row.get("wallet_balance") is not None for row in capital_trend_rows
+    )
+    capital_trend_assets_scope_missing = any(
+        bool(row.get("assets_scope_missing")) for row in capital_trend_rows
+    )
+    capital_trend_latest_snapshot_date = (
+        str(capital_trend_rows[-1].get("month") or "") if capital_trend_rows else ""
+    )
+    capital_trend_total_series = [
+        _to_decimal(row.get("total_asset_value"))
+        for row in capital_trend_rows
+        if row.get("total_asset_value") is not None
+    ]
+    capital_trend_total_change = None
+    if len(capital_trend_total_series) >= 2:
+        capital_trend_total_change = (
+            capital_trend_total_series[-1] - capital_trend_total_series[0]
+        ).quantize(Decimal("0.01"))
+
     user_ids = {
         int(row["seller_id"])
         for row in sell_rows
@@ -8107,6 +8395,8 @@ def material_exchange_stats_history(request):
         "config": config,
         "chosen_corporation_id": chosen_corporation_id,
         "chosen_wallet_division": chosen_wallet_division,
+        "chosen_corporation_name": chosen_corporation_name,
+        "chosen_wallet_division_name": chosen_wallet_division_name,
         "corp_options": corp_options,
         "wallet_division_options": wallet_division_options,
         "division_scope_missing": bool(division_scope_missing),
@@ -8114,10 +8404,36 @@ def material_exchange_stats_history(request):
         "market_scope_missing": bool(market_scope_missing),
         "wallet_activity_error": wallet_activity_error,
         "wallet_data_source": wallet_data_source,
+        "wallet_division_balance_available": bool(wallet_division_balance_available),
         "stats_scope_mode": stats_scope_mode,
         "stats_scope_note": stats_scope_note,
         "corp_config_count": len(corp_config_ids),
         "selected_config_count": len(selected_config_ids),
+        "current_buy_hangar_inventory_value": current_buy_hangar_inventory["value"],
+        "current_buy_hangar_inventory_item_count": current_buy_hangar_inventory["item_count"],
+        "current_buy_hangar_inventory_type_count": current_buy_hangar_inventory["type_count"],
+        "current_buy_hangar_inventory_priced_type_count": current_buy_hangar_inventory[
+            "priced_type_count"
+        ],
+        "current_buy_hangar_location_count": current_buy_hangar_inventory["location_count"],
+        "current_buy_hangar_count": current_buy_hangar_inventory["hangar_count"],
+        "current_buy_hangar_assets_scope_missing": current_buy_hangar_inventory[
+            "assets_scope_missing"
+        ],
+        "current_total_asset_value": current_total_asset_value,
+        "current_total_asset_value_partial": current_total_asset_value_partial,
+        "capital_trend_rows": capital_trend_rows,
+        "capital_trend_note": capital_trend_note,
+        "capital_trend_wallet_label": capital_trend_wallet_label,
+        "capital_trend_wallet_history_available": capital_trend_wallet_history_available,
+        "capital_trend_assets_scope_missing": capital_trend_assets_scope_missing,
+        "capital_trend_latest_snapshot_date": capital_trend_latest_snapshot_date,
+        "capital_trend_snapshot_count": len(capital_trend_rows),
+        "capital_trend_total_change": capital_trend_total_change,
+        "capital_trend_chart_labels": capital_trend_chart_labels,
+        "capital_trend_wallet_values": capital_trend_wallet_values,
+        "capital_trend_inventory_values": capital_trend_inventory_values,
+        "capital_trend_total_values": capital_trend_total_values,
         "chart_labels": chart_labels,
         "buy_volumes": buy_volumes,
         "sell_volumes": sell_volumes,
@@ -8130,6 +8446,7 @@ def material_exchange_stats_history(request):
         "recent_transactions": recent_transactions,
         "period_options": period_options,
         "selected_period": selected_period,
+        "selected_period_label": selected_period_label,
         "period_start": period_start,
         "start_date": custom_start_date.isoformat() if custom_start_date else "",
         "end_date": custom_end_date.isoformat() if custom_end_date else "",
@@ -8220,7 +8537,6 @@ def material_exchange_stats_history(request):
     )
 
     return render(request, "indy_hub/material_exchange/stats_history.html", context)
-
 
 @login_required
 @require_http_methods(["POST"])

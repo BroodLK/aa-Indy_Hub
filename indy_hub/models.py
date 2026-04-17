@@ -2664,6 +2664,73 @@ class MaterialExchangeStock(models.Model):
         )
 
 
+class MaterialExchangeDailySnapshot(models.Model):
+    """Daily saved Buyback holdings snapshot for history charts."""
+
+    corporation_id = models.BigIntegerField(db_index=True)
+    wallet_division = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(7)]
+    )
+    snapshot_date = models.DateField(db_index=True)
+
+    inventory_market_value = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        default=0,
+    )
+    inventory_item_count = models.BigIntegerField(default=0)
+    inventory_type_count = models.IntegerField(default=0)
+    inventory_priced_type_count = models.IntegerField(default=0)
+    inventory_location_count = models.IntegerField(default=0)
+    inventory_hangar_count = models.IntegerField(default=0)
+
+    wallet_balance = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    wallet_balance_available = models.BooleanField(default=False)
+    total_asset_value = models.DecimalField(
+        max_digits=20,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    assets_scope_missing = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Buyback Daily Snapshot")
+        verbose_name_plural = _("Buyback Daily Snapshots")
+        default_permissions = ()
+        ordering = ["snapshot_date", "corporation_id", "wallet_division"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["corporation_id", "wallet_division", "snapshot_date"],
+                name="me_daily_snapshot_unique_scope",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["corporation_id", "wallet_division", "snapshot_date"],
+                name="me_daily_snapshot_scope_idx",
+            ),
+            models.Index(
+                fields=["snapshot_date"],
+                name="me_daily_snapshot_date_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Buyback snapshot corp {self.corporation_id} "
+            f"wallet {self.wallet_division} @ {self.snapshot_date}"
+        )
+
+
 class MaterialExchangeSellOrder(models.Model):
     """
     A member wants to sell materials TO the corp hub.

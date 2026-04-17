@@ -13,11 +13,17 @@ from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import Max
 from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 from esi.models import Token
+
+try:  # Optional dependency.
+    from corptools.models import CorporationWalletDivision
+except Exception:  # pragma: no cover - Corptools not installed/enabled.
+    CorporationWalletDivision = None
 
 try:
     try:
@@ -38,6 +44,7 @@ except ImportError:  # pragma: no cover - older django-esi
 from indy_hub.models import (
     CachedCharacterAsset,
     MaterialExchangeConfig,
+    MaterialExchangeDailySnapshot,
     MaterialExchangeStock,
 )
 from indy_hub.services.asset_cache import (
@@ -708,6 +715,400 @@ def refresh_material_exchange_buy_stock(corporation_id: int) -> None:
             label="failed",
             result="error",
         )
+
+
+def _normalize_snapshot_asset_quantity(raw_asset: dict) -> int:
+    """Normalize corp-asset quantities using stock-sync semantics."""
+
+    try:
+        quantity = int(raw_asset.get("quantity", 0) or 0)
+    except (TypeError, ValueError):
+        quantity = 0
+    if quantity <= 0:
+        quantity = 1 if raw_asset.get("is_singleton") else 0
+    return max(int(quantity), 0)
+
+
+def _get_snapshot_scoped_corp_assets(
+    *,
+    config: MaterialExchangeConfig,
+    corp_assets: list[dict] | None = None,
+) -> list[dict]:
+    """Return cached corp assets matched to a config's buy locations/division."""
+
+    if corp_assets is None:
+        try:
+            corp_assets, _scope_missing = get_corp_assets_cached(
+                int(config.corporation_id),
+                allow_refresh=False,
+            )
+        except Exception:
+            return []
+    if not corp_assets:
+        return []
+
+    try:
+        target_structure_ids = [int(sid) for sid in config.get_buy_structure_ids() or []]
+    except Exception:
+        target_structure_ids = []
+    if not target_structure_ids:
+        return []
+
+    hangar_flag_map = {
+        1: "CorpSAG1",
+        2: "CorpSAG2",
+        3: "CorpSAG3",
+        4: "CorpSAG4",
+        5: "CorpSAG5",
+        6: "CorpSAG6",
+        7: "CorpSAG7",
+    }
+    target_flag = hangar_flag_map.get(int(getattr(config, "hangar_division", 0) or 0))
+    if not target_flag:
+        return []
+
+    effective_location_ids: list[int] = []
+    context_to_structure_ids: dict[int, set[int]] = {}
+    hangar_fallback_context_ids: set[int] = set()
+    for structure_id in target_structure_ids:
+        structure_id_int = int(structure_id)
+        office_folder_item_id = get_office_folder_item_id_from_assets(
+            corp_assets,
+            structure_id=structure_id_int,
+        )
+        candidate_context_ids: list[int] = [structure_id_int]
+        if office_folder_item_id is not None:
+            office_folder_item_id_int = int(office_folder_item_id)
+            candidate_context_ids.append(office_folder_item_id_int)
+            candidate_context_ids.append(
+                make_managed_hangar_location_id(
+                    office_folder_item_id_int,
+                    int(config.hangar_division),
+                )
+            )
+        else:
+            hangar_fallback_context_ids.add(structure_id_int)
+
+        for context_id in candidate_context_ids:
+            context_id_int = int(context_id)
+            if context_id_int not in effective_location_ids:
+                effective_location_ids.append(context_id_int)
+            context_to_structure_ids.setdefault(context_id_int, set()).add(
+                structure_id_int
+            )
+
+    index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
+
+    def _asset_chain_contains_location(asset_row: dict, location_id: int) -> bool:
+        current = asset_row
+        seen: set[int] = set()
+        target_id = int(location_id)
+        for _ in range(25):
+            try:
+                current_location_id = int(current.get("location_id", 0) or 0)
+            except (TypeError, ValueError):
+                return False
+            if current_location_id == target_id:
+                return True
+            parent = index_by_item_id.get(current_location_id)
+            if not parent:
+                return False
+            if current_location_id in seen:
+                return False
+            seen.add(current_location_id)
+            current = parent
+        return False
+
+    scoped_assets: list[dict] = []
+    for raw_asset in corp_assets or []:
+        matches_any_location = False
+        matched_structure_ids: set[int] = set()
+        for location_id in effective_location_ids:
+            location_id_int = int(location_id)
+            if location_id_int < 0:
+                matched = _asset_chain_contains_location(raw_asset, location_id_int)
+            else:
+                matched = asset_chain_has_context(
+                    raw_asset,
+                    index_by_item_id,
+                    location_id=location_id_int,
+                    location_flag=str(target_flag),
+                )
+                if not matched and location_id_int in hangar_fallback_context_ids:
+                    matched = asset_chain_has_context(
+                        raw_asset,
+                        index_by_item_id,
+                        location_id=location_id_int,
+                        location_flag="Hangar",
+                    )
+            if not matched:
+                continue
+            matches_any_location = True
+            matched_structure_ids.update(context_to_structure_ids.get(location_id_int, set()))
+            break
+
+        if not matches_any_location:
+            continue
+
+        asset = dict(raw_asset)
+        asset["source_structure_ids"] = sorted(int(sid) for sid in matched_structure_ids)
+        scoped_assets.append(asset)
+
+    return scoped_assets
+
+
+def _build_daily_snapshot_inventory(
+    *,
+    configs: list[MaterialExchangeConfig] | tuple[MaterialExchangeConfig, ...],
+) -> dict[str, object]:
+    """Return current on-hand inventory stats for configured buy hangars."""
+
+    snapshot: dict[str, object] = {
+        "value": Decimal("0"),
+        "item_count": 0,
+        "type_count": 0,
+        "priced_type_count": 0,
+        "location_count": 0,
+        "hangar_count": 0,
+        "assets_scope_missing": False,
+    }
+
+    selected_configs: list[MaterialExchangeConfig] = []
+    configured_structure_ids: set[int] = set()
+    configured_hangar_keys: set[tuple[int, int]] = set()
+    corporation_id = 0
+
+    for config in configs or []:
+        if not config or not bool(getattr(config, "buy_enabled", True)):
+            continue
+        try:
+            buy_structure_ids = [int(sid) for sid in config.get_buy_structure_ids() or []]
+        except Exception:
+            buy_structure_ids = []
+        if not buy_structure_ids:
+            continue
+
+        try:
+            hangar_division = int(getattr(config, "hangar_division", 0) or 0)
+        except (TypeError, ValueError):
+            hangar_division = 0
+        if hangar_division not in range(1, 8):
+            continue
+
+        if corporation_id <= 0:
+            try:
+                corporation_id = int(getattr(config, "corporation_id", 0) or 0)
+            except (TypeError, ValueError):
+                corporation_id = 0
+
+        selected_configs.append(config)
+        configured_structure_ids.update(buy_structure_ids)
+        configured_hangar_keys.update(
+            {(int(structure_id), int(hangar_division)) for structure_id in buy_structure_ids}
+        )
+
+    snapshot["location_count"] = len(configured_structure_ids)
+    snapshot["hangar_count"] = len(configured_hangar_keys)
+
+    if not selected_configs or corporation_id <= 0:
+        return snapshot
+
+    try:
+        corp_assets, assets_scope_missing = get_corp_assets_cached(
+            int(corporation_id),
+            allow_refresh=False,
+        )
+    except Exception:
+        corp_assets = []
+        assets_scope_missing = False
+
+    snapshot["assets_scope_missing"] = bool(assets_scope_missing)
+    if not corp_assets:
+        return snapshot
+
+    aggregated_quantities: dict[int, int] = {}
+    seen_item_ids: set[int] = set()
+    for config in selected_configs:
+        scoped_assets = _get_snapshot_scoped_corp_assets(
+            config=config,
+            corp_assets=corp_assets,
+        )
+        for raw_asset in scoped_assets:
+            try:
+                item_id = int(raw_asset.get("item_id") or 0)
+            except (TypeError, ValueError):
+                item_id = 0
+            if item_id > 0:
+                if item_id in seen_item_ids:
+                    continue
+                seen_item_ids.add(item_id)
+
+            try:
+                type_id = int(raw_asset.get("type_id") or 0)
+            except (TypeError, ValueError):
+                type_id = 0
+            if type_id <= 0:
+                continue
+
+            quantity = _normalize_snapshot_asset_quantity(raw_asset)
+            if quantity <= 0:
+                continue
+
+            aggregated_quantities[type_id] = aggregated_quantities.get(type_id, 0) + quantity
+
+    if not aggregated_quantities:
+        return snapshot
+
+    stock_price_rows = (
+        MaterialExchangeStock.objects.filter(
+            config_id__in=[
+                int(config.id) for config in selected_configs if int(config.id or 0) > 0
+            ],
+            type_id__in=list(aggregated_quantities.keys()),
+        )
+        .values("type_id")
+        .annotate(jita_sell_price=Max("jita_sell_price"))
+    )
+    price_map = {
+        int(row["type_id"]): Decimal(str(row.get("jita_sell_price") or 0))
+        for row in stock_price_rows
+        if int(row.get("type_id") or 0) > 0
+    }
+
+    total_value = Decimal("0")
+    priced_type_count = 0
+    for type_id, quantity in aggregated_quantities.items():
+        jita_sell_price = Decimal(price_map.get(int(type_id)) or 0)
+        if jita_sell_price <= 0:
+            continue
+        total_value += (jita_sell_price * Decimal(str(quantity))).quantize(Decimal("0.01"))
+        priced_type_count += 1
+
+    snapshot.update(
+        {
+            "value": total_value,
+            "item_count": int(sum(aggregated_quantities.values())),
+            "type_count": len(aggregated_quantities),
+            "priced_type_count": int(priced_type_count),
+        }
+    )
+    return snapshot
+
+
+def _get_wallet_balance_map(corporation_id: int) -> dict[int, Decimal]:
+    """Return wallet balances keyed by division when Corptools data is present."""
+
+    if CorporationWalletDivision is None or int(corporation_id or 0) <= 0:
+        return {}
+
+    try:
+        rows = CorporationWalletDivision.objects.filter(
+            corporation__corporation__corporation_id=int(corporation_id),
+        ).values("division", "balance")
+    except Exception as exc:
+        logger.warning(
+            "Failed to read Corptools wallet balances for corp %s: %s",
+            corporation_id,
+            exc,
+        )
+        return {}
+
+    balance_map: dict[int, Decimal] = {}
+    for row in rows:
+        try:
+            division = int(row.get("division") or 0)
+        except (TypeError, ValueError):
+            division = 0
+        if division not in range(1, 8):
+            continue
+        try:
+            balance_map[division] = Decimal(str(row.get("balance") or 0)).quantize(
+                Decimal("0.01")
+            )
+        except Exception:
+            continue
+    return balance_map
+
+
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 15},
+    rate_limit="20/m",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def snapshot_material_exchange_daily_holdings() -> None:
+    """Save daily wallet + on-hand inventory snapshots for Buyback history."""
+
+    corp_configs: dict[int, list[MaterialExchangeConfig]] = {}
+    for config in MaterialExchangeConfig.objects.filter(is_active=True).order_by(
+        "corporation_id",
+        "id",
+    ):
+        try:
+            corporation_id = int(config.corporation_id or 0)
+        except (TypeError, ValueError):
+            corporation_id = 0
+        if corporation_id <= 0:
+            continue
+        corp_configs.setdefault(corporation_id, []).append(config)
+
+    if not corp_configs:
+        logger.info("No active Buyback configs found; skipping daily snapshot capture")
+        return
+
+    snapshot_date = timezone.localdate()
+    saved_rows = 0
+
+    for corporation_id, configs in corp_configs.items():
+        inventory_snapshot = _build_daily_snapshot_inventory(configs=configs)
+        wallet_balance_map = _get_wallet_balance_map(corporation_id)
+
+        for wallet_division in range(1, 8):
+            wallet_balance = wallet_balance_map.get(int(wallet_division))
+            wallet_balance_available = wallet_balance is not None
+            total_asset_value = None
+            if wallet_balance_available:
+                total_asset_value = (
+                    Decimal(str(inventory_snapshot["value"])) + wallet_balance
+                ).quantize(Decimal("0.01"))
+
+            MaterialExchangeDailySnapshot.objects.update_or_create(
+                corporation_id=int(corporation_id),
+                wallet_division=int(wallet_division),
+                snapshot_date=snapshot_date,
+                defaults={
+                    "inventory_market_value": inventory_snapshot["value"],
+                    "inventory_item_count": int(inventory_snapshot["item_count"]),
+                    "inventory_type_count": int(inventory_snapshot["type_count"]),
+                    "inventory_priced_type_count": int(
+                        inventory_snapshot["priced_type_count"]
+                    ),
+                    "inventory_location_count": int(
+                        inventory_snapshot["location_count"]
+                    ),
+                    "inventory_hangar_count": int(inventory_snapshot["hangar_count"]),
+                    "wallet_balance": wallet_balance,
+                    "wallet_balance_available": bool(wallet_balance_available),
+                    "total_asset_value": total_asset_value,
+                    "assets_scope_missing": bool(
+                        inventory_snapshot["assets_scope_missing"]
+                    ),
+                },
+            )
+            saved_rows += 1
+
+    logger.info(
+        "Saved %s Buyback daily snapshot row(s) for %s corporation(s)",
+        saved_rows,
+        len(corp_configs),
+    )
+    emit_analytics_event(
+        task="material_exchange.snapshot_daily_holdings",
+        label="success",
+        result="success",
+        value=max(saved_rows, 1),
+    )
 
 
 @shared_task(

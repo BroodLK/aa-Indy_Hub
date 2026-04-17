@@ -1,8 +1,9 @@
 """Tests for manager-only Material Exchange stats history view."""
 
 # Standard Library
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import Permission, User
@@ -20,9 +21,11 @@ from indy_hub.models import (
     MaterialExchangeBuyOrder,
     MaterialExchangeBuyOrderItem,
     MaterialExchangeConfig,
+    MaterialExchangeDailySnapshot,
     MaterialExchangeSellOrderItem,
     MaterialExchangeSellOrder,
     MaterialExchangeSettings,
+    MaterialExchangeStock,
     MaterialExchangeTransaction,
 )
 
@@ -518,6 +521,180 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(response.context["selected_config_count"], 1)
         self.assertEqual(response.context["total_transactions"], 1)
         self.assertEqual(response.context["total_buy_volume"], Decimal("500"))
+
+    @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
+    def test_stats_history_exposes_current_value_of_configured_buy_hangars(
+        self, mock_get_corp_assets_cached
+    ) -> None:
+        self.config.buy_structure_ids = [60003760, 60003761]
+        self.config.buy_structure_names = ["Jita Alpha", "Jita Beta"]
+        self.config.hangar_division = 1
+        self.config.save(
+            update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"]
+        )
+
+        MaterialExchangeStock.objects.create(
+            config=self.config,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=17,
+            source_structure_ids=[60003760, 60003761],
+            source_structure_names=["Jita Alpha", "Jita Beta"],
+            jita_sell_price=Decimal("6.00"),
+        )
+        MaterialExchangeStock.objects.create(
+            config=self.config,
+            type_id=35,
+            type_name="Pyerite",
+            quantity=5,
+            source_structure_ids=[60003760],
+            source_structure_names=["Jita Alpha"],
+            jita_sell_price=Decimal("20.00"),
+        )
+
+        mock_get_corp_assets_cached.return_value = (
+            [
+                {
+                    "item_id": 1001,
+                    "location_id": 60003760,
+                    "location_flag": "CorpSAG1",
+                    "type_id": 34,
+                    "quantity": 10,
+                    "is_singleton": False,
+                    "is_blueprint": False,
+                },
+                {
+                    "item_id": 1002,
+                    "location_id": 60003761,
+                    "location_flag": "CorpSAG1",
+                    "type_id": 34,
+                    "quantity": 7,
+                    "is_singleton": False,
+                    "is_blueprint": False,
+                },
+                {
+                    "item_id": 1003,
+                    "location_id": 60003760,
+                    "location_flag": "CorpSAG1",
+                    "type_id": 35,
+                    "quantity": 5,
+                    "is_singleton": False,
+                    "is_blueprint": False,
+                },
+            ],
+            False,
+        )
+
+        self.client.force_login(self.manager)
+        response = self.client.get(reverse("indy_hub:material_exchange_stats_history"))
+        self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(
+            response.context["current_buy_hangar_inventory_value"],
+            Decimal("202.00"),
+        )
+        self.assertEqual(response.context["current_buy_hangar_inventory_item_count"], 22)
+        self.assertEqual(response.context["current_buy_hangar_inventory_type_count"], 2)
+        self.assertEqual(response.context["current_buy_hangar_inventory_priced_type_count"], 2)
+        self.assertEqual(response.context["current_buy_hangar_location_count"], 2)
+        self.assertEqual(response.context["current_buy_hangar_count"], 2)
+        self.assertFalse(response.context["current_buy_hangar_assets_scope_missing"])
+
+    def test_stats_history_uses_saved_daily_snapshots_for_total_value_history(self) -> None:
+        MaterialExchangeDailySnapshot.objects.create(
+            corporation_id=self.config.corporation_id,
+            wallet_division=1,
+            snapshot_date=date(2026, 4, 1),
+            inventory_market_value=Decimal("1250.00"),
+            inventory_item_count=100,
+            inventory_type_count=3,
+            inventory_priced_type_count=3,
+            inventory_location_count=1,
+            inventory_hangar_count=1,
+            wallet_balance=Decimal("5000.00"),
+            wallet_balance_available=True,
+            total_asset_value=Decimal("6250.00"),
+        )
+        MaterialExchangeDailySnapshot.objects.create(
+            corporation_id=self.config.corporation_id,
+            wallet_division=1,
+            snapshot_date=date(2026, 4, 2),
+            inventory_market_value=Decimal("1800.00"),
+            inventory_item_count=140,
+            inventory_type_count=4,
+            inventory_priced_type_count=4,
+            inventory_location_count=1,
+            inventory_hangar_count=1,
+            wallet_balance=Decimal("5400.00"),
+            wallet_balance_available=True,
+            total_asset_value=Decimal("7200.00"),
+        )
+
+        self.client.force_login(self.manager)
+        response = self.client.get(
+            reverse("indy_hub:material_exchange_stats_history"),
+            {"start_date": "2026-04-01", "end_date": "2026-04-30"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+        capital_rows = response.context["capital_trend_rows"]
+        self.assertEqual(len(capital_rows), 2)
+        self.assertEqual(capital_rows[0]["month"], "2026-04-01")
+        self.assertEqual(capital_rows[1]["month"], "2026-04-02")
+        self.assertEqual(capital_rows[0]["total_asset_value"], Decimal("6250.00"))
+        self.assertEqual(capital_rows[1]["total_asset_value"], Decimal("7200.00"))
+        self.assertEqual(capital_rows[1]["total_asset_delta"], Decimal("950.00"))
+        self.assertEqual(
+            response.context["capital_trend_chart_labels"],
+            ["2026-04-01", "2026-04-02"],
+        )
+        self.assertEqual(
+            response.context["capital_trend_total_change"],
+            Decimal("950.00"),
+        )
+        self.assertTrue(response.context["capital_trend_wallet_history_available"])
+        self.assertEqual(
+            response.context["capital_trend_latest_snapshot_date"],
+            "2026-04-02",
+        )
+
+    def test_stats_history_does_not_reconstruct_total_value_history_from_transactions(
+        self,
+    ) -> None:
+        buy_order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.member,
+            status=MaterialExchangeBuyOrder.Status.COMPLETED,
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=buy_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=5,
+            unit_price=Decimal("150.00"),
+            total_price=Decimal("750.00"),
+            stock_available_at_creation=999,
+        )
+        MaterialExchangeTransaction.objects.create(
+            config=self.config,
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
+            buy_order=buy_order,
+            user=self.member,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=5,
+            unit_price=Decimal("150.00"),
+            total_price=Decimal("750.00"),
+            jita_sell_total_value_snapshot=Decimal("850.00"),
+        )
+
+        self.client.force_login(self.manager)
+        response = self.client.get(reverse("indy_hub:material_exchange_stats_history"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["capital_trend_rows"], [])
+        self.assertEqual(response.context["capital_trend_chart_labels"], [])
+        self.assertIsNone(response.context["capital_trend_total_change"])
+        self.assertEqual(response.context["capital_trend_latest_snapshot_date"], "")
 
     def test_stats_rankings_are_account_scoped_and_show_main_character(self) -> None:
         alt_character, _ = EveCharacter.objects.get_or_create(
