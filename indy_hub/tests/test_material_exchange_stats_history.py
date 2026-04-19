@@ -6,6 +6,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 # Django
+from django.contrib.messages import get_messages
 from django.contrib.auth.models import Permission, User
 from django.test import TestCase
 from django.urls import reverse
@@ -163,6 +164,23 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
             jita_split_total_value_snapshot=Decimal("725.00"),
         )
 
+        sell_created_at = now - timedelta(days=3)
+        sell_completed_at = now - timedelta(days=2)
+        buy_created_at = now - timedelta(days=5)
+        buy_completed_at = now - timedelta(days=3)
+        MaterialExchangeSellOrder.objects.filter(pk=sell_order.pk).update(
+            created_at=sell_created_at
+        )
+        MaterialExchangeBuyOrder.objects.filter(pk=buy_order.pk).update(
+            created_at=buy_created_at
+        )
+        MaterialExchangeTransaction.objects.filter(sell_order=sell_order).update(
+            completed_at=sell_completed_at
+        )
+        MaterialExchangeTransaction.objects.filter(buy_order=buy_order).update(
+            completed_at=buy_completed_at
+        )
+
         ESIContract.objects.create(
             contract_id=2000101,
             issuer_id=10,
@@ -250,6 +268,11 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(ctx["forecast_90d_profit"], Decimal("-15300.00"))
         self.assertEqual(ctx["snapshot_coverage_pct"], 100.0)
         self.assertEqual(ctx["potential_priced_type_count"], 1)
+        self.assertEqual(ctx["average_order_completion_seconds"], 129600)
+        self.assertEqual(
+            ctx["average_order_completion_duration_display"], "1d 12h 0m"
+        )
+        self.assertEqual(ctx["average_order_completion_count"], 2)
 
         self.assertEqual(ctx["contract_stats"]["total"], 4)
         self.assertEqual(ctx["contract_stats"]["completed"], 2)
@@ -386,6 +409,47 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(follow.status_code, 200)
         self.assertEqual(follow.context["chosen_corporation_id"], 789456)
         self.assertEqual(follow.context["chosen_wallet_division"], 4)
+
+    @patch("indy_hub.views.material_exchange.capture_material_exchange_daily_holdings")
+    def test_stats_history_can_run_manual_snapshot(
+        self, mock_capture_material_exchange_daily_holdings
+    ) -> None:
+        mock_capture_material_exchange_daily_holdings.return_value = {
+            "snapshot_date": "2026-04-19",
+            "saved_rows": 7,
+            "corporation_count": 1,
+            "warnings": ["Corporation 123456: corp asset scope is missing or stale; snapshot used cached assets."],
+            "errors": ["Corporation 123456: no wallet division balances were available, so total asset values were saved without wallet balances."],
+            "corporations": [],
+        }
+
+        self.client.force_login(self.manager)
+        response = self.client.post(
+            reverse("indy_hub:material_exchange_stats_history"),
+            {
+                "action": "run_manual_snapshot",
+                "chosen_corporation_id": str(self.config.corporation_id),
+                "chosen_wallet_division": "1",
+            },
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_capture_material_exchange_daily_holdings.assert_called_once_with(
+            corporation_id=self.config.corporation_id
+        )
+
+        settings_obj = MaterialExchangeSettings.get_solo()
+        self.assertEqual(
+            settings_obj.stats_selected_corporation_id, self.config.corporation_id
+        )
+        self.assertEqual(settings_obj.stats_selected_wallet_division, 1)
+
+        messages_list = [message.message for message in get_messages(response.wsgi_request)]
+        self.assertTrue(
+            any("Manual snapshot saved 7 wallet snapshot row(s)" in msg for msg in messages_list)
+        )
+        self.assertTrue(any("corp asset scope is missing or stale" in msg for msg in messages_list))
+        self.assertTrue(any("no wallet division balances were available" in msg for msg in messages_list))
 
     def test_stats_history_scopes_metrics_to_saved_corporation(self) -> None:
         other_config = MaterialExchangeConfig.objects.create(

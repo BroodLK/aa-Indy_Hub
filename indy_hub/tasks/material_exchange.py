@@ -1030,18 +1030,18 @@ def _get_wallet_balance_map(corporation_id: int) -> dict[int, Decimal]:
     return balance_map
 
 
-@shared_task(
-    autoretry_for=(Exception,),
-    retry_kwargs={"max_retries": 3, "countdown": 15},
-    rate_limit="20/m",
-    time_limit=300,
-    soft_time_limit=280,
-)
-def snapshot_material_exchange_daily_holdings() -> None:
-    """Save daily wallet + on-hand inventory snapshots for Buyback history."""
+def _collect_snapshot_corporation_configs(
+    *,
+    corporation_id: int | None = None,
+) -> dict[int, list[MaterialExchangeConfig]]:
+    """Return active buyback configs grouped by corporation."""
 
     corp_configs: dict[int, list[MaterialExchangeConfig]] = {}
-    for config in MaterialExchangeConfig.objects.filter(is_active=True).order_by(
+    config_qs = MaterialExchangeConfig.objects.filter(is_active=True)
+    if int(corporation_id or 0) > 0:
+        config_qs = config_qs.filter(corporation_id=int(corporation_id))
+
+    for config in config_qs.order_by(
         "corporation_id",
         "id",
     ):
@@ -1052,63 +1052,180 @@ def snapshot_material_exchange_daily_holdings() -> None:
         if corporation_id <= 0:
             continue
         corp_configs.setdefault(corporation_id, []).append(config)
+    return corp_configs
+
+
+def capture_material_exchange_daily_holdings(
+    *,
+    corporation_id: int | None = None,
+    snapshot_date=None,
+) -> dict[str, object]:
+    """Capture daily wallet + on-hand inventory snapshots and return a report."""
+
+    target_corporation_id = int(corporation_id or 0)
+    snapshot_date = snapshot_date or timezone.localdate()
+    report: dict[str, object] = {
+        "snapshot_date": snapshot_date.isoformat(),
+        "saved_rows": 0,
+        "corporation_count": 0,
+        "warnings": [],
+        "errors": [],
+        "corporations": [],
+    }
+
+    try:
+        corp_configs = _collect_snapshot_corporation_configs(
+            corporation_id=target_corporation_id or None
+        )
+    except Exception as exc:
+        message = f"Snapshot configuration lookup failed: {exc}"
+        logger.exception(message)
+        report["errors"].append(message)
+        return report
 
     if not corp_configs:
-        logger.info("No active Buyback configs found; skipping daily snapshot capture")
-        return
-
-    snapshot_date = timezone.localdate()
-    saved_rows = 0
+        if target_corporation_id > 0:
+            report["warnings"].append(
+                f"Corporation {target_corporation_id}: no active Buyback configs found."
+            )
+        else:
+            report["warnings"].append("No active Buyback configs found.")
+        return report
 
     for corporation_id, configs in corp_configs.items():
-        inventory_snapshot = _build_daily_snapshot_inventory(configs=configs)
+        corp_report = {
+            "corporation_id": int(corporation_id),
+            "config_count": len(configs),
+            "saved_rows": 0,
+            "warnings": [],
+            "errors": [],
+        }
+        report["corporation_count"] = int(report["corporation_count"]) + 1
+
+        try:
+            inventory_snapshot = _build_daily_snapshot_inventory(configs=configs)
+        except Exception as exc:
+            message = f"Corporation {corporation_id}: inventory snapshot failed: {exc}"
+            logger.exception(message)
+            corp_report["errors"].append(message)
+            report["errors"].append(message)
+            report["corporations"].append(corp_report)
+            continue
+
         wallet_balance_map = _get_wallet_balance_map(corporation_id)
-
-        for wallet_division in range(1, 8):
-            wallet_balance = wallet_balance_map.get(int(wallet_division))
-            wallet_balance_available = wallet_balance is not None
-            total_asset_value = None
-            if wallet_balance_available:
-                total_asset_value = (
-                    Decimal(str(inventory_snapshot["value"])) + wallet_balance
-                ).quantize(Decimal("0.01"))
-
-            MaterialExchangeDailySnapshot.objects.update_or_create(
-                corporation_id=int(corporation_id),
-                wallet_division=int(wallet_division),
-                snapshot_date=snapshot_date,
-                defaults={
-                    "inventory_market_value": inventory_snapshot["value"],
-                    "inventory_item_count": int(inventory_snapshot["item_count"]),
-                    "inventory_type_count": int(inventory_snapshot["type_count"]),
-                    "inventory_priced_type_count": int(
-                        inventory_snapshot["priced_type_count"]
-                    ),
-                    "inventory_location_count": int(
-                        inventory_snapshot["location_count"]
-                    ),
-                    "inventory_hangar_count": int(inventory_snapshot["hangar_count"]),
-                    "wallet_balance": wallet_balance,
-                    "wallet_balance_available": bool(wallet_balance_available),
-                    "total_asset_value": total_asset_value,
-                    "assets_scope_missing": bool(
-                        inventory_snapshot["assets_scope_missing"]
-                    ),
-                },
+        buy_enabled_configs = [
+            config for config in configs if bool(getattr(config, "buy_enabled", True))
+        ]
+        if not buy_enabled_configs:
+            corp_report["warnings"].append(
+                f"Corporation {corporation_id}: no buy-enabled configs are active for snapshot capture."
             )
-            saved_rows += 1
+        elif int(inventory_snapshot.get("hangar_count") or 0) <= 0:
+            corp_report["warnings"].append(
+                f"Corporation {corporation_id}: no buy hangars are configured for the active snapshot scope."
+            )
+        if bool(inventory_snapshot.get("assets_scope_missing")):
+            corp_report["warnings"].append(
+                f"Corporation {corporation_id}: corp asset scope is missing or stale; snapshot used cached assets."
+            )
+        if CorporationWalletDivision is None:
+            corp_report["warnings"].append(
+                f"Corporation {corporation_id}: wallet balances are unavailable because Corptools wallet data is not installed."
+            )
+        elif not wallet_balance_map:
+            corp_report["warnings"].append(
+                f"Corporation {corporation_id}: no wallet division balances were available, so total asset values were saved without wallet balances."
+            )
+
+        try:
+            for wallet_division in range(1, 8):
+                wallet_balance = wallet_balance_map.get(int(wallet_division))
+                wallet_balance_available = wallet_balance is not None
+                total_asset_value = None
+                if wallet_balance_available:
+                    total_asset_value = (
+                        Decimal(str(inventory_snapshot["value"])) + wallet_balance
+                    ).quantize(Decimal("0.01"))
+
+                MaterialExchangeDailySnapshot.objects.update_or_create(
+                    corporation_id=int(corporation_id),
+                    wallet_division=int(wallet_division),
+                    snapshot_date=snapshot_date,
+                    defaults={
+                        "inventory_market_value": inventory_snapshot["value"],
+                        "inventory_item_count": int(inventory_snapshot["item_count"]),
+                        "inventory_type_count": int(inventory_snapshot["type_count"]),
+                        "inventory_priced_type_count": int(
+                            inventory_snapshot["priced_type_count"]
+                        ),
+                        "inventory_location_count": int(
+                            inventory_snapshot["location_count"]
+                        ),
+                        "inventory_hangar_count": int(
+                            inventory_snapshot["hangar_count"]
+                        ),
+                        "wallet_balance": wallet_balance,
+                        "wallet_balance_available": bool(wallet_balance_available),
+                        "total_asset_value": total_asset_value,
+                        "assets_scope_missing": bool(
+                            inventory_snapshot["assets_scope_missing"]
+                        ),
+                    },
+                )
+                corp_report["saved_rows"] = int(corp_report["saved_rows"]) + 1
+                report["saved_rows"] = int(report["saved_rows"]) + 1
+        except Exception as exc:
+            message = f"Corporation {corporation_id}: failed to save snapshot rows: {exc}"
+            logger.exception(message)
+            corp_report["errors"].append(message)
+
+        report["warnings"].extend(corp_report["warnings"])
+        report["errors"].extend(corp_report["errors"])
+        report["corporations"].append(corp_report)
+
+    return report
+
+
+@shared_task(
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 3, "countdown": 15},
+    rate_limit="20/m",
+    time_limit=300,
+    soft_time_limit=280,
+)
+def snapshot_material_exchange_daily_holdings(
+    corporation_id: int | None = None,
+) -> dict[str, object]:
+    """Save daily wallet + on-hand inventory snapshots for Buyback history."""
+
+    report = capture_material_exchange_daily_holdings(corporation_id=corporation_id)
+    saved_rows = int(report.get("saved_rows") or 0)
+    corporation_count = int(report.get("corporation_count") or 0)
+    warnings = list(report.get("warnings") or [])
+    errors = list(report.get("errors") or [])
 
     logger.info(
         "Saved %s Buyback daily snapshot row(s) for %s corporation(s)",
         saved_rows,
-        len(corp_configs),
+        corporation_count,
     )
+    if warnings:
+        logger.warning(
+            "Buyback daily snapshot warnings: %s",
+            " | ".join(str(item) for item in warnings[:10]),
+        )
+    if errors:
+        logger.error(
+            "Buyback daily snapshot errors: %s",
+            " | ".join(str(item) for item in errors[:10]),
+        )
     emit_analytics_event(
         task="material_exchange.snapshot_daily_holdings",
-        label="success",
-        result="success",
+        label="success" if not errors else "warning",
+        result="success" if not errors else "warning",
         value=max(saved_rows, 1),
     )
+    return report
 
 
 @shared_task(

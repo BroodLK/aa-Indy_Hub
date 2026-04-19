@@ -745,7 +745,7 @@ def craft_sync_owned_bpcs(request):
 @login_required
 @require_http_methods(["GET"])
 def craft_industry_fees(request):
-    """Return aggregated EVERef job fees for the provided production jobs."""
+    """Return manufacturing-only EVERef job fees for craft planner jobs."""
     emit_view_analytics_event(view_name="api.craft_industry_fees", request=request)
 
     raw_jobs = str(request.GET.get("jobs", "")).strip()
@@ -888,7 +888,10 @@ def craft_industry_fees(request):
                 runs=runs,
                 query_params=optional_query,
             )
-            summary = summarize_job_fees(payload)
+            summary = summarize_job_fees(
+                payload,
+                included_sections={"manufacturing"},
+            )
             row = {
                 "product_id": product_id,
                 "runs": runs,

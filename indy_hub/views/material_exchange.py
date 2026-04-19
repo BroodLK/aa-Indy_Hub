@@ -76,6 +76,7 @@ from ..tasks.material_exchange import (
     ESI_DOWN_COOLDOWN_SECONDS,
     ME_STOCK_SYNC_CACHE_VERSION,
     ME_USER_ASSETS_CACHE_VERSION,
+    capture_material_exchange_daily_holdings,
     me_buy_stock_esi_cooldown_key,
     me_sell_assets_esi_cooldown_key,
     me_stock_sync_cache_version_key,
@@ -6877,28 +6878,32 @@ def material_exchange_stats_history(request):
     else:
         chosen_wallet_division = 1
 
-    if request.method == "POST" and request.POST.get("action") == "save_stats_preferences":
-        chosen_corporation_raw = str(
-            request.POST.get("chosen_corporation_id") or ""
-        ).strip()
-        chosen_wallet_raw = str(
-            request.POST.get("chosen_wallet_division") or ""
-        ).strip()
+    if request.method == "POST":
+        post_action = str(request.POST.get("action") or "").strip()
+        if post_action in {"save_stats_preferences", "run_manual_snapshot"}:
+            chosen_corporation_raw = str(
+                request.POST.get("chosen_corporation_id") or ""
+            ).strip()
+            chosen_wallet_raw = str(
+                request.POST.get("chosen_wallet_division") or ""
+            ).strip()
 
-        try:
-            post_corp_id = int(chosen_corporation_raw)
-        except (TypeError, ValueError):
-            post_corp_id = 0
-        try:
-            post_wallet_division = int(chosen_wallet_raw)
-        except (TypeError, ValueError):
-            post_wallet_division = 0
+            try:
+                post_corp_id = int(chosen_corporation_raw)
+            except (TypeError, ValueError):
+                post_corp_id = 0
+            try:
+                post_wallet_division = int(chosen_wallet_raw)
+            except (TypeError, ValueError):
+                post_wallet_division = 0
 
-        if post_corp_id <= 0:
-            messages.error(request, _("Choose a corporation for Buyback stats."))
-        elif post_wallet_division not in range(1, 8):
-            messages.error(request, _("Choose wallet division 1-7."))
-        else:
+            if post_corp_id <= 0:
+                messages.error(request, _("Choose a corporation for Buyback stats."))
+                return redirect("indy_hub:material_exchange_stats_history")
+            if post_wallet_division not in range(1, 8):
+                messages.error(request, _("Choose wallet division 1-7."))
+                return redirect("indy_hub:material_exchange_stats_history")
+
             settings_obj.stats_selected_corporation_id = int(post_corp_id)
             settings_obj.stats_selected_wallet_division = int(post_wallet_division)
             settings_obj.save(
@@ -6908,8 +6913,57 @@ def material_exchange_stats_history(request):
                     "updated_at",
                 ]
             )
-            messages.success(request, _("Buyback stats preferences saved."))
-        return redirect("indy_hub:material_exchange_stats_history")
+
+            if post_action == "save_stats_preferences":
+                messages.success(request, _("Buyback stats preferences saved."))
+                return redirect("indy_hub:material_exchange_stats_history")
+
+            try:
+                snapshot_report = capture_material_exchange_daily_holdings(
+                    corporation_id=int(post_corp_id)
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Manual Buyback snapshot failed for corporation %s: %s",
+                    post_corp_id,
+                    exc,
+                )
+                messages.error(
+                    request,
+                    _("Manual snapshot failed: %(error)s")
+                    % {"error": str(exc)},
+                )
+                return redirect("indy_hub:material_exchange_stats_history")
+
+            saved_rows = int(snapshot_report.get("saved_rows") or 0)
+            snapshot_date = str(snapshot_report.get("snapshot_date") or "")
+            corp_name = get_corporation_name(int(post_corp_id)) or str(post_corp_id)
+            if saved_rows > 0:
+                messages.success(
+                    request,
+                    _(
+                        "Manual snapshot saved %(rows)s wallet snapshot row(s) for %(corp)s on %(date)s."
+                    )
+                    % {
+                        "rows": saved_rows,
+                        "corp": corp_name,
+                        "date": snapshot_date,
+                    },
+                )
+            else:
+                messages.warning(
+                    request,
+                    _(
+                        "Manual snapshot completed, but no rows were saved for %(corp)s."
+                    )
+                    % {"corp": corp_name},
+                )
+
+            for warning in list(snapshot_report.get("warnings") or [])[:5]:
+                messages.warning(request, str(warning))
+            for error in list(snapshot_report.get("errors") or [])[:5]:
+                messages.error(request, str(error))
+            return redirect("indy_hub:material_exchange_stats_history")
 
     corp_options = [
         {
@@ -7543,6 +7597,32 @@ def material_exchange_stats_history(request):
         int(order_id): _to_decimal((rollup or {}).get("total_value"))
         for order_id, rollup in buy_tx_rollup_by_order.items()
     }
+    completion_durations: list = []
+    for row in sell_rows:
+        order_id = int(row.get("id") or 0)
+        completed_at = (sell_tx_rollup_by_order.get(order_id) or {}).get("completed_at")
+        created_at = row.get("created_at")
+        if created_at and completed_at and completed_at >= created_at:
+            completion_durations.append(completed_at - created_at)
+    for row in buy_rows:
+        order_id = int(row.get("id") or 0)
+        completed_at = (buy_tx_rollup_by_order.get(order_id) or {}).get("completed_at")
+        created_at = row.get("created_at")
+        if created_at and completed_at and completed_at >= created_at:
+            completion_durations.append(completed_at - created_at)
+
+    average_order_completion_seconds = None
+    average_order_completion_duration_display = "-"
+    if completion_durations:
+        total_completion_seconds = sum(
+            int(duration.total_seconds()) for duration in completion_durations
+        )
+        average_order_completion_seconds = int(
+            total_completion_seconds / len(completion_durations)
+        )
+        average_order_completion_duration_display = _format_duration_short(
+            timedelta(seconds=average_order_completion_seconds)
+        )
 
     # Use real contract prices first, and fallback to transaction totals for rows
     # missing a matched contract price.
@@ -8442,6 +8522,9 @@ def material_exchange_stats_history(request):
         "total_buy_volume": total_buy_volume,
         "total_sell_volume": total_sell_volume,
         "total_transactions": total_transactions,
+        "average_order_completion_seconds": average_order_completion_seconds,
+        "average_order_completion_duration_display": average_order_completion_duration_display,
+        "average_order_completion_count": len(completion_durations),
         "top_user_stats": top_user_stats,
         "recent_transactions": recent_transactions,
         "period_options": period_options,

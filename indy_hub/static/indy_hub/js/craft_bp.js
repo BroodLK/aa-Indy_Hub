@@ -5311,19 +5311,11 @@ function renderIndustryFeeBreakdown(context = null) {
 
     const totalRunsEl = document.getElementById('industryFeeBreakdownTotalRuns');
     const totalManufacturingEl = document.getElementById('industryFeeBreakdownTotalManufacturing');
-    const totalInventionEl = document.getElementById('industryFeeBreakdownTotalInvention');
-    const totalCopyingEl = document.getElementById('industryFeeBreakdownTotalCopying');
-    const totalReactionEl = document.getElementById('industryFeeBreakdownTotalReaction');
-    const totalOtherEl = document.getElementById('industryFeeBreakdownTotalOther');
     const totalFeesEl = document.getElementById('industryFeeBreakdownTotalFees');
 
     const resetTotals = () => {
         if (totalRunsEl) totalRunsEl.textContent = '0';
         if (totalManufacturingEl) totalManufacturingEl.textContent = formatPrice(0);
-        if (totalInventionEl) totalInventionEl.textContent = formatPrice(0);
-        if (totalCopyingEl) totalCopyingEl.textContent = formatPrice(0);
-        if (totalReactionEl) totalReactionEl.textContent = formatPrice(0);
-        if (totalOtherEl) totalOtherEl.textContent = formatPrice(0);
         if (totalFeesEl) totalFeesEl.textContent = formatPrice(0);
     };
 
@@ -5357,7 +5349,7 @@ function renderIndustryFeeBreakdown(context = null) {
     if (hasErrors) {
         statusEl.textContent = __('Fee lookup returned errors. Review logs and retry.');
     } else {
-        statusEl.textContent = __('Itemized job installation fees from EVERef.');
+        statusEl.textContent = __('Manufacturing job installation fees from EVERef.');
     }
 
     if (rows.length === 0) {
@@ -5365,15 +5357,10 @@ function renderIndustryFeeBreakdown(context = null) {
     }
 
     const nameMap = getIndustryFeeProductNameMap();
-    const knownKeys = new Set(['manufacturing', 'invention', 'copying', 'reaction']);
     const toFee = (value) => Math.max(0, Number(value) || 0);
 
     let totalRuns = 0;
     let totalManufacturing = 0;
-    let totalInvention = 0;
-    let totalCopying = 0;
-    let totalReaction = 0;
-    let totalOther = 0;
     let totalFees = 0;
 
     const normalizedRows = rows
@@ -5384,31 +5371,17 @@ function renderIndustryFeeBreakdown(context = null) {
                 ? row.section_job_costs
                 : {};
             const manufacturing = toFee(sections.manufacturing);
-            const invention = toFee(sections.invention);
-            const copying = toFee(sections.copying);
-            const reaction = toFee(sections.reaction);
-            let other = 0;
-            Object.entries(sections).forEach(([key, value]) => {
-                if (knownKeys.has(String(key || '').toLowerCase())) {
-                    return;
-                }
-                other += toFee(value);
-            });
-            const total = toFee(row?.total_job_cost);
+            const total = manufacturing;
             const typeName = nameMap.get(productId) || `${__('Type')} ${productId}`;
             return {
                 productId,
                 typeName,
                 runs,
                 manufacturing,
-                invention,
-                copying,
-                reaction,
-                other,
                 total,
             };
         })
-        .filter((row) => row.productId > 0)
+        .filter((row) => row.productId > 0 && row.total > 0)
         .sort((left, right) => {
             if (right.total !== left.total) {
                 return right.total - left.total;
@@ -5419,10 +5392,6 @@ function renderIndustryFeeBreakdown(context = null) {
     normalizedRows.forEach((row) => {
         totalRuns += row.runs;
         totalManufacturing += row.manufacturing;
-        totalInvention += row.invention;
-        totalCopying += row.copying;
-        totalReaction += row.reaction;
-        totalOther += row.other;
         totalFees += row.total;
 
         const tr = document.createElement('tr');
@@ -5432,10 +5401,6 @@ function renderIndustryFeeBreakdown(context = null) {
             </td>
             <td class="text-end">${formatInteger(row.runs)}</td>
             <td class="text-end">${formatPrice(row.manufacturing)}</td>
-            <td class="text-end">${formatPrice(row.invention)}</td>
-            <td class="text-end">${formatPrice(row.copying)}</td>
-            <td class="text-end">${formatPrice(row.reaction)}</td>
-            <td class="text-end">${formatPrice(row.other)}</td>
             <td class="text-end fw-semibold">${formatPrice(row.total)}</td>
         `;
         bodyEl.appendChild(tr);
@@ -5443,10 +5408,6 @@ function renderIndustryFeeBreakdown(context = null) {
 
     if (totalRunsEl) totalRunsEl.textContent = formatInteger(totalRuns);
     if (totalManufacturingEl) totalManufacturingEl.textContent = formatPrice(totalManufacturing);
-    if (totalInventionEl) totalInventionEl.textContent = formatPrice(totalInvention);
-    if (totalCopyingEl) totalCopyingEl.textContent = formatPrice(totalCopying);
-    if (totalReactionEl) totalReactionEl.textContent = formatPrice(totalReaction);
-    if (totalOtherEl) totalOtherEl.textContent = formatPrice(totalOther);
     if (totalFeesEl) totalFeesEl.textContent = formatPrice(totalFees);
 }
 

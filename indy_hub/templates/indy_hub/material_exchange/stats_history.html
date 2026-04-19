@@ -245,6 +245,11 @@
                             <div class="stats-tile-meta">{% trans "Buy + Sell" %}</div>
                         </div>
                         <div class="stats-tile">
+                            <div class="stats-tile-label">{% trans "Avg Time To Completion" %}</div>
+                            <div class="stats-tile-value">{{ average_order_completion_duration_display }}</div>
+                            <div class="stats-tile-meta">{{ average_order_completion_count|intcomma }} {% trans "completed orders" %}</div>
+                        </div>
+                        <div class="stats-tile">
                             <div class="stats-tile-label">{% trans "Relevant Market Orders" %}</div>
                             <div class="stats-tile-value">{{ donation_stats.market_orders_total|intcomma }}</div>
                             <div class="stats-tile-meta">{% trans "Open or proxy count" %}</div>
@@ -567,7 +572,10 @@
                 </table>
             </div>
             {% else %}
-            <div class="dashboard-empty">{% trans "No daily Buyback snapshots have been saved yet." %}</div>
+            <div class="dashboard-empty">
+                {% trans "No daily Buyback snapshots have been saved yet for this corporation and wallet division." %}
+                {% trans "The snapshot task runs once per day, or you can trigger it manually to capture a point immediately." %}
+            </div>
             {% endif %}
         </div>
 
@@ -634,6 +642,31 @@
                     </div>
                 </form>
                 <div class="dashboard-control-note">{% trans "Saved choices define which corp wallet and buyback configs the dashboard evaluates." %}</div>
+            </div>
+
+            <div class="dashboard-control-panel">
+                <div class="stats-panel-kicker">{% trans "Snapshots" %}</div>
+                <h3 class="stats-panel-title">{% trans "Manual Capture" %}</h3>
+                <form method="post" class="mt-3">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="run_manual_snapshot">
+                    <input type="hidden" name="chosen_corporation_id" value="{{ chosen_corporation_id }}">
+                    <input type="hidden" name="chosen_wallet_division" value="{{ chosen_wallet_division }}">
+                    <div class="dashboard-field mb-3">
+                        <span class="dashboard-field-label">{% trans "Target Scope" %}</span>
+                        <span class="dashboard-field-value">{{ chosen_corporation_name }} / {{ chosen_wallet_division_name }}</span>
+                    </div>
+                    <div class="dashboard-field mb-3">
+                        <span class="dashboard-field-label">{% trans "Latest Snapshot" %}</span>
+                        <span class="dashboard-field-value">{{ capital_trend_latest_snapshot_date|default:"-" }}</span>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-outline-primary">
+                            <i class="fas fa-camera me-1"></i>{% trans "Capture Snapshot Now" %}
+                        </button>
+                    </div>
+                </form>
+                <div class="dashboard-control-note">{% trans "Runs the snapshot immediately for the currently selected corporation and shows any warnings or errors on reload." %}</div>
             </div>
         </div>
         <div class="dashboard-note-panel">
