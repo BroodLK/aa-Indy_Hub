@@ -1049,10 +1049,10 @@ def material_exchange_toggle_active(request):
     settings_obj.is_enabled = desired_active
     settings_obj.save(update_fields=["is_enabled", "updated_at"])
     try:
-        config = MaterialExchangeConfig.objects.first()
-        if config and config.is_active != desired_active:
-            config.is_active = desired_active
-            config.save(update_fields=["is_active", "updated_at"])
+        MaterialExchangeConfig.objects.exclude(is_active=desired_active).update(
+            is_active=desired_active,
+            updated_at=timezone.now(),
+        )
     except Exception:
         pass
     try:
@@ -2231,8 +2231,11 @@ def _handle_config_save(request, existing_config):
     location_match_mode = request.POST.get("location_match_mode") or "name_or_id"
 
     raw_is_active = request.POST.get("is_active")
-    if raw_is_active is None and existing_config is not None:
-        is_active = existing_config.is_active
+    if raw_is_active is None:
+        try:
+            is_active = bool(MaterialExchangeSettings.get_solo().is_enabled)
+        except Exception:
+            is_active = existing_config.is_active if existing_config is not None else True
     else:
         is_active = raw_is_active == "on"
 

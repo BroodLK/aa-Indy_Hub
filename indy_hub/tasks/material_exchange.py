@@ -45,6 +45,7 @@ from indy_hub.models import (
     CachedCharacterAsset,
     MaterialExchangeConfig,
     MaterialExchangeDailySnapshot,
+    MaterialExchangeSettings,
     MaterialExchangeStock,
 )
 from indy_hub.services.asset_cache import (
@@ -1037,21 +1038,41 @@ def _collect_snapshot_corporation_configs(
     """Return active buyback configs grouped by corporation."""
 
     corp_configs: dict[int, list[MaterialExchangeConfig]] = {}
-    config_qs = MaterialExchangeConfig.objects.filter(is_active=True)
-    if int(corporation_id or 0) > 0:
-        config_qs = config_qs.filter(corporation_id=int(corporation_id))
+    target_corporation_id = int(corporation_id or 0)
+    all_configs_qs = MaterialExchangeConfig.objects.all()
+    if target_corporation_id > 0:
+        all_configs_qs = all_configs_qs.filter(corporation_id=target_corporation_id)
 
-    for config in config_qs.order_by(
-        "corporation_id",
-        "id",
-    ):
+    all_configs = list(all_configs_qs.order_by("corporation_id", "id"))
+    if not all_configs:
+        return corp_configs
+
+    try:
+        module_enabled = bool(MaterialExchangeSettings.get_solo().is_enabled)
+    except Exception:
+        module_enabled = True
+
+    active_by_corp: dict[int, list[MaterialExchangeConfig]] = {}
+    fallback_by_corp: dict[int, list[MaterialExchangeConfig]] = {}
+
+    for config in all_configs:
         try:
-            corporation_id = int(config.corporation_id or 0)
+            config_corporation_id = int(config.corporation_id or 0)
         except (TypeError, ValueError):
-            corporation_id = 0
-        if corporation_id <= 0:
+            config_corporation_id = 0
+        if config_corporation_id <= 0:
             continue
-        corp_configs.setdefault(corporation_id, []).append(config)
+        fallback_by_corp.setdefault(config_corporation_id, []).append(config)
+        if bool(getattr(config, "is_active", False)):
+            active_by_corp.setdefault(config_corporation_id, []).append(config)
+
+    for config_corporation_id, configs in active_by_corp.items():
+        corp_configs[config_corporation_id] = configs
+
+    if module_enabled:
+        for config_corporation_id, configs in fallback_by_corp.items():
+            corp_configs.setdefault(config_corporation_id, configs)
+
     return corp_configs
 
 

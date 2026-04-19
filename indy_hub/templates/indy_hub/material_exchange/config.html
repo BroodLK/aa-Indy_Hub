@@ -90,6 +90,15 @@
                         <strong>"{{ current_hangar_name|default:config.hangar_division }}"</strong>
                     </div>
                     <div class="d-flex flex-wrap align-items-center gap-2">
+                        {% if config.is_active %}
+                            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+                                {% trans "Config active" %}
+                            </span>
+                        {% else %}
+                            <span class="badge bg-warning text-dark">
+                                {% trans "Config inactive" %}
+                            </span>
+                        {% endif %}
                         {% if config.enforce_jita_price_bounds %}
                             <span class="badge bg-warning text-dark">
                                 <i class="fas fa-shield-alt me-1"></i>
@@ -97,9 +106,9 @@
                             </span>
                         {% endif %}
                         {% if material_exchange_enabled %}
-                            <span class="badge bg-success">{% trans "Active" %}</span>
+                            <span class="badge bg-success">{% trans "Module enabled" %}</span>
                         {% else %}
-                            <span class="badge bg-secondary">{% trans "Disabled" %}</span>
+                            <span class="badge bg-secondary">{% trans "Module disabled" %}</span>
                         {% endif %}
                     </div>
                 </div>

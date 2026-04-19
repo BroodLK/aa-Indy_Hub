@@ -9,7 +9,11 @@ from django.contrib.sessions.middleware import SessionMiddleware
 from django.test import RequestFactory, TestCase
 
 # AA Example App
-from indy_hub.models import MaterialExchangeConfig, MaterialExchangeItemPriceOverride
+from indy_hub.models import (
+    MaterialExchangeConfig,
+    MaterialExchangeItemPriceOverride,
+    MaterialExchangeSettings,
+)
 from indy_hub.views.material_exchange_config import _handle_config_save
 
 
@@ -155,6 +159,43 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.config.refresh_from_db()
         self.assertFalse(self.config.buy_enabled)
         self.assertEqual(self.config.buy_structure_ids, [])
+
+    @patch("indy_hub.views.material_exchange_config.resolve_structure_names")
+    @patch("indy_hub.views.material_exchange_config._get_corp_structures")
+    def test_new_config_defaults_active_to_global_module_state(
+        self,
+        mock_get_corp_structures,
+        mock_resolve_structure_names,
+    ):
+        settings_obj = MaterialExchangeSettings.get_solo()
+        settings_obj.is_enabled = True
+        settings_obj.save(update_fields=["is_enabled", "updated_at"])
+
+        second_structure_id = int(self.config.structure_id) + 99
+        mock_get_corp_structures.return_value = (
+            [
+                {
+                    "id": second_structure_id,
+                    "name": "Created Structure",
+                    "flags": ["CorpSAG1"],
+                }
+            ],
+            False,
+        )
+        mock_resolve_structure_names.return_value = {
+            second_structure_id: "Created Structure"
+        }
+
+        post_data = self._base_post_data()
+        post_data["sell_structure_ids"] = [str(second_structure_id)]
+        post_data["buy_structure_ids"] = [str(second_structure_id)]
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, None)
+
+        self.assertEqual(response.status_code, 302)
+        created = MaterialExchangeConfig.objects.exclude(id=self.config.id).get()
+        self.assertTrue(created.is_active)
 
     def test_sell_market_groups_can_be_saved_per_structure(self):
         second_structure_id = int(self.config.structure_id) + 1

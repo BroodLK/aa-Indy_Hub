@@ -20,13 +20,13 @@ from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCharacter
 from esi.models import Token
 
-from ..services.industry_skills import SKILLS_SCOPE
 from ..tasks.industry import (
     BLUEPRINT_SCOPE,
     CORP_BLUEPRINT_SCOPE_SET,
     CORP_JOBS_SCOPE_SET,
     JOBS_SCOPE,
     MATERIAL_EXCHANGE_SCOPE_SET,
+    SKILLS_SCOPE,
     STRUCTURE_SCOPE,
 )
 
