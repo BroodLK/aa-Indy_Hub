@@ -53,6 +53,12 @@ INDY_HUB_BEAT_SCHEDULE = {
         "options": {"priority": 6},
         "apply_offset": True,
     },
+    "indy-hub-sync-capital-ship-estimates": {
+        "task": "indy_hub.tasks.public_contracts.sync_capital_ship_estimates",
+        "schedule": crontab(minute=27, hour=4, day_of_week="sun"),  # Weekly
+        "options": {"priority": 6},
+        "apply_offset": True,
+    },
     # Buyback combined cycle: sync -> validate -> check completed
     "indy-hub-material-exchange-cycle": {
         "task": "indy_hub.tasks.material_exchange_contracts.run_material_exchange_cycle",

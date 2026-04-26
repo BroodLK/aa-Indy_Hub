@@ -566,7 +566,15 @@ def _get_ship_default_price(
             override_map = {}
         price_override = _quantize_isk(override_map.get(type_id))
         if price_override is not None:
-            return price_override, "ship_config_default"
+            return price_override, "ship_config_override"
+
+        try:
+            auto_map = config.get_capital_ship_auto_estimated_price_map()
+        except Exception:
+            auto_map = {}
+        auto_price = _quantize_isk(auto_map.get(type_id))
+        if auto_price is not None:
+            return auto_price, "public_contract_median"
 
     class_price = _get_class_default_price(config, ship_class)
     if class_price is not None:
@@ -1734,7 +1742,8 @@ def capital_ship_orders_config(request):
 
     disabled_groups = set(config.get_capital_disabled_ship_groups())
     disabled_ship_type_ids = set(config.get_capital_disabled_ship_type_ids())
-    estimated_price_map = config.get_capital_ship_estimated_price_map()
+    manual_estimated_price_map = config.get_capital_ship_estimated_price_map()
+    auto_estimate_row_map = config.get_capital_ship_auto_estimate_row_map()
     custom_ship_map: dict[int, dict[str, object]] = {
         int(row.get("type_id")): row
         for row in config.get_capital_custom_ship_options()
@@ -1770,6 +1779,7 @@ def capital_ship_orders_config(request):
             continue
         ship_class = _normalize_ship_class_key(option.get("ship_class"))
         custom_entry = custom_ship_map.get(type_id)
+        auto_row = auto_estimate_row_map.get(type_id, {})
         ship_rows.append(
             {
                 "type_id": type_id,
@@ -1785,7 +1795,11 @@ def capital_ship_orders_config(request):
                 ),
                 "is_disabled_type": type_id in disabled_ship_type_ids,
                 "is_disabled_group": ship_class in disabled_groups,
-                "estimated_price": estimated_price_map.get(type_id),
+                "manual_estimated_price": manual_estimated_price_map.get(type_id),
+                "auto_estimated_price": auto_row.get("price_isk"),
+                "auto_estimated_contract_count": int(
+                    auto_row.get("contract_count") or 0
+                ),
             }
         )
 
@@ -1795,6 +1809,7 @@ def capital_ship_orders_config(request):
         if type_id <= 0:
             continue
         ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
+        auto_row = auto_estimate_row_map.get(type_id, {})
         custom_ship_rows.append(
             {
                 "type_id": type_id,
@@ -1805,7 +1820,11 @@ def capital_ship_orders_config(request):
                     or _default_ship_class_label(ship_class)
                 ),
                 "enabled": bool(custom_entry.get("enabled", True)),
-                "estimated_price": estimated_price_map.get(type_id),
+                "manual_estimated_price": manual_estimated_price_map.get(type_id),
+                "auto_estimated_price": auto_row.get("price_isk"),
+                "auto_estimated_contract_count": int(
+                    auto_row.get("contract_count") or 0
+                ),
             }
         )
     custom_ship_rows = sorted(

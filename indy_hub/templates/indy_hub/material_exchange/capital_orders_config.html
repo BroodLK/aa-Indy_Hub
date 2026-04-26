@@ -1,5 +1,6 @@
 {% extends "indy_hub/base.html" %}
 {% load i18n %}
+{% load humanize %}
 {% load static %}
 
 {% block page_title %}{% trans "Capital Order Settings" %}{% endblock page_title %}
@@ -227,7 +228,7 @@
                 <div class="card">
                     <div class="card-body">
                         <h5 class="mb-3">{% trans "Ships and Estimated Price Prefills" %}</h5>
-                        <p class="text-muted small mb-2">{% trans "Set per-ship estimated prices and disable individual hulls from the order form." %}</p>
+                        <p class="text-muted small mb-2">{% trans "Set per-ship manual overrides and disable individual hulls from the order form. Leave Manual Override blank to use the automated Forge contract estimate when available." %}</p>
                         <div class="table-responsive">
                             <table class="table table-sm align-middle">
                                 <thead>
@@ -235,7 +236,8 @@
                                         <th>{% trans "Disable" %}</th>
                                         <th>{% trans "Ship" %}</th>
                                         <th>{% trans "Group" %}</th>
-                                        <th>{% trans "Estimated Price (ISK)" %}</th>
+                                        <th>{% trans "Auto Estimate (ISK)" %}</th>
+                                        <th>{% trans "Manual Override (ISK)" %}</th>
                                         <th>{% trans "Notes" %}</th>
                                     </tr>
                                 </thead>
@@ -253,14 +255,27 @@
                                         <td>{{ row.type_name }} <span class="text-muted">({{ row.type_id }})</span></td>
                                         <td>{{ row.ship_class_label }} <span class="text-muted">({{ row.ship_class }})</span></td>
                                         <td>
+                                            {% if row.auto_estimated_price %}
+                                            <div>{{ row.auto_estimated_price|floatformat:2|intcomma }}</div>
+                                            {% if row.auto_estimated_contract_count %}
+                                            <div class="small text-muted">
+                                                {% blocktranslate count count=row.auto_estimated_contract_count %}{{ count }} matching contract{% plural %}{{ count }} matching contracts{% endblocktranslate %}
+                                            </div>
+                                            {% endif %}
+                                            {% else %}
+                                            <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
                                             <input
                                                 type="text"
                                                 inputmode="decimal"
                                                 class="form-control form-control-sm js-isk-format"
                                                 name="estimated_price_{{ row.type_id }}"
-                                                value="{{ row.estimated_price|default_if_none:'' }}">
+                                                value="{{ row.manual_estimated_price|default_if_none:'' }}">
                                         </td>
                                         <td class="small text-muted">
+                                            {% if not row.auto_estimated_price %}{% trans "Blank manual override falls back to the group default." %} {% else %}{% trans "Blank manual override uses the automated estimate." %} {% endif %}
                                             {% if row.is_disabled_group %}{% trans "Group currently hidden" %}.{% endif %}
                                             {% if row.is_custom %}{% trans "Custom ship entry" %}.{% endif %}
                                             {% if not row.custom_enabled %}{% trans "Custom row is disabled" %}.{% endif %}
@@ -283,7 +298,7 @@
                                 <i class="fas fa-plus me-1"></i>{% trans "Add Custom Ship" %}
                             </button>
                         </div>
-                        <p class="text-muted small mb-2">{% trans "Use this to add new hulls or new ship groups to the capital order menu." %}</p>
+                        <p class="text-muted small mb-2">{% trans "Use this to add new hulls or new ship groups to the capital order menu. Leave Manual Override blank to use the automated Forge contract estimate when available." %}</p>
                         <div class="table-responsive">
                             <table class="table table-sm align-middle" id="customShipTable">
                                 <thead>
@@ -292,7 +307,8 @@
                                         <th>{% trans "Ship Name" %}</th>
                                         <th>{% trans "Group Key" %}</th>
                                         <th>{% trans "Group Label" %}</th>
-                                        <th>{% trans "Estimated Price (ISK)" %}</th>
+                                        <th>{% trans "Auto Estimate (ISK)" %}</th>
+                                        <th>{% trans "Manual Override (ISK)" %}</th>
                                         <th>{% trans "Menu State" %}</th>
                                         <th></th>
                                     </tr>
@@ -304,7 +320,19 @@
                                         <td><input type="text" name="custom_ship_type_name" class="form-control form-control-sm" value="{{ row.type_name }}"></td>
                                         <td><input type="text" name="custom_ship_class" class="form-control form-control-sm" value="{{ row.ship_class }}" placeholder="super"></td>
                                         <td><input type="text" name="custom_ship_class_label" class="form-control form-control-sm" value="{{ row.ship_class_label }}" placeholder="Supercapital"></td>
-                                        <td><input type="text" inputmode="decimal" name="custom_ship_estimated_price" class="form-control form-control-sm js-isk-format" value="{{ row.estimated_price|default_if_none:'' }}"></td>
+                                        <td>
+                                            {% if row.auto_estimated_price %}
+                                            <div>{{ row.auto_estimated_price|floatformat:2|intcomma }}</div>
+                                            {% if row.auto_estimated_contract_count %}
+                                            <div class="small text-muted">
+                                                {% blocktranslate count count=row.auto_estimated_contract_count %}{{ count }} matching contract{% plural %}{{ count }} matching contracts{% endblocktranslate %}
+                                            </div>
+                                            {% endif %}
+                                            {% else %}
+                                            <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td><input type="text" inputmode="decimal" name="custom_ship_estimated_price" class="form-control form-control-sm js-isk-format" value="{{ row.manual_estimated_price|default_if_none:'' }}"></td>
                                         <td>
                                             <select name="custom_ship_enabled" class="form-select form-select-sm">
                                                 <option value="true" {% if row.enabled %}selected{% endif %}>{% trans "Enabled" %}</option>
@@ -412,6 +440,7 @@
                 <td><input type="text" name="custom_ship_type_name" class="form-control form-control-sm"></td>
                 <td><input type="text" name="custom_ship_class" class="form-control form-control-sm" placeholder="super"></td>
                 <td><input type="text" name="custom_ship_class_label" class="form-control form-control-sm" placeholder="Supercapital"></td>
+                <td><span class="text-muted">-</span></td>
                 <td><input type="text" inputmode="decimal" name="custom_ship_estimated_price" class="form-control form-control-sm js-isk-format"></td>
                 <td>
                     <select name="custom_ship_enabled" class="form-select form-select-sm">

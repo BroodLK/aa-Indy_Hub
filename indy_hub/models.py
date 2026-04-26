@@ -2072,6 +2072,14 @@ class MaterialExchangeConfig(models.Model):
             "Per-ship estimated price overrides. Each row should define type_id and price_isk."
         ),
     )
+    capital_ship_auto_estimated_prices = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_(
+            "System-managed per-ship estimated prices from public contract data. "
+            "Each row should define type_id, price_isk, and optional metadata."
+        ),
+    )
 
     # Market group filters
     allowed_market_groups_buy = models.JSONField(
@@ -2393,6 +2401,65 @@ class MaterialExchangeConfig(models.Model):
                 continue
             normalized[type_id] = price_value
         return normalized
+
+    def get_capital_ship_auto_estimate_rows(self) -> list[dict[str, object]]:
+        raw_rows = list(getattr(self, "capital_ship_auto_estimated_prices", []) or [])
+        normalized_by_type: dict[int, dict[str, object]] = {}
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                type_id = int(row.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0:
+                continue
+            try:
+                price_value = Decimal(str(row.get("price_isk") or "0")).quantize(
+                    Decimal("0.01")
+                )
+            except Exception:
+                continue
+            if price_value <= 0:
+                continue
+
+            normalized: dict[str, object] = {
+                "type_id": type_id,
+                "price_isk": price_value,
+            }
+            try:
+                contract_count = int(row.get("contract_count") or 0)
+            except (TypeError, ValueError):
+                contract_count = 0
+            if contract_count > 0:
+                normalized["contract_count"] = contract_count
+
+            updated_at = str(row.get("updated_at") or "").strip()
+            if updated_at:
+                normalized["updated_at"] = updated_at
+
+            normalized_by_type[type_id] = normalized
+
+        return list(normalized_by_type.values())
+
+    def get_capital_ship_auto_estimate_row_map(self) -> dict[int, dict[str, object]]:
+        return {
+            int(row["type_id"]): row
+            for row in self.get_capital_ship_auto_estimate_rows()
+            if int(row.get("type_id") or 0) > 0
+        }
+
+    def get_capital_ship_auto_estimated_price_map(self) -> dict[int, Decimal]:
+        return {
+            int(type_id): Decimal(str(row.get("price_isk")))
+            for type_id, row in self.get_capital_ship_auto_estimate_row_map().items()
+            if row.get("price_isk") is not None
+        }
+
+    def get_capital_ship_effective_estimated_price_map(self) -> dict[int, Decimal]:
+        auto_map = self.get_capital_ship_auto_estimated_price_map()
+        manual_map = self.get_capital_ship_estimated_price_map()
+        return {**auto_map, **manual_map}
 
 
 class MaterialExchangeItemPriceOverride(models.Model):
