@@ -5654,7 +5654,7 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
  * @returns {string} Formatted price string
  */
 function formatPrice(num) {
-    return num.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ISK';
+    return num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ISK';
 }
 
 /**
@@ -5663,7 +5663,7 @@ function formatPrice(num) {
  * @returns {string} Formatted number string
  */
 function formatNumber(num) {
-    return num.toLocaleString('de-DE', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    return num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
 /**
