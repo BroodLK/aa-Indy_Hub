@@ -1284,15 +1284,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
             "esi-contracts.read_corporation_contracts.v1",
         )
 
-        has_cached_contracts = ESIContract.objects.filter(
-            corporation_id=corporation_id
-        ).exists()
-
         # Fetch contracts from ESI
         contracts = shared_client.fetch_corporation_contracts(
             corporation_id=corporation_id,
             character_id=character_id,
-            force_refresh=not has_cached_contracts,
+            force_refresh=True,
         )
         if not isinstance(contracts, list):
             logger.warning(
@@ -1316,9 +1312,19 @@ def _sync_contracts_for_corporation(corporation_id: int):
         )
         return
     except ESIUnmodifiedError:
-        logger.debug(
-            "Contracts not modified for corporation %s; skipping sync",
+        cached_contracts = ESIContract.objects.filter(corporation_id=corporation_id)
+        cached_count = cached_contracts.count()
+        last_synced = (
+            cached_contracts.order_by("-last_synced")
+            .values_list("last_synced", flat=True)
+            .first()
+        )
+        logger.info(
+            "Contracts not modified for corporation %s; keeping cached snapshot "
+            "(rows=%s, last_synced=%s)",
             corporation_id,
+            cached_count,
+            last_synced,
         )
         return
     except ESIRateLimitError as exc:
@@ -5268,30 +5274,37 @@ def check_completed_material_exchange_contracts():
     )
 
     try:
-        has_cached_contracts = ESIContract.objects.filter(
-            corporation_id=config.corporation_id
-        ).exists()
         contracts = shared_client.fetch_corporation_contracts(
             corporation_id=config.corporation_id,
             character_id=_get_character_for_scope(
                 config.corporation_id,
                 "esi-contracts.read_corporation_contracts.v1",
             ),
-            force_refresh=not has_cached_contracts,
+            force_refresh=True,
         )
     except ESIUnmodifiedError:
-        contracts = list(
-            ESIContract.objects.filter(corporation_id=config.corporation_id).values(
-                "contract_id",
-                "status",
-            )
+        cached_contracts = ESIContract.objects.filter(
+            corporation_id=config.corporation_id
         )
+        last_synced = (
+            cached_contracts.order_by("-last_synced")
+            .values_list("last_synced", flat=True)
+            .first()
+        )
+        contracts = list(cached_contracts.values("contract_id", "status"))
         if not contracts:
             logger.debug(
                 "Contracts not modified for corporation %s; no cached contracts available",
                 config.corporation_id,
             )
             return
+        logger.info(
+            "Contracts not modified for corporation %s; using cached snapshot "
+            "for completion check (rows=%s, last_synced=%s)",
+            config.corporation_id,
+            len(contracts),
+            last_synced,
+        )
     except ESIRateLimitError as exc:
         delay = get_retry_after_seconds(exc)
         logger.warning(

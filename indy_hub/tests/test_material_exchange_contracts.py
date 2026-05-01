@@ -33,6 +33,7 @@ from indy_hub.tasks.material_exchange_contracts import (
     check_completed_material_exchange_contracts,
     handle_material_exchange_buy_order_created,
     handle_material_exchange_sell_order_created,
+    sync_esi_contracts,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
 )
@@ -206,6 +207,42 @@ class ContractValidationTaskTest(TestCase):
             quantity=1000,
             unit_price=5.5,
             total_price=5500,
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    def test_sync_esi_contracts_forces_refresh_when_cache_exists(
+        self, mock_client, mock_get_char
+    ):
+        """Corp contract sync should bypass stale local cache on scheduled runs."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        ESIContract.objects.create(
+            contract_id=9001,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=1,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=0,
+            status="outstanding",
+            title="INDY-OLD",
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+            price=0,
+            reward=0,
+            collateral=0,
+        )
+        mock_get_char.return_value = 111111111
+        mock_client.fetch_corporation_contracts.return_value = []
+
+        sync_esi_contracts()
+
+        mock_client.fetch_corporation_contracts.assert_called_once_with(
+            corporation_id=self.config.corporation_id,
+            character_id=111111111,
+            force_refresh=True,
         )
 
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
@@ -1019,6 +1056,42 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertEqual(
             admin_message,
             f"Contract for {self.buy_order.buyer.username} has completed.",
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    def test_check_completed_contracts_forces_refresh_when_cache_exists(
+        self, mock_client, mock_get_char
+    ):
+        """Completion checks should refresh corp contracts even when cached rows exist."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        ESIContract.objects.create(
+            contract_id=9002,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=1,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=0,
+            status="finished",
+            title="INDY-OLD-COMPLETE",
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+            price=0,
+            reward=0,
+            collateral=0,
+        )
+        mock_get_char.return_value = 222222222
+        mock_client.fetch_corporation_contracts.return_value = []
+
+        check_completed_material_exchange_contracts()
+
+        mock_client.fetch_corporation_contracts.assert_called_once_with(
+            corporation_id=self.config.corporation_id,
+            character_id=222222222,
+            force_refresh=True,
         )
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")

@@ -451,24 +451,19 @@ class ESIClient:
                 f"ESI operation {resource}.{operation} is not available"
             ) from exc
 
-        request_kwargs = {}
-        if force_refresh:
-            request_kwargs["If-None-Match"] = ""
-
         try:
-            result_obj = operation_fn(
-                **params, token=token_obj, **request_kwargs
-            )
+            result_obj = operation_fn(**params, token=token_obj)
             # When ESI returns 304, django-esi will handle it and return cached data
             # if use_etag is True (default). We call results() to get either fresh or cached data.
-            payload = result_obj.results()
+            payload = result_obj.results(
+                force_refresh=force_refresh,
+                use_cache=not force_refresh,
+            )
         except HTTPNotModified:
             # 304 means data hasn't changed. Try to get cached data from django-esi.
             # According to django-esi docs, calling results() after 304 should return cached data.
             try:
-                result_obj = operation_fn(
-                    **params, token=token_obj, **request_kwargs
-                )
+                result_obj = operation_fn(**params, token=token_obj)
                 payload = result_obj.results(use_cache=True)
             except Exception as cache_exc:
                 logger.debug(
