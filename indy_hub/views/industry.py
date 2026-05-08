@@ -921,6 +921,7 @@ def _notify_blueprint_copy_request_providers(
     *,
     notification_title: str | None = None,
     notification_body: str | None = None,
+    notification_level: str = "info",
 ) -> None:
     """Notify eligible providers for a blueprint copy request.
 
@@ -944,8 +945,11 @@ def _notify_blueprint_copy_request_providers(
     resolved_title = notification_title or default_title
     resolved_body = notification_body or default_body
 
-    fulfill_queue_url = request.build_absolute_uri(
-        reverse("indy_hub:bp_copy_fulfill_requests")
+    fulfill_queue_path = reverse("indy_hub:bp_copy_fulfill_requests")
+    fulfill_queue_url = (
+        request.build_absolute_uri(fulfill_queue_path)
+        if request is not None
+        else (build_site_url(fulfill_queue_path) or fulfill_queue_path)
     )
     fulfill_label = _("Review copy requests")
 
@@ -970,7 +974,7 @@ def _notify_blueprint_copy_request_providers(
                 webhook.webhook_url,
                 resolved_title,
                 provider_body,
-                level="info",
+                level=notification_level,
                 link=fulfill_queue_url,
                 thumbnail_url=None,
                 embed_title=f"📘 {resolved_title}",
@@ -995,7 +999,7 @@ def _notify_blueprint_copy_request_providers(
         is_active=True,
     )
 
-    base_url = request.build_absolute_uri("/")
+    base_url = request.build_absolute_uri("/") if request is not None else None
     sent_to: set[int] = set()
     for owner in provider_users:
         if owner.id in sent_to:
@@ -1053,7 +1057,7 @@ def _notify_blueprint_copy_request_providers(
             owner,
             resolved_title,
             provider_body,
-            "info",
+            notification_level,
             link=fulfill_queue_url,
             link_label=fulfill_label,
         )

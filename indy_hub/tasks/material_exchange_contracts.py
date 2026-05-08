@@ -44,6 +44,7 @@ from django.contrib.auth.models import User
 from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -54,6 +55,7 @@ from allianceauth.services.hooks import get_extension_logger
 # AA Example App
 # Local
 from indy_hub.models import (
+    BlueprintCopyRequest,
     CapitalShipOrder,
     CapitalShipOrderEvent,
     CachedStructureName,
@@ -159,6 +161,45 @@ _BUY_ORDER_VALIDATION_SOURCE_STATUSES = (
 )
 _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
 _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
+_PENDING_REQUEST_REMINDER_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
+_PENDING_REQUEST_REMINDER_STAGES = (
+    ("day3", timedelta(days=3), _("3 days")),
+    ("day1", timedelta(hours=24), _("24 hours")),
+)
+
+
+def _claim_pending_request_reminder_stage(
+    reminder_kind: str,
+    entity_id: int,
+    *,
+    created_at,
+    now=None,
+) -> tuple[str, object] | None:
+    if created_at is None:
+        return None
+
+    current_time = now or timezone.now()
+    elapsed = current_time - created_at
+    for stage_key, threshold, elapsed_label in _PENDING_REQUEST_REMINDER_STAGES:
+        if elapsed < threshold:
+            continue
+
+        cache_key = (
+            f"indy_hub:pending_request_reminder:{reminder_kind}:{int(entity_id)}:{stage_key}"
+        )
+        if cache.add(
+            cache_key,
+            current_time.timestamp(),
+            _PENDING_REQUEST_REMINDER_SENT_TTL_SECONDS,
+        ):
+            return stage_key, elapsed_label
+        return None
+
+    return None
+
+
+def _pending_request_reminder_level(stage_key: str) -> str:
+    return "warning" if str(stage_key or "").strip().lower() == "day3" else "info"
 
 
 def _build_contract_state_webhook_line(
@@ -1222,6 +1263,149 @@ def auto_progress_reprocessing_requests() -> None:
             )
 
 
+def send_capital_order_waiting_reminders() -> None:
+    orders = (
+        CapitalShipOrder.objects.filter(status=CapitalShipOrder.Status.WAITING)
+        .select_related("requester")
+        .order_by("created_at")
+    )
+    for order in orders:
+        if (
+            int(getattr(order, "gathering_materials_by_id", 0) or 0) > 0
+            or int(getattr(order, "in_production_by_id", 0) or 0) > 0
+            or getattr(order, "offer_updated_at", None) is not None
+            or getattr(order, "user_offer_confirmed_at", None) is not None
+            or getattr(order, "agreement_locked_at", None) is not None
+        ):
+            continue
+
+        claimed_stage = _claim_pending_request_reminder_stage(
+            "capital_order_waiting",
+            int(order.id),
+            created_at=getattr(order, "created_at", None),
+        )
+        if not claimed_stage:
+            continue
+
+        stage_key, elapsed_label = claimed_stage
+        _notify_capital_order_managers(
+            order,
+            _("Capital Order Waiting Reminder"),
+            _(
+                "Capital order %(reference)s has been waiting without manager action for %(elapsed)s.\n"
+                "User: %(user)s\n"
+                "Hull: %(hull)s\n"
+                "Current status: %(status)s"
+            )
+            % {
+                "reference": order.order_reference,
+                "elapsed": elapsed_label,
+                "user": order.requester.username,
+                "hull": order.ship_type_name,
+                "status": order.get_status_display(),
+            },
+            level=_pending_request_reminder_level(stage_key),
+            link="/indy_hub/material-exchange/capital-orders/admin/",
+        )
+
+
+def send_reprocessing_request_waiting_reminders() -> None:
+    requests = (
+        ReprocessingServiceRequest.objects.filter(
+            status__in=[
+                ReprocessingServiceRequest.Status.REQUEST_SUBMITTED,
+                ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            ],
+            inbound_contract_id__isnull=True,
+            inbound_contract_verified_at__isnull=True,
+            return_contract_id__isnull=True,
+            return_contract_verified_at__isnull=True,
+        )
+        .select_related("requester", "processor_user", "processor_profile")
+        .order_by("created_at")
+    )
+    for service_request in requests:
+        claimed_stage = _claim_pending_request_reminder_stage(
+            "reprocessing_request_waiting",
+            int(service_request.id),
+            created_at=getattr(service_request, "created_at", None),
+        )
+        if not claimed_stage:
+            continue
+
+        stage_key, elapsed_label = claimed_stage
+        detail_link = reverse(
+            "indy_hub:reprocessing_request_detail",
+            args=[int(service_request.id)],
+        )
+        notify_user(
+            service_request.processor_user,
+            _("Reprocessing Request Pending Reminder"),
+            _(
+                "Reprocessing request %(reference)s has had no follow-up action for %(elapsed)s.\n"
+                "Requester: %(requester)s\n"
+                "Current status: %(status)s"
+            )
+            % {
+                "reference": service_request.request_reference,
+                "elapsed": elapsed_label,
+                "requester": (
+                    service_request.requester_character_name
+                    or service_request.requester.username
+                ),
+                "status": service_request.get_status_display(),
+            },
+            level=_pending_request_reminder_level(stage_key),
+            link=detail_link,
+            link_label=_("Open processing queue"),
+        )
+
+
+def send_blueprint_copy_request_waiting_reminders() -> None:
+    from indy_hub.views.industry import _notify_blueprint_copy_request_providers
+
+    requests = (
+        BlueprintCopyRequest.objects.filter(fulfilled=False)
+        .select_related("requested_by")
+        .prefetch_related("offers")
+        .order_by("created_at")
+    )
+    for copy_request in requests:
+        if copy_request.offers.exists():
+            continue
+
+        claimed_stage = _claim_pending_request_reminder_stage(
+            "blueprint_copy_request_waiting",
+            int(copy_request.id),
+            created_at=getattr(copy_request, "created_at", None),
+        )
+        if not claimed_stage:
+            continue
+
+        stage_key, elapsed_label = claimed_stage
+        _notify_blueprint_copy_request_providers(
+            None,
+            copy_request,
+            notification_title=_("Blueprint Copy Request Reminder"),
+            notification_body=_(
+                "%(username)s requested %(type_name)s (ME%(me)s, TE%(te)s).\n"
+                "Requested runs: %(runs)s\n"
+                "Requested copies: %(copies)s\n"
+                "No provider has responded for %(elapsed)s."
+            )
+            % {
+                "username": copy_request.requested_by.username,
+                "type_name": get_type_name(copy_request.type_id),
+                "me": copy_request.material_efficiency,
+                "te": copy_request.time_efficiency,
+                "runs": copy_request.runs_requested,
+                "copies": copy_request.copies_requested,
+                "elapsed": elapsed_label,
+            },
+            notification_level=_pending_request_reminder_level(stage_key),
+        )
+
+
 @shared_task(
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 2, "countdown": 5},
@@ -1257,7 +1441,10 @@ def run_material_exchange_cycle():
         # Step 4: process capital ship order workflow
         process_capital_ship_orders()
 
-        # Step 5: check completion/payment for approved orders
+        # Step 5: remind managers about untouched waiting capital orders
+        send_capital_order_waiting_reminders()
+
+        # Step 6: check completion/payment for approved orders
         check_completed_material_exchange_contracts()
     else:
         logger.info(
@@ -1266,11 +1453,17 @@ def run_material_exchange_cycle():
             material_exchange_has_config,
         )
 
-    # Step 6: sync character contracts used by active reprocessing requests
+    # Step 7: sync character contracts used by active reprocessing requests
     sync_reprocessing_character_contracts()
 
-    # Step 7: auto-process reprocessing request contracts
+    # Step 8: auto-process reprocessing request contracts
     auto_progress_reprocessing_requests()
+
+    # Step 9: remind on untouched reprocessing requests
+    send_reprocessing_request_waiting_reminders()
+
+    # Step 10: remind on untouched blueprint copy requests
+    send_blueprint_copy_request_waiting_reminders()
 
 
 def _sync_contracts_for_corporation(corporation_id: int):

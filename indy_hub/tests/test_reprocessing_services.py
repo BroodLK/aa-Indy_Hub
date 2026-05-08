@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import Permission, User
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -25,6 +26,7 @@ from indy_hub.models import (
 from indy_hub.tasks.material_exchange_contracts import (
     auto_progress_reprocessing_requests,
     run_material_exchange_cycle,
+    send_reprocessing_request_waiting_reminders,
     sync_reprocessing_character_contracts,
 )
 from indy_hub.services.reprocessing import (
@@ -1160,7 +1162,11 @@ class ReprocessingCycleExecutionTests(TestCase):
             "indy_hub.tasks.material_exchange_contracts.sync_reprocessing_character_contracts"
         ) as mock_sync_reprocessing, patch(
             "indy_hub.tasks.material_exchange_contracts.auto_progress_reprocessing_requests"
-        ) as mock_auto_progress:
+        ) as mock_auto_progress, patch(
+            "indy_hub.tasks.material_exchange_contracts.send_reprocessing_request_waiting_reminders"
+        ) as mock_reprocessing_reminders, patch(
+            "indy_hub.tasks.material_exchange_contracts.send_blueprint_copy_request_waiting_reminders"
+        ) as mock_blueprint_reminders:
             run_material_exchange_cycle()
 
         mock_sync_esi.assert_not_called()
@@ -1170,6 +1176,73 @@ class ReprocessingCycleExecutionTests(TestCase):
         mock_check_completed.assert_not_called()
         mock_sync_reprocessing.assert_called_once()
         mock_auto_progress.assert_called_once()
+        mock_reprocessing_reminders.assert_called_once()
+        mock_blueprint_reminders.assert_called_once()
+
+
+class ReprocessingWaitingReminderTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.requester = User.objects.create_user("reproc_wait_req", password="secret")
+        self.processor = User.objects.create_user("reproc_wait_proc", password="secret")
+        self.profile = ReprocessingServiceProfile.objects.create(
+            user=self.processor,
+            character_id=91030001,
+            character_name="Reminder Processor",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    def test_sends_24_hour_and_3_day_waiting_reminders(self, mock_notify_user):
+        first_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            requester_character_name="Requester One",
+            status=ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+        )
+        second_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            requester_character_name="Requester Two",
+            status=ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+        )
+        first_request.created_at = timezone.now() - timedelta(hours=25)
+        first_request.save(update_fields=["created_at"])
+        second_request.created_at = timezone.now() - timedelta(days=3, minutes=5)
+        second_request.save(update_fields=["created_at"])
+
+        send_reprocessing_request_waiting_reminders()
+        send_reprocessing_request_waiting_reminders()
+
+        self.assertEqual(mock_notify_user.call_count, 2)
+        messages = [str(call.args[2]) for call in mock_notify_user.call_args_list]
+        self.assertTrue(any("24 hours" in message for message in messages))
+        self.assertTrue(any("3 days" in message for message in messages))
+
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    def test_skips_waiting_reminder_after_inbound_contract_submission(self, mock_notify_user):
+        service_request = ReprocessingServiceRequest.objects.create(
+            requester=self.requester,
+            processor_profile=self.profile,
+            processor_user=self.processor,
+            processor_character_id=self.profile.character_id,
+            processor_character_name=self.profile.character_name,
+            status=ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT,
+            inbound_contract_id=712345678,
+        )
+        service_request.created_at = timezone.now() - timedelta(days=4)
+        service_request.save(update_fields=["created_at"])
+
+        send_reprocessing_request_waiting_reminders()
+
+        mock_notify_user.assert_not_called()
 
 
 class ReprocessingScopeWarningsViewTests(TestCase):
