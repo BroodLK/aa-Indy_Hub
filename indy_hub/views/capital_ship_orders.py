@@ -708,6 +708,26 @@ def _can_manage_capital_orders(user: User | None) -> bool:
     return bool(user and user.has_perm(_CAPITAL_MANAGER_PERMISSION))
 
 
+def _is_capital_order_requester(order: CapitalShipOrder, user: User | None) -> bool:
+    return bool(
+        user
+        and int(getattr(user, "id", 0) or 0) == int(getattr(order, "requester_id", 0) or 0)
+    )
+
+
+def _redirect_after_capital_order_action(request, *, default_route: str | None = None):
+    next_url = str(request.POST.get("next") or request.GET.get("next") or "").strip()
+    if next_url.startswith("/"):
+        return redirect(next_url)
+
+    if default_route:
+        return redirect(default_route)
+
+    if _can_manage_capital_orders(getattr(request, "user", None)):
+        return redirect("indy_hub:capital_ship_orders_admin")
+    return redirect("indy_hub:capital_ship_orders")
+
+
 def _resolve_locked_capital_manager_id(order: CapitalShipOrder) -> int:
     """Resolve the manager currently claiming this order."""
     try:
@@ -1146,6 +1166,95 @@ def _attach_user_display_fields(order: CapitalShipOrder) -> None:
         order.display_eta_label = _("Estimated ETA")
 
 
+def _iter_recent_capital_cancellation_events(order: CapitalShipOrder):
+    try:
+        recent_events = order.events.filter(
+            event_type__in=[
+                CapitalShipOrderEvent.EventType.STATUS_CHANGED,
+                CapitalShipOrderEvent.EventType.AUTO_CANCELLED_STATE_MISMATCH,
+            ]
+        ).order_by("-created_at", "-id")
+    except Exception:
+        return []
+    return recent_events[:30]
+
+
+def _get_latest_capital_cancellation_context(order: CapitalShipOrder) -> dict[str, object]:
+    valid_statuses = {
+        str(choice[0]).strip().lower() for choice in CapitalShipOrder.Status.choices
+    }
+    fallback_status = CapitalShipOrder.Status.WAITING
+
+    for event in _iter_recent_capital_cancellation_events(order):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        event_type = str(getattr(event, "event_type", "") or "").strip()
+
+        if event_type == CapitalShipOrderEvent.EventType.AUTO_CANCELLED_STATE_MISMATCH:
+            previous_status = str(payload.get("previous_status") or "").strip().lower()
+            if previous_status not in valid_statuses:
+                previous_status = fallback_status
+            if previous_status in _CAPITAL_TERMINAL_STATUSES:
+                previous_status = fallback_status
+            return {
+                "event_type": event_type,
+                "previous_status": previous_status,
+                "cancelled_by_role": "system",
+                "cancelled_by_user_id": 0,
+            }
+
+        new_status = str(payload.get("new_status") or "").strip().lower()
+        if new_status != CapitalShipOrder.Status.CANCELLED:
+            continue
+
+        previous_status = str(payload.get("previous_status") or "").strip().lower()
+        if previous_status not in valid_statuses or previous_status in _CAPITAL_TERMINAL_STATUSES:
+            previous_status = fallback_status
+
+        cancelled_by_user_id = int(
+            payload.get("cancelled_by_user_id")
+            or payload.get("changed_by_user_id")
+            or getattr(event, "actor_id", 0)
+            or 0
+        )
+        cancelled_by_role = str(
+            payload.get("cancelled_by_role") or payload.get("changed_by_role") or ""
+        ).strip().lower()
+        if not cancelled_by_role:
+            if cancelled_by_user_id > 0 and cancelled_by_user_id == int(order.requester_id):
+                cancelled_by_role = "requester"
+            elif cancelled_by_user_id > 0:
+                cancelled_by_role = "manager"
+            else:
+                cancelled_by_role = "unknown"
+
+        return {
+            "event_type": event_type,
+            "previous_status": previous_status,
+            "cancelled_by_role": cancelled_by_role,
+            "cancelled_by_user_id": cancelled_by_user_id,
+        }
+
+    return {
+        "event_type": "",
+        "previous_status": fallback_status,
+        "cancelled_by_role": "unknown",
+        "cancelled_by_user_id": 0,
+    }
+
+
+def _can_requester_reopen_cancelled_order(order: CapitalShipOrder, user: User | None) -> bool:
+    if not _is_capital_order_requester(order, user):
+        return False
+    if str(getattr(order, "status", "") or "").strip().lower() != CapitalShipOrder.Status.CANCELLED:
+        return False
+    cancel_context = _get_latest_capital_cancellation_context(order)
+    return (
+        str(cancel_context.get("cancelled_by_role") or "").strip().lower() == "requester"
+        and int(cancel_context.get("cancelled_by_user_id") or 0)
+        == int(getattr(user, "id", 0) or 0)
+    )
+
+
 def _load_latest_declined_offer_by_order(
     order_ids: list[int],
 ) -> dict[int, dict[str, object]]:
@@ -1245,6 +1354,11 @@ def capital_ship_orders(request):
     for order in my_orders:
         order.chat_trigger = _build_order_chat_trigger(order, viewer_role_public="buyer")
         _attach_user_display_fields(order)
+        order.can_requester_cancel = not order.is_terminal
+        order.can_requester_reopen = _can_requester_reopen_cancelled_order(
+            order,
+            request.user,
+        )
 
     ship_options_by_class: dict[str, list[dict[str, object]]] = {}
     ship_class_labels: dict[str, str] = {}
@@ -2411,10 +2525,18 @@ def _close_capital_order(
     target_status: str,
     action_label: str,
     task_name: str,
+    actor_role: str = "manager",
 ):
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    is_requester = _is_capital_order_requester(order, request.user)
+    if actor_role == "manager":
+        if not _require_order_update_access_as_manager(request, order):
+            return _redirect_after_capital_order_action(
+                request, default_route="indy_hub:capital_ship_orders_admin"
+            )
+    elif actor_role != "requester" or not is_requester:
+        messages.warning(request, "You cannot update this capital order.")
+        return _redirect_after_capital_order_action(request)
     current_status = str(order.status or "")
 
     if current_status == str(target_status):
@@ -2422,84 +2544,105 @@ def _close_capital_order(
             request,
             f"Order {order.order_reference} is already {action_label.lower()}.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(request)
 
     if current_status in _CAPITAL_TERMINAL_STATUSES:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed ({order.get_status_display()}).",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(request)
 
-    manager_name = str(getattr(request.user, "username", "") or "Manager").strip()
+    actor_name = str(getattr(request.user, "username", "") or "User").strip()
+    actor_label = "requester" if actor_role == "requester" else "manager"
     status_note = (
-        f"{action_label} by manager {manager_name} at "
+        f"{action_label} by {actor_label} {actor_name} at "
         f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
     )
     order.status = target_status
     order.anomaly_reason = ""
     _append_order_note(order, status_note)
-    order.save(update_fields=["status", "anomaly_reason", "notes", "updated_at"])
+    update_fields = ["status", "anomaly_reason", "notes", "updated_at"]
+    if target_status == CapitalShipOrder.Status.CANCELLED:
+        order.requester_preapproved_mismatch_since = None
+        update_fields.append("requester_preapproved_mismatch_since")
+    order.save(update_fields=update_fields)
+    event_payload = {
+        "new_status": target_status,
+        "previous_status": current_status,
+        "changed_by_role": actor_role,
+        "changed_by_user_id": int(getattr(request.user, "id", 0) or 0),
+    }
+    if target_status == CapitalShipOrder.Status.CANCELLED:
+        event_payload["cancelled_by_role"] = actor_role
+        event_payload["cancelled_by_user_id"] = int(getattr(request.user, "id", 0) or 0)
     _record_capital_event(
         order=order,
         event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED,
         actor=request.user,
-        payload={"new_status": target_status, "previous_status": current_status},
+        payload=event_payload,
     )
 
-    try:
-        from indy_hub.tasks.material_exchange_contracts import (
-            handle_capital_ship_order_closed_by_manager,
-        )
+    if actor_role == "manager":
+        try:
+            from indy_hub.tasks.material_exchange_contracts import (
+                handle_capital_ship_order_closed_by_manager,
+            )
 
-        handle_capital_ship_order_closed_by_manager.apply_async(
-            args=(int(order.id), str(target_status), int(request.user.id)),
-            countdown=1,
-            expires=300,
+            handle_capital_ship_order_closed_by_manager.apply_async(
+                args=(int(order.id), str(target_status), int(request.user.id)),
+                countdown=1,
+                expires=300,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to queue %s notification for capital order %s: %s",
+                task_name,
+                order.id,
+                exc,
+            )
+    else:
+        _create_chat_system_message(
+            order,
+            _(
+                "Requester cancelled the order. Status changed from %(previous_status)s to Cancelled."
+            )
+            % {
+                "previous_status": CapitalShipOrder.Status(current_status).label
+                if current_status in CapitalShipOrder.Status.values
+                else current_status.title(),
+            },
         )
-    except Exception as exc:
-        logger.warning(
-            "Failed to queue %s notification for capital order %s: %s",
-            task_name,
-            order.id,
-            exc,
+        _notify_capital_managers(
+            title=_("Capital Order Cancelled"),
+            body=_(
+                "%(requester)s cancelled capital order %(ref)s.\n"
+                "Hull: %(hull)s\n"
+                "Previous status: %(status)s"
+            )
+            % {
+                "requester": order.requester.username,
+                "ref": order.order_reference,
+                "hull": order.ship_type_name,
+                "status": current_status,
+            },
+            order=order,
+            level="info",
+            link="/indy_hub/material-exchange/capital-orders/admin/",
         )
 
     messages.success(
         request,
         f"Order {order.order_reference} marked as {action_label}.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(request)
 
 
 def _resolve_restore_status_for_cancelled_order(order: CapitalShipOrder) -> str:
-    valid_statuses = {
-        str(choice[0]).strip().lower() for choice in CapitalShipOrder.Status.choices
-    }
-    fallback_status = CapitalShipOrder.Status.WAITING
-    try:
-        status_events = order.events.filter(
-            event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED
-        ).order_by("-created_at", "-id")
-    except Exception:
-        return fallback_status
-
-    for event in status_events[:30]:
-        payload = event.payload or {}
-        if not isinstance(payload, dict):
-            continue
-        new_status = str(payload.get("new_status") or "").strip().lower()
-        if new_status != CapitalShipOrder.Status.CANCELLED:
-            continue
-        previous_status = str(payload.get("previous_status") or "").strip().lower()
-        if not previous_status:
-            continue
-        if previous_status in _CAPITAL_TERMINAL_STATUSES:
-            continue
-        if previous_status not in valid_statuses:
-            continue
-        return previous_status
-    return fallback_status
+    return str(
+        _get_latest_capital_cancellation_context(order).get("previous_status")
+        or CapitalShipOrder.Status.WAITING
+    )
 
 
 @login_required
@@ -2522,25 +2665,30 @@ def capital_ship_order_reject(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_cancel(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.cancel",
         request=request,
     )
+    order = get_object_or_404(CapitalShipOrder, id=order_id)
+    is_manager = _can_manage_capital_orders(request.user)
+    is_requester = _is_capital_order_requester(order, request.user)
+    if not is_manager and not is_requester:
+        messages.warning(request, "You cannot update this capital order.")
+        return _redirect_after_capital_order_action(request)
     return _close_capital_order(
         request,
         order_id=order_id,
         target_status=CapitalShipOrder.Status.CANCELLED,
         action_label="Cancelled",
         task_name="cancel",
+        actor_role="manager" if is_manager and not is_requester else "requester",
     )
 
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_uncancel(request, order_id: int):
     emit_view_analytics_event(
@@ -2548,20 +2696,29 @@ def capital_ship_order_uncancel(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    is_manager = _can_manage_capital_orders(request.user)
+    is_requester = _is_capital_order_requester(order, request.user)
+    if is_manager:
+        if not _require_order_update_access_as_manager(request, order):
+            return _redirect_after_capital_order_action(
+                request, default_route="indy_hub:capital_ship_orders_admin"
+            )
+    elif not _can_requester_reopen_cancelled_order(order, request.user):
+        messages.warning(request, "You cannot reopen this capital order.")
+        return _redirect_after_capital_order_action(request)
     current_status = str(order.status or "").strip().lower()
     if current_status != CapitalShipOrder.Status.CANCELLED:
         messages.warning(
             request,
             f"Order {order.order_reference} is not cancelled.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(request)
 
+    actor_role = "requester" if is_requester and not is_manager else "manager"
     restored_status = _resolve_restore_status_for_cancelled_order(order)
-    manager_name = str(getattr(request.user, "username", "") or "Manager").strip()
+    actor_name = str(getattr(request.user, "username", "") or "User").strip()
     status_note = (
-        f"Reopened from cancelled by manager {manager_name} at "
+        f"Reopened from cancelled by {actor_role} {actor_name} at "
         f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}; "
         f"restored to {restored_status}"
     )
@@ -2586,56 +2743,230 @@ def capital_ship_order_uncancel(request, order_id: int):
             "new_status": restored_status,
             "previous_status": CapitalShipOrder.Status.CANCELLED,
             "restored_from_cancelled": True,
+            "changed_by_role": actor_role,
+            "changed_by_user_id": int(getattr(request.user, "id", 0) or 0),
+        },
+    )
+    _create_chat_system_message(
+        order,
+        (
+            _(
+                "Order reopened by requester. Status restored from Cancelled to %(status)s."
+            )
+            if actor_role == "requester"
+            else _(
+                "Order reopened by admin. Status restored from Cancelled to %(status)s."
+            )
+        )
+        % {"status": order.get_status_display()},
+    )
+
+    if actor_role == "manager":
+        notify_user(
+            order.requester,
+            _("Capital Order Reopened"),
+            _(
+                "Order %(ref)s (%(hull)s) was reopened by %(manager)s and is now %(status)s."
+            )
+            % {
+                "ref": order.order_reference,
+                "hull": order.ship_type_name,
+                "manager": actor_name,
+                "status": order.get_status_display(),
+            },
+            level="info",
+            link="/indy_hub/material-exchange/capital-orders/",
+        )
+        _notify_capital_managers(
+            title=_("Capital Order Reopened"),
+            body=_(
+                "%(manager)s reopened capital order %(ref)s.\n"
+                "User: %(user)s\n"
+                "Hull: %(hull)s\n"
+                "Status: %(status)s"
+            )
+            % {
+                "manager": actor_name,
+                "ref": order.order_reference,
+                "user": order.requester.username,
+                "hull": order.ship_type_name,
+                "status": order.get_status_display(),
+            },
+            order=order,
+            level="info",
+            link="/indy_hub/material-exchange/capital-orders/admin/",
+        )
+    else:
+        _notify_capital_managers(
+            title=_("Capital Order Reopened"),
+            body=_(
+                "%(requester)s reopened capital order %(ref)s.\n"
+                "Hull: %(hull)s\n"
+                "Status: %(status)s"
+            )
+            % {
+                "requester": order.requester.username,
+                "ref": order.order_reference,
+                "hull": order.ship_type_name,
+                "status": order.get_status_display(),
+            },
+            order=order,
+            level="info",
+            link="/indy_hub/material-exchange/capital-orders/admin/",
+        )
+
+    messages.success(
+        request,
+        f"Order {order.order_reference} reopened to {order.get_status_display()}.",
+    )
+    return _redirect_after_capital_order_action(request)
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_manage_capital_orders")
+@require_POST
+def capital_ship_order_release_claim(request, order_id: int):
+    emit_view_analytics_event(
+        view_name="capital_ship_orders.release_claim",
+        request=request,
+    )
+    order = get_object_or_404(CapitalShipOrder, id=order_id)
+    if not _require_order_update_access_as_manager(request, order):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
+    if order.is_terminal:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is already closed.",
+        )
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
+
+    previous_status = str(getattr(order, "status", "") or "").strip().lower()
+    if previous_status not in {
+        CapitalShipOrder.Status.GATHERING_MATERIALS,
+        CapitalShipOrder.Status.IN_PRODUCTION,
+        CapitalShipOrder.Status.CONTRACT_CREATED,
+        CapitalShipOrder.Status.ANOMALY,
+    }:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is not currently claimed by a manager.",
+        )
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
+
+    current_manager_id = _resolve_locked_capital_manager_id(order)
+    if current_manager_id <= 0:
+        messages.warning(
+            request,
+            f"Order {order.order_reference} is not currently claimed by a manager.",
+        )
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
+
+    manager_name = str(getattr(request.user, "username", "") or "Manager").strip()
+    order.status = CapitalShipOrder.Status.WAITING
+    order.gathering_materials_by = None
+    order.gathering_materials_at = None
+    order.in_production_by = None
+    order.in_production_at = None
+    order.contract_created_at = None
+    order.esi_contract_id = None
+    order.definitive_eta_min_days = None
+    order.definitive_eta_max_days = None
+    order.definitive_eta_updated_at = None
+    order.definitive_eta_updated_by = None
+    order.anomaly_reason = ""
+    _append_order_note(
+        order,
+        (
+            f"Claim released by manager {manager_name} at "
+            f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}; "
+            f"status reset from {previous_status} to waiting"
+        ),
+    )
+    order.save(
+        update_fields=[
+            "status",
+            "gathering_materials_by",
+            "gathering_materials_at",
+            "in_production_by",
+            "in_production_at",
+            "contract_created_at",
+            "esi_contract_id",
+            "definitive_eta_min_days",
+            "definitive_eta_max_days",
+            "definitive_eta_updated_at",
+            "definitive_eta_updated_by",
+            "anomaly_reason",
+            "notes",
+            "updated_at",
+        ]
+    )
+    _record_capital_event(
+        order=order,
+        event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED,
+        actor=request.user,
+        payload={
+            "new_status": CapitalShipOrder.Status.WAITING,
+            "previous_status": previous_status,
+            "released_claim": True,
+            "released_by_user_id": int(getattr(request.user, "id", 0) or 0),
+            "changed_by_role": "manager",
+            "changed_by_user_id": int(getattr(request.user, "id", 0) or 0),
         },
     )
     _create_chat_system_message(
         order,
         _(
-            "Order reopened by admin. Status restored from Cancelled to %(status)s."
+            "Order claim released by %(manager)s. Status reset to Waiting."
         )
-        % {"status": order.get_status_display()},
+        % {"manager": manager_name},
     )
-
     notify_user(
         order.requester,
-        _("Capital Order Reopened"),
+        _("Capital Order Update"),
         _(
-            "Order %(ref)s (%(hull)s) was reopened by %(manager)s and is now %(status)s."
+            "Order %(ref)s (%(hull)s) was released back to the waiting queue by %(manager)s."
         )
         % {
             "ref": order.order_reference,
             "hull": order.ship_type_name,
             "manager": manager_name,
-            "status": order.get_status_display(),
         },
         level="info",
         link="/indy_hub/material-exchange/capital-orders/",
     )
     _notify_capital_managers(
-        title=_("Capital Order Reopened"),
+        title=_("Capital Order Claim Released"),
         body=_(
-            "%(manager)s reopened capital order %(ref)s.\n"
+            "%(manager)s released the claim on capital order %(ref)s.\n"
             "User: %(user)s\n"
-            "Hull: %(hull)s\n"
-            "Status: %(status)s"
+            "Hull: %(hull)s"
         )
         % {
             "manager": manager_name,
             "ref": order.order_reference,
             "user": order.requester.username,
             "hull": order.ship_type_name,
-            "status": order.get_status_display(),
         },
-        order=order,
+        order=None,
         level="info",
         link="/indy_hub/material-exchange/capital-orders/admin/",
     )
-
     messages.success(
         request,
-        f"Order {order.order_reference} reopened to {order.get_status_display()}.",
+        f"Order {order.order_reference} released back to Waiting.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 @login_required

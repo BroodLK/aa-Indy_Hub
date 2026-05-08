@@ -55,6 +55,7 @@ try:
         capital_ship_order_chat_decide,
         capital_ship_order_chat_history,
         capital_ship_order_chat_send,
+        capital_ship_order_release_claim,
         capital_ship_order_refresh_guideline,
         capital_ship_order_reject,
         capital_ship_order_set_definitive_eta,
@@ -81,6 +82,7 @@ except ModuleNotFoundError:
     capital_ship_order_refresh_guideline = _capital_orders_module_missing
     capital_ship_order_update_offer = _capital_orders_module_missing
     capital_ship_order_transfer_manager = _capital_orders_module_missing
+    capital_ship_order_release_claim = _capital_orders_module_missing
     capital_ship_orders_config = _capital_orders_module_missing
     capital_ship_order_set_definitive_eta = _capital_orders_module_missing
     capital_ship_order_reject = _capital_orders_module_missing
@@ -552,6 +554,11 @@ urlpatterns = [
         "material-exchange/capital-orders/<int:order_id>/transfer-manager/",
         capital_ship_order_transfer_manager,
         name="capital_ship_order_transfer_manager",
+    ),
+    path(
+        "material-exchange/capital-orders/<int:order_id>/release-claim/",
+        capital_ship_order_release_claim,
+        name="capital_ship_order_release_claim",
     ),
     path(
         "material-exchange/capital-orders/<int:order_id>/set-definitive-eta/",

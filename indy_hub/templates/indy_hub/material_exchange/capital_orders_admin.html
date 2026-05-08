@@ -204,6 +204,7 @@
                                     data-action-production="{% url 'indy_hub:capital_ship_order_set_in_production' order.id %}"
                                     data-action-offer="{% url 'indy_hub:capital_ship_order_update_offer' order.id %}"
                                     data-action-transfer="{% url 'indy_hub:capital_ship_order_transfer_manager' order.id %}"
+                                    data-action-release="{% url 'indy_hub:capital_ship_order_release_claim' order.id %}"
                                     data-action-definitive="{% url 'indy_hub:capital_ship_order_set_definitive_eta' order.id %}"
                                     data-action-cancel="{% url 'indy_hub:capital_ship_order_cancel' order.id %}"
                                     data-action-uncancel="{% url 'indy_hub:capital_ship_order_uncancel' order.id %}"
@@ -290,6 +291,16 @@
                                     {% csrf_token %}
                                     <button type="submit" class="btn btn-sm btn-warning">
                                         <i class="fas fa-industry me-1"></i>{% trans "Set In Production" %}
+                                    </button>
+                                </form>
+                                <form method="post" data-cap-action-form="release" class="d-inline d-none">
+                                    {% csrf_token %}
+                                    <button
+                                        type="submit"
+                                        class="btn btn-sm btn-outline-danger"
+                                        onclick="return confirm('{% trans "Release this claim and reset the order back to Waiting?" %}');"
+                                    >
+                                        <i class="fas fa-unlock me-1"></i>{% trans "Release Claim" %}
                                     </button>
                                 </form>
                                 <button type="button" class="btn btn-sm btn-outline-secondary d-none" data-cap-transfer-toggle>
@@ -492,6 +503,7 @@
             const formRefresh = modalEl.querySelector('[data-cap-action-form="refresh"]');
             const formGathering = modalEl.querySelector('[data-cap-action-form="gathering"]');
             const formProduction = modalEl.querySelector('[data-cap-action-form="production"]');
+            const formRelease = modalEl.querySelector('[data-cap-action-form="release"]');
             const formTransfer = modalEl.querySelector('[data-cap-action-form="transfer"]');
             const formOffer = modalEl.querySelector('[data-cap-action-form="offer"]');
             const formDefinitive = modalEl.querySelector('[data-cap-action-form="definitive"]');
@@ -608,6 +620,7 @@
                     setFormAction(formRefresh, triggerEl.dataset.actionRefresh);
                     setFormAction(formGathering, triggerEl.dataset.actionGathering);
                     setFormAction(formProduction, triggerEl.dataset.actionProduction);
+                    setFormAction(formRelease, triggerEl.dataset.actionRelease);
                     setFormAction(formTransfer, triggerEl.dataset.actionTransfer);
                     setFormAction(formOffer, triggerEl.dataset.actionOffer);
                     setFormAction(formDefinitive, triggerEl.dataset.actionDefinitive);
@@ -618,6 +631,7 @@
                     setVisible(reopenActionsSection, isCancelled);
                     setVisible(formGathering, !isTerminal && gatherStatuses.has(status));
                     setVisible(formProduction, !isTerminal && productionStatuses.has(status));
+                    setVisible(formRelease, !isTerminal && canTransfer);
                     setVisible(transferToggleButton, canTransfer);
                     setVisible(transferSection, false);
                     setVisible(definitiveSection, !isTerminal && definitiveStatuses.has(status));
@@ -626,6 +640,7 @@
                     setFormDisabled(formRefresh, isTerminal);
                     setFormDisabled(formGathering, isTerminal || !gatherStatuses.has(status));
                     setFormDisabled(formProduction, isTerminal || !productionStatuses.has(status));
+                    setFormDisabled(formRelease, isTerminal || !canTransfer);
                     setFormDisabled(formTransfer, isTerminal || !canTransfer);
                     setFormDisabled(formOffer, isTerminal);
                     setFormDisabled(formDefinitive, isTerminal || !definitiveStatuses.has(status));

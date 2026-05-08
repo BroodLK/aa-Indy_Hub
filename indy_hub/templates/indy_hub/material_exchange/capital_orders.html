@@ -126,6 +126,7 @@
                             <th>{% trans "Price" %}</th>
                             <th>{% trans "ETA" %}</th>
                             <th>{% trans "Chat" %}</th>
+                            <th>{% trans "Actions" %}</th>
                             <th class="text-end">{% trans "Updated" %}</th>
                         </tr>
                     </thead>
@@ -178,6 +179,35 @@
                                 </button>
                                 {% if order.chat_trigger.has_unread %}
                                 <span class="badge bg-warning text-dark ms-1">{% trans "New" %}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if order.can_requester_cancel %}
+                                <form method="post" action="{% url 'indy_hub:capital_ship_order_cancel' order.id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                    <button
+                                        type="submit"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        onclick="return confirm('{% trans "Cancel this capital order?" %}');"
+                                    >
+                                        <i class="fas fa-ban me-1"></i>{% trans "Cancel" %}
+                                    </button>
+                                </form>
+                                {% elif order.can_requester_reopen %}
+                                <form method="post" action="{% url 'indy_hub:capital_ship_order_uncancel' order.id %}" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                    <button
+                                        type="submit"
+                                        class="btn btn-sm btn-outline-warning"
+                                        onclick="return confirm('{% trans "Reopen this cancelled capital order?" %}');"
+                                    >
+                                        <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                                    </button>
+                                </form>
+                                {% else %}
+                                <span class="text-muted">-</span>
                                 {% endif %}
                             </td>
                             <td class="text-end">
