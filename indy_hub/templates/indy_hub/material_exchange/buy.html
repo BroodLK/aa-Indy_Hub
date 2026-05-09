@@ -65,6 +65,8 @@
         {% endif %}
 
         <div class="{% if stock_refreshing %}d-none{% endif %}">
+            <div id="buyMultibuyTopAlert" class="alert alert-warning py-2 px-3 small mb-3 d-none" role="status" aria-live="polite"></div>
+
             <div class="me-info-bar" role="status">
                 <i class="fas fa-clock" aria-hidden="true"></i>
                 <div class="me-info-bar-body">
@@ -168,6 +170,16 @@
                             <select id="buyMarketGroupFilter" class="form-select form-select-sm">
                                 <option value="">{% trans "All market groups" %}</option>
                             </select>
+                        </div>
+                        <div class="col-12 d-flex justify-content-end">
+                            <button
+                                type="button"
+                                class="btn btn-outline-info btn-sm"
+                                id="buyMultibuyModalBtn"
+                                data-bs-toggle="modal"
+                                data-bs-target="#buyMultibuyModal">
+                                <i class="fas fa-paste me-2"></i>{% trans "Paste Multibuy" %}
+                            </button>
                         </div>
                     </div>
                     <form method="post" id="purchaseForm">
@@ -398,6 +410,40 @@
         {% endif %}
 </div>
 
+<div class="modal fade" id="buyMultibuyModal" tabindex="-1" aria-labelledby="buyMultibuyModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="buyMultibuyModalLabel">
+                    <i class="fas fa-paste me-2"></i>{% trans "Paste Multibuy List" %}
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    {% trans "Paste an EVE multibuy list. Matching items from one hub location will be added to your current buy list." %}
+                </p>
+                <label class="form-label fw-semibold" for="buyMultibuyInput">{% trans "Multibuy lines" %}</label>
+                <textarea
+                    id="buyMultibuyInput"
+                    class="form-control"
+                    rows="8"
+                    placeholder="{% trans 'Examples: Tritanium 1000, Tritanium<tab>1000, or 1000 Tritanium' %}"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="buyMultibuySearchBtn"
+                    data-parse-url="{% url 'indy_hub:material_exchange_buy_multibuy_parse' %}">
+                    <i class="fas fa-search me-2"></i>{% trans "Search" %}
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const cleanUrl = new URL(window.location.href);
@@ -411,6 +457,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const buySortMode = document.getElementById('buySortMode');
     const buySortDirection = document.getElementById('buySortDirection');
     const buyMarketGroupFilter = document.getElementById('buyMarketGroupFilter');
+    const buyMultibuyTopAlert = document.getElementById('buyMultibuyTopAlert');
+    const buyMultibuyInput = document.getElementById('buyMultibuyInput');
+    const buyMultibuySearchBtn = document.getElementById('buyMultibuySearchBtn');
+    const buyMultibuyModalElement = document.getElementById('buyMultibuyModal');
     const invoiceItemsList = document.getElementById('itemsList');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
     const rowLocationIdsCache = new WeakMap();
@@ -900,6 +950,384 @@ document.addEventListener('DOMContentLoaded', function() {
         return correctedSelection;
     }
 
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function showBuyMultibuyTopAlert(level, lines) {
+        if (!buyMultibuyTopAlert) {
+            return;
+        }
+        const alertClass = level === 'success'
+            ? 'alert-success'
+            : level === 'warning'
+                ? 'alert-warning'
+                : 'alert-danger';
+        const entries = Array.isArray(lines) ? lines : [String(lines || '')];
+        buyMultibuyTopAlert.className = `alert ${alertClass} py-2 px-3 small mb-3`;
+        buyMultibuyTopAlert.innerHTML = entries
+            .filter(line => String(line || '').trim().length > 0)
+            .map(line => `<div>${escapeHtml(line)}</div>`)
+            .join('');
+        buyMultibuyTopAlert.classList.remove('d-none');
+    }
+
+    function hideBuyMultibuyTopAlert() {
+        if (!buyMultibuyTopAlert) {
+            return;
+        }
+        buyMultibuyTopAlert.classList.add('d-none');
+        buyMultibuyTopAlert.innerHTML = '';
+    }
+
+    function getSelectedItemRows() {
+        const selectedRows = [];
+        qtyInputs.forEach(input => {
+            const qty = parseInt(input.value, 10) || 0;
+            if (qty <= 0) {
+                return;
+            }
+            const row = input.closest('tr');
+            if (!row || row.dataset.rowKind !== 'item') {
+                return;
+            }
+            selectedRows.push(row);
+        });
+        return selectedRows;
+    }
+
+    function getImportRowInput(row) {
+        if (!row) {
+            return null;
+        }
+        return row.querySelector('.qty-input');
+    }
+
+    function getImportRowCapacity(row) {
+        const input = getImportRowInput(row);
+        if (!input || input.dataset.baseDisabled === '1') {
+            return 0;
+        }
+        const max = parseInt(input.dataset.max, 10) || 0;
+        const currentQty = parseInt(input.value, 10) || 0;
+        return Math.max(max - currentQty, 0);
+    }
+
+    function resolveImportCandidateLocationId(importItems, lockedLocationIds) {
+        const allowedLocationIds = lockedLocationIds && lockedLocationIds.size
+            ? new Set(lockedLocationIds)
+            : null;
+        const candidateScores = new Map();
+
+        importItems.forEach(item => {
+            const typeId = parseInt(item.type_id, 10) || 0;
+            const requestedQty = parseInt(item.quantity, 10) || 0;
+            if (typeId <= 0 || requestedQty <= 0) {
+                return;
+            }
+
+            const capacitiesByLocation = new Map();
+            itemRows.forEach(row => {
+                const rowTypeId = parseInt(row.dataset.typeId || '0', 10) || 0;
+                if (rowTypeId !== typeId) {
+                    return;
+                }
+                const capacity = getImportRowCapacity(row);
+                if (capacity <= 0) {
+                    return;
+                }
+
+                let rowLocationIds = getRowLocationIds(row);
+                if (allowedLocationIds && allowedLocationIds.size) {
+                    rowLocationIds = intersectSets(rowLocationIds, allowedLocationIds);
+                }
+                if (!rowLocationIds.size) {
+                    return;
+                }
+
+                rowLocationIds.forEach(locationId => {
+                    capacitiesByLocation.set(
+                        locationId,
+                        (capacitiesByLocation.get(locationId) || 0) + capacity
+                    );
+                });
+            });
+
+            capacitiesByLocation.forEach((capacity, locationId) => {
+                const existing = candidateScores.get(locationId) || {
+                    matchedTypes: 0,
+                    matchedQuantity: 0,
+                };
+                existing.matchedTypes += 1;
+                existing.matchedQuantity += Math.min(capacity, requestedQty);
+                candidateScores.set(locationId, existing);
+            });
+        });
+
+        let bestLocationId = null;
+        let bestScore = null;
+        candidateScores.forEach((score, locationId) => {
+            if (!bestScore) {
+                bestLocationId = locationId;
+                bestScore = score;
+                return;
+            }
+            if (score.matchedTypes > bestScore.matchedTypes) {
+                bestLocationId = locationId;
+                bestScore = score;
+                return;
+            }
+            if (score.matchedTypes === bestScore.matchedTypes) {
+                if (score.matchedQuantity > bestScore.matchedQuantity) {
+                    bestLocationId = locationId;
+                    bestScore = score;
+                    return;
+                }
+                if (
+                    score.matchedQuantity === bestScore.matchedQuantity
+                    && Number(locationId) < Number(bestLocationId)
+                ) {
+                    bestLocationId = locationId;
+                    bestScore = score;
+                }
+            }
+        });
+
+        return bestLocationId;
+    }
+
+    function getImportRowsForType(typeId, targetLocationId) {
+        return itemRows
+            .filter(row => {
+                const rowTypeId = parseInt(row.dataset.typeId || '0', 10) || 0;
+                if (rowTypeId !== typeId) {
+                    return false;
+                }
+                if (getImportRowCapacity(row) <= 0) {
+                    return false;
+                }
+                if (targetLocationId) {
+                    const rowLocationIds = getRowLocationIds(row);
+                    if (rowLocationIds.size > 0 && !rowLocationIds.has(targetLocationId)) {
+                        return false;
+                    }
+                }
+                return true;
+            })
+            .sort((leftRow, rightRow) => {
+                const leftDepth = splitContainerPath(leftRow.dataset.containerPath).length;
+                const rightDepth = splitContainerPath(rightRow.dataset.containerPath).length;
+                if (leftDepth !== rightDepth) {
+                    return leftDepth - rightDepth;
+                }
+                return (leftRow.dataset.typeName || '').localeCompare(
+                    rightRow.dataset.typeName || '',
+                    undefined,
+                    { sensitivity: 'base' }
+                );
+            });
+    }
+
+    function getCsrfToken() {
+        const tokenField = purchaseForm
+            ? purchaseForm.querySelector('input[name="csrfmiddlewaretoken"]')
+            : null;
+        return tokenField ? tokenField.value : '';
+    }
+
+    async function handleBuyMultibuyImport() {
+        if (!buyMultibuyInput || !buyMultibuySearchBtn) {
+            return;
+        }
+
+        const rawText = String(buyMultibuyInput.value || '').trim();
+        if (!rawText) {
+            showBuyMultibuyTopAlert('warning', '{% trans "Paste a multibuy list first." %}');
+            return;
+        }
+
+        const parseUrl = String(buyMultibuySearchBtn.dataset.parseUrl || '').trim();
+        if (!parseUrl) {
+            showBuyMultibuyTopAlert('danger', '{% trans "Multibuy import is not available right now." %}');
+            return;
+        }
+
+        hideBuyMultibuyTopAlert();
+
+        const originalButtonHtml = buyMultibuySearchBtn.innerHTML;
+        buyMultibuySearchBtn.disabled = true;
+        buyMultibuySearchBtn.innerHTML = `<i class="fas fa-spinner fa-spin me-2" aria-hidden="true"></i>{% trans "Searching" %}`;
+
+        try {
+            const response = await fetch(parseUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-CSRFToken': getCsrfToken(),
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({
+                    multibuy_text: rawText
+                })
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (_error) {
+                payload = {};
+            }
+
+            if (!response.ok || payload.ok === false) {
+                showBuyMultibuyTopAlert(
+                    'danger',
+                    payload.summary || '{% trans "Unable to parse the pasted multibuy list." %}'
+                );
+                return;
+            }
+
+            const importItems = Array.isArray(payload.items) ? payload.items : [];
+            if (!importItems.length) {
+                showBuyMultibuyTopAlert(
+                    'warning',
+                    '{% trans "No valid multibuy lines were found." %}'
+                );
+                return;
+            }
+
+            const selectedRows = getSelectedItemRows();
+            const lockedLocationIds = resolveLockedLocationIds(selectedRows);
+            const targetLocationId = resolveImportCandidateLocationId(
+                importItems,
+                lockedLocationIds
+            );
+            if (
+                selectedRows.length > 0
+                && lockedLocationIds
+                && lockedLocationIds.size > 0
+                && !targetLocationId
+            ) {
+                showBuyMultibuyTopAlert(
+                    'warning',
+                    [
+                        '{% trans "Your current order is already locked to a different hub location." %}',
+                    ]
+                );
+                return;
+            }
+
+            let addedLineCount = 0;
+            let addedQuantity = 0;
+            const partialItems = [];
+            const unavailableItems = [];
+
+            importItems.forEach(item => {
+                const typeId = parseInt(item.type_id, 10) || 0;
+                const requestedQty = parseInt(item.quantity, 10) || 0;
+                const typeName = String(item.type_name || `Type ${typeId}`);
+                if (typeId <= 0 || requestedQty <= 0) {
+                    return;
+                }
+
+                let remainingQty = requestedQty;
+                const candidateRows = getImportRowsForType(typeId, targetLocationId);
+                candidateRows.forEach(row => {
+                    if (remainingQty <= 0) {
+                        return;
+                    }
+                    const input = getImportRowInput(row);
+                    if (!input) {
+                        return;
+                    }
+                    const currentQty = parseInt(input.value, 10) || 0;
+                    const capacity = getImportRowCapacity(row);
+                    if (capacity <= 0) {
+                        return;
+                    }
+                    const addQty = Math.min(capacity, remainingQty);
+                    if (addQty <= 0) {
+                        return;
+                    }
+                    input.value = String(currentQty + addQty);
+                    remainingQty -= addQty;
+                    addedQuantity += addQty;
+                });
+
+                const importedQty = requestedQty - remainingQty;
+                if (importedQty > 0) {
+                    addedLineCount += 1;
+                }
+                if (importedQty <= 0) {
+                    unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                    return;
+                }
+                if (remainingQty > 0) {
+                    partialItems.push(
+                        `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
+                    );
+                }
+            });
+
+            updateInvoice();
+
+            if (buyMultibuyModalElement && window.bootstrap && window.bootstrap.Modal) {
+                const modalInstance = window.bootstrap.Modal.getInstance(buyMultibuyModalElement)
+                    || window.bootstrap.Modal.getOrCreateInstance(buyMultibuyModalElement);
+                modalInstance.hide();
+            }
+
+            const invalidLines = Array.isArray(payload.invalid_lines)
+                ? payload.invalid_lines
+                : [];
+            const alertLines = [];
+            const successLines = [
+                `${addedLineCount.toLocaleString()} {% trans "matched line(s) added totaling" %} ${addedQuantity.toLocaleString()} {% trans "unit(s)." %}`
+            ];
+            if (partialItems.length > 0) {
+                alertLines.push(
+                    '{% trans "Partially filled due to available stock:" %} '
+                    + partialItems.slice(0, 4).join(', ')
+                );
+            }
+            if (unavailableItems.length > 0) {
+                alertLines.push(
+                    '{% trans "Not available in the chosen hub location:" %} '
+                    + unavailableItems.slice(0, 4).join(', ')
+                );
+            }
+            if (invalidLines.length > 0) {
+                alertLines.push(
+                    '{% trans "Unparsed lines:" %} '
+                    + invalidLines.slice(0, 4).join(' | ')
+                );
+            }
+
+            if (alertLines.length > 0) {
+                showBuyMultibuyTopAlert('warning', alertLines);
+            } else if (addedLineCount > 0) {
+                showBuyMultibuyTopAlert('success', successLines);
+            } else {
+                showBuyMultibuyTopAlert(
+                    'warning',
+                    '{% trans "No imported items matched available stock." %}'
+                );
+            }
+        } catch (_error) {
+            showBuyMultibuyTopAlert(
+                'danger',
+                '{% trans "Unable to import the pasted multibuy list right now." %}'
+            );
+        } finally {
+            buyMultibuySearchBtn.disabled = false;
+            buyMultibuySearchBtn.innerHTML = originalButtonHtml;
+        }
+    }
+
     qtyInputs.forEach(input => {
         input.dataset.baseDisabled = input.disabled ? '1' : '0';
         const row = input.closest('tr');
@@ -1304,6 +1732,30 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert('{% trans "Some quantities exceeded available stock and have been adjusted." %}');
                 updateInvoice();
                 return false;
+            }
+        });
+    }
+
+    if (buyMultibuySearchBtn) {
+        buyMultibuySearchBtn.addEventListener('click', function() {
+            handleBuyMultibuyImport();
+        });
+    }
+
+    if (buyMultibuyInput) {
+        buyMultibuyInput.addEventListener('keydown', function(event) {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                handleBuyMultibuyImport();
+            }
+        });
+    }
+
+    if (buyMultibuyModalElement) {
+        buyMultibuyModalElement.addEventListener('shown.bs.modal', function() {
+            if (buyMultibuyInput) {
+                buyMultibuyInput.focus();
+                buyMultibuyInput.select();
             }
         });
     }

@@ -96,6 +96,7 @@ from .views.material_exchange import (
     material_exchange_approve_sell,
     material_exchange_assign_contract,
     material_exchange_buy,
+    material_exchange_buy_multibuy_parse,
     material_exchange_buy_stock_refresh_status,
     material_exchange_complete_buy,
     material_exchange_complete_sell,
@@ -105,6 +106,7 @@ from .views.material_exchange import (
     material_exchange_reject_buy,
     material_exchange_reject_sell,
     material_exchange_sell,
+    material_exchange_sell_multibuy_parse,
     material_exchange_sell_estimate,
     material_exchange_sell_assets_refresh_status,
     material_exchange_stats_history,
@@ -449,6 +451,11 @@ urlpatterns = [
         name="material_exchange_sell_assets_refresh_status",
     ),
     path(
+        "material-exchange/api/sell-multibuy-parse/",
+        material_exchange_sell_multibuy_parse,
+        name="material_exchange_sell_multibuy_parse",
+    ),
+    path(
         "material-exchange/api/sell-estimate/",
         material_exchange_sell_estimate,
         name="material_exchange_sell_estimate",
@@ -462,6 +469,11 @@ urlpatterns = [
         "material-exchange/api/buy-stock-refresh-status/",
         material_exchange_buy_stock_refresh_status,
         name="material_exchange_buy_stock_refresh_status",
+    ),
+    path(
+        "material-exchange/api/buy-multibuy-parse/",
+        material_exchange_buy_multibuy_parse,
+        name="material_exchange_buy_multibuy_parse",
     ),
     # User Order Management
     path(

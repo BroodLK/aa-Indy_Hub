@@ -65,6 +65,8 @@
         {% endif %}
 
         <div class="{% if assets_refreshing %}d-none{% endif %}">
+            <div id="sellMultibuyTopAlert" class="alert alert-warning py-2 px-3 small mb-3 d-none" role="status" aria-live="polite"></div>
+
             <div class="me-info-bar" role="status">
                 <i class="fas fa-clock" aria-hidden="true"></i>
                 <div class="me-info-bar-body">
@@ -169,6 +171,14 @@
                         <div class="d-flex flex-wrap gap-2">
                             <button type="button" class="btn btn-outline-success btn-sm" id="sellAllBtn">
                                 <i class="fas fa-check-double me-1"></i>{% trans "Sell all" %}
+                            </button>
+                            <button
+                                type="button"
+                                class="btn btn-outline-info btn-sm"
+                                id="sellMultibuyModalBtn"
+                                data-bs-toggle="modal"
+                                data-bs-target="#sellMultibuyModal">
+                                <i class="fas fa-paste me-2"></i>{% trans "Paste Sell List" %}
                             </button>
                         </div>
                     </div>
@@ -426,6 +436,40 @@
         {% endif %}
 </div>
 
+<div class="modal fade" id="sellMultibuyModal" tabindex="-1" aria-labelledby="sellMultibuyModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sellMultibuyModalLabel">
+                    <i class="fas fa-paste me-2"></i>{% trans "Paste Sell List" %}
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    {% trans "Paste a list of items you want to sell. Matching items at the current sell location will be added to this order." %}
+                </p>
+                <label class="form-label fw-semibold" for="sellMultibuyInput">{% trans "Sell list lines" %}</label>
+                <textarea
+                    id="sellMultibuyInput"
+                    class="form-control"
+                    rows="8"
+                    placeholder="{% trans 'Examples: Tritanium 1000, Tritanium<tab>1000, or 1000 Tritanium' %}"></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+                <button
+                    type="button"
+                    class="btn btn-success"
+                    id="sellMultibuySearchBtn"
+                    data-parse-url="{% url 'indy_hub:material_exchange_sell_multibuy_parse' %}">
+                    <i class="fas fa-search me-2"></i>{% trans "Search" %}
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const cleanUrl = new URL(window.location.href);
@@ -440,6 +484,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const sellSortMode = document.getElementById('sellSortMode');
     const sellSortDirection = document.getElementById('sellSortDirection');
     const sellMarketGroupFilter = document.getElementById('sellMarketGroupFilter');
+    const sellMultibuyTopAlert = document.getElementById('sellMultibuyTopAlert');
+    const sellMultibuyInput = document.getElementById('sellMultibuyInput');
+    const sellMultibuySearchBtn = document.getElementById('sellMultibuySearchBtn');
+    const sellMultibuyModalElement = document.getElementById('sellMultibuyModal');
     const invoiceItemsList = document.getElementById('itemsList');
     const sellLocationInput = document.querySelector('#sellForm input[name="sell_location_id"]');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
@@ -598,6 +646,41 @@ document.addEventListener('DOMContentLoaded', function() {
         sellLocationInput ? sellLocationInput.value : ''
     );
 
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function showSellMultibuyTopAlert(level, lines) {
+        if (!sellMultibuyTopAlert) {
+            return;
+        }
+        const alertClass = level === 'success'
+            ? 'alert-success'
+            : level === 'warning'
+                ? 'alert-warning'
+                : 'alert-danger';
+        const entries = Array.isArray(lines) ? lines : [String(lines || '')];
+        sellMultibuyTopAlert.className = `alert ${alertClass} py-2 px-3 small mb-3`;
+        sellMultibuyTopAlert.innerHTML = entries
+            .filter(line => String(line || '').trim().length > 0)
+            .map(line => `<div>${escapeHtml(line)}</div>`)
+            .join('');
+        sellMultibuyTopAlert.classList.remove('d-none');
+    }
+
+    function hideSellMultibuyTopAlert() {
+        if (!sellMultibuyTopAlert) {
+            return;
+        }
+        sellMultibuyTopAlert.classList.add('d-none');
+        sellMultibuyTopAlert.innerHTML = '';
+    }
+
     function getRowLocationIds(row) {
         if (!row) {
             return new Set();
@@ -625,6 +708,226 @@ document.addEventListener('DOMContentLoaded', function() {
         const row = input.closest('tr');
         const rowLocationIds = getRowLocationIds(row);
         return rowLocationIds.size > 0 && hasIntersection(rowLocationIds, activeSellLocationIds);
+    }
+
+    function getSellImportRowInput(row) {
+        if (!row) {
+            return null;
+        }
+        return row.querySelector('.qty-input');
+    }
+
+    function getSellImportRowCapacity(row) {
+        const input = getSellImportRowInput(row);
+        if (!input || input.disabled || input.dataset.baseDisabled === '1') {
+            return 0;
+        }
+        const max = parseInt(input.dataset.max, 10) || 0;
+        const currentQty = parseInt(input.value, 10) || 0;
+        return Math.max(max - currentQty, 0);
+    }
+
+    function getSellImportRowsForType(typeId) {
+        return itemRows
+            .filter(row => {
+                const rowTypeId = parseInt(row.dataset.typeId || '0', 10) || 0;
+                if (rowTypeId !== typeId) {
+                    return false;
+                }
+                const rowLocationIds = getRowLocationIds(row);
+                if (activeSellLocationIds.size > 0 && rowLocationIds.size > 0 && !hasIntersection(rowLocationIds, activeSellLocationIds)) {
+                    return false;
+                }
+                return getSellImportRowCapacity(row) > 0;
+            })
+            .sort((leftRow, rightRow) => {
+                const leftDepth = splitContainerPath(leftRow.dataset.containerPath).length;
+                const rightDepth = splitContainerPath(rightRow.dataset.containerPath).length;
+                if (leftDepth !== rightDepth) {
+                    return leftDepth - rightDepth;
+                }
+                return (leftRow.dataset.typeName || '').localeCompare(
+                    rightRow.dataset.typeName || '',
+                    undefined,
+                    { sensitivity: 'base' }
+                );
+            });
+    }
+
+    function getSellCsrfToken() {
+        const sellForm = document.getElementById('sellForm');
+        const tokenField = sellForm
+            ? sellForm.querySelector('input[name="csrfmiddlewaretoken"]')
+            : null;
+        return tokenField ? tokenField.value : '';
+    }
+
+    async function handleSellMultibuyImport() {
+        if (!sellMultibuyInput || !sellMultibuySearchBtn) {
+            return;
+        }
+
+        const rawText = String(sellMultibuyInput.value || '').trim();
+        if (!rawText) {
+            showSellMultibuyTopAlert('warning', '{% trans "Paste a sell list first." %}');
+            return;
+        }
+
+        const parseUrl = String(sellMultibuySearchBtn.dataset.parseUrl || '').trim();
+        if (!parseUrl) {
+            showSellMultibuyTopAlert('danger', '{% trans "Sell-list import is not available right now." %}');
+            return;
+        }
+
+        hideSellMultibuyTopAlert();
+
+        const originalButtonHtml = sellMultibuySearchBtn.innerHTML;
+        sellMultibuySearchBtn.disabled = true;
+        sellMultibuySearchBtn.innerHTML = `<i class="fas fa-spinner fa-spin me-2" aria-hidden="true"></i>{% trans "Searching" %}`;
+
+        try {
+            const response = await fetch(parseUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-CSRFToken': getSellCsrfToken(),
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({
+                    multibuy_text: rawText
+                })
+            });
+
+            let payload = {};
+            try {
+                payload = await response.json();
+            } catch (_error) {
+                payload = {};
+            }
+
+            if (!response.ok || payload.ok === false) {
+                showSellMultibuyTopAlert(
+                    'danger',
+                    payload.summary || '{% trans "Unable to parse the pasted sell list." %}'
+                );
+                return;
+            }
+
+            const importItems = Array.isArray(payload.items) ? payload.items : [];
+            if (!importItems.length) {
+                showSellMultibuyTopAlert(
+                    'warning',
+                    '{% trans "No valid sell-list lines were found." %}'
+                );
+                return;
+            }
+
+            let addedLineCount = 0;
+            let addedQuantity = 0;
+            const partialItems = [];
+            const unavailableItems = [];
+
+            importItems.forEach(item => {
+                const typeId = parseInt(item.type_id, 10) || 0;
+                const requestedQty = parseInt(item.quantity, 10) || 0;
+                const typeName = String(item.type_name || `Type ${typeId}`);
+                if (typeId <= 0 || requestedQty <= 0) {
+                    return;
+                }
+
+                let remainingQty = requestedQty;
+                const candidateRows = getSellImportRowsForType(typeId);
+                candidateRows.forEach(row => {
+                    if (remainingQty <= 0) {
+                        return;
+                    }
+                    const input = getSellImportRowInput(row);
+                    if (!input) {
+                        return;
+                    }
+                    const currentQty = parseInt(input.value, 10) || 0;
+                    const capacity = getSellImportRowCapacity(row);
+                    if (capacity <= 0) {
+                        return;
+                    }
+                    const addQty = Math.min(capacity, remainingQty);
+                    if (addQty <= 0) {
+                        return;
+                    }
+                    input.value = String(currentQty + addQty);
+                    remainingQty -= addQty;
+                    addedQuantity += addQty;
+                });
+
+                const importedQty = requestedQty - remainingQty;
+                if (importedQty > 0) {
+                    addedLineCount += 1;
+                }
+                if (importedQty <= 0) {
+                    unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                    return;
+                }
+                if (remainingQty > 0) {
+                    partialItems.push(
+                        `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
+                    );
+                }
+            });
+
+            updateInvoice();
+            updateAllContainerSelectionStates();
+
+            if (sellMultibuyModalElement && window.bootstrap && window.bootstrap.Modal) {
+                const modalInstance = window.bootstrap.Modal.getInstance(sellMultibuyModalElement)
+                    || window.bootstrap.Modal.getOrCreateInstance(sellMultibuyModalElement);
+                modalInstance.hide();
+            }
+
+            const invalidLines = Array.isArray(payload.invalid_lines)
+                ? payload.invalid_lines
+                : [];
+            const alertLines = [];
+            const successLines = [
+                `${addedLineCount.toLocaleString()} {% trans "matched line(s) added totaling" %} ${addedQuantity.toLocaleString()} {% trans "unit(s)." %}`
+            ];
+            if (partialItems.length > 0) {
+                alertLines.push(
+                    '{% trans "Partially filled due to available quantity:" %} '
+                    + partialItems.slice(0, 4).join(', ')
+                );
+            }
+            if (unavailableItems.length > 0) {
+                alertLines.push(
+                    '{% trans "Not available at this sell location:" %} '
+                    + unavailableItems.slice(0, 4).join(', ')
+                );
+            }
+            if (invalidLines.length > 0) {
+                alertLines.push(
+                    '{% trans "Unparsed lines:" %} '
+                    + invalidLines.slice(0, 4).join(' | ')
+                );
+            }
+
+            if (alertLines.length > 0) {
+                showSellMultibuyTopAlert('warning', alertLines);
+            } else if (addedLineCount > 0) {
+                showSellMultibuyTopAlert('success', successLines);
+            } else {
+                showSellMultibuyTopAlert(
+                    'warning',
+                    '{% trans "No imported items matched the current sell inventory." %}'
+                );
+            }
+        } catch (_error) {
+            showSellMultibuyTopAlert(
+                'danger',
+                '{% trans "Unable to import the pasted sell list right now." %}'
+            );
+        } finally {
+            sellMultibuySearchBtn.disabled = false;
+            sellMultibuySearchBtn.innerHTML = originalButtonHtml;
+        }
     }
 
     function rowMatchesSearch(row, query) {
@@ -988,6 +1291,30 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (sellMarketGroupFilter) {
         sellMarketGroupFilter.addEventListener('change', applyStockFilter);
+    }
+
+    if (sellMultibuySearchBtn) {
+        sellMultibuySearchBtn.addEventListener('click', function() {
+            handleSellMultibuyImport();
+        });
+    }
+
+    if (sellMultibuyInput) {
+        sellMultibuyInput.addEventListener('keydown', function(event) {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                handleSellMultibuyImport();
+            }
+        });
+    }
+
+    if (sellMultibuyModalElement) {
+        sellMultibuyModalElement.addEventListener('shown.bs.modal', function() {
+            if (sellMultibuyInput) {
+                sellMultibuyInput.focus();
+                sellMultibuyInput.select();
+            }
+        });
     }
 
     document.addEventListener('click', function(event) {

@@ -1109,6 +1109,156 @@ def material_exchange_buy_stock_refresh_status(request):
     return JsonResponse(state)
 
 
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@require_http_methods(["POST"])
+def material_exchange_buy_multibuy_parse(request):
+    """Parse pasted multibuy rows into normalized type IDs and quantities."""
+
+    emit_view_analytics_event(
+        view_name="material_exchange.buy_multibuy_parse",
+        request=request,
+    )
+
+    if not _is_material_exchange_enabled():
+        return JsonResponse(
+            {"ok": False, "summary": _("Buyback is disabled.")},
+            status=400,
+        )
+
+    config = _get_material_exchange_config()
+    if not config:
+        return JsonResponse(
+            {"ok": False, "summary": _("Buyback is not configured.")},
+            status=400,
+        )
+    if not bool(getattr(config, "buy_enabled", True)):
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _("Buy orders are currently disabled for this hub."),
+            },
+            status=400,
+        )
+
+    raw_text = str(request.POST.get("multibuy_text") or "").strip()
+    parsed_rows, invalid_lines = _parse_sell_estimate_input(raw_text)
+    if not parsed_rows:
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _(
+                    "No valid lines were detected. Use: item name <tab> qty, item name <space> qty, or qty <space> item name."
+                ),
+                "invalid_lines": invalid_lines,
+            },
+            status=400,
+        )
+
+    type_name_map = _get_type_name_map(
+        [int(row["type_id"]) for row in parsed_rows if int(row.get("type_id") or 0) > 0]
+    )
+    payload_rows = []
+    for row in parsed_rows:
+        type_id = int(row["type_id"])
+        payload_rows.append(
+            {
+                "type_id": type_id,
+                "type_name": str(type_name_map.get(type_id) or get_type_name(type_id)),
+                "quantity": int(row["quantity"]),
+            }
+        )
+
+    summary_parts = [
+        _("%(count)s valid line(s) parsed.") % {"count": len(payload_rows)},
+    ]
+    if invalid_lines:
+        summary_parts.append(
+            _("%(count)s line(s) could not be parsed.")
+            % {"count": len(invalid_lines)}
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "items": payload_rows,
+            "invalid_lines": invalid_lines,
+            "summary": " ".join(summary_parts),
+        }
+    )
+
+
+@login_required
+@indy_hub_permission_required("can_access_indy_hub")
+@require_http_methods(["POST"])
+def material_exchange_sell_multibuy_parse(request):
+    """Parse pasted sell-list rows into normalized type IDs and quantities."""
+
+    emit_view_analytics_event(
+        view_name="material_exchange.sell_multibuy_parse",
+        request=request,
+    )
+
+    if not _is_material_exchange_enabled():
+        return JsonResponse(
+            {"ok": False, "summary": _("Buyback is disabled.")},
+            status=400,
+        )
+
+    config = _get_material_exchange_config()
+    if not config:
+        return JsonResponse(
+            {"ok": False, "summary": _("Buyback is not configured.")},
+            status=400,
+        )
+
+    raw_text = str(request.POST.get("multibuy_text") or "").strip()
+    parsed_rows, invalid_lines = _parse_sell_estimate_input(raw_text)
+    if not parsed_rows:
+        return JsonResponse(
+            {
+                "ok": False,
+                "summary": _(
+                    "No valid lines were detected. Use: item name <tab> qty, item name <space> qty, or qty <space> item name."
+                ),
+                "invalid_lines": invalid_lines,
+            },
+            status=400,
+        )
+
+    type_name_map = _get_type_name_map(
+        [int(row["type_id"]) for row in parsed_rows if int(row.get("type_id") or 0) > 0]
+    )
+    payload_rows = []
+    for row in parsed_rows:
+        type_id = int(row["type_id"])
+        payload_rows.append(
+            {
+                "type_id": type_id,
+                "type_name": str(type_name_map.get(type_id) or get_type_name(type_id)),
+                "quantity": int(row["quantity"]),
+            }
+        )
+
+    summary_parts = [
+        _("%(count)s valid line(s) parsed.") % {"count": len(payload_rows)},
+    ]
+    if invalid_lines:
+        summary_parts.append(
+            _("%(count)s line(s) could not be parsed.")
+            % {"count": len(invalid_lines)}
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "items": payload_rows,
+            "invalid_lines": invalid_lines,
+            "summary": " ".join(summary_parts),
+        }
+    )
+
+
 def _get_group_map(type_ids: list[int]) -> dict[int, str]:
     """Return mapping type_id -> group name using Eve SDE if available."""
 
@@ -1597,6 +1747,18 @@ def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], lis
             if match:
                 item_part = str(match.group(1) or "").strip()
                 quantity = _parse_sell_estimate_positive_quantity(match.group(2))
+
+        if not item_part or quantity is None:
+            normalized_line = (
+                line.replace("\u00A0", " ")
+                .replace("\u202F", " ")
+                .replace("\u2009", " ")
+                .strip()
+            )
+            match = re.match(r"^([0-9][0-9\s,._']*)[ \t]+(.*\S)$", normalized_line)
+            if match:
+                quantity = _parse_sell_estimate_positive_quantity(match.group(1))
+                item_part = str(match.group(2) or "").strip()
 
         item_part = str(item_part or "").strip()
         if not item_part or quantity is None:
