@@ -245,6 +245,82 @@ class ContractValidationTaskTest(TestCase):
             force_refresh=True,
         )
 
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_sync_then_validate_buy_order_active_contract_without_indy_title(
+        self, mock_notify_multi, mock_notify_user, mock_client, mock_get_char
+    ):
+        """Active item-exchange contracts should validate buy orders even without an INDY title."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        buyer = User.objects.create_user(username="test_buyer_from_sync")
+        buy_order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=buyer,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+        )
+        buy_item = MaterialExchangeBuyOrderItem.objects.create(
+            order=buy_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=500,
+            unit_price=6.0,
+            total_price=3000,
+            stock_available_at_creation=1000,
+        )
+
+        buyer_char_id = 999999999
+        contract_id = 227079501
+        mock_get_char.return_value = 111111111
+        mock_client.fetch_corporation_contracts.return_value = [
+            {
+                "contract_id": contract_id,
+                "issuer_id": 0,
+                "issuer_corporation_id": self.config.corporation_id,
+                "assignee_id": buyer_char_id,
+                "type": "item_exchange",
+                "status": "outstanding",
+                "title": "BUY CONTRACT",
+                "start_location_id": self.config.structure_id,
+                "end_location_id": self.config.structure_id,
+                "price": buy_order.total_price,
+                "reward": 0,
+                "collateral": 0,
+                "date_issued": timezone.now(),
+                "date_expired": timezone.now() + timedelta(days=30),
+            }
+        ]
+        mock_client.fetch_corporation_contract_items.return_value = [
+            {
+                "record_id": 1,
+                "type_id": buy_item.type_id,
+                "quantity": buy_item.quantity,
+                "is_included": True,
+                "is_singleton": False,
+            }
+        ]
+
+        sync_esi_contracts()
+
+        self.assertTrue(ESIContract.objects.filter(contract_id=contract_id).exists())
+
+        with patch(
+            "indy_hub.tasks.material_exchange_contracts._get_user_character_ids",
+            return_value=[buyer_char_id],
+        ):
+            validate_material_exchange_buy_orders()
+
+        buy_order.refresh_from_db()
+        self.assertEqual(
+            buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
+        )
+        self.assertEqual(buy_order.esi_contract_id, contract_id)
+        mock_notify_user.assert_called()
+        mock_notify_multi.assert_called()
+
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
@@ -1190,6 +1266,56 @@ class BuyOrderValidationTaskTest(TestCase):
             admin_message,
             f"Contract from {sell_order.seller.username} has completed.",
         )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    def test_check_completed_sell_order_uses_esi_completion_timestamp(
+        self,
+        mock_client,
+        mock_get_char,
+        _mock_notify_admins,
+        _mock_notify_user,
+        _mock_log_sell_tx,
+    ):
+        """Sell completion should preserve ESI's completion timestamp when available."""
+        seller = User.objects.create_user(username="test_seller_completion_ts")
+        sell_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=seller,
+            status=MaterialExchangeSellOrder.Status.VALIDATED,
+            order_reference="INDY-SELL-COMPLETE-TS",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=sell_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1000,
+            unit_price=5.0,
+            total_price=5000,
+        )
+        completed_at = timezone.now() - timedelta(hours=2)
+        sell_order.esi_contract_id = 227079399
+        sell_order.save(update_fields=["esi_contract_id", "updated_at"])
+
+        mock_get_char.return_value = 999999999
+        mock_client.fetch_corporation_contracts.return_value = [
+            {
+                "contract_id": 227079399,
+                "status": "finished",
+                "date_completed": completed_at,
+            }
+        ]
+
+        check_completed_material_exchange_contracts()
+
+        sell_order.refresh_from_db()
+        self.assertEqual(
+            sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
+        )
+        self.assertEqual(sell_order.payment_verified_at, completed_at)
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")

@@ -1556,10 +1556,14 @@ def _sync_contracts_for_corporation(corporation_id: int):
             contract_type = str(contract_payload.get("type") or "").strip().lower()
             contract_title = contract_payload.get("title", "")
             contract_title_upper = str(contract_title or "").upper()
-            if not any(
+            is_tagged_contract = any(
                 marker in contract_title_upper
                 for marker in ("INDY", "REPROCESSING", "REPROC")
-            ):
+            )
+            # Keep all item-exchange contracts in cache so validation can detect
+            # newly-created buyback contracts even when the title/reference is
+            # missing or malformed.
+            if not (is_tagged_contract or contract_type == "item_exchange"):
                 continue
 
             indy_contracts_count += 1
@@ -1689,7 +1693,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
             )
 
     logger.info(
-        "Successfully synced %s INDY contracts (filtered from %s total) for corporation %s",
+        "Successfully synced %s relevant contracts (filtered from %s total) for corporation %s",
         indy_contracts_count,
         len(contracts),
         corporation_id,
@@ -5542,8 +5546,9 @@ def check_completed_material_exchange_contracts():
 
         # Contract completed successfully
         if contract_status in ["finished", "finished_issuer", "finished_contractor"]:
+            completed_at = contract.get("date_completed") or timezone.now()
             order.status = MaterialExchangeSellOrder.Status.COMPLETED
-            order.payment_verified_at = timezone.now()
+            order.payment_verified_at = completed_at
             order.save(
                 update_fields=[
                     "status",
