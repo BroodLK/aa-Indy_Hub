@@ -24,9 +24,9 @@
                 <p class="description mb-0">{% trans "Order one dread, carrier, or fax per request." %}</p>
             </div>
             <div class="d-flex gap-2">
-                {% if can_manage_capital_orders %}
+                {% if can_work_capital_orders %}
                 <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-warning">
-                    <i class="fas fa-list-check me-1"></i>{% trans "Manager Queue" %}
+                    <i class="fas fa-list-check me-1"></i>{% trans "Capital Queue" %}
                 </a>
                 {% endif %}
                 <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light">

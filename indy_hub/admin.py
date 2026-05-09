@@ -45,6 +45,8 @@ def _indy_hub_permission_label(permission):
         "can_access_indy_hub",
         "can_manage_corp_bp_requests",
         "can_manage_material_hub",
+        "can_manage_capital_orders",
+        "can_build_capital_orders",
     }
     if (
         permission.content_type.app_label == "indy_hub"

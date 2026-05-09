@@ -73,6 +73,7 @@ _VIEWER_TO_ROLE = {
     "seller": CapitalShipOrderChat.SenderRole.ADMIN,
 }
 _CAPITAL_MANAGER_PERMISSION = "indy_hub.can_manage_capital_orders"
+_CAPITAL_BUILDER_PERMISSION = "indy_hub.can_build_capital_orders"
 _PRE_PRODUCTION_STATUSES = {
     CapitalShipOrder.Status.WAITING,
 }
@@ -708,6 +709,22 @@ def _can_manage_capital_orders(user: User | None) -> bool:
     return bool(user and user.has_perm(_CAPITAL_MANAGER_PERMISSION))
 
 
+def _can_build_capital_orders(user: User | None) -> bool:
+    return bool(user and user.has_perm(_CAPITAL_BUILDER_PERMISSION))
+
+
+def _can_work_capital_orders(user: User | None) -> bool:
+    return bool(_can_manage_capital_orders(user) or _can_build_capital_orders(user))
+
+
+def _capital_staff_actor_role(user: User | None) -> str | None:
+    if _can_manage_capital_orders(user):
+        return "manager"
+    if _can_build_capital_orders(user):
+        return "worker"
+    return None
+
+
 def _is_capital_order_requester(order: CapitalShipOrder, user: User | None) -> bool:
     return bool(
         user
@@ -723,7 +740,7 @@ def _redirect_after_capital_order_action(request, *, default_route: str | None =
     if default_route:
         return redirect(default_route)
 
-    if _can_manage_capital_orders(getattr(request, "user", None)):
+    if _can_work_capital_orders(getattr(request, "user", None)):
         return redirect("indy_hub:capital_ship_orders_admin")
     return redirect("indy_hub:capital_ship_orders")
 
@@ -778,6 +795,17 @@ def _is_chat_locked_to_in_producer(order: CapitalShipOrder) -> bool:
     if manager_id <= 0:
         return False
     return str(getattr(order, "status", "") or "") not in _PRE_PRODUCTION_STATUSES
+
+
+def _is_capital_order_claimed_by_user(order: CapitalShipOrder, user: User | None) -> bool:
+    if not user:
+        return False
+    try:
+        return _resolve_locked_capital_manager_id(order) == int(
+            getattr(user, "id", 0) or 0
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _can_act_as_capital_manager_for_order(order: CapitalShipOrder, user: User) -> bool:
@@ -837,9 +865,34 @@ def _get_capital_manager_users() -> list[User]:
     )
 
 
+def _get_capital_worker_users() -> list[User]:
+    return list(
+        User.objects.filter(is_active=True)
+        .filter(
+            Q(
+                user_permissions__codename="can_manage_capital_orders",
+                user_permissions__content_type__app_label="indy_hub",
+            )
+            | Q(
+                groups__permissions__codename="can_manage_capital_orders",
+                groups__permissions__content_type__app_label="indy_hub",
+            )
+            | Q(
+                user_permissions__codename="can_build_capital_orders",
+                user_permissions__content_type__app_label="indy_hub",
+            )
+            | Q(
+                groups__permissions__codename="can_build_capital_orders",
+                groups__permissions__content_type__app_label="indy_hub",
+            )
+        )
+        .distinct()
+    )
+
+
 def _build_capital_manager_transfer_options() -> list[dict[str, object]]:
     options: list[dict[str, object]] = []
-    for manager in _get_capital_manager_users():
+    for manager in _get_capital_worker_users():
         main_character_name = _resolve_main_character_name(manager).strip()
         username = str(getattr(manager, "username", "") or "").strip()
         if main_character_name and username and main_character_name != username:
@@ -892,14 +945,54 @@ def _append_order_note(order: CapitalShipOrder, note: str) -> None:
 def _can_access_chat(order: CapitalShipOrder, user: User) -> bool:
     if int(getattr(user, "id", 0) or 0) == int(order.requester_id):
         return True
-    return _can_act_as_capital_manager_for_order(order, user)
+    if _can_manage_capital_orders(user):
+        return _can_act_as_capital_manager_for_order(order, user)
+    if _can_build_capital_orders(user):
+        return _is_capital_order_claimed_by_user(order, user)
+    return False
 
 
-def _require_order_update_access_as_manager(
-    request, order: CapitalShipOrder
-) -> bool:
-    if _can_act_as_capital_manager_for_order(order, request.user):
+def _can_update_claimed_capital_order(order: CapitalShipOrder, user: User | None) -> bool:
+    if _can_manage_capital_orders(user):
+        return _can_act_as_capital_manager_for_order(order, user)
+    if _can_build_capital_orders(user):
+        return _is_capital_order_claimed_by_user(order, user)
+    return False
+
+
+def _require_capital_queue_access(request) -> bool:
+    if _can_work_capital_orders(getattr(request, "user", None)):
         return True
+    messages.error(request, "You do not have the required Indy Hub permission.")
+    return False
+
+
+def _require_order_update_access_as_worker(
+    request,
+    order: CapitalShipOrder,
+    *,
+    allow_waiting_for_builders: bool = False,
+) -> bool:
+    if _can_manage_capital_orders(request.user):
+        if _can_act_as_capital_manager_for_order(order, request.user):
+            return True
+    elif _can_build_capital_orders(request.user):
+        if allow_waiting_for_builders and str(getattr(order, "status", "") or "").strip() == (
+            CapitalShipOrder.Status.WAITING
+        ):
+            return True
+        if _is_capital_order_claimed_by_user(order, request.user):
+            return True
+        if str(getattr(order, "status", "") or "").strip() == CapitalShipOrder.Status.WAITING:
+            messages.warning(
+                request,
+                f"Claim order {order.order_reference} before updating it.",
+            )
+            return False
+    else:
+        messages.warning(request, "You cannot update this capital order.")
+        return False
+
     locked_manager = _resolve_locked_capital_manager(order)
     locked_manager_name = str(getattr(locked_manager, "username", "") or "").strip()
     if locked_manager_name:
@@ -910,7 +1003,7 @@ def _require_order_update_access_as_manager(
     else:
         messages.warning(
             request,
-            f"Order {order.order_reference} is currently claimed by another manager.",
+            f"Order {order.order_reference} is currently claimed by another worker.",
         )
     return False
 
@@ -1421,6 +1514,7 @@ def capital_ship_orders(request):
         "ship_option_sections": ship_option_sections,
         "reason_choices": CapitalShipOrder.Reason.choices,
         "my_orders": my_orders,
+        "can_work_capital_orders": _can_work_capital_orders(request.user),
         "can_manage_capital_orders": request.user.has_perm(
             "indy_hub.can_manage_capital_orders"
         ),
@@ -1433,9 +1527,11 @@ def capital_ship_orders(request):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 def capital_ship_orders_admin(request):
     emit_view_analytics_event(view_name="capital_ship_orders.admin", request=request)
+
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
 
     include_completed = str(request.GET.get("include_completed") or "").strip() == "1"
 
@@ -1458,9 +1554,70 @@ def capital_ship_orders_admin(request):
         [int(order.id) for order in orders]
     )
     for order in orders:
+        order_status = str(getattr(order, "status", "") or "").strip().lower()
+        can_manage_order = _can_manage_capital_orders(
+            request.user
+        ) and _can_act_as_capital_manager_for_order(order, request.user)
+        is_claimed_by_user = _is_capital_order_claimed_by_user(order, request.user)
+        can_claim_waiting = order_status == CapitalShipOrder.Status.WAITING and (
+            can_manage_order or _can_build_capital_orders(request.user)
+        )
+        can_adjust_claimed = can_manage_order or is_claimed_by_user
+
         order.requester_main_character = _resolve_main_character_name(order.requester)
         order.chat_trigger = _build_order_chat_trigger(order, viewer_role_public="seller")
         order.can_access_chat_as_admin = _can_access_chat(order, request.user)
+        order.can_refresh_guideline = (not order.is_terminal) and (
+            can_manage_order or is_claimed_by_user
+        )
+        order.can_set_gathering_materials = can_claim_waiting
+        order.can_set_in_production = (
+            can_claim_waiting
+            or (
+                order_status == CapitalShipOrder.Status.GATHERING_MATERIALS
+                and can_adjust_claimed
+            )
+        )
+        order.can_update_offer = (not order.is_terminal) and can_adjust_claimed
+        order.can_transfer_claim = (
+            order_status
+            in {
+                CapitalShipOrder.Status.GATHERING_MATERIALS,
+                CapitalShipOrder.Status.IN_PRODUCTION,
+                CapitalShipOrder.Status.CONTRACT_CREATED,
+                CapitalShipOrder.Status.ANOMALY,
+            }
+            and can_adjust_claimed
+        )
+        order.can_release_claim = order.can_transfer_claim
+        order.can_set_definitive_eta = (
+            order_status
+            in {
+                CapitalShipOrder.Status.GATHERING_MATERIALS,
+                CapitalShipOrder.Status.IN_PRODUCTION,
+                CapitalShipOrder.Status.CONTRACT_CREATED,
+            }
+            and can_adjust_claimed
+        )
+        order.can_cancel_as_admin = (can_manage_order or is_claimed_by_user) and (
+            not order.is_terminal
+        )
+        order.can_uncancel_as_admin = (
+            order_status == CapitalShipOrder.Status.CANCELLED and can_manage_order
+        )
+        order.can_update_queue_order = any(
+            [
+                order.can_refresh_guideline,
+                order.can_set_gathering_materials,
+                order.can_set_in_production,
+                order.can_update_offer,
+                order.can_transfer_claim,
+                order.can_release_claim,
+                order.can_set_definitive_eta,
+                order.can_cancel_as_admin,
+                order.can_uncancel_as_admin,
+            ]
+        )
         _attach_user_display_fields(order)
         declined_offer = last_declined_by_order.get(int(order.id))
         order.last_declined_offer = declined_offer
@@ -1526,6 +1683,7 @@ def capital_ship_orders_admin(request):
     context = {
         "orders": orders,
         "include_completed": include_completed,
+        "can_manage_capital_orders": _can_manage_capital_orders(request.user),
         "capital_manager_transfer_options": _build_capital_manager_transfer_options(),
     }
     if auto_open_chat_id:
@@ -2030,48 +2188,64 @@ def capital_ship_orders_config(request):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_refresh_guideline(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.refresh_guideline",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    if not _require_order_update_access_as_worker(request, order):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     _refresh_guideline(order)
     messages.success(
         request,
         f"Estimate refreshed for order {order.order_reference}.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_set_gathering_materials(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.set_gathering_materials",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    if not _require_order_update_access_as_worker(
+        request,
+        order,
+        allow_waiting_for_builders=True,
+    ):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if order.status != CapitalShipOrder.Status.WAITING:
         messages.warning(
             request,
             f"Order {order.order_reference} is not in waiting status.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     order.status = CapitalShipOrder.Status.GATHERING_MATERIALS
     order.gathering_materials_by = request.user
@@ -2116,21 +2290,30 @@ def capital_ship_order_set_gathering_materials(request, order_id: int):
         request,
         f"Order {order.order_reference} moved to Gathering Materials.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_set_in_production(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.set_in_production",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    if not _require_order_update_access_as_worker(
+        request,
+        order,
+        allow_waiting_for_builders=True,
+    ):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     if order.status not in {
         CapitalShipOrder.Status.WAITING,
@@ -2140,7 +2323,9 @@ def capital_ship_order_set_in_production(request, order_id: int):
             request,
             f"Order {order.order_reference} is not in waiting or gathering materials status.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     previous_status = order.status
     order.status = CapitalShipOrder.Status.IN_PRODUCTION
@@ -2191,59 +2376,74 @@ def capital_ship_order_set_in_production(request, order_id: int):
         request,
         f"Order {order.order_reference} moved to In Production.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_transfer_manager(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.transfer_manager",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    if not _require_order_update_access_as_worker(request, order):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     current_manager_id = _resolve_locked_capital_manager_id(order)
     if current_manager_id <= 0:
         messages.warning(
             request,
-            f"Order {order.order_reference} is not currently claimed by a manager.",
+            f"Order {order.order_reference} is not currently claimed by a worker.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     target_manager_id = _parse_positive_int(
         request.POST.get("transfer_manager_user_id"),
         minimum=1,
     )
     if target_manager_id is None:
-        messages.error(request, "Select a capital manager to transfer this order.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        messages.error(request, "Select a capital worker to transfer this order.")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     manager_by_id = {
         int(user.id): user
-        for user in _get_capital_manager_users()
+        for user in _get_capital_worker_users()
     }
     target_manager = manager_by_id.get(int(target_manager_id))
     if target_manager is None:
-        messages.error(request, "Selected user is not an active capital order manager.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        messages.error(request, "Selected user cannot work capital orders.")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     if int(target_manager.id) == int(current_manager_id):
         messages.info(
             request,
             f"Order {order.order_reference} is already assigned to {target_manager.username}.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     previous_manager = _resolve_locked_capital_manager(order)
     previous_manager_name = str(getattr(previous_manager, "username", "") or "").strip()
@@ -2274,7 +2474,7 @@ def capital_ship_order_transfer_manager(request, order_id: int):
     _append_order_note(
         order,
         (
-            f"Order manager transferred from {from_text} to {to_text} by "
+            f"Order worker transferred from {from_text} to {to_text} by "
             f"{request.user.username} at {now_text}"
         ),
     )
@@ -2282,7 +2482,7 @@ def capital_ship_order_transfer_manager(request, order_id: int):
     _create_chat_system_message(
         order,
         _(
-            "Order manager transferred from %(from_manager)s to %(to_manager)s by %(actor)s."
+            "Order worker transferred from %(from_manager)s to %(to_manager)s by %(actor)s."
         )
         % {
             "from_manager": from_text,
@@ -2294,7 +2494,7 @@ def capital_ship_order_transfer_manager(request, order_id: int):
         order.requester,
         _("Capital Order Update"),
         _(
-            "Order %(ref)s was transferred to another capital manager."
+            "Order %(ref)s was transferred to another capital worker."
         )
         % {"ref": order.order_reference},
         level="info",
@@ -2319,27 +2519,34 @@ def capital_ship_order_transfer_manager(request, order_id: int):
         request,
         f"Order {order.order_reference} transferred to {target_manager_name}.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_update_offer(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.update_offer",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    if not _require_order_update_access_as_worker(request, order):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     offer_price = _quantize_isk((request.POST.get("offer_price_isk") or "").strip())
     offer_eta_min_days = _parse_positive_int(
@@ -2353,13 +2560,19 @@ def capital_ship_order_update_offer(request, order_id: int):
 
     if offer_price is None:
         messages.error(request, "Offer price must be a positive ISK value.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if offer_eta_min_days is None or offer_eta_max_days is None:
         messages.error(request, "Offer ETA min and max days are required.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if offer_eta_max_days < offer_eta_min_days:
         messages.error(request, "Offer ETA max days must be greater than or equal to min days.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     now = timezone.now()
     update_fields = [
@@ -2445,21 +2658,26 @@ def capital_ship_order_update_offer(request, order_id: int):
         request,
         f"Offer updated for order {order.order_reference}.",
     )
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_set_definitive_eta(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.set_definitive_eta",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
-        return redirect("indy_hub:capital_ship_orders_admin")
+    if not _require_order_update_access_as_worker(request, order):
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if order.status not in {
         CapitalShipOrder.Status.GATHERING_MATERIALS,
         CapitalShipOrder.Status.IN_PRODUCTION,
@@ -2469,16 +2687,22 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
             request,
             "Definitive ETA can only be set once work has started.",
         )
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     eta_min_days = _parse_positive_int(request.POST.get("definitive_eta_min_days"), minimum=1)
     eta_max_days = _parse_positive_int(request.POST.get("definitive_eta_max_days"), minimum=1)
     if eta_min_days is None or eta_max_days is None:
         messages.error(request, "Definitive ETA min and max days are required.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
     if eta_max_days < eta_min_days:
         messages.error(request, "Definitive ETA max days must be greater than or equal to min days.")
-        return redirect("indy_hub:capital_ship_orders_admin")
+        return _redirect_after_capital_order_action(
+            request, default_route="indy_hub:capital_ship_orders_admin"
+        )
 
     order.definitive_eta_min_days = int(eta_min_days)
     order.definitive_eta_max_days = int(eta_max_days)
@@ -2515,7 +2739,9 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
         link="/indy_hub/material-exchange/capital-orders/",
     )
     messages.success(request, f"Definitive ETA updated for order {order.order_reference}.")
-    return redirect("indy_hub:capital_ship_orders_admin")
+    return _redirect_after_capital_order_action(
+        request, default_route="indy_hub:capital_ship_orders_admin"
+    )
 
 
 def _close_capital_order(
@@ -2529,8 +2755,8 @@ def _close_capital_order(
 ):
     order = get_object_or_404(CapitalShipOrder, id=order_id)
     is_requester = _is_capital_order_requester(order, request.user)
-    if actor_role == "manager":
-        if not _require_order_update_access_as_manager(request, order):
+    if actor_role in {"manager", "worker"}:
+        if not _require_order_update_access_as_worker(request, order):
             return _redirect_after_capital_order_action(
                 request, default_route="indy_hub:capital_ship_orders_admin"
             )
@@ -2554,7 +2780,11 @@ def _close_capital_order(
         return _redirect_after_capital_order_action(request)
 
     actor_name = str(getattr(request.user, "username", "") or "User").strip()
-    actor_label = "requester" if actor_role == "requester" else "manager"
+    actor_label = {
+        "requester": "requester",
+        "manager": "manager",
+        "worker": "worker",
+    }.get(actor_role, "user")
     status_note = (
         f"{action_label} by {actor_label} {actor_name} at "
         f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
@@ -2584,23 +2814,26 @@ def _close_capital_order(
     )
 
     if actor_role == "manager":
-        try:
-            from indy_hub.tasks.material_exchange_contracts import (
-                handle_capital_ship_order_closed_by_manager,
-            )
-
-            handle_capital_ship_order_closed_by_manager.apply_async(
-                args=(int(order.id), str(target_status), int(request.user.id)),
-                countdown=1,
-                expires=300,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to queue %s notification for capital order %s: %s",
-                task_name,
-                order.id,
-                exc,
-            )
+        _queue_capital_order_closed_by_manager_notification(
+            order=order,
+            target_status=target_status,
+            task_name=task_name,
+            manager_user_id=int(getattr(request.user, "id", 0) or 0),
+        )
+    elif actor_role == "worker":
+        notify_user(
+            order.requester,
+            _("Capital Order %(action)s") % {"action": str(action_label or "").strip()},
+            _("Order %(ref)s (%(hull)s) was %(action)s by %(worker)s.")
+            % {
+                "ref": order.order_reference,
+                "hull": order.ship_type_name,
+                "action": str(action_label or "").strip().lower(),
+                "worker": actor_name,
+            },
+            level="info" if target_status == CapitalShipOrder.Status.CANCELLED else "warning",
+            link="/indy_hub/material-exchange/capital-orders/",
+        )
     else:
         _create_chat_system_message(
             order,
@@ -2638,6 +2871,32 @@ def _close_capital_order(
     return _redirect_after_capital_order_action(request)
 
 
+def _queue_capital_order_closed_by_manager_notification(
+    *,
+    order: CapitalShipOrder,
+    target_status: str,
+    task_name: str,
+    manager_user_id: int,
+) -> None:
+    try:
+        from indy_hub.tasks.material_exchange_contracts import (
+            handle_capital_ship_order_closed_by_manager,
+        )
+
+        handle_capital_ship_order_closed_by_manager.apply_async(
+            args=(int(order.id), str(target_status), int(manager_user_id)),
+            countdown=1,
+            expires=300,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to queue %s notification for capital order %s: %s",
+            task_name,
+            order.id,
+            exc,
+        )
+
+
 def _resolve_restore_status_for_cancelled_order(order: CapitalShipOrder) -> str:
     return str(
         _get_latest_capital_cancellation_context(order).get("previous_status")
@@ -2672,9 +2931,15 @@ def capital_ship_order_cancel(request, order_id: int):
         request=request,
     )
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    is_manager = _can_manage_capital_orders(request.user)
+    staff_actor_role = _capital_staff_actor_role(request.user)
+    is_worker = bool(staff_actor_role)
     is_requester = _is_capital_order_requester(order, request.user)
-    if not is_manager and not is_requester:
+    if is_worker and not is_requester:
+        if not _require_order_update_access_as_worker(request, order):
+            return _redirect_after_capital_order_action(
+                request, default_route="indy_hub:capital_ship_orders_admin"
+            )
+    elif not is_requester:
         messages.warning(request, "You cannot update this capital order.")
         return _redirect_after_capital_order_action(request)
     return _close_capital_order(
@@ -2683,7 +2948,7 @@ def capital_ship_order_cancel(request, order_id: int):
         target_status=CapitalShipOrder.Status.CANCELLED,
         action_label="Cancelled",
         task_name="cancel",
-        actor_role="manager" if is_manager and not is_requester else "requester",
+        actor_role=staff_actor_role if is_worker and not is_requester else "requester",
     )
 
 
@@ -2699,7 +2964,7 @@ def capital_ship_order_uncancel(request, order_id: int):
     is_manager = _can_manage_capital_orders(request.user)
     is_requester = _is_capital_order_requester(order, request.user)
     if is_manager:
-        if not _require_order_update_access_as_manager(request, order):
+        if not _require_order_update_access_as_worker(request, order):
             return _redirect_after_capital_order_action(
                 request, default_route="indy_hub:capital_ship_orders_admin"
             )
@@ -2824,15 +3089,16 @@ def capital_ship_order_uncancel(request, order_id: int):
 
 @login_required
 @indy_hub_permission_required("can_access_indy_hub")
-@indy_hub_permission_required("can_manage_capital_orders")
 @require_POST
 def capital_ship_order_release_claim(request, order_id: int):
     emit_view_analytics_event(
         view_name="capital_ship_orders.release_claim",
         request=request,
     )
+    if not _require_capital_queue_access(request):
+        return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
-    if not _require_order_update_access_as_manager(request, order):
+    if not _require_order_update_access_as_worker(request, order):
         return _redirect_after_capital_order_action(
             request, default_route="indy_hub:capital_ship_orders_admin"
         )
@@ -2854,7 +3120,7 @@ def capital_ship_order_release_claim(request, order_id: int):
     }:
         messages.warning(
             request,
-            f"Order {order.order_reference} is not currently claimed by a manager.",
+            f"Order {order.order_reference} is not currently claimed by a worker.",
         )
         return _redirect_after_capital_order_action(
             request, default_route="indy_hub:capital_ship_orders_admin"
@@ -2864,13 +3130,21 @@ def capital_ship_order_release_claim(request, order_id: int):
     if current_manager_id <= 0:
         messages.warning(
             request,
-            f"Order {order.order_reference} is not currently claimed by a manager.",
+            f"Order {order.order_reference} is not currently claimed by a worker.",
         )
         return _redirect_after_capital_order_action(
             request, default_route="indy_hub:capital_ship_orders_admin"
         )
 
-    manager_name = str(getattr(request.user, "username", "") or "Manager").strip()
+    actor_role = _capital_staff_actor_role(request.user) or "manager"
+    actor_name = str(
+        getattr(
+            request.user,
+            "username",
+            "Manager" if actor_role == "manager" else "Worker",
+        )
+        or ("Manager" if actor_role == "manager" else "Worker")
+    ).strip()
     order.status = CapitalShipOrder.Status.WAITING
     order.gathering_materials_by = None
     order.gathering_materials_at = None
@@ -2886,7 +3160,7 @@ def capital_ship_order_release_claim(request, order_id: int):
     _append_order_note(
         order,
         (
-            f"Claim released by manager {manager_name} at "
+            f"Claim released by {actor_role} {actor_name} at "
             f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}; "
             f"status reset from {previous_status} to waiting"
         ),
@@ -2918,48 +3192,47 @@ def capital_ship_order_release_claim(request, order_id: int):
             "previous_status": previous_status,
             "released_claim": True,
             "released_by_user_id": int(getattr(request.user, "id", 0) or 0),
-            "changed_by_role": "manager",
+            "changed_by_role": actor_role,
             "changed_by_user_id": int(getattr(request.user, "id", 0) or 0),
         },
     )
     _create_chat_system_message(
         order,
-        _(
-            "Order claim released by %(manager)s. Status reset to Waiting."
-        )
-        % {"manager": manager_name},
+        _("Order claim released by %(actor)s. Status reset to Waiting.")
+        % {"actor": actor_name},
     )
     notify_user(
         order.requester,
         _("Capital Order Update"),
         _(
-            "Order %(ref)s (%(hull)s) was released back to the waiting queue by %(manager)s."
+            "Order %(ref)s (%(hull)s) was released back to the waiting queue by %(actor)s."
         )
         % {
             "ref": order.order_reference,
             "hull": order.ship_type_name,
-            "manager": manager_name,
+            "actor": actor_name,
         },
         level="info",
         link="/indy_hub/material-exchange/capital-orders/",
     )
-    _notify_capital_managers(
-        title=_("Capital Order Claim Released"),
-        body=_(
-            "%(manager)s released the claim on capital order %(ref)s.\n"
-            "User: %(user)s\n"
-            "Hull: %(hull)s"
+    if actor_role == "manager":
+        _notify_capital_managers(
+            title=_("Capital Order Claim Released"),
+            body=_(
+                "%(manager)s released the claim on capital order %(ref)s.\n"
+                "User: %(user)s\n"
+                "Hull: %(hull)s"
+            )
+            % {
+                "manager": actor_name,
+                "ref": order.order_reference,
+                "user": order.requester.username,
+                "hull": order.ship_type_name,
+            },
+            order=None,
+            level="info",
+            link="/indy_hub/material-exchange/capital-orders/admin/",
         )
-        % {
-            "manager": manager_name,
-            "ref": order.order_reference,
-            "user": order.requester.username,
-            "hull": order.ship_type_name,
-        },
-        order=None,
-        level="info",
-        link="/indy_hub/material-exchange/capital-orders/admin/",
-    )
     messages.success(
         request,
         f"Order {order.order_reference} released back to Waiting.",

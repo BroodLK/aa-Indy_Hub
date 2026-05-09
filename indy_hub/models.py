@@ -118,6 +118,10 @@ class Blueprint(models.Model):
                 "can_manage_capital_orders",
                 "can admin CapitalOrders",
             ),
+            (
+                "can_build_capital_orders",
+                "can build CapitalOrders",
+            ),
         ]
         default_permissions = ()  # Disable Django's add/change/delete/view permissions
 
@@ -3541,7 +3545,9 @@ class CapitalShipOrderChat(models.Model):
             return None
         if int(getattr(user, "id", 0) or 0) == int(self.requester_id):
             return self.SenderRole.REQUESTER
-        if user.has_perm("indy_hub.can_manage_capital_orders"):
+        if user.has_perm("indy_hub.can_manage_capital_orders") or user.has_perm(
+            "indy_hub.can_build_capital_orders"
+        ):
             return self.SenderRole.ADMIN
         return None
 

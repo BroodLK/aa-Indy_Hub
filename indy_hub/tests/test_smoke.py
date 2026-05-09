@@ -3134,6 +3134,10 @@ class CapitalOrderAdminActionsTests(TestCase):
         grant_indy_permissions(self.manager, "can_manage_capital_orders")
         self.client.force_login(self.manager)
 
+        self.builder = User.objects.create_user("capbuilder", password="secret123")
+        assign_main_character(self.builder, character_id=2025007)
+        grant_indy_permissions(self.builder, "can_build_capital_orders")
+
         self.requester = User.objects.create_user("caprequester", password="secret123")
         assign_main_character(self.requester, character_id=2025002)
         grant_indy_permissions(self.requester)
@@ -3175,6 +3179,177 @@ class CapitalOrderAdminActionsTests(TestCase):
             reverse("indy_hub:capital_ship_order_uncancel", args=[order.id]),
         )
         self.assertNotContains(response, 'data-cap-action-form="reject"')
+
+    def test_builder_can_view_queue_but_not_settings(self) -> None:
+        order = self._create_order()
+        self.client.force_login(self.builder)
+
+        response = self.client.get(reverse("indy_hub:capital_ship_orders_admin"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, order.order_reference)
+        self.assertNotContains(response, "Capital Order Settings")
+
+    def test_builder_can_claim_waiting_order(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        self.client.force_login(self.builder)
+
+        response = self.client.post(
+            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.GATHERING_MATERIALS)
+        self.assertEqual(int(order.gathering_materials_by_id or 0), int(self.builder.id))
+
+    def test_builder_cannot_cancel_unclaimed_waiting_order(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        self.client.force_login(self.builder)
+
+        response = self.client.post(
+            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
+
+    def test_builder_can_update_offer_for_owned_claim(self) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        self.client.force_login(self.builder)
+
+        claim_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
+        )
+        self.assertEqual(claim_response.status_code, 302)
+
+        response = self.client.post(
+            reverse("indy_hub:capital_ship_order_update_offer", args=[order.id]),
+            {
+                "offer_price_isk": "123456789.00",
+                "offer_eta_min_days": "5",
+                "offer_eta_max_days": "10",
+                "lead_time_days": "1",
+                "offer_notes": "builder-owned-claim",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(int(order.offer_updated_by_id or 0), int(self.builder.id))
+        self.assertEqual(str(order.offer_notes), "builder-owned-claim")
+
+    def test_builder_can_cancel_release_and_transfer_owned_claim(self) -> None:
+        other_builder = User.objects.create_user("capbuilder2", password="secret123")
+        assign_main_character(other_builder, character_id=2025008)
+        grant_indy_permissions(other_builder, "can_build_capital_orders")
+
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        self.client.force_login(self.builder)
+
+        claim_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
+        )
+        self.assertEqual(claim_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(int(order.gathering_materials_by_id or 0), int(self.builder.id))
+
+        transfer_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_transfer_manager", args=[order.id]),
+            {"transfer_manager_user_id": str(other_builder.id)},
+        )
+        self.assertEqual(transfer_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(
+            int(order.gathering_materials_by_id or 0),
+            int(other_builder.id),
+        )
+
+        self.client.force_login(other_builder)
+        release_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_release_claim", args=[order.id])
+        )
+        self.assertEqual(release_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
+        self.assertIsNone(order.gathering_materials_by_id)
+
+        reclaim_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
+        )
+        self.assertEqual(reclaim_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(int(order.gathering_materials_by_id or 0), int(other_builder.id))
+
+        cancel_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
+        )
+        self.assertEqual(cancel_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
+
+    @patch("indy_hub.views.capital_ship_orders._notify_capital_managers")
+    def test_builder_release_claim_skips_manager_notifications(self, mock_notify_managers) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        self.client.force_login(self.builder)
+
+        claim_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
+        )
+        self.assertEqual(claim_response.status_code, 302)
+
+        release_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_release_claim", args=[order.id])
+        )
+        self.assertEqual(release_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
+        self.assertIsNone(order.gathering_materials_by_id)
+        mock_notify_managers.assert_not_called()
+
+        release_event = (
+            order.events.filter(
+                event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED,
+                payload__released_claim=True,
+            )
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        self.assertIsNotNone(release_event)
+        self.assertEqual(release_event.payload.get("changed_by_role"), "worker")
+
+    @patch(
+        "indy_hub.views.capital_ship_orders._queue_capital_order_closed_by_manager_notification"
+    )
+    def test_builder_cancel_uses_worker_close_path(self, mock_queue_close_notification) -> None:
+        order = self._create_order(status=CapitalShipOrder.Status.WAITING)
+        self.client.force_login(self.builder)
+
+        claim_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
+        )
+        self.assertEqual(claim_response.status_code, 302)
+
+        cancel_response = self.client.post(
+            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
+        )
+        self.assertEqual(cancel_response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
+        mock_queue_close_notification.assert_not_called()
+
+        cancel_event = (
+            order.events.filter(
+                event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED,
+                payload__new_status=CapitalShipOrder.Status.CANCELLED,
+            )
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        self.assertIsNotNone(cancel_event)
+        self.assertEqual(cancel_event.payload.get("changed_by_role"), "worker")
+        self.assertEqual(cancel_event.payload.get("cancelled_by_role"), "worker")
 
     def test_manager_can_uncancel_and_restore_previous_status(self) -> None:
         order = self._create_order(status=CapitalShipOrder.Status.GATHERING_MATERIALS)
