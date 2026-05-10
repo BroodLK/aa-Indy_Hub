@@ -371,7 +371,9 @@ def _skill_snapshot_stale(snapshot: IndustrySkillSnapshot | None) -> bool:
     return timezone.now() - snapshot.last_updated > SKILL_CACHE_TTL
 
 
-def _build_slot_overview_rows(user: User) -> list[dict[str, object]]:
+def _build_slot_overview_rows(
+    user: User, *, refresh_skills: bool = True
+) -> list[dict[str, object]]:
     ownerships = CharacterOwnership.objects.filter(user=user).select_related(
         "character"
     )
@@ -448,9 +450,12 @@ def _build_slot_overview_rows(user: User) -> list[dict[str, object]]:
             continue
         character_id = char.character_id
         snapshot = snapshots.get(character_id)
-        skills_missing = character_id not in skill_token_ids
+        skills_missing = snapshot is None
 
-        if not skills_missing:
+        if refresh_skills:
+            skills_missing = character_id not in skill_token_ids
+
+        if refresh_skills and not skills_missing:
             if snapshot is None:
                 try:
                     levels = _fetch_character_skill_levels(
@@ -487,8 +492,10 @@ def _build_slot_overview_rows(user: User) -> list[dict[str, object]]:
                         character_id,
                         exc,
                     )
+        elif snapshot is None:
+            skills_missing = True
 
-        if skills_missing:
+        if skills_missing and (refresh_skills or snapshot is None):
             snapshot = None
 
         totals = {
@@ -3850,6 +3857,15 @@ def craft_bp(request, type_id):
                 return [_to_serializable(item) for item in value]
             return value
 
+        slot_overview_rows = _build_slot_overview_rows(
+            request.user,
+            refresh_skills=False,
+        )
+        slot_overview = {
+            "characters": slot_overview_rows,
+            "summary": _build_slot_overview_summary(slot_overview_rows),
+        }
+
         blueprint_payload = {
             "type_id": type_id,
             "bp_type_id": type_id,
@@ -3871,6 +3887,7 @@ def craft_bp(request, type_id):
             ),
             "market_group_map": _to_serializable(market_group_map),
             "materials_by_group": _to_serializable(materials_by_group),
+            "slot_overview": _to_serializable(slot_overview),
             "build_environment": _to_serializable(build_environment),
             "industry_fee_config": _to_serializable(industry_fee_config),
             "build_rig_catalog": _to_serializable(build_rig_catalog),

@@ -47,6 +47,11 @@ const CRAFT_LIVE_PAYLOAD_STATE = {
     requestSeq: 0,
     queued: false,
 };
+const CRAFT_BUILD_PLANNER_STATE = {
+    rowsSignature: '',
+    renderedSignature: '',
+    slotAssignments: new Map(),
+};
 const CRAFT_SELECTION_SCOPE = {
     initialized: false,
     blueprintTypeId: 0,
@@ -270,6 +275,10 @@ function getBpcContractStorageKey() {
 
 function getBuyCraftStorageKey() {
     return getScopedCraftStorageKey('craft_bp_buy_craft');
+}
+
+function getBuildPlannerSlotsStorageKey() {
+    return getScopedCraftStorageKey('craft_bp_build_slots');
 }
 
 function saveBuyCraftStateToStorage() {
@@ -874,6 +883,9 @@ function refreshTabsAfterStateChange(options = {}) {
     if (typeof updateMaterialsTabFromState === 'function') {
         updateMaterialsTabFromState();
     }
+    if (typeof updateBuildTabFromState === 'function') {
+        updateBuildTabFromState();
+    }
     if (typeof updateFinancialTabFromState === 'function') {
         updateFinancialTabFromState();
     }
@@ -987,6 +999,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (typeof updateMaterialsTabFromState === 'function') {
         updateMaterialsTabFromState();
+    }
+    if (typeof updateBuildTabFromState === 'function') {
+        updateBuildTabFromState();
     }
     initializeRunOptimizedTab();
     // Financial calculations will be initialized via CraftBP.init()
@@ -7118,6 +7133,531 @@ function getMainBlueprintInfoForFinancialPlanner() {
     return {};
 }
 
+function getBuildPlannerSlotOverview() {
+    const payload = window.BLUEPRINT_DATA || {};
+    const slotOverview = payload.slot_overview || payload.slotOverview;
+    if (!slotOverview || typeof slotOverview !== 'object') {
+        return { characters: [], summary: {} };
+    }
+    return {
+        characters: Array.isArray(slotOverview.characters) ? slotOverview.characters : [],
+        summary: slotOverview.summary && typeof slotOverview.summary === 'object'
+            ? slotOverview.summary
+            : {},
+    };
+}
+
+function getBuildPlannerCharacterRows() {
+    const slotOverview = getBuildPlannerSlotOverview();
+    return slotOverview.characters
+        .map((row) => {
+            const manufacturing = row?.manufacturing && typeof row.manufacturing === 'object'
+                ? row.manufacturing
+                : {};
+            const totalRaw = Number(manufacturing.total);
+            const availableRaw = Number(manufacturing.available);
+            const usedRaw = Number(manufacturing.used);
+            const totalSlots = Number.isFinite(totalRaw) ? Math.max(0, Math.floor(totalRaw)) : null;
+            const availableSlots = Number.isFinite(availableRaw) ? Math.max(0, Math.floor(availableRaw)) : null;
+            const usedSlots = Number.isFinite(usedRaw) ? Math.max(0, Math.floor(usedRaw)) : null;
+            return {
+                characterId: Number(row?.character_id || row?.characterId) || 0,
+                name: String(row?.name || '').trim() || __('Unknown character'),
+                skillsMissing: Boolean(row?.skills_missing ?? row?.skillsMissing),
+                totalSlots,
+                availableSlots,
+                usedSlots,
+            };
+        })
+        .filter((row) => row.characterId > 0);
+}
+
+function loadBuildPlannerSlotAssignmentsFromStorage() {
+    const assignments = new Map();
+    try {
+        const raw = localStorage.getItem(getBuildPlannerSlotsStorageKey());
+        if (!raw) {
+            return assignments;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') {
+            return assignments;
+        }
+        Object.entries(parsed).forEach(([characterIdRaw, valueRaw]) => {
+            const characterId = Number(characterIdRaw) || 0;
+            const value = Number(valueRaw);
+            if (!characterId || !Number.isFinite(value)) {
+                return;
+            }
+            assignments.set(characterId, Math.max(0, Math.floor(value)));
+        });
+    } catch (error) {
+        console.error('[CraftBP] Failed to load build slot assignments', error);
+    }
+    return assignments;
+}
+
+function saveBuildPlannerSlotAssignmentsToStorage() {
+    const payload = {};
+    CRAFT_BUILD_PLANNER_STATE.slotAssignments.forEach((value, characterId) => {
+        const numericCharacterId = Number(characterId) || 0;
+        if (!numericCharacterId) {
+            return;
+        }
+        payload[String(numericCharacterId)] = Math.max(0, Math.floor(Number(value) || 0));
+    });
+    try {
+        localStorage.setItem(getBuildPlannerSlotsStorageKey(), JSON.stringify(payload));
+    } catch (error) {
+        console.error('[CraftBP] Failed to persist build slot assignments', error);
+    }
+}
+
+function clampBuildPlannerSlotValue(value, maxValue) {
+    const upperBound = Math.max(0, Math.floor(Number(maxValue) || 0));
+    return clampInt(value, 0, upperBound);
+}
+
+function ensureBuildPlannerSlotAssignments(rows) {
+    const signature = JSON.stringify(
+        (Array.isArray(rows) ? rows : []).map((row) => [
+            Number(row.characterId) || 0,
+            row.availableSlots == null ? null : Number(row.availableSlots),
+            row.totalSlots == null ? null : Number(row.totalSlots),
+            row.usedSlots == null ? null : Number(row.usedSlots),
+            Boolean(row.skillsMissing),
+        ])
+    );
+
+    if (signature === CRAFT_BUILD_PLANNER_STATE.rowsSignature) {
+        return;
+    }
+
+    const storedAssignments = loadBuildPlannerSlotAssignmentsFromStorage();
+    const nextAssignments = new Map();
+
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const characterId = Number(row.characterId) || 0;
+        const maxSlots = Math.max(0, Math.floor(Number(row.availableSlots) || 0));
+        if (!characterId) {
+            return;
+        }
+        const storedValue = storedAssignments.get(characterId);
+        const defaultValue = maxSlots;
+        nextAssignments.set(
+            characterId,
+            clampBuildPlannerSlotValue(storedValue == null ? defaultValue : storedValue, maxSlots)
+        );
+    });
+
+    CRAFT_BUILD_PLANNER_STATE.rowsSignature = signature;
+    CRAFT_BUILD_PLANNER_STATE.renderedSignature = '';
+    CRAFT_BUILD_PLANNER_STATE.slotAssignments = nextAssignments;
+    saveBuildPlannerSlotAssignmentsToStorage();
+}
+
+function getBuildPlannerAssignedSlotsTotal(rows = null) {
+    const resolvedRows = Array.isArray(rows) ? rows : getBuildPlannerCharacterRows();
+    const rowsById = new Map(resolvedRows.map((row) => [row.characterId, row]));
+    let total = 0;
+    CRAFT_BUILD_PLANNER_STATE.slotAssignments.forEach((value, characterId) => {
+        const row = rowsById.get(Number(characterId) || 0);
+        if (!row) {
+            return;
+        }
+        const maxSlots = Math.max(0, Math.floor(Number(row.availableSlots) || 0));
+        total += clampBuildPlannerSlotValue(value, maxSlots);
+    });
+    return total;
+}
+
+function buildPlannerItemIsActive(typeId, contextsByProductType) {
+    const numericTypeId = Number(typeId) || 0;
+    if (!numericTypeId) {
+        return false;
+    }
+    const context = contextsByProductType.get(numericTypeId);
+    if (!context) {
+        return true;
+    }
+    return Boolean(context.active);
+}
+
+function collectBuildPlannerItems() {
+    const payload = window.BLUEPRINT_DATA || {};
+    const contextsByProductType = buildBlueprintUsageContextByProductType();
+    const aggregated = new Map();
+    const finalProductTypeId = Number(payload.product_type_id || payload.productTypeId || 0) || 0;
+    const finalProductQty = Math.max(0, Math.ceil(Number(payload.final_product_qty || payload.finalProductQty || 0))) || 0;
+    const outputQtyPerRun = Math.max(1, Math.ceil(Number(payload.output_qty_per_run || payload.outputQtyPerRun || 1))) || 1;
+    const finalProductName = getCraftFinalProductLabel();
+
+    const addItem = ({ typeId, typeName, totalNeeded, producedPerRun, depth }) => {
+        const numericTypeId = Number(typeId) || 0;
+        const neededQty = Math.max(0, Math.ceil(Number(totalNeeded) || 0));
+        const perRunQty = Math.max(1, Math.ceil(Number(producedPerRun) || 0));
+        if (!numericTypeId || neededQty <= 0) {
+            return;
+        }
+
+        const existing = aggregated.get(numericTypeId) || {
+            typeId: numericTypeId,
+            typeName: String(typeName || '').trim() || `Type ${numericTypeId}`,
+            totalNeeded: 0,
+            producedPerRun: perRunQty,
+            depth: Number(depth) || 0,
+            context: contextsByProductType.get(numericTypeId) || null,
+        };
+        existing.totalNeeded += neededQty;
+        existing.producedPerRun = perRunQty;
+        existing.depth = Math.max(existing.depth, Number(depth) || 0);
+        if (!existing.context) {
+            existing.context = contextsByProductType.get(numericTypeId) || null;
+        }
+        aggregated.set(numericTypeId, existing);
+    };
+
+    if (finalProductTypeId && finalProductQty > 0) {
+        addItem({
+            typeId: finalProductTypeId,
+            typeName: finalProductName,
+            totalNeeded: finalProductQty,
+            producedPerRun: outputQtyPerRun,
+            depth: 0,
+        });
+    }
+
+    const walk = (nodes, depth) => {
+        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
+            const typeId = Number(node?.type_id || node?.typeId) || 0;
+            if (!typeId) {
+                return;
+            }
+
+            const children = Array.isArray(node?.sub_materials)
+                ? node.sub_materials
+                : (Array.isArray(node?.subMaterials) ? node.subMaterials : []);
+            const producedPerRun = Math.max(
+                1,
+                Math.ceil(Number(node?.produced_per_cycle ?? node?.producedPerCycle ?? 0) || 0)
+            ) || 1;
+            const isCraftable = children.length > 0 || Boolean(
+                node?.cycles != null
+                || node?.produced_per_cycle != null
+                || node?.producedPerCycle != null
+                || node?.total_produced != null
+                || node?.totalProduced != null
+            );
+
+            if (!isCraftable) {
+                return;
+            }
+
+            if (getTreeSwitchModeForType(typeId) !== 'prod') {
+                return;
+            }
+
+            if (!buildPlannerItemIsActive(typeId, contextsByProductType)) {
+                return;
+            }
+
+            addItem({
+                typeId,
+                typeName: String(node?.type_name || node?.typeName || '').trim(),
+                totalNeeded: node?.quantity ?? node?.qty ?? 0,
+                producedPerRun,
+                depth,
+            });
+
+            if (children.length > 0) {
+                walk(children, depth + 1);
+            }
+        });
+    };
+
+    walk(payload.materials_tree, 1);
+
+    return Array.from(aggregated.values())
+        .map((item) => {
+            const requiredRuns = Math.max(1, Math.ceil(item.totalNeeded / item.producedPerRun));
+            const totalProduced = requiredRuns * item.producedPerRun;
+            return {
+                ...item,
+                requiredRuns,
+                totalProduced,
+                surplus: Math.max(0, totalProduced - item.totalNeeded),
+            };
+        })
+        .sort((left, right) => {
+            if (left.depth !== right.depth) {
+                return right.depth - left.depth;
+            }
+            return String(left.typeName || '').localeCompare(String(right.typeName || ''), undefined, {
+                sensitivity: 'base',
+            });
+        });
+}
+
+function buildPlannerRunDistribution(requiredRuns, slotsAvailable) {
+    const runCount = Math.max(0, Math.floor(Number(requiredRuns) || 0));
+    const slotCount = Math.max(0, Math.floor(Number(slotsAvailable) || 0));
+    if (runCount <= 0 || slotCount <= 0) {
+        return [];
+    }
+    const activeSlots = Math.min(runCount, slotCount);
+    const baseRuns = Math.floor(runCount / activeSlots);
+    const remainder = runCount % activeSlots;
+    return Array.from({ length: activeSlots }, (_, index) => baseRuns + (index < remainder ? 1 : 0));
+}
+
+function formatBuildPlannerRunSplit(distribution) {
+    if (!Array.isArray(distribution) || distribution.length === 0) {
+        return __('No slots selected');
+    }
+
+    const countsByRuns = new Map();
+    distribution.forEach((runs) => {
+        const numericRuns = Math.max(0, Math.floor(Number(runs) || 0));
+        if (!numericRuns) {
+            return;
+        }
+        countsByRuns.set(numericRuns, (countsByRuns.get(numericRuns) || 0) + 1);
+    });
+
+    return Array.from(countsByRuns.entries())
+        .sort((left, right) => right[0] - left[0])
+        .map(([runs, slotCount]) => {
+            const slotLabel = slotCount === 1 ? __('slot') : __('slots');
+            const runLabel = runs === 1 ? __('run') : __('runs');
+            return `${formatInteger(slotCount)} ${slotLabel} @ ${formatInteger(runs)} ${runLabel}`;
+        })
+        .join(' | ');
+}
+
+function renderBuildPlannerSlotControls(rows) {
+    const container = document.getElementById('buildSlotCharacters');
+    if (!container) {
+        return;
+    }
+
+    const signature = JSON.stringify(
+        (Array.isArray(rows) ? rows : []).map((row) => [
+            row.characterId,
+            row.name,
+            row.totalSlots,
+            row.availableSlots,
+            row.usedSlots,
+            row.skillsMissing,
+            CRAFT_BUILD_PLANNER_STATE.slotAssignments.get(row.characterId) || 0,
+        ])
+    );
+
+    if (signature === CRAFT_BUILD_PLANNER_STATE.renderedSignature) {
+        return;
+    }
+
+    CRAFT_BUILD_PLANNER_STATE.renderedSignature = signature;
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = rows.map((row) => {
+        const availableSlots = Math.max(0, Math.floor(Number(row.availableSlots) || 0));
+        const totalSlots = row.totalSlots == null ? null : Math.max(0, Math.floor(Number(row.totalSlots) || 0));
+        const usedSlots = row.usedSlots == null ? null : Math.max(0, Math.floor(Number(row.usedSlots) || 0));
+        const assignedSlots = clampBuildPlannerSlotValue(
+            CRAFT_BUILD_PLANNER_STATE.slotAssignments.get(row.characterId) || 0,
+            availableSlots
+        );
+        const disabled = row.skillsMissing || availableSlots <= 0;
+        let statusText = '';
+        if (row.skillsMissing && totalSlots == null) {
+            statusText = __('Skills snapshot unavailable for this character.');
+        } else if (availableSlots <= 0 && totalSlots != null) {
+            statusText = __('No free manufacturing slots right now.');
+        } else if (totalSlots != null && usedSlots != null) {
+            statusText = `${__('Available')}: ${formatInteger(availableSlots)} / ${formatInteger(totalSlots)} | ${__('Busy')}: ${formatInteger(usedSlots)}`;
+        } else {
+            statusText = `${__('Available')}: ${formatInteger(availableSlots)}`;
+        }
+
+        return `
+            <div class="craft-build-slot-card${disabled ? ' is-unavailable' : ''}">
+                <div class="d-flex align-items-start justify-content-between gap-3">
+                    <div class="min-w-0">
+                        <div class="fw-semibold text-truncate">${escapeHtml(row.name)}</div>
+                        <div class="small text-muted mt-1">${escapeHtml(statusText)}</div>
+                    </div>
+                    <span class="badge ${availableSlots > 0 ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">
+                        ${formatInteger(availableSlots)}
+                    </span>
+                </div>
+                <div class="input-group input-group-sm mt-3">
+                    <span class="input-group-text">${escapeHtml(__('Use'))}</span>
+                    <input
+                        type="number"
+                        class="form-control text-end"
+                        min="0"
+                        max="${availableSlots}"
+                        step="1"
+                        value="${assignedSlots}"
+                        data-build-slot-character-id="${row.characterId}"
+                        ${disabled ? 'disabled' : ''}
+                    >
+                    <span class="input-group-text">/ ${formatInteger(availableSlots)}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.querySelectorAll('input[data-build-slot-character-id]').forEach((input) => {
+        const syncValue = () => {
+            const characterId = Number(input.getAttribute('data-build-slot-character-id')) || 0;
+            const row = rows.find((entry) => entry.characterId === characterId);
+            if (!characterId || !row) {
+                return;
+            }
+            const nextValue = clampBuildPlannerSlotValue(input.value, row.availableSlots);
+            input.value = String(nextValue);
+            CRAFT_BUILD_PLANNER_STATE.slotAssignments.set(characterId, nextValue);
+            saveBuildPlannerSlotAssignmentsToStorage();
+            updateBuildPlannerOutputs(rows);
+        };
+        input.addEventListener('input', syncValue);
+        input.addEventListener('change', syncValue);
+    });
+}
+
+function updateBuildPlannerStatus(rows, items, availableSlots, assignedSlots) {
+    const alertEl = document.getElementById('buildSlotSelectionAlert');
+    if (!alertEl) {
+        return;
+    }
+
+    const missingSkillCount = (Array.isArray(rows) ? rows : []).filter((row) => row.skillsMissing).length;
+    let message = '';
+    let variantClass = 'alert-info';
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+        message = __('No Indy Hub characters are available for manufacturing planning.');
+        variantClass = 'alert-warning';
+    } else if (!Array.isArray(items) || items.length === 0) {
+        message = __('Switch items to Produce in the tree to populate the build planner.');
+    } else if (availableSlots <= 0) {
+        message = __('No manufacturing slots are currently free on your tracked characters.');
+        variantClass = 'alert-warning';
+    } else if (assignedSlots <= 0) {
+        message = __('Select how many free slots you want to allocate to this build.');
+        variantClass = 'alert-warning';
+    } else if (missingSkillCount > 0) {
+        message = `${formatInteger(missingSkillCount)} ${missingSkillCount === 1 ? __('character has') : __('characters have')} ${__('no current skill snapshot loaded.')}`;
+    }
+
+    if (!message) {
+        alertEl.className = 'alert d-none';
+        alertEl.textContent = '';
+        return;
+    }
+
+    alertEl.className = `alert ${variantClass} mb-0`;
+    alertEl.textContent = message;
+}
+
+function updateBuildPlannerOutputs(rows = null) {
+    const resolvedRows = Array.isArray(rows) ? rows : getBuildPlannerCharacterRows();
+    const items = collectBuildPlannerItems();
+    const availableSlots = resolvedRows.reduce(
+        (total, row) => total + Math.max(0, Math.floor(Number(row.availableSlots) || 0)),
+        0
+    );
+    const assignedSlots = getBuildPlannerAssignedSlotsTotal(resolvedRows);
+    const totalRuns = items.reduce((total, item) => total + (Number(item.requiredRuns) || 0), 0);
+
+    const body = document.getElementById('buildPlannerBody');
+    const emptyState = document.getElementById('buildPlannerEmptyState');
+    const tableWrapper = body ? body.closest('.table-responsive') : null;
+
+    const setText = (id, value) => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = value;
+        }
+    };
+
+    setText('buildPlannerItemCount', formatInteger(items.length));
+    setText('buildPlannerBuildCount', formatInteger(items.length));
+    setText('buildPlannerAvailableSlots', formatInteger(availableSlots));
+    setText('buildPlannerUsedSlots', formatInteger(assignedSlots));
+    setText('buildPlannerRunCount', formatInteger(totalRuns));
+
+    let peakLoad = 0;
+    const rowsHtml = items.map((item) => {
+        const slotsUsed = assignedSlots > 0 ? Math.min(assignedSlots, item.requiredRuns) : 0;
+        const distribution = buildPlannerRunDistribution(item.requiredRuns, slotsUsed);
+        const maxRunsPerSlot = distribution.length > 0 ? Math.max.apply(null, distribution) : 0;
+        peakLoad = Math.max(peakLoad, maxRunsPerSlot);
+
+        const context = item.context || null;
+        const sourceLabel = context ? getBlueprintSourceInfo(context).label : __('Blueprint selected');
+        const itemClasses = Number(item.typeId) === getProductTypeIdValue() ? 'table-primary' : '';
+        const slotSplitText = formatBuildPlannerRunSplit(distribution);
+        const surplusText = item.surplus > 0
+            ? ` <span class="badge bg-success-subtle text-success fw-semibold ms-2">+${formatInteger(item.surplus)}</span>`
+            : '';
+
+        return `
+            <tr class="${itemClasses}" data-type-id="${item.typeId}">
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        <img src="https://images.evetech.net/types/${item.typeId}/icon?size=32" alt="${escapeHtml(item.typeName)}" class="rounded eve-type-icon eve-type-icon--30" onerror="this.style.display='none';">
+                        <div class="min-w-0">
+                            <span class="small fw-semibold d-block">${escapeHtml(item.typeName)}</span>
+                            <span class="small text-muted d-block">${escapeHtml(sourceLabel)}</span>
+                        </div>
+                    </div>
+                </td>
+                <td class="text-end text-xs fw-semibold">${formatInteger(item.totalNeeded)}${surplusText}</td>
+                <td class="text-end text-xs">${formatInteger(item.producedPerRun)}</td>
+                <td class="text-end text-xs fw-semibold">${formatInteger(item.requiredRuns)}</td>
+                <td class="text-end text-xs">${formatInteger(slotsUsed)}</td>
+                <td class="text-end text-xs">${formatInteger(maxRunsPerSlot)}</td>
+                <td class="text-xs craft-build-run-split">${escapeHtml(slotSplitText)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    setText('buildPlannerPeakLoad', formatInteger(peakLoad));
+    updateBuildPlannerStatus(resolvedRows, items, availableSlots, assignedSlots);
+
+    if (!body || !emptyState || !tableWrapper) {
+        return;
+    }
+
+    if (items.length === 0) {
+        body.innerHTML = '';
+        emptyState.classList.remove('d-none');
+        tableWrapper.classList.add('d-none');
+        return;
+    }
+
+    body.innerHTML = rowsHtml;
+    emptyState.classList.add('d-none');
+    tableWrapper.classList.remove('d-none');
+}
+
+function updateBuildTabFromState() {
+    const buildPane = document.getElementById('build-pane');
+    if (!buildPane) {
+        return;
+    }
+    const rows = getBuildPlannerCharacterRows();
+    ensureBuildPlannerSlotAssignments(rows);
+    renderBuildPlannerSlotControls(rows);
+    updateBuildPlannerOutputs(rows);
+}
+
 function isProductPlannedForProduction(productTypeId) {
     const numericProductTypeId = Number(productTypeId) || 0;
     if (!numericProductTypeId) {
@@ -8976,109 +9516,17 @@ function setCraftBPConfig(fuzzworkUrl, productTypeId) {
 }
 
 window.updateMaterialsTabFromState = updateMaterialsTabFromState;
+window.updateBuildTabFromState = updateBuildTabFromState;
 window.updateFinancialTabFromState = updateFinancialTabFromState;
 window.updateNeededTabFromState = updateNeededTabFromState;
 window.getIndustryFeeConfigFromDom = getIndustryFeeConfigFromDom;
 
-// One-time sort for the server-rendered Cycles table on the Build tab.
-// This keeps the UI consistent with the dashboard category ordering.
-function sortBuildCyclesTable() {
-    const buildPane = document.getElementById('build-pane');
-    if (!buildPane) {
-        return;
-    }
-
-    const table = buildPane.querySelector('table');
-    const tbody = table ? table.querySelector('tbody') : null;
-    if (!tbody) {
-        return;
-    }
-
-    const rows = Array.from(tbody.querySelectorAll('tr[data-type-id]'));
-    if (rows.length === 0) {
-        return;
-    }
-
-    const productTypeId = getProductTypeIdValue();
-    const payload = window.BLUEPRINT_DATA || {};
-    const marketGroupMap = payload.market_group_map || {};
-    const ordering = getDashboardMaterialsOrdering();
-
-    const groupNameFor = (typeId) => {
-        const info = marketGroupMap[String(typeId)] || marketGroupMap[typeId];
-        if (info && typeof info === 'object') {
-            return info.group_name || info.groupName || ordering.fallbackGroupName;
-        }
-        return ordering.fallbackGroupName;
-    };
-
-    const nameForRow = (row) => {
-        const label = row.querySelector('.small.fw-semibold, .small.fw-bold');
-        return (label && label.textContent ? label.textContent.trim() : '').toLowerCase();
-    };
-
-    const isFinalProductRow = (row) => {
-        if (row.classList.contains('table-primary')) {
-            return true;
-        }
-        const tid = Number(row.getAttribute('data-type-id')) || 0;
-        return !!(productTypeId && tid === productTypeId);
-    };
-
-    const finalRows = rows.filter(isFinalProductRow);
-    const otherRows = rows.filter(r => !isFinalProductRow(r));
-
-    otherRows.sort((a, b) => {
-        const typeA = Number(a.getAttribute('data-type-id')) || 0;
-        const typeB = Number(b.getAttribute('data-type-id')) || 0;
-        const groupA = groupNameFor(typeA);
-        const groupB = groupNameFor(typeB);
-
-        const hasA = ordering.groupOrder.has(groupA);
-        const hasB = ordering.groupOrder.has(groupB);
-
-        if (hasA && hasB) {
-            const groupIdxA = ordering.groupOrder.get(groupA);
-            const groupIdxB = ordering.groupOrder.get(groupB);
-            if (groupIdxA !== groupIdxB) {
-                return groupIdxA - groupIdxB;
-            }
-        } else if (hasA !== hasB) {
-            // Known dashboard groups first, then the rest.
-            return hasA ? -1 : 1;
-        } else {
-            // Neither group exists in the dashboard list -> sort groups alphabetically.
-            const groupCmp = String(groupA).localeCompare(String(groupB), undefined, { sensitivity: 'base' });
-            if (groupCmp !== 0) {
-                return groupCmp;
-            }
-        }
-
-        // If the row type happens to exist in dashboard materials list, keep its exact item order.
-        const dashA = ordering.itemOrder.get(typeA);
-        const dashB = ordering.itemOrder.get(typeB);
-        const itemIdxA = dashA ? dashA.itemIdx : Number.POSITIVE_INFINITY;
-        const itemIdxB = dashB ? dashB.itemIdx : Number.POSITIVE_INFINITY;
-        if (itemIdxA !== itemIdxB) {
-            return itemIdxA - itemIdxB;
-        }
-
-        return nameForRow(a).localeCompare(nameForRow(b), undefined, { sensitivity: 'base' });
-    });
-
-    // Re-append in desired order.
-    finalRows.forEach(r => tbody.appendChild(r));
-    otherRows.forEach(r => tbody.appendChild(r));
-}
-
 try {
     document.addEventListener('DOMContentLoaded', () => {
-        sortBuildCyclesTable();
-
         const buildTabBtn = document.querySelector('#build-tab-btn');
         if (buildTabBtn) {
             buildTabBtn.addEventListener('shown.bs.tab', () => {
-                sortBuildCyclesTable();
+                updateBuildTabFromState();
             });
         }
     });

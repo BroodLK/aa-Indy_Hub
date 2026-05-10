@@ -530,73 +530,68 @@
 
             <!-- ========== BUILD TAB (V2) ========== -->
             <div class="tab-pane fade" id="build-pane" role="tabpanel" aria-labelledby="build-tab-btn">
-                {% if craft_cycles_summary %}
                 <section class="craft-section">
-                    <h3 class="craft-section-title">
-                        <i class="fas fa-sync text-info"></i> {% trans "Cycles" %}
-                        <span class="badge bg-info-subtle text-info fw-semibold ms-2">{{ craft_cycles_summary|length }}</span>
-                    </h3>
+                    <div class="craft-section-header-with-actions">
+                        <h3 class="craft-section-title">
+                            <i class="fas fa-industry text-info"></i> {% trans "Build Planner" %}
+                        </h3>
+                        <span id="buildPlannerItemCount" class="badge bg-info-subtle text-info fw-semibold">0</span>
+                    </div>
+
+                    <div class="craft-kpi-row">
+                        <div class="craft-kpi craft-kpi-sm">
+                            <span class="craft-kpi-label">{% trans "Items To Build" %}</span>
+                            <span class="craft-kpi-value" id="buildPlannerBuildCount">0</span>
+                        </div>
+                        <div class="craft-kpi craft-kpi-sm">
+                            <span class="craft-kpi-label">{% trans "Slots Available" %}</span>
+                            <span class="craft-kpi-value" id="buildPlannerAvailableSlots">0</span>
+                        </div>
+                        <div class="craft-kpi craft-kpi-sm">
+                            <span class="craft-kpi-label">{% trans "Slots In Use" %}</span>
+                            <span class="craft-kpi-value" id="buildPlannerUsedSlots">0</span>
+                        </div>
+                        <div class="craft-kpi craft-kpi-sm">
+                            <span class="craft-kpi-label">{% trans "Total Runs" %}</span>
+                            <span class="craft-kpi-value" id="buildPlannerRunCount">0</span>
+                        </div>
+                        <div class="craft-kpi craft-kpi-sm">
+                            <span class="craft-kpi-label">{% trans "Peak Runs / Slot" %}</span>
+                            <span class="craft-kpi-value" id="buildPlannerPeakLoad">0</span>
+                        </div>
+                    </div>
+
+                    <div id="buildSlotSelectionAlert" class="alert alert-info mb-0 d-none"></div>
+                    <div id="buildSlotCharacters" class="craft-build-slot-grid"></div>
+                </section>
+
+                <section class="craft-section">
+                    <div class="craft-section-header-with-actions">
+                        <h3 class="craft-section-title">
+                            <i class="fas fa-tasks text-warning"></i> {% trans "Per-item Run Split" %}
+                        </h3>
+                    </div>
+
                     <div class="table-responsive craft-cycles-table craft-table-text-120">
                         <table class="table table-sm align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
                                     <th>{% trans "Item" %}</th>
                                     <th class="text-end">{% trans "Needed" %}</th>
-                                    <th class="text-end">{% trans "Per cycle" %}</th>
-                                    <th class="text-end">{% trans "Cycles" %}</th>
-                                    <th class="text-end">{% trans "Produced" %}</th>
-                                    <th class="text-end">{% trans "Surplus" %}</th>
+                                    <th class="text-end">{% trans "Per Run" %}</th>
+                                    <th class="text-end">{% trans "Runs" %}</th>
+                                    <th class="text-end">{% trans "Slots Used" %}</th>
+                                    <th class="text-end">{% trans "Peak / Slot" %}</th>
+                                    <th>{% trans "Run Split" %}</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% if product_type_id and final_product_qty %}
-                                <tr class="table-primary" data-type-id="{{ product_type_id }}">
-                                    <td>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <img src="https://images.evetech.net/types/{{ product_type_id }}/icon?size=32" alt="{{ bp_name }}" class="rounded eve-type-icon eve-type-icon--30" onerror="this.style.display='none';">
-                                            <div class="flex-grow-1">
-                                                <span class="small fw-bold d-block"><i class="fas fa-star text-warning me-1"></i>{{ bp_name }}</span>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td class="text-end text-xs fw-bold">{{ final_product_qty|intcomma }}</td>
-                                    <td class="text-end text-xs">{{ final_product_qty|floatformat:0|intcomma }}</td>
-                                    <td class="text-end text-xs fw-bold">{{ num_runs|intcomma }}</td>
-                                    <td class="text-end text-success text-xs fw-bold">{{ final_product_qty|intcomma }}</td>
-                                    <td class="text-end text-xs"><span class="badge bg-secondary-subtle text-secondary">0</span></td>
-                                </tr>
-                                {% endif %}
-
-                                {% for type_id, data in craft_cycles_summary.items %}
-                                <tr data-type-id="{{ type_id }}">
-                                    <td>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <img src="https://images.evetech.net/types/{{ type_id }}/icon?size=32" alt="{{ data.type_name }}" class="rounded eve-type-icon eve-type-icon--30" onerror="this.style.display='none';">
-                                            <span class="small fw-semibold">{{ data.type_name }}</span>
-                                        </div>
-                                    </td>
-                                    <td class="text-end text-xs">{{ data.total_needed|intcomma }}</td>
-                                    <td class="text-end text-xs">{{ data.produced_per_cycle|intcomma }}</td>
-                                    <td class="text-end text-xs">{{ data.cycles|intcomma }}</td>
-                                    <td class="text-end text-success text-xs fw-semibold">{{ data.total_produced|intcomma }}</td>
-                                    <td class="text-end text-xs">
-                                        {% if data.surplus > 0 %}
-                                            <span class="badge bg-success-subtle text-success fw-semibold">+{{ data.surplus|intcomma }}</span>
-                                        {% elif data.surplus < 0 %}
-                                            <span class="badge bg-danger-subtle text-danger fw-semibold">{{ data.surplus|intcomma }}</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary-subtle text-secondary">0</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
+                            <tbody id="buildPlannerBody"></tbody>
                         </table>
                     </div>
+                    <div id="buildPlannerEmptyState" class="alert alert-info mb-0 d-none">
+                        <i class="fas fa-info-circle me-2"></i>{% trans "No selected production jobs to plan yet." %}
+                    </div>
                 </section>
-                {% else %}
-                <div class="alert alert-info">{% trans "No cycles data available." %}</div>
-                {% endif %}
             </div>
 
             <!-- ========== CONFIGURE TAB (V2) ========== -->

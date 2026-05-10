@@ -1589,6 +1589,31 @@ div[id="bpTabs"] {
     font-size: 0.9rem; /* 0.75 * 1.2 */
 }
 
+.craft-build-slot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+
+.craft-build-slot-card {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.5rem;
+    background: var(--bs-secondary-bg);
+    padding: 0.75rem;
+}
+
+.craft-build-slot-card.is-unavailable {
+    opacity: 0.8;
+}
+
+.craft-build-slot-card .form-control[disabled] {
+    cursor: not-allowed;
+}
+
+.craft-build-run-split {
+    min-width: 220px;
+}
+
 /* Header Compact */
 .craft-header-compact {
     display: flex;
