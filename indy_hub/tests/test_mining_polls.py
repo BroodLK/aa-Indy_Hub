@@ -8,6 +8,9 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.utils import timezone
 
+# Third Party
+from django_celery_beat.models import CrontabSchedule
+
 from indy_hub.models import WeeklyMiningPollConfig, WeeklyMiningPollRun
 from indy_hub.services.mining_polls import create_main_poll_run, finalize_poll_run
 from indy_hub.tasks.mining_polls import (
@@ -18,16 +21,20 @@ from indy_hub.tasks.mining_polls import (
 
 class WeeklyMiningPollServiceTests(TestCase):
     def create_config(self, **overrides) -> WeeklyMiningPollConfig:
+        crontab_schedule = CrontabSchedule.objects.create(
+            minute="0",
+            hour="12",
+            day_of_week="*",
+            day_of_month="*",
+            month_of_year="*",
+            timezone="UTC",
+        )
         defaults = {
             "system_name": "1DQ1-A",
             "poll_name": "Mining Upgrade Vote",
             "channel_id": 123456789012345678,
             "options_json": ["Ore Prospecting", "Ice Harvesting", "Moon Drills"],
-            "cron_minute": "0",
-            "cron_hour": "12",
-            "cron_day_of_week": "*",
-            "cron_day_of_month": "*",
-            "cron_month_of_year": "*",
+            "crontab_schedule_id": crontab_schedule.id,
             "is_active": True,
         }
         defaults.update(overrides)
@@ -146,16 +153,20 @@ class WeeklyMiningPollServiceTests(TestCase):
 
 class WeeklyMiningPollTaskTests(TestCase):
     def create_due_config(self, *, now) -> WeeklyMiningPollConfig:
+        crontab_schedule = CrontabSchedule.objects.create(
+            minute=str(now.minute),
+            hour=str(now.hour),
+            day_of_week="*",
+            day_of_month="*",
+            month_of_year="*",
+            timezone="UTC",
+        )
         return WeeklyMiningPollConfig.objects.create(
             system_name="MJ-5F9",
             poll_name="Mining Upgrade Vote",
             channel_id=987654321098765432,
             options_json=["Ore Prospecting", "Ice Harvesting", "Moon Drills"],
-            cron_minute=str(now.minute),
-            cron_hour=str(now.hour),
-            cron_day_of_week="*",
-            cron_day_of_month="*",
-            cron_month_of_year="*",
+            crontab_schedule_id=crontab_schedule.id,
             last_scheduled_post_at=now - timedelta(days=1),
             is_active=True,
         )
@@ -187,6 +198,14 @@ class WeeklyMiningPollTaskTests(TestCase):
             poll_name="Mining Upgrade Vote",
             channel_id=111111111111111111,
             options_json=["Ore Prospecting", "Ice Harvesting", "Moon Drills"],
+            crontab_schedule_id=CrontabSchedule.objects.create(
+                minute="0",
+                hour="0",
+                day_of_week="*",
+                day_of_month="*",
+                month_of_year="*",
+                timezone="UTC",
+            ).id,
             is_active=True,
         )
         run = WeeklyMiningPollRun.objects.create(

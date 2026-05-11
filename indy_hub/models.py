@@ -3,9 +3,6 @@ import random
 from datetime import timedelta
 from decimal import ROUND_CEILING, Decimal
 
-# Third Party
-from celery.schedules import crontab
-
 # Django
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -1628,11 +1625,11 @@ class WeeklyMiningPollConfig(models.Model):
     )
     options_json = models.JSONField(default=list, blank=True)
     current_winner_option = models.CharField(max_length=55, blank=True)
-    cron_minute = models.CharField(max_length=32, default="0")
-    cron_hour = models.CharField(max_length=32, default="0")
-    cron_day_of_week = models.CharField(max_length=32, default="mon")
-    cron_day_of_month = models.CharField(max_length=32, default="*")
-    cron_month_of_year = models.CharField(max_length=32, default="*")
+    crontab_schedule_id = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="ID of the django-celery-beat crontab schedule to reuse.",
+    )
     is_active = models.BooleanField(default=True)
     last_scheduled_post_at = models.DateTimeField(
         null=True,
@@ -1673,13 +1670,24 @@ class WeeklyMiningPollConfig(models.Model):
         return normalized
 
     def build_crontab(self):
-        return crontab(
-            minute=self.cron_minute,
-            hour=self.cron_hour,
-            day_of_week=self.cron_day_of_week,
-            day_of_month=self.cron_day_of_month,
-            month_of_year=self.cron_month_of_year,
-        )
+        if not self.crontab_schedule_id:
+            raise ValidationError(
+                {"crontab_schedule_id": "A periodic-task crontab schedule is required."}
+            )
+
+        try:
+            from django_celery_beat.models import CrontabSchedule
+        except ImportError as exc:
+            raise ValidationError(
+                {"crontab_schedule_id": "django_celery_beat is not installed."}
+            ) from exc
+
+        try:
+            return CrontabSchedule.objects.get(pk=self.crontab_schedule_id).schedule
+        except CrontabSchedule.DoesNotExist as exc:
+            raise ValidationError(
+                {"crontab_schedule_id": "Selected crontab schedule no longer exists."}
+            ) from exc
 
     def build_question_text(
         self, *, tiebreak_round: int = 0, include_suffix: bool = True
@@ -1730,9 +1738,11 @@ class WeeklyMiningPollConfig(models.Model):
         try:
             self.build_crontab()
         except Exception as exc:
+            if isinstance(exc, ValidationError):
+                raise
             raise ValidationError(
                 {
-                    "cron_minute": f"Invalid cron schedule: {exc}",
+                    "crontab_schedule_id": f"Invalid crontab schedule: {exc}",
                 }
             ) from exc
 

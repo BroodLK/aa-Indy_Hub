@@ -496,6 +496,12 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
             label="Known channel",
             help_text="Choose a channel discovered by aadiscordbot, or enter a manual channel ID below.",
         )
+        crontab_schedule_id = forms.ChoiceField(
+            required=True,
+            choices=[("", "---------")],
+            label="Periodic task schedule",
+            help_text="Reuse an existing django-celery-beat crontab schedule.",
+        )
         options_text = forms.CharField(
             required=True,
             widget=forms.Textarea(attrs={"rows": 8}),
@@ -511,19 +517,16 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                 "known_channel_id",
                 "channel_id",
                 "ping_role_id",
+                "crontab_schedule_id",
                 "options_text",
                 "current_winner_option",
-                "cron_minute",
-                "cron_hour",
-                "cron_day_of_week",
-                "cron_day_of_month",
-                "cron_month_of_year",
                 "is_active",
             )
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.fields["channel_id"].label = "Manual channel ID"
+            self.fields["channel_id"].required = False
             self.fields["channel_id"].help_text = (
                 "Used when the target channel is not listed above."
             )
@@ -532,17 +535,6 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
             )
             self.fields["current_winner_option"].help_text = (
                 "Optional seed for the current winner. Leave blank to let the first result establish it."
-            )
-            self.fields["cron_minute"].help_text = "Cron minute field."
-            self.fields["cron_hour"].help_text = "Cron hour field."
-            self.fields["cron_day_of_week"].help_text = (
-                "Cron day-of-week field. Use UTC/GMT."
-            )
-            self.fields["cron_day_of_month"].help_text = (
-                "Cron day-of-month field. Use UTC/GMT."
-            )
-            self.fields["cron_month_of_year"].help_text = (
-                "Cron month field. Use UTC/GMT."
             )
 
             known_choices = [("", "---------")]
@@ -568,11 +560,44 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                     pass
             self.fields["known_channel_id"].choices = known_choices
 
+            crontab_choices = [("", "---------")]
+            if apps.is_installed("django_celery_beat"):
+                try:
+                    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+                    used_crontab_ids = list(
+                        PeriodicTask.objects.exclude(crontab_id__isnull=True)
+                        .values_list("crontab_id", flat=True)
+                        .distinct()
+                    )
+                    instance = getattr(self, "instance", None)
+                    if instance and instance.pk and instance.crontab_schedule_id:
+                        used_crontab_ids.append(instance.crontab_schedule_id)
+                    for crontab in CrontabSchedule.objects.filter(
+                        id__in=sorted(set(used_crontab_ids))
+                    ).order_by(
+                        "timezone",
+                        "month_of_year",
+                        "day_of_month",
+                        "day_of_week",
+                        "hour",
+                        "minute",
+                    ):
+                        label = getattr(crontab, "human_readable", str(crontab))
+                        crontab_choices.append((str(crontab.id), f"{label} [#{crontab.id}]"))
+                except Exception:
+                    pass
+            self.fields["crontab_schedule_id"].choices = crontab_choices
+
             instance = getattr(self, "instance", None)
             if instance and instance.pk:
                 self.fields["options_text"].initial = "\n".join(instance.options)
                 if instance.channel_id and str(instance.channel_id) in known_ids:
                     self.fields["known_channel_id"].initial = str(instance.channel_id)
+                if instance.crontab_schedule_id:
+                    self.fields["crontab_schedule_id"].initial = str(
+                        instance.crontab_schedule_id
+                    )
 
         def clean(self):
             cleaned = super().clean()
@@ -591,6 +616,15 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                 for line in (cleaned.get("options_text") or "").splitlines()
                 if line.strip()
             ]
+            crontab_schedule_id = (cleaned.get("crontab_schedule_id") or "").strip()
+            if not crontab_schedule_id:
+                self.add_error(
+                    "crontab_schedule_id",
+                    "Select an existing periodic-task crontab schedule.",
+                )
+            else:
+                cleaned["crontab_schedule_id"] = int(crontab_schedule_id)
+                self.instance.crontab_schedule_id = int(crontab_schedule_id)
             cleaned["options_json"] = options
             self.instance.options_json = options
             return cleaned
@@ -647,8 +681,7 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
             "Schedule",
             {
                 "fields": (
-                    ("cron_minute", "cron_hour"),
-                    ("cron_day_of_week", "cron_day_of_month", "cron_month_of_year"),
+                    "crontab_schedule_id",
                     "last_scheduled_post_at",
                 )
             },
