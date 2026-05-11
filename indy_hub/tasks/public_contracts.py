@@ -29,7 +29,7 @@ def sync_public_jita_contracts(*, force: bool = False, max_pages: int = 2000):
 
 @shared_task(name="indy_hub.tasks.public_contracts.sync_capital_ship_estimates")
 def sync_capital_ship_estimates(*, max_pages: int = 2000):
-    """Sync automated capital ship estimates from public Forge contracts."""
+    """Sync automated capital ship estimates from craft buy cost."""
     safe_max_pages = max(1, int(max_pages or 2000))
     result = sync_capital_ship_auto_estimates(max_pages=safe_max_pages)
     logger.info(

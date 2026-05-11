@@ -193,6 +193,30 @@ class ESIClient:
         self.provider = esi_provider
         self.client = self.provider.client
 
+    @staticmethod
+    def _results_with_fallback(
+        result_obj,
+        *,
+        results_kwargs: dict | None = None,
+        use_cache: bool = False,
+        disable_etag: bool = False,
+    ):
+        if not hasattr(result_obj, "results"):
+            return result_obj
+
+        call_kwargs = dict(results_kwargs or {})
+
+        if disable_etag:
+            try:
+                return result_obj.results(use_etag=False)
+            except TypeError:
+                return result_obj.results()
+
+        if use_cache:
+            call_kwargs["use_cache"] = True
+
+        return result_obj.results(**call_kwargs)
+
     def fetch_character_blueprints(
         self, character_id: int, *, force_refresh: bool = False
     ) -> list[dict]:
@@ -455,26 +479,43 @@ class ESIClient:
             result_obj = operation_fn(**params, token=token_obj)
             # When ESI returns 304, django-esi will handle it and return cached data
             # if use_etag is True (default). We call results() to get either fresh or cached data.
-            payload = result_obj.results(
-                force_refresh=force_refresh,
-                use_cache=not force_refresh,
+            payload = self._results_with_fallback(
+                result_obj,
+                results_kwargs={
+                    "force_refresh": force_refresh,
+                    "use_cache": not force_refresh,
+                },
             )
         except HTTPNotModified:
             # 304 means data hasn't changed. Try to get cached data from django-esi.
             # According to django-esi docs, calling results() after 304 should return cached data.
             try:
                 result_obj = operation_fn(**params, token=token_obj)
-                payload = result_obj.results(use_cache=True)
+                payload = self._results_with_fallback(
+                    result_obj,
+                    use_cache=True,
+                )
             except Exception as cache_exc:
                 logger.debug(
                     "Failed to retrieve cached data for %s after 304: %s",
                     endpoint,
                     cache_exc,
                 )
-                # If we can't get cached data, raise the original error
-                raise ESIUnmodifiedError(
-                    f"ESI returned 304 for {endpoint} and no cached data available"
-                ) from cache_exc
+                try:
+                    result_obj = operation_fn(**params, token=token_obj)
+                    payload = self._results_with_fallback(
+                        result_obj,
+                        disable_etag=True,
+                    )
+                except Exception as bypass_exc:
+                    logger.debug(
+                        "Failed ETag bypass for %s after 304 cache miss: %s",
+                        endpoint,
+                        bypass_exc,
+                    )
+                    raise ESIUnmodifiedError(
+                        f"ESI returned 304 for {endpoint} and no cached data available"
+                    ) from bypass_exc
         except (ESIErrorLimitException, ESIBucketLimitException) as exc:
             retry_after = getattr(exc, "reset", None)
             raise ESIRateLimitError(
@@ -955,24 +996,40 @@ class ESIClient:
                 results_kwargs = {}
             result_obj = operation(token_obj)
             # When ESI returns 304, django-esi should return cached data
-            return result_obj.results(**results_kwargs)
+            return self._results_with_fallback(
+                result_obj,
+                results_kwargs=results_kwargs,
+            )
         except HTTPNotModified:
             # 304 means data hasn't changed. Try to get cached data from django-esi.
             try:
                 result_obj = operation(token_obj)
-                cache_kwargs = dict(results_kwargs or {})
-                cache_kwargs["use_cache"] = True
-                return result_obj.results(**cache_kwargs)
+                return self._results_with_fallback(
+                    result_obj,
+                    results_kwargs=results_kwargs,
+                    use_cache=True,
+                )
             except Exception as cache_exc:
                 logger.debug(
                     "Failed to retrieve cached data for %s after 304: %s",
                     endpoint or "request",
                     cache_exc,
                 )
-                # If we can't get cached data, raise the original error
-                raise ESIUnmodifiedError(
-                    f"ESI returned 304 for {endpoint or 'request'} and no cached data available"
-                ) from cache_exc
+                try:
+                    result_obj = operation(token_obj)
+                    return self._results_with_fallback(
+                        result_obj,
+                        disable_etag=True,
+                    )
+                except Exception as bypass_exc:
+                    logger.debug(
+                        "Failed ETag bypass for %s after 304 cache miss: %s",
+                        endpoint or "request",
+                        bypass_exc,
+                    )
+                    raise ESIUnmodifiedError(
+                        f"ESI returned 304 for {endpoint or 'request'} and no cached data available"
+                    ) from bypass_exc
         except (ESIErrorLimitException, ESIBucketLimitException) as exc:
             retry_after = getattr(exc, "reset", None)
             raise ESIRateLimitError(

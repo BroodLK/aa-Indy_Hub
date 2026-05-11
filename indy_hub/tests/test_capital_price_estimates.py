@@ -15,7 +15,10 @@ from allianceauth.eveonline.models import EveCharacter
 
 # Local
 from indy_hub.models import MaterialExchangeConfig
-from indy_hub.services.capital_price_estimates import sync_capital_ship_auto_estimates
+from indy_hub.services.capital_price_estimates import (
+    _build_capital_buy_cost_map,
+    sync_capital_ship_auto_estimates,
+)
 from indy_hub.views.capital_ship_orders import (
     _get_ship_default_price,
     _load_capital_ship_options,
@@ -56,18 +59,12 @@ def grant_indy_permissions(user: User, *codenames: str) -> None:
 
 
 class CapitalPriceEstimateSyncTests(TestCase):
-    @patch("indy_hub.services.capital_price_estimates._resolve_fuel_like_type_ids")
-    @patch("indy_hub.services.capital_price_estimates._fetch_public_contract_items_cached")
-    @patch("indy_hub.services.capital_price_estimates._fetch_public_contract_page_cached")
-    @patch("indy_hub.services.capital_price_estimates._resolve_operation")
+    @patch("indy_hub.services.capital_price_estimates._build_capital_buy_cost_map")
     @patch("indy_hub.services.capital_price_estimates._load_capital_ship_options")
-    def test_sync_updates_auto_estimate_from_contract_median_and_preserves_missing_types(
+    def test_sync_updates_auto_estimate_from_buy_cost_plus_markup_and_preserves_missing_types(
         self,
         mock_load_options,
-        mock_resolve_operation,
-        mock_fetch_pages,
-        mock_fetch_items,
-        mock_resolve_fuel_types,
+        mock_build_cost_map,
     ) -> None:
         config = MaterialExchangeConfig.objects.create(
             corporation_id=1234,
@@ -96,75 +93,89 @@ class CapitalPriceEstimateSyncTests(TestCase):
                 "ship_class_label": "FAX",
             },
         ]
-        mock_resolve_operation.return_value = lambda **kwargs: None
-        mock_fetch_pages.side_effect = [
-            [
-                {
-                    "contract_id": 1,
-                    "contract_type": "item_exchange",
-                    "status": "outstanding",
-                    "price": "3000000000.00",
-                },
-                {
-                    "contract_id": 2,
-                    "contract_type": "item_exchange",
-                    "status": "outstanding",
-                    "price": "3400000000.00",
-                },
-                {
-                    "contract_id": 3,
-                    "contract_type": "item_exchange",
-                    "status": "outstanding",
-                    "price": "4200000000.00",
-                },
-                {
-                    "contract_id": 4,
-                    "contract_type": "item_exchange",
-                    "status": "outstanding",
-                    "price": "999000000.00",
-                },
-            ],
-            [],
-            [],
-        ]
-
-        def items_side_effect(*, contract_id, **kwargs):
-            if int(contract_id) == 1:
-                return [{"type_id": 19720, "quantity": 1, "is_included": True}]
-            if int(contract_id) == 2:
-                return [{"type_id": 19720, "quantity": 1, "is_included": True}]
-            if int(contract_id) == 3:
-                return [
-                    {"type_id": 19720, "quantity": 1, "is_included": True},
-                    {"type_id": 4247, "quantity": 10, "is_included": True},
-                ]
-            if int(contract_id) == 4:
-                return [
-                    {"type_id": 19720, "quantity": 1, "is_included": True},
-                    {"type_id": 34, "quantity": 1, "is_included": True},
-                ]
-            return []
-
-        mock_fetch_items.side_effect = items_side_effect
-        mock_resolve_fuel_types.return_value = {4247}
+        mock_build_cost_map.return_value = (
+            {
+                19720: Decimal("3000000000.00"),
+            },
+            {
+                "types_requested": 2,
+                "blueprints_found": 1,
+                "requirements_built": 1,
+                "material_types_needed": 3,
+                "material_price_hits": 3,
+                "material_price_misses": 0,
+                "types_priced": 1,
+                "types_skipped_missing_prices": 0,
+            },
+        )
 
         result = sync_capital_ship_auto_estimates(max_pages=10)
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["contracts_matched"], 3)
+        self.assertEqual(result["types_priced"], 1)
         self.assertEqual(result["types_updated"], 1)
 
         config.refresh_from_db()
         auto_row_map = config.get_capital_ship_auto_estimate_row_map()
         self.assertEqual(
             auto_row_map[19720]["price_isk"],
-            Decimal("3400000000.00"),
+            Decimal("3300000000.00"),
         )
-        self.assertEqual(auto_row_map[19720]["contract_count"], 3)
-        self.assertEqual(
-            auto_row_map[37604]["price_isk"],
-            Decimal("5550000000.00"),
-        )
+        self.assertNotIn("contract_count", auto_row_map[19720])
+        self.assertEqual(auto_row_map[37604]["price_isk"], Decimal("5550000000.00"))
+
+
+class CapitalPriceEstimateCostingTests(TestCase):
+    @patch("indy_hub.services.capital_price_estimates.fetch_fuzzwork_prices")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_output_qty")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_material_rows")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_for_product")
+    def test_build_cost_map_uses_recursive_leaf_buy_costs(
+        self,
+        mock_get_blueprint_for_product,
+        mock_get_blueprint_material_rows,
+        mock_get_blueprint_output_qty,
+        mock_fetch_fuzzwork_prices,
+    ) -> None:
+        def blueprint_for_product_side_effect(
+            product_type_id,
+            *,
+            blueprint_by_product_cache,
+            blueprint_output_qty_cache,
+        ):
+            mapping = {
+                19720: 101,
+                5001: 201,
+            }
+            return mapping.get(int(product_type_id))
+
+        def material_rows_side_effect(blueprint_id, *, blueprint_material_cache):
+            mapping = {
+                101: [(5001, 2), (5002, 5)],
+                201: [(5003, 3)],
+            }
+            return list(mapping.get(int(blueprint_id), []))
+
+        def output_qty_side_effect(blueprint_id, *, blueprint_output_qty_cache):
+            mapping = {
+                201: 2,
+            }
+            return mapping.get(int(blueprint_id), 1)
+
+        mock_get_blueprint_for_product.side_effect = blueprint_for_product_side_effect
+        mock_get_blueprint_material_rows.side_effect = material_rows_side_effect
+        mock_get_blueprint_output_qty.side_effect = output_qty_side_effect
+        mock_fetch_fuzzwork_prices.return_value = {
+            5002: {"buy": Decimal("0"), "sell": Decimal("4")},
+            5003: {"buy": Decimal("0"), "sell": Decimal("2")},
+        }
+
+        cost_map, stats = _build_capital_buy_cost_map({19720})
+
+        self.assertEqual(cost_map[19720], Decimal("26.00"))
+        self.assertEqual(stats["blueprints_found"], 1)
+        self.assertEqual(stats["material_types_needed"], 2)
+        self.assertEqual(stats["types_priced"], 1)
 
 
 class CapitalPriceEstimateFallbackTests(TestCase):
@@ -201,7 +212,7 @@ class CapitalPriceEstimateFallbackTests(TestCase):
             ship_class="dread",
         )
         self.assertEqual(price, Decimal("3400000000.00"))
-        self.assertEqual(source, "public_contract_median")
+        self.assertEqual(source, "craft_buy_cost_plus_10")
 
         config.capital_ship_auto_estimated_prices = []
         price, source = _get_ship_default_price(

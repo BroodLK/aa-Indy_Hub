@@ -446,7 +446,7 @@ def _get_ship_default_price(
             auto_map = {}
         auto_price = _quantize_isk(auto_map.get(type_id))
         if auto_price is not None:
-            return auto_price, "public_contract_median"
+            return auto_price, "craft_buy_cost_plus_10"
 
     class_price = _get_class_default_price(config, ship_class)
     if class_price is not None:
