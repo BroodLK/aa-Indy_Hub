@@ -72,6 +72,11 @@ INDY_HUB_BEAT_SCHEDULE = {
         "options": {"priority": 7},
         "apply_offset": True,
     },
+    "indy-hub-weekly-mining-poll-cycle": {
+        "task": "indy_hub.tasks.mining_polls.run_weekly_mining_poll_cycle",
+        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+        "options": {"priority": 5},
+    },
     # Removed: indy-hub-refresh-production-items - now using indy_hub SDE industry tables
 }
 

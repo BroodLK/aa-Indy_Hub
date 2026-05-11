@@ -32,6 +32,7 @@ def _import_task_submodules() -> None:
     from . import location  # noqa: F401
     from . import material_exchange  # noqa: F401
     from . import material_exchange_contracts  # noqa: F401
+    from . import mining_polls  # noqa: F401
     from . import notifications  # noqa: F401
     from . import public_contracts  # noqa: F401
     from . import user  # noqa: F401

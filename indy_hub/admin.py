@@ -1,10 +1,12 @@
 """Django admin configuration for indy_hub models."""
 
 # Django
+from django.apps import apps
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import GroupAdmin
 from django.contrib.auth.models import Group, User
+from django.utils import timezone
 
 from .models import (
     Blueprint,
@@ -25,7 +27,11 @@ from .models import (
     MaterialExchangeTransaction,
     NotificationWebhook,
     UserOnboardingProgress,
+    WeeklyMiningPollConfig,
+    WeeklyMiningPollRun,
 )
+from .services.mining_polls import create_main_poll_run
+from .tasks.mining_polls import queue_weekly_mining_poll_post
 
 
 class IndyHubGroupAdminForm(forms.ModelForm):
@@ -479,6 +485,354 @@ class NotificationWebhookAdmin(admin.ModelAdmin):
 
     class Media:
         js = ("indy_hub/js/admin_notification_webhook.js",)
+
+
+@admin.register(WeeklyMiningPollConfig)
+class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
+    class WeeklyMiningPollConfigForm(forms.ModelForm):
+        known_channel_id = forms.ChoiceField(
+            required=False,
+            choices=[("", "---------")],
+            label="Known channel",
+            help_text="Choose a channel discovered by aadiscordbot, or enter a manual channel ID below.",
+        )
+        options_text = forms.CharField(
+            required=True,
+            widget=forms.Textarea(attrs={"rows": 8}),
+            label="Poll options",
+            help_text="Enter one option per line. Discord native polls support 2 to 10 options.",
+        )
+
+        class Meta:
+            model = WeeklyMiningPollConfig
+            fields = (
+                "system_name",
+                "poll_name",
+                "known_channel_id",
+                "channel_id",
+                "ping_role_id",
+                "options_text",
+                "current_winner_option",
+                "cron_minute",
+                "cron_hour",
+                "cron_day_of_week",
+                "cron_day_of_month",
+                "cron_month_of_year",
+                "is_active",
+            )
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fields["channel_id"].label = "Manual channel ID"
+            self.fields["channel_id"].help_text = (
+                "Used when the target channel is not listed above."
+            )
+            self.fields["ping_role_id"].help_text = (
+                "Optional Discord role ID to mention when posting the poll."
+            )
+            self.fields["current_winner_option"].help_text = (
+                "Optional seed for the current winner. Leave blank to let the first result establish it."
+            )
+            self.fields["cron_minute"].help_text = "Cron minute field."
+            self.fields["cron_hour"].help_text = "Cron hour field."
+            self.fields["cron_day_of_week"].help_text = (
+                "Cron day-of-week field. Use UTC/GMT."
+            )
+            self.fields["cron_day_of_month"].help_text = (
+                "Cron day-of-month field. Use UTC/GMT."
+            )
+            self.fields["cron_month_of_year"].help_text = (
+                "Cron month field. Use UTC/GMT."
+            )
+
+            known_choices = [("", "---------")]
+            known_ids: set[str] = set()
+            if apps.is_installed("aadiscordbot"):
+                try:
+                    from aadiscordbot.models import Channels
+
+                    for channel in (
+                        Channels.objects.select_related("server")
+                        .filter(deleted=False)
+                        .order_by("server__name", "name")
+                    ):
+                        value = str(channel.channel)
+                        known_ids.add(value)
+                        known_choices.append(
+                            (
+                                value,
+                                f"{channel.server.name} / #{channel.name} ({channel.channel})",
+                            )
+                        )
+                except Exception:
+                    pass
+            self.fields["known_channel_id"].choices = known_choices
+
+            instance = getattr(self, "instance", None)
+            if instance and instance.pk:
+                self.fields["options_text"].initial = "\n".join(instance.options)
+                if instance.channel_id and str(instance.channel_id) in known_ids:
+                    self.fields["known_channel_id"].initial = str(instance.channel_id)
+
+        def clean(self):
+            cleaned = super().clean()
+            selected_known_channel = (cleaned.get("known_channel_id") or "").strip()
+            manual_channel_id = cleaned.get("channel_id")
+            if selected_known_channel:
+                cleaned["channel_id"] = int(selected_known_channel)
+            elif not manual_channel_id:
+                self.add_error(
+                    "channel_id",
+                    "Select a known channel or provide a manual Discord channel ID.",
+                )
+
+            options = [
+                line.strip()
+                for line in (cleaned.get("options_text") or "").splitlines()
+                if line.strip()
+            ]
+            cleaned["options_json"] = options
+            self.instance.options_json = options
+            return cleaned
+
+        def save(self, commit=True):
+            instance = super().save(commit=False)
+            instance.options_json = self.cleaned_data.get("options_json") or []
+            if commit:
+                instance.save()
+            return instance
+
+    form = WeeklyMiningPollConfigForm
+    actions = ["enable_selected_configs", "disable_selected_configs", "post_selected_now"]
+    list_display = [
+        "system_name",
+        "poll_name",
+        "channel_id",
+        "current_winner_option",
+        "is_active",
+        "last_scheduled_post_at",
+    ]
+    list_filter = ["is_active"]
+    search_fields = [
+        "system_name",
+        "poll_name",
+        "channel_id",
+        "current_winner_option",
+    ]
+    readonly_fields = ["created_at", "updated_at", "last_scheduled_post_at"]
+    fieldsets = (
+        (
+            "Poll Target",
+            {
+                "fields": (
+                    "system_name",
+                    "poll_name",
+                    "known_channel_id",
+                    "channel_id",
+                    "ping_role_id",
+                    "is_active",
+                )
+            },
+        ),
+        (
+            "Poll Content",
+            {
+                "fields": (
+                    "options_text",
+                    "current_winner_option",
+                )
+            },
+        ),
+        (
+            "Schedule",
+            {
+                "fields": (
+                    ("cron_minute", "cron_hour"),
+                    ("cron_day_of_week", "cron_day_of_month", "cron_month_of_year"),
+                    "last_scheduled_post_at",
+                )
+            },
+        ),
+        (
+            "Audit",
+            {
+                "fields": ("created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    @admin.action(description="Enable selected weekly mining polls")
+    def enable_selected_configs(self, request, queryset):
+        updated = queryset.update(is_active=True, updated_at=timezone.now())
+        self.message_user(
+            request,
+            f"Enabled {updated} weekly mining poll config(s).",
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description="Disable selected weekly mining polls")
+    def disable_selected_configs(self, request, queryset):
+        updated = queryset.update(is_active=False, updated_at=timezone.now())
+        self.message_user(
+            request,
+            f"Disabled {updated} weekly mining poll config(s).",
+            level=messages.SUCCESS,
+        )
+
+    @admin.action(description="Post selected weekly mining polls now")
+    def post_selected_now(self, request, queryset):
+        posted = 0
+        skipped = 0
+        failed = 0
+        now = timezone.now()
+
+        for config in queryset.order_by("id"):
+            has_active_run = config.runs.filter(
+                status__in=[
+                    WeeklyMiningPollRun.Status.PENDING_POST,
+                    WeeklyMiningPollRun.Status.OPEN,
+                    WeeklyMiningPollRun.Status.PENDING_RESOLUTION,
+                ]
+            ).exists()
+            if has_active_run:
+                skipped += 1
+                continue
+
+            run = create_main_poll_run(config, scheduled_at=now)
+            if queue_weekly_mining_poll_post(run.id):
+                posted += 1
+            else:
+                run.status = WeeklyMiningPollRun.Status.FAILED
+                run.failure_reason = "aadiscordbot task queue unavailable"
+                run.save(update_fields=["status", "failure_reason", "updated_at"])
+                failed += 1
+
+        if posted:
+            self.message_user(
+                request,
+                f"Queued {posted} weekly mining poll(s) for immediate posting.",
+                level=messages.SUCCESS,
+            )
+        if skipped:
+            self.message_user(
+                request,
+                f"Skipped {skipped} config(s) because they already have an active poll run.",
+                level=messages.WARNING,
+            )
+        if failed:
+            self.message_user(
+                request,
+                f"Failed to queue {failed} poll(s) because aadiscordbot was unavailable.",
+                level=messages.ERROR,
+            )
+
+
+@admin.register(WeeklyMiningPollRun)
+class WeeklyMiningPollRunAdmin(admin.ModelAdmin):
+    list_display = [
+        "id",
+        "config",
+        "kind",
+        "tiebreak_round",
+        "status",
+        "winning_option",
+        "total_votes",
+        "posted_at",
+        "finalized_at",
+    ]
+    list_filter = ["kind", "status", "tiebreak_round"]
+    search_fields = [
+        "config__system_name",
+        "config__poll_name",
+        "discord_message_id",
+        "winning_option",
+    ]
+    readonly_fields = [
+        "config",
+        "parent_run",
+        "root_run",
+        "kind",
+        "status",
+        "tiebreak_round",
+        "duration_hours",
+        "discord_channel_id",
+        "discord_message_id",
+        "ping_role_id",
+        "question_text",
+        "option_labels",
+        "display_option_labels",
+        "previous_winner_option",
+        "winning_option",
+        "resolution_method",
+        "total_votes",
+        "resolution_attempts",
+        "posted_at",
+        "closes_at",
+        "resolve_after",
+        "finalized_at",
+        "failure_reason",
+        "created_at",
+        "updated_at",
+    ]
+    fieldsets = (
+        (
+            "Context",
+            {
+                "fields": (
+                    "config",
+                    "parent_run",
+                    "root_run",
+                    "kind",
+                    "status",
+                    "tiebreak_round",
+                    "duration_hours",
+                )
+            },
+        ),
+        (
+            "Discord",
+            {
+                "fields": (
+                    "discord_channel_id",
+                    "discord_message_id",
+                    "ping_role_id",
+                    "question_text",
+                    "option_labels",
+                    "display_option_labels",
+                )
+            },
+        ),
+        (
+            "Outcome",
+            {
+                "fields": (
+                    "previous_winner_option",
+                    "winning_option",
+                    "resolution_method",
+                    "total_votes",
+                    "resolution_attempts",
+                    "failure_reason",
+                )
+            },
+        ),
+        (
+            "Timing",
+            {
+                "fields": (
+                    "posted_at",
+                    "closes_at",
+                    "resolve_after",
+                    "finalized_at",
+                    "created_at",
+                    "updated_at",
+                )
+            },
+        ),
+    )
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(MaterialExchangeConfig)

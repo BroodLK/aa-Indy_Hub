@@ -3,6 +3,9 @@ import random
 from datetime import timedelta
 from decimal import ROUND_CEILING, Decimal
 
+# Third Party
+from celery.schedules import crontab
+
 # Django
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
@@ -1610,6 +1613,246 @@ class NotificationWebhookMessage(models.Model):
 
     def __str__(self):
         return f"Webhook message {self.message_id}"
+
+
+class WeeklyMiningPollConfig(models.Model):
+    """Admin-only configuration for recurring Discord mining upgrade polls."""
+
+    system_name = models.CharField(max_length=80)
+    poll_name = models.CharField(max_length=180)
+    channel_id = models.BigIntegerField(help_text="Discord channel ID used for posting.")
+    ping_role_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Optional Discord role ID to ping when the poll is posted.",
+    )
+    options_json = models.JSONField(default=list, blank=True)
+    current_winner_option = models.CharField(max_length=55, blank=True)
+    cron_minute = models.CharField(max_length=32, default="0")
+    cron_hour = models.CharField(max_length=32, default="0")
+    cron_day_of_week = models.CharField(max_length=32, default="mon")
+    cron_day_of_month = models.CharField(max_length=32, default="*")
+    cron_month_of_year = models.CharField(max_length=32, default="*")
+    is_active = models.BooleanField(default=True)
+    last_scheduled_post_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time this config dispatched a weekly poll run.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Weekly Mining Poll Config"
+        verbose_name_plural = "Weekly Mining Poll Configs"
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["is_active"], name="indy_hub_wmp_active_idx"),
+            models.Index(
+                fields=["last_scheduled_post_at"],
+                name="indy_hub_wmp_last_post_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.system_name} - {self.poll_name}"
+
+    @property
+    def options(self) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_option in self.options_json or []:
+            option = str(raw_option or "").strip()
+            if not option:
+                continue
+            key = option.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(option)
+        return normalized
+
+    def build_crontab(self):
+        return crontab(
+            minute=self.cron_minute,
+            hour=self.cron_hour,
+            day_of_week=self.cron_day_of_week,
+            day_of_month=self.cron_day_of_month,
+            month_of_year=self.cron_month_of_year,
+        )
+
+    def build_question_text(
+        self, *, tiebreak_round: int = 0, include_suffix: bool = True
+    ) -> str:
+        base_question = f"{self.system_name}: {self.poll_name}"
+        if tiebreak_round > 0 and include_suffix:
+            return f"{base_question} (Tiebreaker {tiebreak_round})"
+        return base_question
+
+    def clean(self):
+        super().clean()
+
+        if self.channel_id is None or int(self.channel_id) <= 0:
+            raise ValidationError({"channel_id": "A Discord channel ID is required."})
+
+        normalized_options = self.options
+        if len(normalized_options) < 2:
+            raise ValidationError(
+                {"options_json": "At least two poll options are required."}
+            )
+        if len(normalized_options) > 10:
+            raise ValidationError(
+                {"options_json": "Discord native polls support at most 10 options."}
+            )
+        for option in normalized_options:
+            if len(option) > 55:
+                raise ValidationError(
+                    {
+                        "options_json": (
+                            "Each poll option must be 55 characters or fewer "
+                            "for Discord native polls."
+                        )
+                    }
+                )
+
+        if (
+            self.current_winner_option
+            and self.current_winner_option not in normalized_options
+        ):
+            raise ValidationError(
+                {
+                    "current_winner_option": (
+                        "Current winner must match one of the configured poll options."
+                    )
+                }
+            )
+
+        try:
+            self.build_crontab()
+        except Exception as exc:
+            raise ValidationError(
+                {
+                    "cron_minute": f"Invalid cron schedule: {exc}",
+                }
+            ) from exc
+
+        if len(self.build_question_text()) > 300:
+            raise ValidationError(
+                {
+                    "poll_name": (
+                        "System name and poll name must fit within Discord's "
+                        "300 character poll question limit."
+                    )
+                }
+            )
+        if len(self.build_question_text(tiebreak_round=3)) > 300:
+            raise ValidationError(
+                {
+                    "poll_name": (
+                        "System name and poll name are too long to include "
+                        "the tie-breaker suffix."
+                    )
+                }
+            )
+
+    def save(self, *args, **kwargs):
+        self.options_json = self.options
+        super().save(*args, **kwargs)
+
+
+class WeeklyMiningPollRun(models.Model):
+    """A posted Discord poll run, including tie-break rounds and outcomes."""
+
+    class Kind(models.TextChoices):
+        MAIN = "main", "Main"
+        TIEBREAKER = "tiebreaker", "Tiebreaker"
+
+    class Status(models.TextChoices):
+        PENDING_POST = "pending_post", "Pending post"
+        OPEN = "open", "Open"
+        PENDING_RESOLUTION = "pending_resolution", "Pending resolution"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    class ResolutionMethod(models.TextChoices):
+        VOTE_WINNER = "vote_winner", "Vote winner"
+        TIEBREAKER = "tiebreaker", "Spawned tie-breaker"
+        NO_VOTES_PREVIOUS = "no_votes_previous", "No votes - previous winner"
+        NO_VOTES_RANDOM = "no_votes_random", "No votes - random winner"
+        FALLBACK_PREVIOUS = "fallback_previous", "Tie fallback - previous winner"
+        FALLBACK_RANDOM = "fallback_random", "Tie fallback - random winner"
+
+    config = models.ForeignKey(
+        WeeklyMiningPollConfig,
+        on_delete=models.CASCADE,
+        related_name="runs",
+    )
+    parent_run = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="child_runs",
+        null=True,
+        blank=True,
+    )
+    root_run = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="descendant_runs",
+        null=True,
+        blank=True,
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.MAIN)
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.PENDING_POST,
+    )
+    tiebreak_round = models.PositiveSmallIntegerField(default=0)
+    duration_hours = models.PositiveSmallIntegerField(default=24)
+    discord_channel_id = models.BigIntegerField()
+    discord_message_id = models.BigIntegerField(null=True, blank=True)
+    ping_role_id = models.BigIntegerField(null=True, blank=True)
+    question_text = models.CharField(max_length=300)
+    option_labels = models.JSONField(default=list, blank=True)
+    display_option_labels = models.JSONField(default=list, blank=True)
+    previous_winner_option = models.CharField(max_length=55, blank=True)
+    winning_option = models.CharField(max_length=55, blank=True)
+    resolution_method = models.CharField(max_length=32, blank=True)
+    total_votes = models.PositiveIntegerField(null=True, blank=True)
+    resolution_attempts = models.PositiveSmallIntegerField(default=0)
+    posted_at = models.DateTimeField(null=True, blank=True)
+    closes_at = models.DateTimeField(null=True, blank=True)
+    resolve_after = models.DateTimeField(null=True, blank=True)
+    finalized_at = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Weekly Mining Poll Run"
+        verbose_name_plural = "Weekly Mining Poll Runs"
+        default_permissions = ()
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "resolve_after"], name="indy_hub_wmpr_resolve_idx"),
+            models.Index(fields=["config", "created_at"], name="indy_hub_wmpr_cfg_created_idx"),
+            models.Index(fields=["root_run"], name="indy_hub_wmpr_root_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.config.system_name} {self.get_kind_display()} #{self.id}"
+
+    @property
+    def effective_root_run_id(self) -> int:
+        return self.root_run_id or self.id
+
+    @property
+    def is_open(self) -> bool:
+        return self.status in {
+            self.Status.PENDING_POST,
+            self.Status.OPEN,
+            self.Status.PENDING_RESOLUTION,
+        }
 
 
 class ProductionConfig(models.Model):
