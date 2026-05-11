@@ -124,6 +124,54 @@ class CapitalPriceEstimateSyncTests(TestCase):
         self.assertNotIn("contract_count", auto_row_map[19720])
         self.assertEqual(auto_row_map[37604]["price_isk"], Decimal("5550000000.00"))
 
+    @patch("indy_hub.services.capital_price_estimates._build_capital_buy_cost_map")
+    @patch("indy_hub.services.capital_price_estimates._load_capital_ship_options")
+    def test_sync_ceils_auto_estimate_to_next_hundred_million(
+        self,
+        mock_load_options,
+        mock_build_cost_map,
+    ) -> None:
+        config = MaterialExchangeConfig.objects.create(
+            corporation_id=1234,
+            structure_id=60003760,
+            is_active=True,
+        )
+        mock_load_options.return_value = [
+            {
+                "type_id": 19720,
+                "type_name": "Revelation",
+                "ship_class": "dread",
+                "ship_class_label": "Dreadnought",
+            }
+        ]
+        mock_build_cost_map.return_value = (
+            {
+                19720: Decimal("7686924416.81"),
+            },
+            {
+                "types_requested": 1,
+                "blueprints_found": 1,
+                "requirements_built": 1,
+                "material_types_needed": 3,
+                "material_price_hits": 3,
+                "material_price_misses": 0,
+                "types_priced": 1,
+                "types_skipped_missing_prices": 0,
+            },
+        )
+
+        result = sync_capital_ship_auto_estimates(max_pages=10)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["types_updated"], 1)
+
+        config.refresh_from_db()
+        auto_row_map = config.get_capital_ship_auto_estimate_row_map()
+        self.assertEqual(
+            auto_row_map[19720]["price_isk"],
+            Decimal("8500000000.00"),
+        )
+
 
 class CapitalPriceEstimateCostingTests(TestCase):
     @patch("indy_hub.services.capital_price_estimates.fetch_fuzzwork_prices")
@@ -176,6 +224,76 @@ class CapitalPriceEstimateCostingTests(TestCase):
         self.assertEqual(stats["blueprints_found"], 1)
         self.assertEqual(stats["material_types_needed"], 2)
         self.assertEqual(stats["types_priced"], 1)
+
+    @patch("indy_hub.services.capital_price_estimates.get_public_jita_bpc_offers")
+    @patch(
+        "indy_hub.services.capital_price_estimates._requires_blueprint_copy_cost_for_capital_hull"
+    )
+    @patch("indy_hub.services.capital_price_estimates.fetch_fuzzwork_prices")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_output_qty")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_material_rows")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_for_product")
+    def test_build_cost_map_adds_public_bpc_cost_for_special_hulls(
+        self,
+        mock_get_blueprint_for_product,
+        mock_get_blueprint_material_rows,
+        mock_get_blueprint_output_qty,
+        mock_fetch_fuzzwork_prices,
+        mock_requires_copy_cost,
+        mock_get_public_bpc_offers,
+    ) -> None:
+        mock_get_blueprint_for_product.return_value = 101
+        mock_get_blueprint_material_rows.return_value = [(5002, 5)]
+        mock_get_blueprint_output_qty.return_value = 1
+        mock_fetch_fuzzwork_prices.return_value = {
+            5002: {"buy": Decimal("0"), "sell": Decimal("4")},
+        }
+        mock_requires_copy_cost.return_value = True
+        mock_get_public_bpc_offers.return_value = [
+            {"price_per_run": Decimal("10")},
+            {"price_per_run": Decimal("12")},
+        ]
+
+        cost_map, stats = _build_capital_buy_cost_map({19720})
+
+        self.assertEqual(cost_map[19720], Decimal("30.00"))
+        self.assertEqual(stats["bpc_eligible_types"], 1)
+        self.assertEqual(stats["bpc_price_hits"], 1)
+        self.assertEqual(stats["types_priced_with_bpc"], 1)
+
+    @patch("indy_hub.services.capital_price_estimates.get_public_jita_bpc_offers")
+    @patch(
+        "indy_hub.services.capital_price_estimates._requires_blueprint_copy_cost_for_capital_hull"
+    )
+    @patch("indy_hub.services.capital_price_estimates.fetch_fuzzwork_prices")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_output_qty")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_material_rows")
+    @patch("indy_hub.services.capital_price_estimates._get_blueprint_for_product")
+    def test_build_cost_map_special_hulls_fall_back_to_material_cost_without_bpc_offers(
+        self,
+        mock_get_blueprint_for_product,
+        mock_get_blueprint_material_rows,
+        mock_get_blueprint_output_qty,
+        mock_fetch_fuzzwork_prices,
+        mock_requires_copy_cost,
+        mock_get_public_bpc_offers,
+    ) -> None:
+        mock_get_blueprint_for_product.return_value = 101
+        mock_get_blueprint_material_rows.return_value = [(5002, 5)]
+        mock_get_blueprint_output_qty.return_value = 1
+        mock_fetch_fuzzwork_prices.return_value = {
+            5002: {"buy": Decimal("0"), "sell": Decimal("4")},
+        }
+        mock_requires_copy_cost.return_value = True
+        mock_get_public_bpc_offers.return_value = []
+
+        cost_map, stats = _build_capital_buy_cost_map({19720})
+
+        self.assertEqual(cost_map[19720], Decimal("20.00"))
+        self.assertEqual(stats["bpc_eligible_types"], 1)
+        self.assertEqual(stats["bpc_price_hits"], 0)
+        self.assertEqual(stats["bpc_price_misses"], 1)
+        self.assertEqual(stats["types_priced_with_bpc"], 0)
 
 
 class CapitalPriceEstimateFallbackTests(TestCase):
@@ -320,7 +438,7 @@ class CapitalOrderConfigViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Auto Estimate (ISK)")
         self.assertContains(response, "3,400,000,000.00")
-        self.assertContains(response, "3600000000.00")
+        self.assertContains(response, 'value="3,600,000,000.00"')
         self.assertNotContains(response, "Estimated Defaults")
         self.assertNotContains(response, "Add Custom Ship")
 
@@ -341,4 +459,38 @@ class CapitalOrderConfigViewTests(TestCase):
         self.assertEqual(
             self.config.get_capital_ship_effective_estimated_price_map()[19720],
             Decimal("3400000000.00"),
+        )
+
+    @patch("indy_hub.views.capital_ship_orders._load_capital_ship_options_for_editor")
+    def test_config_view_accepts_comma_formatted_manual_override_submission(
+        self,
+        mock_editor_options,
+    ) -> None:
+        mock_editor_options.return_value = [
+            {
+                "type_id": 19720,
+                "type_name": "Revelation",
+                "ship_class": "dread",
+                "ship_class_label": "Dreadnought",
+                "enabled": True,
+            }
+        ]
+        url = reverse("indy_hub:capital_ship_orders_config")
+
+        response = self.client.post(
+            url,
+            {
+                "capital_default_lead_time_days": "0",
+                "capital_auto_cancel_delay_value": "0",
+                "capital_auto_cancel_delay_unit": "hours",
+                "capital_auto_cancel_preapproved_state_names": ["Pre-Approved"],
+                "estimated_price_19720": "3,650,000,000.00",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.get_capital_ship_estimated_price_map()[19720],
+            Decimal("3650000000.00"),
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 # Standard Library
 from collections import defaultdict
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from math import ceil
 from typing import Any
 
@@ -18,10 +18,12 @@ from allianceauth.services.hooks import get_extension_logger
 # Local
 from indy_hub.models import MaterialExchangeConfig
 from indy_hub.services.fuzzwork import fetch_fuzzwork_prices
+from indy_hub.services.public_contracts_store import get_public_jita_bpc_offers
 
 logger = get_extension_logger(__name__)
 
 _AUTO_ESTIMATE_MARKUP_MULTIPLIER = Decimal("1.10")
+_AUTO_ESTIMATE_CEILING_STEP = Decimal("100000000")
 _DEFAULT_BLUEPRINT_ME = 0
 _DEFAULT_ENVIRONMENT_MATERIAL_MULTIPLIER = 1.0
 
@@ -35,6 +37,110 @@ def _to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
 
 def _format_price(value: Decimal) -> str:
     return format(value.quantize(Decimal("0.01")), "f")
+
+
+def _ceil_price_to_step(value: Decimal, *, step: Decimal) -> Decimal:
+    normalized_value = _to_decimal(value)
+    normalized_step = _to_decimal(step)
+    if normalized_step <= 0 or normalized_value <= 0:
+        return normalized_value.quantize(Decimal("0.01"))
+    return (
+        (normalized_value / normalized_step).to_integral_value(rounding=ROUND_CEILING)
+        * normalized_step
+    ).quantize(Decimal("0.01"))
+
+
+def _requires_blueprint_copy_cost_for_capital_hull(
+    hull_type_id: int,
+    *,
+    copy_cost_required_cache: dict[int, bool],
+) -> bool:
+    clean_hull_type_id = int(hull_type_id or 0)
+    if clean_hull_type_id <= 0:
+        return False
+
+    cached = copy_cost_required_cache.get(clean_hull_type_id)
+    if cached is not None:
+        return bool(cached)
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                COALESCE(t.name, ''),
+                COALESCE(g.name, ''),
+                COALESCE(t.meta_group_id_raw, 0)
+            FROM eve_sde_itemtype t
+            LEFT JOIN eve_sde_itemgroup g
+              ON g.id = t.group_id
+            WHERE t.id = %s
+            LIMIT 1
+            """,
+            [clean_hull_type_id],
+        )
+        row = cursor.fetchone()
+
+    if not row:
+        copy_cost_required_cache[clean_hull_type_id] = False
+        return False
+
+    type_name = str(row[0] or "").strip().lower()
+    group_name = str(row[1] or "").strip().lower()
+    meta_group_id = int(row[2] or 0)
+
+    requires_copy_cost = False
+    if meta_group_id not in {0, 1}:
+        requires_copy_cost = True
+    elif "lancer" in group_name:
+        requires_copy_cost = True
+    elif "navy issue" in type_name or "fleet issue" in type_name:
+        requires_copy_cost = True
+
+    copy_cost_required_cache[clean_hull_type_id] = requires_copy_cost
+    return requires_copy_cost
+
+
+def _get_blueprint_copy_cost_per_unit(
+    blueprint_id: int,
+    *,
+    blueprint_output_qty_cache: dict[int, int],
+    blueprint_copy_cost_cache: dict[int, Decimal | None],
+) -> Decimal | None:
+    clean_blueprint_id = int(blueprint_id or 0)
+    if clean_blueprint_id <= 0:
+        return None
+
+    if clean_blueprint_id in blueprint_copy_cost_cache:
+        return blueprint_copy_cost_cache[clean_blueprint_id]
+
+    offers = get_public_jita_bpc_offers(
+        blueprint_type_id=clean_blueprint_id,
+        max_offers=25,
+    )
+    positive_prices: list[Decimal] = []
+    for offer in offers:
+        price_per_run = _to_decimal(offer.get("price_per_run"))
+        if price_per_run > 0:
+            positive_prices.append(price_per_run)
+    positive_prices.sort()
+    if not positive_prices:
+        blueprint_copy_cost_cache[clean_blueprint_id] = None
+        return None
+
+    output_qty = _get_blueprint_output_qty(
+        clean_blueprint_id,
+        blueprint_output_qty_cache=blueprint_output_qty_cache,
+    )
+    if output_qty <= 0:
+        output_qty = 1
+
+    copy_cost = (positive_prices[0] / Decimal(output_qty)).quantize(Decimal("0.01"))
+    if copy_cost <= 0:
+        blueprint_copy_cost_cache[clean_blueprint_id] = None
+        return None
+
+    blueprint_copy_cost_cache[clean_blueprint_id] = copy_cost
+    return copy_cost
 
 
 def _load_capital_ship_options(config: MaterialExchangeConfig) -> list[dict[str, object]]:
@@ -287,7 +393,11 @@ def _build_capital_buy_cost_map(
         "material_types_needed": 0,
         "material_price_hits": 0,
         "material_price_misses": 0,
+        "bpc_eligible_types": 0,
+        "bpc_price_hits": 0,
+        "bpc_price_misses": 0,
         "types_priced": 0,
+        "types_priced_with_bpc": 0,
         "types_skipped_missing_prices": 0,
     }
     if not allowed_hull_type_ids:
@@ -296,6 +406,9 @@ def _build_capital_buy_cost_map(
     blueprint_by_product_cache: dict[int, int | None] = {}
     blueprint_material_cache: dict[int, list[tuple[int, int]]] = {}
     blueprint_output_qty_cache: dict[int, int] = {}
+    blueprint_by_hull_type: dict[int, int] = {}
+    copy_cost_required_cache: dict[int, bool] = {}
+    blueprint_copy_cost_cache: dict[int, Decimal | None] = {}
 
     normalized_type_ids = {int(type_id) for type_id in allowed_hull_type_ids if int(type_id) > 0}
     _prime_blueprint_cache_for_products(
@@ -317,6 +430,7 @@ def _build_capital_buy_cost_map(
             continue
 
         stats["blueprints_found"] += 1
+        blueprint_by_hull_type[int(hull_type_id)] = int(blueprint_id)
         material_totals: dict[int, int] = defaultdict(int)
         _collect_leaf_buy_requirements(
             blueprint_id,
@@ -369,6 +483,24 @@ def _build_capital_buy_cost_map(
         if missing_prices or total_cost <= 0:
             stats["types_skipped_missing_prices"] += 1
             continue
+
+        blueprint_id = int(blueprint_by_hull_type.get(int(hull_type_id), 0) or 0)
+        if blueprint_id > 0 and _requires_blueprint_copy_cost_for_capital_hull(
+            int(hull_type_id),
+            copy_cost_required_cache=copy_cost_required_cache,
+        ):
+            stats["bpc_eligible_types"] += 1
+            copy_cost = _get_blueprint_copy_cost_per_unit(
+                blueprint_id,
+                blueprint_output_qty_cache=blueprint_output_qty_cache,
+                blueprint_copy_cost_cache=blueprint_copy_cost_cache,
+            )
+            if copy_cost is not None and copy_cost > 0:
+                total_cost += copy_cost
+                stats["bpc_price_hits"] += 1
+                stats["types_priced_with_bpc"] += 1
+            else:
+                stats["bpc_price_misses"] += 1
 
         cost_by_hull_type[int(hull_type_id)] = total_cost.quantize(Decimal("0.01"))
         stats["types_priced"] += 1
@@ -432,8 +564,9 @@ def sync_capital_ship_auto_estimates(
             if base_cost is None or base_cost <= 0:
                 continue
 
-            estimate_price = (base_cost * _AUTO_ESTIMATE_MARKUP_MULTIPLIER).quantize(
-                Decimal("0.01")
+            estimate_price = _ceil_price_to_step(
+                base_cost * _AUTO_ESTIMATE_MARKUP_MULTIPLIER,
+                step=_AUTO_ESTIMATE_CEILING_STEP,
             )
             next_rows[int(type_id)] = {
                 "type_id": int(type_id),

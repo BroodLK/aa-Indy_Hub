@@ -217,7 +217,7 @@
                                                 inputmode="decimal"
                                                 class="form-control form-control-sm js-isk-format"
                                                 name="estimated_price_{{ row.type_id }}"
-                                                value="{{ row.manual_estimated_price|default_if_none:'' }}">
+                                                value="{{ row.manual_estimated_price_display }}">
                                         </td>
                                         <td class="small text-muted">
                                             {% if row.auto_estimated_price %}{% trans "Blank manual override uses the automated estimate." %}{% else %}{% trans "Blank manual override leaves the estimate empty until live data exists." %}{% endif %}
@@ -288,6 +288,17 @@
                 input.dataset.iskFormatBound = "1";
                 input.addEventListener("focus", function () {
                     input.value = stripCommas(input.value);
+                });
+                input.addEventListener("input", function () {
+                    const cursor = input.selectionStart || 0;
+                    const fromRight = input.value.length - cursor;
+                    input.value = formatIskValue(input.value);
+                    const nextPos = Math.max(0, input.value.length - fromRight);
+                    try {
+                        input.setSelectionRange(nextPos, nextPos);
+                    } catch (error) {
+                        // Ignore selection errors on unsupported input states.
+                    }
                 });
                 input.addEventListener("blur", function () {
                     input.value = formatIskValue(input.value);

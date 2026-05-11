@@ -307,6 +307,13 @@ def _quantize_isk(value: Decimal | str | int | float | None) -> Decimal | None:
     return parsed.quantize(Decimal("0.01"))
 
 
+def _format_isk_for_input(value: Decimal | str | int | float | None) -> str:
+    quantized = _quantize_isk(value)
+    if quantized is None:
+        return ""
+    return f"{quantized:,.2f}"
+
+
 def _parse_positive_int(raw_value, *, minimum: int = 0) -> int | None:
     try:
         parsed = int(str(raw_value).strip())
@@ -1748,6 +1755,9 @@ def capital_ship_orders_config(request):
                 "is_disabled_type": type_id in disabled_ship_type_ids,
                 "is_disabled_group": ship_class in disabled_groups,
                 "manual_estimated_price": manual_estimated_price_map.get(type_id),
+                "manual_estimated_price_display": _format_isk_for_input(
+                    manual_estimated_price_map.get(type_id)
+                ),
                 "auto_estimated_price": auto_row.get("price_isk"),
                 "auto_estimated_contract_count": int(
                     auto_row.get("contract_count") or 0
