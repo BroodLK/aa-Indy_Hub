@@ -34,6 +34,21 @@
         </div>
     </div>
 
+    <div class="d-flex flex-wrap gap-2 mb-4">
+        <a href="{% url 'indy_hub:material_exchange_history' %}" class="btn btn-sm {% if history_status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+            {% trans "All Closed" %}
+        </a>
+        <a href="{% url 'indy_hub:material_exchange_history' %}?status=rejected" class="btn btn-sm {% if history_status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+            {% trans "Rejected" %}
+        </a>
+        <a href="{% url 'indy_hub:material_exchange_history' %}?status=completed" class="btn btn-sm {% if history_status_filter == 'completed' %}btn-success{% else %}btn-outline-success{% endif %}">
+            {% trans "Completed" %}
+        </a>
+        <a href="{% url 'indy_hub:material_exchange_history' %}?status=cancelled" class="btn btn-sm {% if history_status_filter == 'cancelled' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+            {% trans "Cancelled" %}
+        </a>
+    </div>
+
     <div class="row g-4">
         <div class="col-12 col-lg-6">
             <div class="history-panel p-3">
@@ -51,6 +66,7 @@
                                 <th class="text-end">{% trans "Total" %}</th>
                                 <th>{% trans "Status" %}</th>
                                 <th>{% trans "Date" %}</th>
+                                <th class="text-end">{% trans "Actions" %}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -63,6 +79,22 @@
                                     <span class="badge bg-secondary">{{ order.get_status_display }}</span>
                                 </td>
                                 <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+                                <td class="text-end">
+                                    <div class="d-inline-flex gap-2">
+                                        <a href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ history_return_url|urlencode }}" class="btn btn-sm btn-outline-secondary">
+                                            <i class="fas fa-eye me-1"></i>{% trans "Details" %}
+                                        </a>
+                                        {% if order.status == 'rejected' %}
+                                        <form method="post" class="d-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="next" value="{{ history_return_url }}">
+                                            <button formaction="{% url 'indy_hub:material_exchange_reopen_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen sell order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
+                                                <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -90,6 +122,7 @@
                                 <th class="text-end">{% trans "Total" %}</th>
                                 <th>{% trans "Status" %}</th>
                                 <th>{% trans "Date" %}</th>
+                                <th class="text-end">{% trans "Actions" %}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -102,6 +135,22 @@
                                     <span class="badge bg-secondary">{{ order.get_status_display }}</span>
                                 </td>
                                 <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+                                <td class="text-end">
+                                    <div class="d-inline-flex gap-2">
+                                        <a href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ history_return_url|urlencode }}" class="btn btn-sm btn-outline-secondary">
+                                            <i class="fas fa-eye me-1"></i>{% trans "Details" %}
+                                        </a>
+                                        {% if order.status == 'rejected' %}
+                                        <form method="post" class="d-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="next" value="{{ history_return_url }}">
+                                            <button formaction="{% url 'indy_hub:material_exchange_reopen_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen buy order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
+                                                <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                                            </button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>

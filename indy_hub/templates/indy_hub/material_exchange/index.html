@@ -206,8 +206,11 @@
             </button>
             <div class="flex-grow-1 border-bottom admin-divider-line"></div>
         </div>
-        <a href="{% url 'indy_hub:material_exchange_transactions' %}" class="btn btn-sm me-panel-action-btn ms-3">
-            <i class="fas fa-history me-1"></i>{% trans "View History" %}
+        <a href="{% url 'indy_hub:material_exchange_history' %}" class="btn btn-sm me-panel-action-btn ms-3">
+            <i class="fas fa-history me-1"></i>{% trans "Closed Orders" %}
+        </a>
+        <a href="{% url 'indy_hub:material_exchange_history' %}?status=rejected" class="btn btn-sm btn-outline-danger ms-2">
+            <i class="fas fa-ban me-1"></i>{% trans "Rejected" %}
         </a>
         {% if capital_ship_orders_admin_url %}
             <a href="{{ capital_ship_orders_admin_url }}" class="btn btn-sm btn-warning ms-2">
@@ -269,10 +272,11 @@
                         <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn" href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
                             <i class="fas fa-eye me-1"></i>{% trans "Details" %}
                         </a>
-                        {% if order.status not in 'completed,rejected,cancelled' %}
+                        {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
                         <form method="post" class="me-admin-order-action-form">
                             {% csrf_token %}
-                            <button formaction="{% url 'indy_hub:material_exchange_reject_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn">
+                            <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
+                            <button formaction="{% url 'indy_hub:material_exchange_reject_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject sell order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
                                 <i class="fas fa-times me-1"></i>{% trans "Reject" %}
                             </button>
                         </form>
@@ -340,10 +344,11 @@
                         <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn" href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
                             <i class="fas fa-eye me-1"></i>{% trans "Details" %}
                         </a>
-                        {% if order.status not in 'completed,rejected,cancelled' %}
+                        {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
                         <form method="post" class="me-admin-order-action-form">
                             {% csrf_token %}
-                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn">
+                            <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
+                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject buy order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
                                 <i class="fas fa-times me-1"></i>{% trans "Reject" %}
                             </button>
                         </form>

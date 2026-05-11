@@ -105,6 +105,8 @@ from .views.material_exchange import (
     material_exchange_mark_delivered_buy,
     material_exchange_reject_buy,
     material_exchange_reject_sell,
+    material_exchange_reopen_buy,
+    material_exchange_reopen_sell,
     material_exchange_sell,
     material_exchange_sell_multibuy_parse,
     material_exchange_sell_estimate,
@@ -644,6 +646,11 @@ urlpatterns = [
         name="material_exchange_reject_sell",
     ),
     path(
+        "material-exchange/sell/<int:order_id>/reopen/",
+        material_exchange_reopen_sell,
+        name="material_exchange_reopen_sell",
+    ),
+    path(
         "material-exchange/sell/<int:order_id>/verify-payment/",
         material_exchange_verify_payment_sell,
         name="material_exchange_verify_payment_sell",
@@ -662,6 +669,11 @@ urlpatterns = [
         "material-exchange/buy/<int:order_id>/reject/",
         material_exchange_reject_buy,
         name="material_exchange_reject_buy",
+    ),
+    path(
+        "material-exchange/buy/<int:order_id>/reopen/",
+        material_exchange_reopen_buy,
+        name="material_exchange_reopen_buy",
     ),
     path(
         "material-exchange/buy/<int:order_id>/delivered/",

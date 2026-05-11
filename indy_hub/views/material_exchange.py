@@ -20,6 +20,7 @@ from django.db.models.functions import Lower, Replace, TruncMonth
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_http_methods
@@ -423,6 +424,21 @@ def _is_material_exchange_enabled() -> bool:
 
 def _get_material_exchange_config() -> MaterialExchangeConfig | None:
     return MaterialExchangeConfig.objects.first()
+
+
+def _resolve_material_exchange_next_url(request, fallback: str) -> str:
+    next_url = str(request.POST.get("next") or request.GET.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return next_url
+    return fallback
+
+
+def _redirect_material_exchange(request, fallback: str):
+    return redirect(_resolve_material_exchange_next_url(request, fallback))
 
 
 def _get_industry_market_group_ids() -> set[int]:
@@ -4605,21 +4621,32 @@ def material_exchange_history(request):
     if not config:
         messages.warning(request, _("Buyback is not configured."))
         return redirect("indy_hub:material_exchange_index")
+    history_status_filter = str(request.GET.get("status") or "all").strip().lower()
+    allowed_history_status_filters = {"all", "completed", "rejected", "cancelled"}
+    if history_status_filter not in allowed_history_status_filters:
+        history_status_filter = "all"
+
     closed_statuses = ["completed", "rejected", "cancelled"]
+    status_queryset = (
+        [history_status_filter] if history_status_filter != "all" else closed_statuses
+    )
 
     sell_history = (
-        config.sell_orders.filter(status__in=closed_statuses)
+        config.sell_orders.filter(status__in=status_queryset)
         .select_related("seller")
         .order_by("-created_at")
     )
     buy_history = (
-        config.buy_orders.filter(status__in=closed_statuses)
+        config.buy_orders.filter(status__in=status_queryset)
         .select_related("buyer")
         .order_by("-created_at")
     )
 
     context = {
         "config": config,
+        "closed_statuses": closed_statuses,
+        "history_status_filter": history_status_filter,
+        "history_return_url": request.get_full_path(),
         "sell_history": sell_history,
         "buy_history": buy_history,
         "nav_context": _build_nav_context(request.user),
@@ -6353,6 +6380,32 @@ def material_exchange_approve_sell(request, order_id):
     return redirect("indy_hub:material_exchange_index")
 
 
+def _reject_sell_order(order: MaterialExchangeSellOrder) -> None:
+    order.status_before_rejection = str(order.status or "").strip()
+    order.status = MaterialExchangeSellOrder.Status.REJECTED
+    order.save(update_fields=["status_before_rejection", "status", "updated_at"])
+
+
+def _restore_sell_order_status(order: MaterialExchangeSellOrder) -> str:
+    previous_status = str(order.status_before_rejection or "").strip()
+    valid_statuses = {
+        MaterialExchangeSellOrder.Status.DRAFT,
+        MaterialExchangeSellOrder.Status.AWAITING_VALIDATION,
+        MaterialExchangeSellOrder.Status.ANOMALY,
+        MaterialExchangeSellOrder.Status.ANOMALY_REJECTED,
+        MaterialExchangeSellOrder.Status.VALIDATED,
+    }
+    restored_status = (
+        previous_status
+        if previous_status in valid_statuses
+        else MaterialExchangeSellOrder.Status.DRAFT
+    )
+    order.status = restored_status
+    order.status_before_rejection = ""
+    order.save(update_fields=["status", "status_before_rejection", "updated_at"])
+    return restored_status
+
+
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_reject_sell(request, order_id):
@@ -6375,11 +6428,45 @@ def material_exchange_reject_sell(request, order_id):
             MaterialExchangeSellOrder.Status.VALIDATED,
         ],
     )
-    order.status = MaterialExchangeSellOrder.Status.REJECTED
-    order.save()
+    _reject_sell_order(order)
 
     messages.warning(request, _(f"Sell order #{order.id} rejected."))
-    return redirect("indy_hub:material_exchange_index")
+    return _redirect_material_exchange(
+        request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel"
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def material_exchange_reopen_sell(request, order_id):
+    emit_view_analytics_event(
+        view_name="material_exchange.reopen_sell", request=request
+    )
+    if not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Permission denied."))
+        return redirect("indy_hub:material_exchange_index")
+
+    order = get_object_or_404(
+        MaterialExchangeSellOrder,
+        id=order_id,
+        status=MaterialExchangeSellOrder.Status.REJECTED,
+    )
+    restored_status = _restore_sell_order_status(order)
+    messages.success(
+        request,
+        _(
+            f"Sell order #{order.id} reopened and restored to {order.get_status_display()}."
+        ),
+    )
+    logger.info(
+        "Reopened sell order %s to status %s by user %s",
+        order.id,
+        restored_status,
+        request.user.id,
+    )
+    return _redirect_material_exchange(
+        request, reverse("indy_hub:material_exchange_history")
+    )
 
 
 @login_required
@@ -6533,12 +6620,22 @@ def material_exchange_reject_buy(request, order_id):
         messages.error(request, _("Permission denied."))
         return redirect("indy_hub:material_exchange_index")
 
-    order = get_object_or_404(MaterialExchangeBuyOrder, id=order_id, status="draft")
+    order = get_object_or_404(
+        MaterialExchangeBuyOrder,
+        id=order_id,
+        status__in=[
+            MaterialExchangeBuyOrder.Status.DRAFT,
+            MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
+            MaterialExchangeBuyOrder.Status.VALIDATED,
+        ],
+    )
 
     _reject_buy_order(order)
 
     messages.warning(request, _(f"Buy order #{order.id} rejected and buyer notified."))
-    return redirect("indy_hub:material_exchange_index")
+    return _redirect_material_exchange(
+        request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel"
+    )
 
 
 def _reject_buy_order(order: MaterialExchangeBuyOrder) -> None:
@@ -6556,8 +6653,56 @@ def _reject_buy_order(order: MaterialExchangeBuyOrder) -> None:
         link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
     )
 
-    order.status = "rejected"
-    order.save()
+    order.status_before_rejection = str(order.status or "").strip()
+    order.status = MaterialExchangeBuyOrder.Status.REJECTED
+    order.save(update_fields=["status_before_rejection", "status", "updated_at"])
+
+
+def _restore_buy_order_status(order: MaterialExchangeBuyOrder) -> str:
+    previous_status = str(order.status_before_rejection or "").strip()
+    valid_statuses = {
+        MaterialExchangeBuyOrder.Status.DRAFT,
+        MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
+        MaterialExchangeBuyOrder.Status.VALIDATED,
+    }
+    restored_status = (
+        previous_status
+        if previous_status in valid_statuses
+        else MaterialExchangeBuyOrder.Status.DRAFT
+    )
+    order.status = restored_status
+    order.status_before_rejection = ""
+    order.save(update_fields=["status", "status_before_rejection", "updated_at"])
+    return restored_status
+
+
+@login_required
+@require_http_methods(["POST"])
+def material_exchange_reopen_buy(request, order_id):
+    emit_view_analytics_event(view_name="material_exchange.reopen_buy", request=request)
+    if not request.user.has_perm("indy_hub.can_manage_material_hub"):
+        messages.error(request, _("Permission denied."))
+        return redirect("indy_hub:material_exchange_index")
+
+    order = get_object_or_404(
+        MaterialExchangeBuyOrder,
+        id=order_id,
+        status=MaterialExchangeBuyOrder.Status.REJECTED,
+    )
+    restored_status = _restore_buy_order_status(order)
+    messages.success(
+        request,
+        _(f"Buy order #{order.id} reopened and restored to {order.get_status_display()}."),
+    )
+    logger.info(
+        "Reopened buy order %s to status %s by user %s",
+        order.id,
+        restored_status,
+        request.user.id,
+    )
+    return _redirect_material_exchange(
+        request, reverse("indy_hub:material_exchange_history")
+    )
 
 
 @login_required

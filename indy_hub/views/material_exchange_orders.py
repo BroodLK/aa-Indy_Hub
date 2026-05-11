@@ -236,6 +236,7 @@ def sell_order_detail(request, order_id):
         "timeline": timeline,
         "timeline_breadcrumb": timeline_breadcrumb,
         "can_cancel": order.status not in ["completed", "rejected", "cancelled"],
+        "can_manage_material_hub": _can_manage_material_hub(request.user),
     }
 
     context.update(build_nav_context(request.user, active_tab="material_hub"))
@@ -303,6 +304,7 @@ def buy_order_detail(request, order_id):
         "order_location_label": order_location_label,
         "contract_check_amount_label": contract_check_amount_label,
         "can_cancel": order.status not in ["completed", "rejected", "cancelled"],
+        "can_manage_material_hub": _can_manage_material_hub(request.user),
     }
 
     context.update(build_nav_context(request.user, active_tab="material_hub"))

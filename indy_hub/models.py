@@ -2862,6 +2862,12 @@ class MaterialExchangeSellOrder(models.Model):
     )
     approved_at = models.DateTimeField(null=True, blank=True)
 
+    status_before_rejection = models.CharField(
+        max_length=30,
+        blank=True,
+        help_text=_("Previous status restored when an accidental rejection is reopened."),
+    )
+
     payment_verified_by = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -3099,6 +3105,12 @@ class MaterialExchangeBuyOrder(models.Model):
         related_name="approved_buy_orders",
     )
     approved_at = models.DateTimeField(null=True, blank=True)
+
+    status_before_rejection = models.CharField(
+        max_length=30,
+        blank=True,
+        help_text=_("Previous status restored when an accidental rejection is reopened."),
+    )
 
     delivered_by = models.ForeignKey(
         User,

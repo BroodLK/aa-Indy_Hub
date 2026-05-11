@@ -29,6 +29,15 @@
                     <a href="{{ back_url }}" class="btn btn-outline-light">
                         <i class="fas fa-arrow-left me-1"></i>{% trans "My Orders" %}
                     </a>
+                    {% if can_manage_material_hub and order.status == 'rejected' %}
+                    <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ back_url }}">
+                        <button formaction="{% url 'indy_hub:material_exchange_reopen_sell' order.id %}" type="submit" class="btn btn-outline-success" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen sell order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
+                            <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                        </button>
+                    </form>
+                    {% endif %}
                 </div>
                 {% endwith %}
             </div>
