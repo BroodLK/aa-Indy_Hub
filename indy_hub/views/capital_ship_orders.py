@@ -44,13 +44,37 @@ from .navigation import build_nav_context
 
 logger = get_extension_logger(__name__)
 
-_CAPITAL_SHIP_OPTIONS_CACHE_KEY = "indy_hub:capital_ship_orders:options:v1"
-_SHIP_CLASS_ORDER = {"dread": 0, "carrier": 1, "fax": 2}
-_SHIP_CLASS_LABEL = {"dread": "Dreadnought", "carrier": "Carrier", "fax": "FAX"}
-_ROOT_MARKET_GROUP_CLASSIFIERS = {
-    "dread": ("dreadnought",),
-    "carrier": ("carrier",),
-    "fax": ("force auxili", "force auxiliary"),
+_CAPITAL_SHIP_OPTIONS_CACHE_KEY = "indy_hub:capital_ship_orders:options:v2"
+_SHIP_CLASS_ORDER = {
+    "dread": 0,
+    "carrier": 1,
+    "fax": 2,
+    "super": 3,
+    "titan": 4,
+    "freighter": 5,
+    "jump_freighter": 6,
+    "capital_indy": 7,
+}
+_SHIP_CLASS_LABEL = {
+    "dread": "Dreadnought",
+    "carrier": "Carrier",
+    "fax": "FAX",
+    "super": "Supercarrier",
+    "titan": "Titan",
+    "freighter": "Freighter",
+    "jump_freighter": "Jump Freighter",
+    "capital_indy": "Capital Industrial",
+}
+_SDE_GROUP_NAME_TO_SHIP_CLASS = {
+    "Dreadnought": "dread",
+    "Lancer Dreadnought": "dread",
+    "Carrier": "carrier",
+    "Force Auxiliary": "fax",
+    "Supercarrier": "super",
+    "Titan": "titan",
+    "Freighter": "freighter",
+    "Jump Freighter": "jump_freighter",
+    "Capital Industrial Ship": "capital_indy",
 }
 _CAPITAL_TERMINAL_STATUSES = {
     CapitalShipOrder.Status.COMPLETED,
@@ -111,35 +135,8 @@ def _get_material_exchange_config() -> MaterialExchangeConfig | None:
     return MaterialExchangeConfig.objects.first()
 
 
-def _expand_market_group_ids(
-    root_ids: set[int], children_map: dict[int | None, set[int]]
-) -> set[int]:
-    if not root_ids:
-        return set()
-    expanded = {int(group_id) for group_id in root_ids}
-    stack = list(expanded)
-    while stack:
-        current = int(stack.pop())
-        for child_id in children_map.get(current, set()):
-            child_int = int(child_id)
-            if child_int in expanded:
-                continue
-            expanded.add(child_int)
-            stack.append(child_int)
-    return expanded
-
-
 def _resolve_ship_class_for_group_name(group_name: str) -> str | None:
-    lowered = str(group_name or "").strip().lower()
-    if not lowered:
-        return None
-    if "force auxili" in lowered:
-        return "fax"
-    if "dreadnought" in lowered:
-        return "dread"
-    if lowered in {"carrier", "carriers"}:
-        return "carrier"
-    return None
+    return _SDE_GROUP_NAME_TO_SHIP_CLASS.get(str(group_name or "").strip())
 
 
 def _load_base_capital_ship_options() -> list[dict[str, object]]:
@@ -168,73 +165,25 @@ def _load_base_capital_ship_options() -> list[dict[str, object]]:
         if normalized_cached:
             return normalized_cached
 
-    try:
-        from indy_hub.models import SdeMarketGroup
-
-        group_rows = list(SdeMarketGroup.objects.values_list("id", "name", "parent_id"))
-    except Exception as exc:
-        logger.warning("Failed to load market groups for capital orders: %s", exc)
-        group_rows = []
-
-    children_map: dict[int | None, set[int]] = {}
-    root_group_ids_by_class: dict[str, set[int]] = {
-        "dread": set(),
-        "carrier": set(),
-        "fax": set(),
-    }
-    for group_id, group_name, parent_id in group_rows:
-        group_id_int = int(group_id)
-        parent_key = int(parent_id) if parent_id is not None else None
-        children_map.setdefault(parent_key, set()).add(group_id_int)
-
-        lowered_name = str(group_name or "").strip().lower()
-        for ship_class, markers in _ROOT_MARKET_GROUP_CLASSIFIERS.items():
-            if any(marker in lowered_name for marker in markers):
-                root_group_ids_by_class[ship_class].add(group_id_int)
-
     options_by_type_id: dict[int, dict[str, object]] = {}
-    for ship_class, root_ids in root_group_ids_by_class.items():
-        expanded_ids = _expand_market_group_ids(root_ids, children_map)
-        if not expanded_ids:
+    type_rows = ItemType.objects.filter(
+        group__category_id=6,
+        group__name__in=list(_SDE_GROUP_NAME_TO_SHIP_CLASS.keys()),
+    ).values_list("id", "name", "group__name")
+    for type_id, type_name, group_name in type_rows:
+        ship_class = _resolve_ship_class_for_group_name(str(group_name or ""))
+        if not ship_class:
             continue
-        type_rows = ItemType.objects.filter(
-            market_group_id__in=list(expanded_ids),
-            group__category_id=6,
-            group__name__in=["Dreadnought", "Carrier", "Force Auxiliary"],
-        ).values_list("id", "name")
-        for type_id, type_name in type_rows:
-            type_id_int = int(type_id)
-            if type_id_int in options_by_type_id:
-                continue
-            clean_name = str(type_name or "").strip()
-            if not clean_name:
-                continue
-            options_by_type_id[type_id_int] = {
-                "type_id": type_id_int,
-                "type_name": clean_name,
-                "ship_class": ship_class,
-                "ship_class_label": _SHIP_CLASS_LABEL[ship_class],
-            }
-
-    if not options_by_type_id:
-        fallback_rows = ItemType.objects.filter(
-            group__name__in=["Dreadnought", "Carrier", "Force Auxiliary"],
-            group__category_id=6,
-        ).values_list("id", "name", "group__name")
-        for type_id, type_name, group_name in fallback_rows:
-            ship_class = _resolve_ship_class_for_group_name(str(group_name or ""))
-            if not ship_class:
-                continue
-            type_id_int = int(type_id)
-            clean_name = str(type_name or "").strip()
-            if type_id_int <= 0 or not clean_name:
-                continue
-            options_by_type_id[type_id_int] = {
-                "type_id": type_id_int,
-                "type_name": clean_name,
-                "ship_class": ship_class,
-                "ship_class_label": _SHIP_CLASS_LABEL[ship_class],
-            }
+        type_id_int = int(type_id)
+        clean_name = str(type_name or "").strip()
+        if type_id_int <= 0 or not clean_name:
+            continue
+        options_by_type_id[type_id_int] = {
+            "type_id": type_id_int,
+            "type_name": clean_name,
+            "ship_class": ship_class,
+            "ship_class_label": _SHIP_CLASS_LABEL[ship_class],
+        }
 
     options = sorted(
         options_by_type_id.values(),
@@ -283,7 +232,6 @@ def _load_capital_ship_options(
 
     disabled_type_ids: set[int] = set()
     disabled_groups: set[str] = set()
-    custom_options: list[dict[str, object]] = []
     try:
         disabled_type_ids = set(config.get_capital_disabled_ship_type_ids())
     except Exception:
@@ -296,42 +244,9 @@ def _load_capital_ship_options(
         disabled_groups.discard("")
     except Exception:
         disabled_groups = set()
-    try:
-        custom_options = config.get_capital_custom_ship_options()
-    except Exception:
-        custom_options = []
 
     for type_id in disabled_type_ids:
         options_by_type_id.pop(int(type_id), None)
-
-    for custom_entry in custom_options:
-        try:
-            type_id = int(custom_entry.get("type_id") or 0)
-        except (TypeError, ValueError):
-            continue
-        if type_id <= 0 or type_id in disabled_type_ids:
-            continue
-        if not bool(custom_entry.get("enabled", True)):
-            options_by_type_id.pop(type_id, None)
-            continue
-
-        type_name = str(custom_entry.get("type_name") or "").strip()
-        ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
-        if not type_name or not ship_class:
-            continue
-        if ship_class in disabled_groups:
-            options_by_type_id.pop(type_id, None)
-            continue
-        ship_class_label = str(custom_entry.get("ship_class_label") or "").strip()
-        if not ship_class_label:
-            ship_class_label = _default_ship_class_label(ship_class)
-
-        options_by_type_id[type_id] = {
-            "type_id": type_id,
-            "type_name": type_name,
-            "ship_class": ship_class,
-            "ship_class_label": ship_class_label,
-        }
 
     if disabled_groups:
         options_by_type_id = {
@@ -359,32 +274,6 @@ def _load_capital_ship_options_for_editor(
         }
         for row in _load_base_capital_ship_options()
     }
-    if config:
-        try:
-            for custom_entry in config.get_capital_custom_ship_options():
-                try:
-                    type_id = int(custom_entry.get("type_id") or 0)
-                except (TypeError, ValueError):
-                    continue
-                if type_id <= 0:
-                    continue
-                ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
-                type_name = str(custom_entry.get("type_name") or "").strip()
-                if not ship_class or not type_name:
-                    continue
-                ship_class_label = str(custom_entry.get("ship_class_label") or "").strip()
-                if not ship_class_label:
-                    ship_class_label = _default_ship_class_label(ship_class)
-                options_by_type_id[type_id] = {
-                    "type_id": type_id,
-                    "type_name": type_name,
-                    "ship_class": ship_class,
-                    "ship_class_label": ship_class_label,
-                    "enabled": bool(custom_entry.get("enabled", True)),
-                }
-        except Exception:
-            pass
-
     return _sort_capital_ship_options(list(options_by_type_id.values()))
 
 
@@ -519,17 +408,6 @@ def _decimal_to_json_string(value: Decimal | None) -> str | None:
     return format(value, "f")
 
 
-def _parse_bool_like(raw_value, *, default: bool = True) -> bool:
-    if raw_value is None:
-        return bool(default)
-    if isinstance(raw_value, bool):
-        return bool(raw_value)
-    normalized = str(raw_value).strip().lower()
-    if not normalized:
-        return bool(default)
-    return normalized not in {"0", "false", "no", "off"}
-
-
 def _median_decimal(values: list[Decimal]) -> Decimal | None:
     if not values:
         return None
@@ -542,13 +420,6 @@ def _median_decimal(values: list[Decimal]) -> Decimal | None:
 
 
 def _get_class_default_price(config: MaterialExchangeConfig, ship_class: str) -> Decimal | None:
-    ship_class = str(ship_class or "").strip().lower()
-    if ship_class == CapitalShipOrder.ShipClass.DREAD:
-        return _quantize_isk(getattr(config, "capital_default_price_dread", None))
-    if ship_class == CapitalShipOrder.ShipClass.CARRIER:
-        return _quantize_isk(getattr(config, "capital_default_price_carrier", None))
-    if ship_class == CapitalShipOrder.ShipClass.FAX:
-        return _quantize_isk(getattr(config, "capital_default_price_fax", None))
     return None
 
 
@@ -584,22 +455,6 @@ def _get_ship_default_price(
 
 
 def _get_class_default_eta_window(config: MaterialExchangeConfig, ship_class: str) -> tuple[int | None, int | None]:
-    ship_class = str(ship_class or "").strip().lower()
-    if ship_class == CapitalShipOrder.ShipClass.DREAD:
-        return (
-            int(getattr(config, "capital_default_eta_min_days_dread", 14) or 14),
-            int(getattr(config, "capital_default_eta_max_days_dread", 28) or 28),
-        )
-    if ship_class == CapitalShipOrder.ShipClass.CARRIER:
-        return (
-            int(getattr(config, "capital_default_eta_min_days_carrier", 14) or 14),
-            int(getattr(config, "capital_default_eta_max_days_carrier", 28) or 28),
-        )
-    if ship_class == CapitalShipOrder.ShipClass.FAX:
-        return (
-            int(getattr(config, "capital_default_eta_min_days_fax", 14) or 14),
-            int(getattr(config, "capital_default_eta_max_days_fax", 28) or 28),
-        )
     return None, None
 
 
@@ -1714,63 +1569,12 @@ def capital_ship_orders_config(request):
 
     if request.method == "POST":
         try:
-            capital_default_price_dread = _quantize_isk(
-                request.POST.get("capital_default_price_dread")
-            )
-            capital_default_price_carrier = _quantize_isk(
-                request.POST.get("capital_default_price_carrier")
-            )
-            capital_default_price_fax = _quantize_isk(
-                request.POST.get("capital_default_price_fax")
-            )
-            capital_default_eta_min_days_dread = _parse_positive_int_or_raise(
-                request.POST.get("capital_default_eta_min_days_dread"),
-                label="Dread ETA min days",
-                minimum=1,
-                fallback=14,
-            )
-            capital_default_eta_max_days_dread = _parse_positive_int_or_raise(
-                request.POST.get("capital_default_eta_max_days_dread"),
-                label="Dread ETA max days",
-                minimum=1,
-                fallback=28,
-            )
-            capital_default_eta_min_days_carrier = _parse_positive_int_or_raise(
-                request.POST.get("capital_default_eta_min_days_carrier"),
-                label="Carrier ETA min days",
-                minimum=1,
-                fallback=14,
-            )
-            capital_default_eta_max_days_carrier = _parse_positive_int_or_raise(
-                request.POST.get("capital_default_eta_max_days_carrier"),
-                label="Carrier ETA max days",
-                minimum=1,
-                fallback=28,
-            )
-            capital_default_eta_min_days_fax = _parse_positive_int_or_raise(
-                request.POST.get("capital_default_eta_min_days_fax"),
-                label="FAX ETA min days",
-                minimum=1,
-                fallback=14,
-            )
-            capital_default_eta_max_days_fax = _parse_positive_int_or_raise(
-                request.POST.get("capital_default_eta_max_days_fax"),
-                label="FAX ETA max days",
-                minimum=1,
-                fallback=28,
-            )
             capital_default_lead_time_days = _parse_positive_int_or_raise(
                 request.POST.get("capital_default_lead_time_days"),
                 label="Default lead time days",
                 minimum=0,
                 fallback=0,
             )
-            if capital_default_eta_max_days_dread < capital_default_eta_min_days_dread:
-                raise ValueError("Dread ETA max days must be greater than or equal to min days.")
-            if capital_default_eta_max_days_carrier < capital_default_eta_min_days_carrier:
-                raise ValueError("Carrier ETA max days must be greater than or equal to min days.")
-            if capital_default_eta_max_days_fax < capital_default_eta_min_days_fax:
-                raise ValueError("FAX ETA max days must be greater than or equal to min days.")
 
             capital_auto_cancel_on_state_change = (
                 request.POST.get("capital_auto_cancel_on_state_change") == "on"
@@ -1850,98 +1654,6 @@ def capital_ship_orders_config(request):
                     parsed_price
                 )
 
-            custom_ship_type_ids = request.POST.getlist("custom_ship_type_id")
-            custom_ship_names = request.POST.getlist("custom_ship_type_name")
-            custom_ship_classes = request.POST.getlist("custom_ship_class")
-            custom_ship_class_labels = request.POST.getlist("custom_ship_class_label")
-            custom_ship_enabled_values = request.POST.getlist("custom_ship_enabled")
-            custom_ship_estimated_prices = request.POST.getlist("custom_ship_estimated_price")
-            custom_count = max(
-                len(custom_ship_type_ids),
-                len(custom_ship_names),
-                len(custom_ship_classes),
-                len(custom_ship_class_labels),
-                len(custom_ship_enabled_values),
-                len(custom_ship_estimated_prices),
-            )
-            custom_rows_by_type: dict[int, dict[str, object]] = {}
-            for idx in range(custom_count):
-                type_id_raw = (
-                    custom_ship_type_ids[idx] if idx < len(custom_ship_type_ids) else ""
-                )
-                type_name_raw = (
-                    custom_ship_names[idx] if idx < len(custom_ship_names) else ""
-                )
-                ship_class_raw = (
-                    custom_ship_classes[idx] if idx < len(custom_ship_classes) else ""
-                )
-                ship_class_label_raw = (
-                    custom_ship_class_labels[idx]
-                    if idx < len(custom_ship_class_labels)
-                    else ""
-                )
-                enabled_raw = (
-                    custom_ship_enabled_values[idx]
-                    if idx < len(custom_ship_enabled_values)
-                    else "true"
-                )
-                estimated_price_raw = (
-                    custom_ship_estimated_prices[idx]
-                    if idx < len(custom_ship_estimated_prices)
-                    else ""
-                )
-
-                if (
-                    not str(type_id_raw).strip()
-                    and not str(type_name_raw).strip()
-                    and not str(ship_class_raw).strip()
-                ):
-                    continue
-                try:
-                    type_id_value = int(str(type_id_raw).strip())
-                except (TypeError, ValueError):
-                    raise ValueError("Custom ship type IDs must be integers.")
-                if type_id_value <= 0:
-                    raise ValueError("Custom ship type IDs must be positive integers.")
-
-                type_name_value = str(type_name_raw or "").strip()
-                if not type_name_value:
-                    raise ValueError(
-                        f"Custom ship {type_id_value} is missing a ship name."
-                    )
-
-                ship_class_value = _normalize_ship_class_key(ship_class_raw)
-                if not ship_class_value:
-                    raise ValueError(
-                        f"Custom ship {type_id_value} is missing a ship group key."
-                    )
-                ship_class_label_value = str(ship_class_label_raw or "").strip()
-                if not ship_class_label_value:
-                    ship_class_label_value = _default_ship_class_label(ship_class_value)
-
-                custom_rows_by_type[type_id_value] = {
-                    "type_id": type_id_value,
-                    "type_name": type_name_value,
-                    "ship_class": ship_class_value,
-                    "ship_class_label": ship_class_label_value,
-                    "enabled": _parse_bool_like(enabled_raw, default=True),
-                }
-
-                custom_estimated_price = _quantize_isk(estimated_price_raw)
-                if custom_estimated_price is not None:
-                    estimated_price_overrides_by_type[type_id_value] = (
-                        _decimal_to_json_string(custom_estimated_price)
-                    )
-
-            capital_custom_ship_options = list(custom_rows_by_type.values())
-            if capital_disabled_ship_type_ids:
-                disabled_type_id_set = set(capital_disabled_ship_type_ids)
-                capital_custom_ship_options = [
-                    row
-                    for row in capital_custom_ship_options
-                    if int(row.get("type_id") or 0) not in disabled_type_id_set
-                ]
-
             capital_ship_estimated_price_overrides = [
                 {"type_id": type_id, "price_isk": price_isk}
                 for type_id, price_isk in sorted(
@@ -1955,19 +1667,6 @@ def capital_ship_orders_config(request):
             messages.error(request, str(exc))
             return redirect("indy_hub:capital_ship_orders_config")
 
-        config.capital_default_price_dread = capital_default_price_dread
-        config.capital_default_price_carrier = capital_default_price_carrier
-        config.capital_default_price_fax = capital_default_price_fax
-        config.capital_default_eta_min_days_dread = capital_default_eta_min_days_dread
-        config.capital_default_eta_max_days_dread = capital_default_eta_max_days_dread
-        config.capital_default_eta_min_days_carrier = (
-            capital_default_eta_min_days_carrier
-        )
-        config.capital_default_eta_max_days_carrier = (
-            capital_default_eta_max_days_carrier
-        )
-        config.capital_default_eta_min_days_fax = capital_default_eta_min_days_fax
-        config.capital_default_eta_max_days_fax = capital_default_eta_max_days_fax
         config.capital_default_lead_time_days = capital_default_lead_time_days
         config.capital_auto_cancel_on_state_change = (
             capital_auto_cancel_on_state_change
@@ -1982,21 +1681,12 @@ def capital_ship_orders_config(request):
         config.capital_auto_cancel_delay_unit = capital_auto_cancel_delay_unit
         config.capital_disabled_ship_groups = capital_disabled_ship_groups
         config.capital_disabled_ship_type_ids = capital_disabled_ship_type_ids
-        config.capital_custom_ship_options = capital_custom_ship_options
+        config.capital_custom_ship_options = []
         config.capital_ship_estimated_price_overrides = (
             capital_ship_estimated_price_overrides
         )
         config.save(
             update_fields=[
-                "capital_default_price_dread",
-                "capital_default_price_carrier",
-                "capital_default_price_fax",
-                "capital_default_eta_min_days_dread",
-                "capital_default_eta_max_days_dread",
-                "capital_default_eta_min_days_carrier",
-                "capital_default_eta_max_days_carrier",
-                "capital_default_eta_min_days_fax",
-                "capital_default_eta_max_days_fax",
                 "capital_default_lead_time_days",
                 "capital_auto_cancel_on_state_change",
                 "capital_auto_cancel_preapproved_state_names",
@@ -2016,11 +1706,6 @@ def capital_ship_orders_config(request):
     disabled_ship_type_ids = set(config.get_capital_disabled_ship_type_ids())
     manual_estimated_price_map = config.get_capital_ship_estimated_price_map()
     auto_estimate_row_map = config.get_capital_ship_auto_estimate_row_map()
-    custom_ship_map: dict[int, dict[str, object]] = {
-        int(row.get("type_id")): row
-        for row in config.get_capital_custom_ship_options()
-        if int(row.get("type_id") or 0) > 0
-    }
 
     group_labels: dict[str, str] = {}
     for option in editor_options:
@@ -2050,7 +1735,6 @@ def capital_ship_orders_config(request):
         if type_id <= 0:
             continue
         ship_class = _normalize_ship_class_key(option.get("ship_class"))
-        custom_entry = custom_ship_map.get(type_id)
         auto_row = auto_estimate_row_map.get(type_id, {})
         ship_rows.append(
             {
@@ -2061,10 +1745,6 @@ def capital_ship_orders_config(request):
                     option.get("ship_class_label")
                     or _default_ship_class_label(ship_class)
                 ),
-                "is_custom": custom_entry is not None,
-                "custom_enabled": (
-                    bool(custom_entry.get("enabled", True)) if custom_entry else True
-                ),
                 "is_disabled_type": type_id in disabled_ship_type_ids,
                 "is_disabled_group": ship_class in disabled_groups,
                 "manual_estimated_price": manual_estimated_price_map.get(type_id),
@@ -2074,39 +1754,6 @@ def capital_ship_orders_config(request):
                 ),
             }
         )
-
-    custom_ship_rows: list[dict[str, object]] = []
-    for custom_entry in config.get_capital_custom_ship_options():
-        type_id = int(custom_entry.get("type_id") or 0)
-        if type_id <= 0:
-            continue
-        ship_class = _normalize_ship_class_key(custom_entry.get("ship_class"))
-        auto_row = auto_estimate_row_map.get(type_id, {})
-        custom_ship_rows.append(
-            {
-                "type_id": type_id,
-                "type_name": str(custom_entry.get("type_name") or "").strip(),
-                "ship_class": ship_class,
-                "ship_class_label": str(
-                    custom_entry.get("ship_class_label")
-                    or _default_ship_class_label(ship_class)
-                ),
-                "enabled": bool(custom_entry.get("enabled", True)),
-                "manual_estimated_price": manual_estimated_price_map.get(type_id),
-                "auto_estimated_price": auto_row.get("price_isk"),
-                "auto_estimated_contract_count": int(
-                    auto_row.get("contract_count") or 0
-                ),
-            }
-        )
-    custom_ship_rows = sorted(
-        custom_ship_rows,
-        key=lambda row: (
-            _SHIP_CLASS_ORDER.get(_normalize_ship_class_key(row.get("ship_class")), 99),
-            str(row.get("ship_class_label") or "").lower(),
-            str(row.get("type_name") or "").lower(),
-        ),
-    )
 
     valid_statuses = [
         status
@@ -2125,32 +1772,6 @@ def capital_ship_orders_config(request):
         "group_choices": group_choices,
         "disabled_group_keys": disabled_groups,
         "ship_rows": ship_rows,
-        "custom_ship_rows": custom_ship_rows,
-        "capital_default_price_dread": getattr(config, "capital_default_price_dread", None),
-        "capital_default_price_carrier": getattr(
-            config,
-            "capital_default_price_carrier",
-            None,
-        ),
-        "capital_default_price_fax": getattr(config, "capital_default_price_fax", None),
-        "capital_default_eta_min_days_dread": int(
-            getattr(config, "capital_default_eta_min_days_dread", 14) or 14
-        ),
-        "capital_default_eta_max_days_dread": int(
-            getattr(config, "capital_default_eta_max_days_dread", 28) or 28
-        ),
-        "capital_default_eta_min_days_carrier": int(
-            getattr(config, "capital_default_eta_min_days_carrier", 14) or 14
-        ),
-        "capital_default_eta_max_days_carrier": int(
-            getattr(config, "capital_default_eta_max_days_carrier", 28) or 28
-        ),
-        "capital_default_eta_min_days_fax": int(
-            getattr(config, "capital_default_eta_min_days_fax", 14) or 14
-        ),
-        "capital_default_eta_max_days_fax": int(
-            getattr(config, "capital_default_eta_max_days_fax", 28) or 28
-        ),
         "capital_default_lead_time_days": int(
             getattr(config, "capital_default_lead_time_days", 0) or 0
         ),

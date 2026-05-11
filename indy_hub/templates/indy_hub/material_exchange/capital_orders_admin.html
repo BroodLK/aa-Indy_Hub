@@ -21,7 +21,7 @@
                     <i class="fas fa-user-shield me-2"></i>
                     {% trans "Capital Orders Admin" %}
                 </h2>
-                <p class="description mb-0">{% trans "Current queue for dread/carrier/fax fulfillment." %}</p>
+                <p class="description mb-0">{% trans "Current queue for capital hull fulfillment." %}</p>
             </div>
             <div class="d-flex gap-2">
                 {% if include_completed %}
@@ -91,7 +91,20 @@
                                     </button>
                                 </div>
                             </td>
-                            <td>{{ order.requester_main_character|default:order.requester.username }}</td>
+                            <td>
+                                <div class="d-inline-flex align-items-center gap-1">
+                                    <span>{{ order.requester_main_character|default:order.requester.username }}</span>
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary btn-sm copy-button"
+                                        title="{% trans 'Copy requester name' %}"
+                                        aria-label="{% trans 'Copy requester name' %}"
+                                        onclick="copyCapitalOrderValue(this, '{{ order.requester_main_character|default:order.requester.username|escapejs }}')"
+                                    >
+                                        <i class="fas fa-copy" aria-hidden="true"></i>
+                                    </button>
+                                </div>
+                            </td>
                             <td>{{ order.ship_type_name }} <small class="text-muted">({{ order.get_ship_class_display }})</small></td>
                             <td>{{ order.get_reason_display }}</td>
                             <td class="cap-status-cell">
@@ -106,12 +119,45 @@
                                     </div>
                                 {% endif %}
                                 {% if order.agreed_price_isk %}
-                                    <strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2|intcomma }} ISK
+                                    <div class="d-inline-flex align-items-center gap-1 flex-wrap">
+                                        <span><strong>{% trans "Agreed" %}:</strong> {{ order.agreed_price_isk|floatformat:2|intcomma }} ISK</span>
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-secondary btn-sm copy-button"
+                                            title="{% trans 'Copy agreed price' %}"
+                                            aria-label="{% trans 'Copy agreed price' %}"
+                                            onclick="copyCapitalOrderValue(this, '{{ order.agreed_price_isk|floatformat:2|escapejs }}')"
+                                        >
+                                            <i class="fas fa-copy" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
                                 {% elif order.offer_price_isk %}
-                                    <strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2|intcomma }} ISK
+                                    <div class="d-inline-flex align-items-center gap-1 flex-wrap">
+                                        <span><strong>{% trans "Proposed" %}:</strong> {{ order.offer_price_isk|floatformat:2|intcomma }} ISK</span>
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-secondary btn-sm copy-button"
+                                            title="{% trans 'Copy proposed price' %}"
+                                            aria-label="{% trans 'Copy proposed price' %}"
+                                            onclick="copyCapitalOrderValue(this, '{{ order.offer_price_isk|floatformat:2|escapejs }}')"
+                                        >
+                                            <i class="fas fa-copy" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
                                     <div class="cap-muted-mini">{% trans "Awaiting requester confirmation" %}</div>
                                 {% elif order.guideline_price_isk %}
-                                    <span class="text-muted">{% trans "Estimated" %}: {{ order.guideline_price_isk|floatformat:2|intcomma }} ISK</span>
+                                    <div class="d-inline-flex align-items-center gap-1 flex-wrap">
+                                        <span class="text-muted">{% trans "Estimated" %}: {{ order.guideline_price_isk|floatformat:2|intcomma }} ISK</span>
+                                        <button
+                                            type="button"
+                                            class="btn btn-outline-secondary btn-sm copy-button"
+                                            title="{% trans 'Copy estimated price' %}"
+                                            aria-label="{% trans 'Copy estimated price' %}"
+                                            onclick="copyCapitalOrderValue(this, '{{ order.guideline_price_isk|floatformat:2|escapejs }}')"
+                                        >
+                                            <i class="fas fa-copy" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
                                 {% else %}
                                     <span class="text-muted">-</span>
                                 {% endif %}
@@ -455,24 +501,34 @@
 {% block extra_javascript %}
     {{ block.super }}
     <script>
-        function copyCapitalOrderReference(btn, reference) {
-            if (!reference) {
+        function flashCapitalOrderCopySuccess(btn) {
+            const icon = btn.querySelector('i');
+            if (!icon) {
                 return;
             }
-            navigator.clipboard.writeText(reference).then(() => {
-                const icon = btn.querySelector('i');
-                if (!icon) {
-                    return;
-                }
-                icon.classList.remove('fa-copy');
-                icon.classList.add('fa-check', 'text-success');
-                setTimeout(() => {
-                    icon.classList.remove('fa-check', 'text-success');
-                    icon.classList.add('fa-copy');
-                }, 1400);
+
+            icon.classList.remove('fa-copy');
+            icon.classList.add('fa-check', 'text-success');
+            setTimeout(() => {
+                icon.classList.remove('fa-check', 'text-success');
+                icon.classList.add('fa-copy');
+            }, 1400);
+        }
+
+        function copyCapitalOrderValue(btn, value) {
+            if (!value) {
+                return;
+            }
+
+            navigator.clipboard.writeText(value).then(() => {
+                flashCapitalOrderCopySuccess(btn);
             }).catch(() => {
                 alert('{% trans "Failed to copy to clipboard" %}');
             });
+        }
+
+        function copyCapitalOrderReference(btn, reference) {
+            copyCapitalOrderValue(btn, reference);
         }
 
         (function initCapitalOrderUpdateModal() {

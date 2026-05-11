@@ -16,7 +16,11 @@ from allianceauth.eveonline.models import EveCharacter
 # Local
 from indy_hub.models import MaterialExchangeConfig
 from indy_hub.services.capital_price_estimates import sync_capital_ship_auto_estimates
-from indy_hub.views.capital_ship_orders import _get_ship_default_price
+from indy_hub.views.capital_ship_orders import (
+    _get_ship_default_price,
+    _load_capital_ship_options,
+    _resolve_ship_class_for_group_name,
+)
 
 
 def assign_main_character(user: User, *, character_id: int) -> EveCharacter:
@@ -164,12 +168,11 @@ class CapitalPriceEstimateSyncTests(TestCase):
 
 
 class CapitalPriceEstimateFallbackTests(TestCase):
-    def test_ship_default_price_prefers_manual_then_auto_then_group_default(self) -> None:
+    def test_ship_default_price_prefers_manual_then_auto_only(self) -> None:
         config = MaterialExchangeConfig.objects.create(
             corporation_id=1234,
             structure_id=60003760,
             is_active=True,
-            capital_default_price_dread=Decimal("3100000000.00"),
             capital_ship_estimated_price_overrides=[
                 {"type_id": 19720, "price_isk": "3600000000.00"}
             ],
@@ -206,8 +209,60 @@ class CapitalPriceEstimateFallbackTests(TestCase):
             ship_type_id=19720,
             ship_class="dread",
         )
-        self.assertEqual(price, Decimal("3100000000.00"))
-        self.assertEqual(source, "class_config_default")
+        self.assertIsNone(price)
+        self.assertEqual(source, "")
+
+
+class CapitalShipGroupMappingTests(TestCase):
+    def test_sde_group_mapping_covers_extended_capital_families(self) -> None:
+        expected = {
+            "Dreadnought": "dread",
+            "Lancer Dreadnought": "dread",
+            "Carrier": "carrier",
+            "Force Auxiliary": "fax",
+            "Supercarrier": "super",
+            "Titan": "titan",
+            "Freighter": "freighter",
+            "Jump Freighter": "jump_freighter",
+            "Capital Industrial Ship": "capital_indy",
+        }
+
+        for group_name, ship_class in expected.items():
+            self.assertEqual(_resolve_ship_class_for_group_name(group_name), ship_class)
+
+
+class CapitalShipOptionsTests(TestCase):
+    @patch("indy_hub.views.capital_ship_orders._load_base_capital_ship_options")
+    def test_custom_ship_rows_are_ignored_when_loading_options(
+        self,
+        mock_load_base_options,
+    ) -> None:
+        mock_load_base_options.return_value = [
+            {
+                "type_id": 19720,
+                "type_name": "Revelation",
+                "ship_class": "dread",
+                "ship_class_label": "Dreadnought",
+            }
+        ]
+        config = MaterialExchangeConfig.objects.create(
+            corporation_id=1234,
+            structure_id=60003760,
+            is_active=True,
+            capital_custom_ship_options=[
+                {
+                    "type_id": 67111,
+                    "type_name": "Legacy Custom Hull",
+                    "ship_class": "super",
+                    "ship_class_label": "Supercarrier",
+                    "enabled": True,
+                }
+            ],
+        )
+
+        options = _load_capital_ship_options(config=config)
+
+        self.assertEqual({row["type_id"] for row in options}, {19720})
 
 
 class CapitalOrderConfigViewTests(TestCase):
@@ -255,19 +310,12 @@ class CapitalOrderConfigViewTests(TestCase):
         self.assertContains(response, "Auto Estimate (ISK)")
         self.assertContains(response, "3,400,000,000.00")
         self.assertContains(response, "3600000000.00")
+        self.assertNotContains(response, "Estimated Defaults")
+        self.assertNotContains(response, "Add Custom Ship")
 
         response = self.client.post(
             url,
             {
-                "capital_default_price_dread": "",
-                "capital_default_price_carrier": "",
-                "capital_default_price_fax": "",
-                "capital_default_eta_min_days_dread": "14",
-                "capital_default_eta_max_days_dread": "28",
-                "capital_default_eta_min_days_carrier": "14",
-                "capital_default_eta_max_days_carrier": "28",
-                "capital_default_eta_min_days_fax": "14",
-                "capital_default_eta_max_days_fax": "28",
                 "capital_default_lead_time_days": "0",
                 "capital_auto_cancel_delay_value": "0",
                 "capital_auto_cancel_delay_unit": "hours",

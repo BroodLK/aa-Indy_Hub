@@ -21,7 +21,7 @@
                     <i class="fas fa-ship me-2"></i>
                     {% trans "Capital Orders" %}
                 </h2>
-                <p class="description mb-0">{% trans "Order one dread, carrier, or fax per request." %}</p>
+                <p class="description mb-0">{% trans "Order one capital hull per request." %}</p>
             </div>
             <div class="d-flex gap-2">
                 {% if can_work_capital_orders %}
@@ -101,7 +101,7 @@
             </form>
             {% else %}
             <div class="alert alert-warning mb-0">
-                <i class="fas fa-exclamation-triangle me-2"></i>{% trans "No eligible capital hulls found in SDE market groups." %}
+                <i class="fas fa-exclamation-triangle me-2"></i>{% trans "No eligible capital hulls found in SDE ship groups." %}
             </div>
             {% endif %}
         </div>

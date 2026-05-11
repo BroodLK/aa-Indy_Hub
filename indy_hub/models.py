@@ -3296,6 +3296,11 @@ class CapitalShipOrder(models.Model):
         DREAD = "dread", _("Dreadnought")
         CARRIER = "carrier", _("Carrier")
         FAX = "fax", _("Force Auxiliary")
+        SUPER = "super", _("Supercarrier")
+        TITAN = "titan", _("Titan")
+        FREIGHTER = "freighter", _("Freighter")
+        JUMP_FREIGHTER = "jump_freighter", _("Jump Freighter")
+        CAPITAL_INDY = "capital_indy", _("Capital Industrial")
 
     class Status(models.TextChoices):
         WAITING = "waiting", _("Waiting")
