@@ -40,14 +40,11 @@ class Migration(migrations.Migration):
                 ),
                 ("options_json", models.JSONField(blank=True, default=list)),
                 ("current_winner_option", models.CharField(blank=True, max_length=55)),
-                (
-                    "crontab_schedule_id",
-                    models.PositiveIntegerField(
-                        blank=True,
-                        help_text="ID of the django-celery-beat crontab schedule to reuse.",
-                        null=True,
-                    ),
-                ),
+                ("cron_minute", models.CharField(default="0", max_length=32)),
+                ("cron_hour", models.CharField(default="0", max_length=32)),
+                ("cron_day_of_week", models.CharField(default="mon", max_length=32)),
+                ("cron_day_of_month", models.CharField(default="*", max_length=32)),
+                ("cron_month_of_year", models.CharField(default="*", max_length=32)),
                 ("is_active", models.BooleanField(default=True)),
                 (
                     "last_scheduled_post_at",
