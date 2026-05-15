@@ -3798,6 +3798,9 @@ def _get_effective_contract_location_id(
     may differ from configured sell location IDs for the same structure. In that case,
     prefer a configured expected location ID so market-group acceptance checks evaluate
     against configured location rules.
+
+    If contract location doesn't match any expected location, still return the actual
+    contract location so market group checks are accurate.
     """
     location_ids: list[int] = []
     for raw in [start_location_id, end_location_id]:
@@ -3827,8 +3830,9 @@ def _get_effective_contract_location_id(
         for loc_id in location_ids:
             if loc_id in expected_set:
                 return loc_id
-        # No contract ID match: use first configured expected location deterministically.
-        return expected_ids[0]
+        # Contract location doesn't match expected - still use actual contract location
+        # for market group checks instead of using wrong location
+        return location_ids[0]
 
     return location_ids[0]
 
