@@ -1852,10 +1852,12 @@ def _sync_contracts_for_corporation(corporation_id: int):
             )
 
             # Only fetch items for contracts related to pending orders that don't have cached items
+            # Check if items exist AND are non-empty (count > 0) to handle failed fetch attempts
+            has_items = ESIContractItem.objects.filter(contract=contract).exists()
             should_fetch_items = (
                 contract_type == "item_exchange"
                 and is_relevant_to_pending_order
-                and not ESIContractItem.objects.filter(contract=contract).exists()
+                and not has_items
             )
 
             if should_fetch_items:
@@ -2012,25 +2014,34 @@ def validate_material_exchange_sell_orders():
         logger.debug("No pending sell orders to validate")
         return
 
-    # Get contracts from database instead of ESI
-    # Filter to item_exchange contracts for this corporation
+    # Get character IDs from pending orders to filter relevant contracts
+    seller_character_ids = set()
+    for order in pending_orders.select_related('seller'):
+        char_ids = _get_user_character_ids(order.seller)
+        seller_character_ids.update(char_ids)
+
+    # Get contracts from database - only those relevant to pending orders
+    # Filter to item_exchange contracts where issuer matches a seller with pending orders
     contracts = ESIContract.objects.filter(
         corporation_id=config.corporation_id,
         contract_type="item_exchange",
+        issuer_id__in=seller_character_ids,
     ).prefetch_related("items")
 
     if not contracts.exists():
         logger.warning(
-            "No cached contracts found for corporation %s. "
-            "Run sync_esi_contracts task first.",
+            "No cached contracts found for pending sell orders (corporation=%s, sellers=%s). "
+            "Contracts may not be synced yet or issuers don't match.",
             config.corporation_id,
+            len(seller_character_ids),
         )
         return
 
     logger.info(
-        "Validating %s pending sell orders against %s cached contracts",
+        "Validating %s pending sell orders against %s relevant cached contracts (filtered from issuers: %s characters)",
         pending_orders.count(),
         contracts.count(),
+        len(seller_character_ids),
     )
 
     # Create ESI client for structure name lookups
@@ -2127,15 +2138,24 @@ def validate_material_exchange_buy_orders():
             link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
         )
 
+    # Get character IDs from pending orders to filter relevant contracts
+    buyer_character_ids = set()
+    for order in pending_orders.select_related('buyer'):
+        char_ids = _get_user_character_ids(order.buyer)
+        buyer_character_ids.update(char_ids)
+
+    # Get contracts from database - only those relevant to pending buy orders
+    # Filter to item_exchange contracts where assignee matches a buyer with pending orders
     contracts = ESIContract.objects.filter(
         corporation_id=config.corporation_id,
         contract_type="item_exchange",
+        assignee_id__in=buyer_character_ids,
     ).prefetch_related("items")
 
     if not contracts.exists():
         logger.warning(
-            "No cached contracts found for corporation %s. "
-            "Run sync_esi_contracts task first.",
+            "No cached contracts found for pending buy orders (corporation=%s, buyers=%s). "
+            "Contracts may not be synced yet or assignees don't match.",
             config.corporation_id,
         )
         return
@@ -6010,63 +6030,33 @@ def check_completed_material_exchange_contracts():
         status=MaterialExchangeSellOrder.Status.VALIDATED,
     )
 
-    try:
-        contracts = shared_client.fetch_corporation_contracts(
-            corporation_id=config.corporation_id,
-            character_id=_get_character_for_scope(
-                config.corporation_id,
-                "esi-contracts.read_corporation_contracts.v1",
-            ),
-            force_refresh=True,
-        )
-    except ESIUnmodifiedError:
-        cached_contracts = ESIContract.objects.filter(
-            corporation_id=config.corporation_id
-        )
-        last_synced = (
-            cached_contracts.order_by("-last_synced")
-            .values_list("last_synced", flat=True)
-            .first()
-        )
-        contracts = list(cached_contracts.values("contract_id", "status"))
-        if not contracts:
-            logger.debug(
-                "Contracts not modified for corporation %s; no cached contracts available",
-                config.corporation_id,
-            )
-            return
-        logger.info(
-            "Contracts not modified for corporation %s; using cached snapshot "
-            "for completion check (rows=%s, last_synced=%s)",
-            config.corporation_id,
-            len(contracts),
-            last_synced,
-        )
-    except ESIRateLimitError as exc:
-        delay = get_retry_after_seconds(exc)
+    # Use cached contracts instead of making redundant ESI call
+    # Contracts are already synced in run_material_exchange_cycle()
+    cached_contracts = ESIContract.objects.filter(
+        corporation_id=config.corporation_id
+    )
+
+    if not cached_contracts.exists():
         logger.warning(
-            "ESI rate limit reached while checking contract status; retrying in %ss: %s",
-            delay,
-            exc,
+            "No cached contracts found for corporation %s. "
+            "Run sync_esi_contracts task first.",
+            config.corporation_id,
         )
-        check_completed_material_exchange_contracts.apply_async(countdown=delay)
         return
-    except (ESITokenError, ESIForbiddenError, ESIClientError) as exc:
-        if "304" in str(exc):
-            contracts = list(
-                ESIContract.objects.filter(corporation_id=config.corporation_id).values(
-                    "contract_id", "status"
-                )
-            )
-            if not contracts:
-                logger.debug(
-                    "Contracts not modified for corporation %s; no cached contracts available",
-                    config.corporation_id,
-                )
-                return
-        else:
-            logger.error("Failed to check contract status: %s", exc)
-            return
+
+    last_synced = (
+        cached_contracts.order_by("-last_synced")
+        .values_list("last_synced", flat=True)
+        .first()
+    )
+    contracts = list(cached_contracts.values("contract_id", "status"))
+
+    logger.info(
+        "Checking completion status using cached contracts "
+        "(rows=%s, last_synced=%s)",
+        len(contracts),
+        last_synced,
+    )
 
     for order in approved_orders:
         # Extract contract ID from stored field or notes
