@@ -163,7 +163,6 @@ _BUY_ORDER_VALIDATION_SOURCE_STATUSES = (
 _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
 _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
 _PENDING_REQUEST_REMINDER_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
-_MATERIAL_EXCHANGE_QUICK_VALIDATION_DELAYS_SECONDS = (15, 90)
 _PENDING_REQUEST_REMINDER_STAGES = (
     ("day3", timedelta(days=3), _("3 days")),
     ("day1", timedelta(hours=24), _("24 hours")),
@@ -1619,49 +1618,6 @@ def send_blueprint_copy_request_waiting_reminders() -> None:
                 "elapsed": elapsed_label,
             },
             notification_level=_pending_request_reminder_level(stage_key),
-        )
-
-
-@shared_task(
-    autoretry_for=(Exception,),
-    retry_kwargs={"max_retries": 2, "countdown": 5},
-    rate_limit="300/m",
-    time_limit=600,
-    soft_time_limit=580,
-)
-def run_material_exchange_validation_cycle():
-    """
-    Lightweight material exchange pass used for faster contract discovery after approval.
-
-    This intentionally limits the work to buyback contract sync/validation/completion checks
-    so we can poll more aggressively without running the full capital/reprocessing cycle.
-    """
-    material_exchange_enabled = True
-    try:
-        material_exchange_enabled = bool(MaterialExchangeSettings.get_solo().is_enabled)
-    except Exception:
-        material_exchange_enabled = True
-
-    if not material_exchange_enabled:
-        logger.info("Buyback disabled; skipping quick validation cycle.")
-        return
-
-    if not MaterialExchangeConfig.objects.exists():
-        logger.info("Buyback not configured; skipping quick validation cycle.")
-        return
-
-    sync_esi_contracts()
-    validate_material_exchange_sell_orders()
-    validate_material_exchange_buy_orders()
-    check_completed_material_exchange_contracts()
-
-
-def schedule_material_exchange_quick_validation() -> None:
-    """Queue a short follow-up validation burst after an order enters awaiting_validation."""
-    for countdown in _MATERIAL_EXCHANGE_QUICK_VALIDATION_DELAYS_SECONDS:
-        run_material_exchange_validation_cycle.apply_async(
-            countdown=countdown,
-            expires=countdown + 900,
         )
 
 
@@ -4229,6 +4185,14 @@ def _contract_items_match_order_db(contract, order):
         _refresh_contract_items_for_validation(contract)
         included_items = contract.items.filter(is_included=True)
         if not included_items.exists():
+            contract_status = str(getattr(contract, "status", "") or "").strip().lower()
+            if contract_status == "outstanding":
+                logger.info(
+                    "Contract %s has no included item rows yet while outstanding; "
+                    "allowing pre-acceptance validation fallback",
+                    getattr(contract, "contract_id", None),
+                )
+                return True
             logger.warning(
                 "Contract %s has no included item rows available for validation; refusing item-match fallback",
                 getattr(contract, "contract_id", None),

@@ -33,7 +33,6 @@ from indy_hub.tasks.material_exchange_contracts import (
     check_completed_material_exchange_contracts,
     handle_material_exchange_buy_order_created,
     handle_material_exchange_sell_order_created,
-    schedule_material_exchange_quick_validation,
     sync_esi_contracts,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
@@ -297,22 +296,6 @@ class ContractValidationTaskTest(TestCase):
             contract_id=contract_id,
             character_id=111111111,
             force_refresh=True,
-        )
-
-    @patch("indy_hub.tasks.material_exchange_contracts.run_material_exchange_validation_cycle")
-    def test_schedule_material_exchange_quick_validation_queues_follow_up_passes(
-        self, mock_validation_cycle
-    ) -> None:
-        schedule_material_exchange_quick_validation()
-
-        self.assertEqual(mock_validation_cycle.apply_async.call_count, 2)
-        self.assertEqual(
-            mock_validation_cycle.apply_async.call_args_list[0].kwargs,
-            {"countdown": 15, "expires": 915},
-        )
-        self.assertEqual(
-            mock_validation_cycle.apply_async.call_args_list[1].kwargs,
-            {"countdown": 90, "expires": 990},
         )
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
@@ -648,6 +631,62 @@ class ContractValidationTaskTest(TestCase):
         mock_client.fetch_corporation_contract_items.assert_called_once_with(
             corporation_id=self.config.corporation_id,
             contract_id=202,
+            character_id=222222222,
+            force_refresh=True,
+        )
+        mock_notify_user.assert_called()
+        mock_notify_multi.assert_called()
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_validate_sell_orders_outstanding_without_items_validates(
+        self,
+        mock_notify_multi,
+        mock_notify_user,
+        mock_user_chars,
+        mock_client,
+        mock_get_char,
+    ):
+        """Outstanding sell contracts should not be flagged as mismatch solely due to missing item rows."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        seller_char_id = 111111111
+        mock_user_chars.return_value = [seller_char_id]
+        mock_get_char.return_value = 222222222
+
+        contract = ESIContract.objects.create(
+            contract_id=203,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=0,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=self.sell_item.total_price,
+            title=self.sell_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        mock_client.fetch_corporation_contract_items.return_value = []
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(
+            self.sell_order.status,
+            MaterialExchangeSellOrder.Status.VALIDATED,
+        )
+        self.assertEqual(self.sell_order.esi_contract_id, contract.contract_id)
+        mock_client.fetch_corporation_contract_items.assert_called_once_with(
+            corporation_id=self.config.corporation_id,
+            contract_id=203,
             character_id=222222222,
             force_refresh=True,
         )

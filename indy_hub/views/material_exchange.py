@@ -87,9 +87,6 @@ from ..tasks.material_exchange import (
     sync_material_exchange_prices,
     sync_material_exchange_stock,
 )
-from ..tasks.material_exchange_contracts import (
-    schedule_material_exchange_quick_validation,
-)
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_corporation_name, get_type_name
 from ..utils.material_exchange_pricing import (
@@ -6375,7 +6372,6 @@ def material_exchange_approve_sell(request, order_id):
     order.approved_by = request.user
     order.approved_at = timezone.now()
     order.save()
-    schedule_material_exchange_quick_validation()
 
     messages.success(
         request,
@@ -6607,7 +6603,6 @@ def material_exchange_approve_buy(request, order_id):
     order.approved_by = request.user
     order.approved_at = timezone.now()
     order.save()
-    schedule_material_exchange_quick_validation()
 
     messages.success(
         request,
