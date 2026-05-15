@@ -1689,19 +1689,27 @@ def _sync_contracts_for_corporation(corporation_id: int):
     pending_sell_orders = MaterialExchangeSellOrder.objects.filter(
         config__corporation_id=corporation_id,
         status__in=_SELL_ORDER_VALIDATION_SOURCE_STATUSES,
-    ).values_list('issuer_character_id', flat=True)
+    ).select_related('seller')
 
     pending_buy_orders = MaterialExchangeBuyOrder.objects.filter(
         config__corporation_id=corporation_id,
         status__in=_BUY_ORDER_VALIDATION_SOURCE_STATUSES,
-    ).values_list('buyer_character_id', flat=True)
+    ).select_related('buyer')
 
-    # Combine all character IDs that have pending orders
-    pending_character_ids = set(pending_sell_orders) | set(pending_buy_orders)
+    # Get all character IDs for users with pending orders
+    pending_character_ids = set()
+    for order in pending_sell_orders:
+        char_ids = _get_user_character_ids(order.seller)
+        pending_character_ids.update(char_ids)
+
+    for order in pending_buy_orders:
+        char_ids = _get_user_character_ids(order.buyer)
+        pending_character_ids.update(char_ids)
 
     logger.info(
-        "Found %s pending orders for %s unique characters",
-        len(pending_sell_orders) + len(pending_buy_orders),
+        "Found %s pending sell orders and %s pending buy orders for %s unique characters",
+        pending_sell_orders.count(),
+        pending_buy_orders.count(),
         len(pending_character_ids),
     )
 
