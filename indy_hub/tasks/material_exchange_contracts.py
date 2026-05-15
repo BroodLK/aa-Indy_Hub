@@ -4182,12 +4182,14 @@ def _contract_items_match_order_db(contract, order):
     # Only validate included items (not requested)
     included_items = contract.items.filter(is_included=True)
     if not included_items.exists():
-        # Some contracts can temporarily return no items from ESI even while
-        # still outstanding/in-progress. Allow a temporary fallback only while
-        # the contract is still pending so finished contracts cannot validate
-        # without a real item-level match.
-        normalized_status = str(getattr(contract, "status", "") or "").strip().lower()
-        return normalized_status in {"outstanding", "in_progress"}
+        _refresh_contract_items_for_validation(contract)
+        included_items = contract.items.filter(is_included=True)
+        if not included_items.exists():
+            logger.warning(
+                "Contract %s has no included item rows available for validation; refusing item-match fallback",
+                getattr(contract, "contract_id", None),
+            )
+            return False
 
     order_items = list(order.items.all())
     expected_by_type: dict[int, int] = {}
@@ -4223,6 +4225,89 @@ def _contract_items_match_order_db(contract, order):
         )
 
     return expected_by_type == actual_by_type
+
+
+def _refresh_contract_items_for_validation(contract) -> bool:
+    """Refresh missing corp contract item rows on-demand during validation."""
+    if getattr(contract, "_validation_item_refresh_attempted", False):
+        return False
+    contract._validation_item_refresh_attempted = True
+
+    contract_id = int(getattr(contract, "contract_id", 0) or 0)
+    corporation_id = int(getattr(contract, "corporation_id", 0) or 0)
+    if contract_id <= 0 or corporation_id <= 0:
+        return False
+
+    try:
+        character_id = _get_character_for_scope(
+            corporation_id,
+            "esi-contracts.read_corporation_contracts.v1",
+        )
+        contract_items = shared_client.fetch_corporation_contract_items(
+            corporation_id=corporation_id,
+            contract_id=contract_id,
+            character_id=character_id,
+            force_refresh=True,
+        )
+        if not isinstance(contract_items, list):
+            logger.warning(
+                "Skipping on-demand contract item refresh for %s: unexpected payload type %s",
+                contract_id,
+                type(contract_items).__name__,
+            )
+            return False
+
+        ESIContractItem.objects.filter(contract=contract).delete()
+        for item_data in contract_items:
+            item_payload = _normalize_esi_mapping(
+                item_data,
+                context=f"validation contract item ({contract_id})",
+            )
+            if not item_payload:
+                continue
+            ESIContractItem.objects.create(
+                contract=contract,
+                record_id=item_payload.get("record_id", 0),
+                type_id=item_payload.get("type_id", 0),
+                quantity=item_payload.get("quantity", 0),
+                raw_quantity=item_payload.get("raw_quantity"),
+                is_included=item_payload.get("is_included", False),
+                is_singleton=item_payload.get("is_singleton", False),
+            )
+
+        logger.info(
+            "Contract %s: refreshed %s item rows on-demand during validation",
+            contract_id,
+            len(contract_items),
+        )
+        return bool(
+            ESIContractItem.objects.filter(contract=contract, is_included=True).exists()
+        )
+    except ESIUnmodifiedError:
+        logger.debug(
+            "Contract %s items were unmodified during validation refresh",
+            contract_id,
+        )
+    except ESIClientError as exc:
+        if "404" in str(exc):
+            logger.debug(
+                "Contract %s item refresh returned 404 during validation",
+                contract_id,
+            )
+        else:
+            logger.warning(
+                "Failed to refresh contract %s items during validation: %s",
+                contract_id,
+                exc,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Failed to refresh contract %s items during validation: %s",
+            contract_id,
+            exc,
+        )
+
+    return bool(ESIContractItem.objects.filter(contract=contract, is_included=True).exists())
 
 
 def _is_item_inside_container(contract_item) -> bool:

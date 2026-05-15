@@ -577,6 +577,68 @@ class ContractValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_validate_sell_orders_refreshes_missing_items_before_validating(
+        self,
+        mock_notify_multi,
+        mock_notify_user,
+        mock_user_chars,
+        mock_client,
+        mock_get_char,
+    ):
+        """Sell validation must fetch missing item rows instead of trusting an empty cache."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        seller_char_id = 111111111
+        mock_user_chars.return_value = [seller_char_id]
+        mock_get_char.return_value = 222222222
+
+        ESIContract.objects.create(
+            contract_id=202,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=0,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=self.sell_item.total_price,
+            title=self.sell_order.order_reference,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        mock_client.fetch_corporation_contract_items.return_value = [
+            {
+                "record_id": 1,
+                "type_id": 35,
+                "quantity": 1,
+                "raw_quantity": 1,
+                "is_included": True,
+                "is_singleton": False,
+            }
+        ]
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
+        self.assertIn("item list/quantities do not match", self.sell_order.notes)
+        mock_client.fetch_corporation_contract_items.assert_called_once_with(
+            corporation_id=self.config.corporation_id,
+            contract_id=202,
+            character_id=222222222,
+            force_refresh=True,
+        )
+        mock_notify_user.assert_called()
+        mock_notify_multi.assert_called()
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     def test_validate_sell_orders_no_contract(
         self, mock_notify_user, mock_client, mock_get_char
@@ -1338,6 +1400,67 @@ class BuyOrderValidationTaskTest(TestCase):
             "accepted in-game before validation finished and is now completed",
             validation_message,
         )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
+    @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_validate_buy_order_refreshes_missing_items_before_validating(
+        self,
+        mock_multi,
+        mock_user,
+        mock_user_chars,
+        mock_client,
+        mock_get_char,
+    ):
+        """Buy validation must fetch missing item rows instead of trusting an empty cache."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        buyer_char_id = 999999999
+        mock_user_chars.return_value = [buyer_char_id]
+        mock_get_char.return_value = 222222222
+
+        ESIContract.objects.create(
+            contract_id=227079145,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=0,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            title=self.buy_order.order_reference,
+            price=self.buy_order.total_price,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        mock_client.fetch_corporation_contract_items.return_value = [
+            {
+                "record_id": 1,
+                "type_id": 35,
+                "quantity": 1,
+                "raw_quantity": 1,
+                "is_included": True,
+                "is_singleton": False,
+            }
+        ]
+
+        validate_material_exchange_buy_orders()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
+        self.assertIn("Issue(s): items mismatch", self.buy_order.notes)
+        mock_client.fetch_corporation_contract_items.assert_called_once_with(
+            corporation_id=self.config.corporation_id,
+            contract_id=227079145,
+            character_id=222222222,
+            force_refresh=True,
+        )
+        mock_user.assert_not_called()
+        mock_multi.assert_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
