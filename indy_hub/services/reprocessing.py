@@ -9,6 +9,9 @@ import math
 import re
 from typing import Iterable
 
+# Django
+from django.db import connection
+
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
@@ -552,6 +555,168 @@ def _get_reprocessing_skill_attribute_ids() -> list[int]:
 
 
 @lru_cache(maxsize=4096)
+def _get_reprocessing_item_context(type_id: int) -> dict[str, str]:
+    context = {
+        "type_name": str(get_type_name(int(type_id)) or "").strip(),
+        "group_name": "",
+        "category_name": "",
+        "market_group_name": "",
+    }
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    COALESCE(t.name_en, t.name, ''),
+                    COALESCE(g.name_en, g.name, ''),
+                    COALESCE(c.name_en, c.name, ''),
+                    COALESCE(mg.name_en, mg.name, '')
+                FROM eve_sde_itemtype t
+                LEFT JOIN eve_sde_itemgroup g
+                    ON g.id = t.group_id
+                LEFT JOIN eve_sde_itemcategory c
+                    ON c.id = g.category_id
+                LEFT JOIN eve_sde_itemmarketgroup mg
+                    ON mg.id = t.market_group_id
+                WHERE t.id = %s
+                """,
+                [int(type_id)],
+            )
+            row = cursor.fetchone()
+    except Exception:
+        row = None
+
+    if row:
+        type_name, group_name, category_name, market_group_name = row
+        if str(type_name or "").strip():
+            context["type_name"] = str(type_name).strip()
+        context["group_name"] = str(group_name or "").strip()
+        context["category_name"] = str(category_name or "").strip()
+        context["market_group_name"] = str(market_group_name or "").strip()
+
+    return context
+
+
+@lru_cache(maxsize=1)
+def _get_processing_skill_candidates_from_sde() -> tuple[tuple[int, str], ...]:
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    t.id,
+                    COALESCE(t.name_en, t.name, '')
+                FROM eve_sde_itemtype t
+                LEFT JOIN eve_sde_itemgroup g
+                    ON g.id = t.group_id
+                LEFT JOIN eve_sde_itemcategory c
+                    ON c.id = g.category_id
+                WHERE LOWER(COALESCE(t.name_en, t.name, '')) LIKE %s
+                  AND LOWER(COALESCE(c.name_en, c.name, '')) LIKE %s
+                ORDER BY t.id
+                """,
+                ["% processing", "%skill%"],
+            )
+            rows = cursor.fetchall()
+    except Exception:
+        rows = []
+
+    normalized: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    for raw_skill_id, raw_name in rows:
+        try:
+            skill_id = int(raw_skill_id)
+        except (TypeError, ValueError):
+            continue
+        skill_name = str(raw_name or "").strip()
+        if skill_id <= 0 or not skill_name or skill_id in seen:
+            continue
+        seen.add(skill_id)
+        normalized.append((skill_id, skill_name))
+    return tuple(normalized)
+
+
+def _normalize_processing_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
+
+
+def _extract_processing_subject(skill_name: str) -> str:
+    normalized = re.sub(r"\s+processing$", "", str(skill_name or "").strip(), flags=re.IGNORECASE)
+    return normalized.strip()
+
+
+def _iter_processing_skill_candidates(
+    skill_levels_by_id: dict[int, int] | None,
+) -> list[tuple[int, str]]:
+    candidates = list(_get_processing_skill_candidates_from_sde())
+    seen = {skill_id for skill_id, _skill_name in candidates}
+
+    for raw_skill_id in (skill_levels_by_id or {}):
+        try:
+            skill_id = int(raw_skill_id)
+        except (TypeError, ValueError):
+            continue
+        if skill_id <= 0 or skill_id in seen:
+            continue
+        skill_name = str(get_type_name(skill_id) or "").strip()
+        if not skill_name:
+            continue
+        seen.add(skill_id)
+        candidates.append((skill_id, skill_name))
+
+    return candidates
+
+
+def _infer_processing_skill_type_id_for_item(
+    *,
+    type_id: int,
+    skill_levels_by_id: dict[int, int] | None,
+) -> int | None:
+    context = _get_reprocessing_item_context(int(type_id))
+    context_texts = [
+        _normalize_processing_text(context.get("type_name", "")),
+        _normalize_processing_text(context.get("group_name", "")),
+        _normalize_processing_text(context.get("category_name", "")),
+        _normalize_processing_text(context.get("market_group_name", "")),
+    ]
+    context_texts = [text for text in context_texts if text]
+
+    if not context_texts:
+        return None
+
+    best_skill_id: int | None = None
+    best_score = -1
+    for skill_id, skill_name in _iter_processing_skill_candidates(skill_levels_by_id):
+        normalized_skill_name = _normalize_processing_text(skill_name)
+        if (
+            "processing" not in normalized_skill_name
+            or "reprocessing" in normalized_skill_name
+            or "efficiency" in normalized_skill_name
+        ):
+            continue
+
+        subject = _normalize_processing_text(_extract_processing_subject(skill_name))
+        if not subject:
+            continue
+
+        if not any(
+            text == subject
+            or text.endswith(f" {subject}")
+            or f" {subject} " in f" {text} "
+            for text in context_texts
+        ):
+            continue
+
+        score = len(subject.split())
+        if score > best_score:
+            best_skill_id = int(skill_id)
+            best_score = score
+
+    return best_skill_id
+
+
+@lru_cache(maxsize=4096)
 def resolve_processing_skill_type_id_for_item(type_id: int) -> int | None:
     """Best-effort lookup of the specific processing skill type ID for an item type."""
     try:
@@ -591,9 +756,17 @@ def resolve_processing_skill_level_for_item(
     skill_levels_by_id: dict[int, int] | None,
     fallback_level: int = 0,
 ) -> int:
+    normalized_skill_levels = skill_levels_by_id or {}
     required_skill_type_id = resolve_processing_skill_type_id_for_item(int(type_id))
+    if not required_skill_type_id:
+        required_skill_type_id = _infer_processing_skill_type_id_for_item(
+            type_id=int(type_id),
+            skill_levels_by_id=normalized_skill_levels,
+        )
     if required_skill_type_id:
-        return int((skill_levels_by_id or {}).get(int(required_skill_type_id), 0) or 0)
+        if not normalized_skill_levels:
+            return int(fallback_level or 0)
+        return int(normalized_skill_levels.get(int(required_skill_type_id), 0) or 0)
     return int(fallback_level or 0)
 
 

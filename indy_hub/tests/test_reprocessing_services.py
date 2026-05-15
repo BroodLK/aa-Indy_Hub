@@ -602,6 +602,90 @@ class ReprocessingSkillResolutionTests(TestCase):
         )
         self.assertEqual(level, 5)
 
+    @patch("indy_hub.services.reprocessing._get_processing_skill_candidates_from_sde")
+    @patch("indy_hub.services.reprocessing._get_reprocessing_item_context")
+    @patch("indy_hub.services.reprocessing.resolve_processing_skill_type_id_for_item")
+    def test_infers_moon_ore_processing_skill_from_item_context(
+        self,
+        mock_skill_type,
+        mock_context,
+        mock_candidates,
+    ):
+        mock_skill_type.return_value = None
+        mock_context.return_value = {
+            "type_name": "Brimful Bitumens",
+            "group_name": "Moon Ores",
+            "category_name": "Asteroid",
+            "market_group_name": "Exceptional Moon Ores",
+        }
+        mock_candidates.return_value = (
+            (12245, "Bitumens Processing"),
+            (12345, "Veldspar Processing"),
+        )
+
+        level = resolve_processing_skill_level_for_item(
+            type_id=1234,
+            skill_levels_by_id={12245: 2, 12345: 5},
+            fallback_level=5,
+        )
+
+        self.assertEqual(level, 2)
+
+    @patch("indy_hub.services.reprocessing._get_processing_skill_candidates_from_sde")
+    @patch("indy_hub.services.reprocessing._get_reprocessing_item_context")
+    @patch("indy_hub.services.reprocessing.resolve_processing_skill_type_id_for_item")
+    def test_infers_ice_processing_skill_from_group_context(
+        self,
+        mock_skill_type,
+        mock_context,
+        mock_candidates,
+    ):
+        mock_skill_type.return_value = None
+        mock_context.return_value = {
+            "type_name": "Glacial Mass",
+            "group_name": "Ice",
+            "category_name": "Asteroid",
+            "market_group_name": "Ice Ore",
+        }
+        mock_candidates.return_value = (
+            (16281, "Ice Processing"),
+            (12345, "Veldspar Processing"),
+        )
+
+        level = resolve_processing_skill_level_for_item(
+            type_id=5678,
+            skill_levels_by_id={16281: 1, 12345: 5},
+            fallback_level=5,
+        )
+
+        self.assertEqual(level, 1)
+
+    @patch("indy_hub.services.reprocessing._get_processing_skill_candidates_from_sde")
+    @patch("indy_hub.services.reprocessing._get_reprocessing_item_context")
+    @patch("indy_hub.services.reprocessing.resolve_processing_skill_type_id_for_item")
+    def test_missing_specific_skill_returns_zero_instead_of_generic_fallback(
+        self,
+        mock_skill_type,
+        mock_context,
+        mock_candidates,
+    ):
+        mock_skill_type.return_value = None
+        mock_context.return_value = {
+            "type_name": "Bitumens",
+            "group_name": "Moon Ores",
+            "category_name": "Asteroid",
+            "market_group_name": "Moon Ores",
+        }
+        mock_candidates.return_value = ((12245, "Bitumens Processing"),)
+
+        level = resolve_processing_skill_level_for_item(
+            type_id=9999,
+            skill_levels_by_id={12345: 5},
+            fallback_level=5,
+        )
+
+        self.assertEqual(level, 0)
+
 
 class ReprocessingCorptoolsFallbackTests(TestCase):
     @patch("indy_hub.services.reprocessing.Token.get_token", side_effect=Exception("no token"))

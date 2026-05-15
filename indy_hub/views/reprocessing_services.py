@@ -2892,31 +2892,29 @@ def reprocessing_request_create(request, profile_id: int):
                     "processing": int(profile.processing_skill_level or 0),
                 }
                 yield_percent_by_type: dict[int, Decimal] = {}
-                security_bonus_raw = profile_skill_map.get("security_bonus_percent")
-                if security_bonus_raw is not None:
-                    security_bonus_percent = _to_decimal(security_bonus_raw)
-                    for row in parsed_items:
-                        source_type_id = int(row.get("type_id") or 0)
-                        if source_type_id <= 0:
-                            continue
-                        processing_level = resolve_processing_skill_level_for_item(
-                            type_id=source_type_id,
-                            skill_levels_by_id=skill_levels_by_id,
-                            fallback_level=int(base_skill_snapshot.get("processing") or 0),
-                        )
-                        yield_percent_by_type[source_type_id] = compute_estimated_yield_percent(
-                            skill_snapshot={
-                                "reprocessing": int(base_skill_snapshot["reprocessing"]),
-                                "reprocessing_efficiency": int(
-                                    base_skill_snapshot["reprocessing_efficiency"]
-                                ),
-                                "processing": int(processing_level),
-                            },
-                            implant_bonus_percent=_to_decimal(profile.beancounter_bonus_percent),
-                            structure_bonus_percent=_to_decimal(profile.structure_bonus_percent),
-                            rig_bonus_percent=_to_decimal(profile.rig_bonus_percent),
-                            security_bonus_percent=security_bonus_percent,
-                        )
+                security_bonus_percent = _to_decimal(profile_skill_map.get("security_bonus_percent"))
+                for row in parsed_items:
+                    source_type_id = int(row.get("type_id") or 0)
+                    if source_type_id <= 0:
+                        continue
+                    processing_level = resolve_processing_skill_level_for_item(
+                        type_id=source_type_id,
+                        skill_levels_by_id=skill_levels_by_id,
+                        fallback_level=int(base_skill_snapshot.get("processing") or 0),
+                    )
+                    yield_percent_by_type[source_type_id] = compute_estimated_yield_percent(
+                        skill_snapshot={
+                            "reprocessing": int(base_skill_snapshot["reprocessing"]),
+                            "reprocessing_efficiency": int(
+                                base_skill_snapshot["reprocessing_efficiency"]
+                            ),
+                            "processing": int(processing_level),
+                        },
+                        implant_bonus_percent=_to_decimal(profile.beancounter_bonus_percent),
+                        structure_bonus_percent=_to_decimal(profile.structure_bonus_percent),
+                        rig_bonus_percent=_to_decimal(profile.rig_bonus_percent),
+                        security_bonus_percent=security_bonus_percent,
+                    )
 
                 estimate_payload = build_reprocessing_estimate(
                     input_items=parsed_items,
