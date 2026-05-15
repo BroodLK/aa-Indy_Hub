@@ -62,7 +62,7 @@ INDY_HUB_BEAT_SCHEDULE = {
     # Buyback combined cycle: sync -> validate -> check completed
     "indy-hub-material-exchange-cycle": {
         "task": "indy_hub.tasks.material_exchange_contracts.run_material_exchange_cycle",
-        "schedule": crontab(minute="*/5"),  # Every 5 minutes
+        "schedule": crontab(minute="*/6"),  # Every 6 minutes
         "options": {"priority": 4},
         "apply_offset": True,
     },

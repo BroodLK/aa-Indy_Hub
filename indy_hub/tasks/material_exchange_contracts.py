@@ -1820,14 +1820,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
                 in _CORPORATION_CONTRACT_ITEM_SYNC_STATUSES
             ):
                 try:
-                    has_cached_items = ESIContractItem.objects.filter(
-                        contract=contract
-                    ).exists()
                     contract_items = shared_client.fetch_corporation_contract_items(
                         corporation_id=corporation_id,
                         contract_id=contract_id,
                         character_id=character_id,
-                        force_refresh=not has_cached_items,
+                        force_refresh=True,
                     )
                     if not isinstance(contract_items, list):
                         logger.warning(
@@ -1865,9 +1862,10 @@ def _sync_contracts_for_corporation(corporation_id: int):
 
                 except ESIUnmodifiedError:
                     logger.debug(
-                        "Contract items not modified for %s; skipping items sync",
+                        "Contract items not modified for %s; keeping cached items",
                         contract_id,
                     )
+                    # Keep existing items in database - they're still valid
                 except ESIClientError as exc:
                     # 404 is normal for contracts without items or expired contracts
                     if "404" in str(exc):
