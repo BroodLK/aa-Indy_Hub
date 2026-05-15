@@ -451,6 +451,80 @@ class ContractValidationTaskTest(TestCase):
         admin_message = str(mock_notify_multi.call_args[0][2])
         self.assertIn("No anomalies detected before completion.", admin_message)
 
+    @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_validate_sell_orders_finished_contract_completes_immediately(
+        self,
+        mock_user_chars,
+        mock_notify_user,
+        mock_notify_admins,
+        _mock_log_sell_tx,
+    ):
+        """Finished sell contracts should emit validation and completion in one pass."""
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        seller_char_id = 111111111
+        completed_at = timezone.now() - timedelta(minutes=5)
+        mock_user_chars.return_value = [seller_char_id]
+
+        contract = ESIContract.objects.create(
+            contract_id=1001,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=self.config.corporation_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="finished",
+            price=self.sell_item.total_price,
+            title=self.sell_order.order_reference,
+            date_issued=timezone.now() - timedelta(hours=1),
+            date_expired=timezone.now() + timedelta(days=30),
+            date_completed=completed_at,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1,
+            type_id=self.sell_item.type_id,
+            quantity=self.sell_item.quantity,
+            is_included=True,
+        )
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(
+            self.sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
+        )
+        self.assertEqual(self.sell_order.esi_contract_id, contract.contract_id)
+        self.assertIsNotNone(self.sell_order.contract_validated_at)
+        self.assertEqual(self.sell_order.payment_verified_at, completed_at)
+
+        mock_notify_user.assert_called_once()
+        user_message = str(mock_notify_user.call_args[0][2])
+        self.assertIn(
+            "already completed in-game before validation finished",
+            user_message,
+        )
+
+        self.assertEqual(mock_notify_admins.call_count, 2)
+        validation_title = str(mock_notify_admins.call_args_list[0][0][1])
+        validation_message = str(mock_notify_admins.call_args_list[0][0][2])
+        completion_title = str(mock_notify_admins.call_args_list[1][0][1])
+        completion_message = str(mock_notify_admins.call_args_list[1][0][2])
+        self.assertIn("Validated", validation_title)
+        self.assertIn("No anomalies detected before completion.", validation_message)
+        self.assertIn("Completed", completion_title)
+        self.assertEqual(
+            completion_message,
+            f"Contract from {self.sell_order.seller.username} has completed.",
+        )
+
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
     def test_validate_sell_orders_contract_found_with_split_item_stack(
@@ -701,10 +775,10 @@ class ContractValidationTaskTest(TestCase):
         mock_notify_user.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
-    def test_validate_sell_orders_finished_wrong_reference_force_validates(
+    def test_validate_sell_orders_finished_wrong_reference_stays_anomaly(
         self, mock_user_chars
     ):
-        """Finished near-match with wrong reference should not stay in anomaly."""
+        """Finished near-match with wrong reference should stay an anomaly."""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
 
@@ -739,12 +813,50 @@ class ContractValidationTaskTest(TestCase):
         self.sell_order.refresh_from_db()
         self.assertEqual(
             self.sell_order.status,
-            MaterialExchangeSellOrder.Status.VALIDATED,
+            MaterialExchangeSellOrder.Status.ANOMALY,
         )
-        self.assertEqual(self.sell_order.esi_contract_id, contract.contract_id)
-        self.assertIn("accepted in-game despite anomaly", self.sell_order.notes)
-        self.assertIn("wrong contract reference", self.sell_order.notes)
-        self.assertIn("Found title: WRONG-REF-FINISHED", self.sell_order.notes)
+        self.assertIn("title reference is incorrect", self.sell_order.notes)
+        self.assertIn("WRONG-REF-FINISHED", self.sell_order.notes)
+
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_validate_sell_orders_finished_without_cached_items_stays_anomaly(
+        self, mock_notify_multi, mock_notify_user, mock_user_chars
+    ):
+        """A finished contract without cached item rows must not validate on title/location/price alone."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        seller_char_id = 111111111
+        mock_user_chars.return_value = [seller_char_id]
+
+        ESIContract.objects.create(
+            contract_id=4102,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="finished",
+            price=self.sell_item.total_price,
+            title=self.sell_order.order_reference,
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+        )
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(
+            self.sell_order.status,
+            MaterialExchangeSellOrder.Status.ANOMALY,
+        )
+        self.assertIn("item list/quantities do not match", self.sell_order.notes)
+        mock_notify_user.assert_called()
+        mock_notify_multi.assert_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -1151,6 +1263,79 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("No anomalies detected before completion.", admin_message)
 
     @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_validate_buy_order_finished_contract_completes_immediately(
+        self,
+        mock_user_chars,
+        mock_notify_user,
+        mock_notify_admins,
+        _mock_log_buy_tx,
+    ):
+        """Finished buy contracts should emit validation and completion in one pass."""
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        buyer_char_id = 999999999
+        completed_at = timezone.now() - timedelta(minutes=5)
+        mock_user_chars.return_value = [buyer_char_id]
+
+        contract = ESIContract.objects.create(
+            contract_id=227079144,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=0,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="finished",
+            title=self.buy_order.order_reference,
+            price=self.buy_order.total_price,
+            date_issued=timezone.now() - timedelta(hours=1),
+            date_expired=timezone.now() + timedelta(days=30),
+            date_completed=completed_at,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1,
+            type_id=self.buy_item.type_id,
+            quantity=self.buy_item.quantity,
+            is_included=True,
+        )
+
+        validate_material_exchange_buy_orders()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(
+            self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED
+        )
+        self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
+        self.assertIsNotNone(self.buy_order.contract_validated_at)
+        self.assertEqual(self.buy_order.delivered_at, completed_at)
+
+        mock_notify_user.assert_called_once()
+        user_message = str(mock_notify_user.call_args[0][2])
+        self.assertIn(
+            "already been accepted in-game before validation completed",
+            user_message,
+        )
+
+        self.assertEqual(mock_notify_admins.call_count, 2)
+        validation_title = str(mock_notify_admins.call_args_list[0][0][1])
+        validation_message = str(mock_notify_admins.call_args_list[0][0][2])
+        completion_title = str(mock_notify_admins.call_args_list[1][0][1])
+        completion_message = str(mock_notify_admins.call_args_list[1][0][2])
+        self.assertIn("Created", validation_title)
+        self.assertIn("No anomalies detected before completion.", validation_message)
+        self.assertIn("Completed", completion_title)
+        self.assertEqual(
+            completion_message,
+            f"Contract for {self.buy_order.buyer.username} has completed.",
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts._log_buy_order_transactions")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
@@ -1488,10 +1673,10 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_finished_contract_items_mismatch_force_validates(
+    def test_validate_buy_order_finished_contract_items_mismatch_stays_pending_issue(
         self, mock_multi, mock_user
     ):
-        """Finished in-game contract with item mismatch should not leave buy order pending."""
+        """Finished in-game contract with item mismatch should remain an issue, not validate."""
         # Standard Library
         from datetime import timedelta
 
@@ -1534,24 +1719,30 @@ class BuyOrderValidationTaskTest(TestCase):
 
         self.buy_order.refresh_from_db()
         self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
+            self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT
         )
-        self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
-        self.assertIn("accepted in-game despite anomaly", self.buy_order.notes)
-        self.assertIn("items mismatch", self.buy_order.notes)
+        self.assertIn(
+            f"Contract: #{contract.contract_id} (finished)",
+            self.buy_order.notes,
+        )
+        self.assertIn("Issue(s): items mismatch", self.buy_order.notes)
         self.assertIn("Surplus:", self.buy_order.notes)
 
-        mock_user.assert_called()
-        user_message = str(mock_user.call_args[0][2])
-        self.assertIn("Reason: items mismatch", user_message)
         mock_multi.assert_called()
+        admin_message = str(mock_multi.call_args[0][2])
+        self.assertIn(
+            f"Contract: #{contract.contract_id} (finished)",
+            admin_message,
+        )
+        self.assertIn("Reason: contract mismatch.", admin_message)
+        mock_user.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_finished_wrong_reference_force_validates(
+    def test_validate_buy_order_finished_wrong_reference_stays_pending_issue(
         self, mock_multi, mock_user
     ):
-        """Finished near-match with wrong title reference should not remain pending."""
+        """Finished near-match with wrong title reference should remain an issue."""
         # Standard Library
         from datetime import timedelta
 
@@ -1594,20 +1785,28 @@ class BuyOrderValidationTaskTest(TestCase):
 
         self.buy_order.refresh_from_db()
         self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
+            self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT
         )
-        self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
-        self.assertIn("accepted in-game despite anomaly", self.buy_order.notes)
+        self.assertIn(
+            f"Contract: #{contract.contract_id} (finished)",
+            self.buy_order.notes,
+        )
+        self.assertIn("Issue(s): wrong contract reference", self.buy_order.notes)
 
-        mock_user.assert_called()
         mock_multi.assert_called()
+        admin_message = str(mock_multi.call_args[0][2])
+        self.assertIn(
+            f"Contract: #{contract.contract_id} (finished)",
+            admin_message,
+        )
+        mock_user.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_finished_criteria_mismatch_force_validates(
+    def test_validate_buy_order_finished_criteria_mismatch_stays_pending_issue(
         self, mock_multi, mock_user
     ):
-        """Finished contract with matching reference but criteria mismatch should not remain pending."""
+        """Finished contract with criteria mismatch should remain an issue."""
         # Standard Library
         from datetime import timedelta
 
@@ -1650,13 +1849,21 @@ class BuyOrderValidationTaskTest(TestCase):
 
         self.buy_order.refresh_from_db()
         self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
+            self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT
         )
-        self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
-        self.assertIn("accepted in-game despite anomaly", self.buy_order.notes)
+        self.assertIn(
+            f"Contract: #{contract.contract_id} (finished)",
+            self.buy_order.notes,
+        )
+        self.assertIn("Issue(s): contract criteria mismatch", self.buy_order.notes)
 
-        mock_user.assert_called()
         mock_multi.assert_called()
+        admin_message = str(mock_multi.call_args[0][2])
+        self.assertIn(
+            f"Contract: #{contract.contract_id} (finished)",
+            admin_message,
+        )
+        mock_user.assert_not_called()
 
     @patch(
         "indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins"
@@ -1839,6 +2046,101 @@ class BuyOrderValidationTaskTest(TestCase):
         )
         self.assertIn("Reason: contract mismatch.", admin_message)
         self.assertIn("Issue(s): items mismatch", admin_message)
+
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins"
+    )
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    def test_validate_buy_order_pending_mismatch_lists_deleted_and_replacement_contracts(
+        self, mock_user_chars, mock_notify_admins
+    ):
+        """When a bad contract is replaced, the alert should list both the deleted and new contracts."""
+        # Standard Library
+        from datetime import timedelta
+
+        # Django
+        from django.core.cache import cache
+        from django.utils import timezone
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        buyer_char_id = 999999999
+        mock_user_chars.return_value = [buyer_char_id]
+
+        deleted_contract = ESIContract.objects.create(
+            contract_id=227079150,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=0,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="deleted",
+            title=self.buy_order.order_reference,
+            price=self.buy_order.total_price,
+            date_issued=timezone.now() - timedelta(minutes=5),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=deleted_contract,
+            record_id=150,
+            type_id=self.buy_item.type_id,
+            quantity=self.buy_item.quantity + 1,
+            is_included=True,
+        )
+
+        replacement_contract = ESIContract.objects.create(
+            contract_id=227079151,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=0,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=buyer_char_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            title=self.buy_order.order_reference,
+            price=self.buy_order.total_price,
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+        )
+        ESIContractItem.objects.create(
+            contract=replacement_contract,
+            record_id=151,
+            type_id=self.buy_item.type_id,
+            quantity=self.buy_item.quantity + 2,
+            is_included=True,
+        )
+
+        cache.delete(
+            f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder"
+        )
+
+        validate_material_exchange_buy_orders()
+
+        self.buy_order.refresh_from_db()
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
+        self.assertIn(
+            f"Contract: #{replacement_contract.contract_id} (outstanding)",
+            self.buy_order.notes,
+        )
+        self.assertIn(
+            f"Contract: #{deleted_contract.contract_id} (deleted)",
+            self.buy_order.notes,
+        )
+
+        self.assertEqual(mock_notify_admins.call_count, 1)
+        admin_message = str(mock_notify_admins.call_args[0][2])
+        self.assertIn(
+            f"Contract: #{replacement_contract.contract_id} (outstanding)",
+            admin_message,
+        )
+        self.assertIn(
+            f"Contract: #{deleted_contract.contract_id} (deleted)",
+            admin_message,
+        )
 
 
 class StructureNameMatchingTest(TestCase):
@@ -2337,13 +2639,13 @@ class NotificationDeduplicationTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    def test_anomaly_contract_finished_is_force_validated(
+    def test_anomaly_contract_finished_stays_anomaly(
         self,
         mock_notify_user,
         mock_notify_multi,
         mock_get_character_ids,
     ):
-        """An anomalous contract accepted in-game should move sell order to validated."""
+        """A finished anomalous contract should remain anomaly until a correct replacement arrives."""
         # Standard Library
         from datetime import timedelta
 
@@ -2390,9 +2692,8 @@ class NotificationDeduplicationTest(TestCase):
         validate_material_exchange_sell_orders()
 
         sell_order.refresh_from_db()
-        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED)
-        self.assertEqual(sell_order.esi_contract_id, 777001)
-        self.assertIn("accepted in-game despite anomaly", sell_order.notes)
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
+        self.assertIn("wrong location", sell_order.notes)
         self.assertTrue(mock_notify_user.called)
         self.assertTrue(mock_notify_multi.called)
 

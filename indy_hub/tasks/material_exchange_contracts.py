@@ -234,6 +234,171 @@ def _build_contract_validation_webhook_message(
     )
 
 
+def _format_contract_issue_line(contract_id: int | None, contract_status: str | None) -> str:
+    parsed_contract_id = int(contract_id or 0)
+    if parsed_contract_id <= 0:
+        return ""
+    normalized_status = str(contract_status or "").strip().lower() or "unknown"
+    return f"Contract: #{parsed_contract_id} ({normalized_status})"
+
+
+def _extract_contract_issue_lines(text: str | None) -> list[str]:
+    notes = str(text or "")
+    if not notes:
+        return []
+    matches = re.findall(r"^Contract:\s+#\d+\s+\([^)]+\)$", notes, flags=re.MULTILINE)
+    lines: list[str] = []
+    for raw_line in matches:
+        line = str(raw_line or "").strip()
+        if line and line not in lines:
+            lines.append(line)
+    return lines
+
+
+def _is_finished_contract_status(status: str | None) -> bool:
+    return str(status or "").strip().lower() in {
+        "finished",
+        "finished_issuer",
+        "finished_contractor",
+    }
+
+
+def _complete_sell_order(
+    order: MaterialExchangeSellOrder,
+    *,
+    config: MaterialExchangeConfig,
+    contract_id: int,
+    contract_status: str,
+    completed_at=None,
+) -> bool:
+    if order.status == MaterialExchangeSellOrder.Status.COMPLETED:
+        return False
+
+    order.status = MaterialExchangeSellOrder.Status.COMPLETED
+    order.payment_verified_at = completed_at or timezone.now()
+    order.save(
+        update_fields=[
+            "status",
+            "payment_verified_at",
+            "updated_at",
+        ]
+    )
+
+    try:
+        _log_sell_order_transactions(order)
+    except Exception as exc:
+        logger.exception(
+            "Failed to log completed sell order transactions for order %s: %s",
+            order.id,
+            exc,
+        )
+
+    try:
+        _notify_material_exchange_admins(
+            config,
+            _("Sell Order Completed"),
+            _(
+                _build_contract_state_webhook_line(
+                    order.seller.username,
+                    "completed",
+                    relation="from",
+                )
+            ),
+            level="success",
+            link=(
+                f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                f"?next=/indy_hub/material-exchange/%23admin-panel"
+            ),
+        )
+    except Exception as exc:
+        logger.exception(
+            "Failed to send sell-order completion admin/webhook notification for order %s: %s",
+            order.id,
+            exc,
+        )
+
+    logger.info(
+        "Sell order %s completed: contract %s accepted (status: %s)",
+        order.id,
+        contract_id,
+        contract_status,
+    )
+    emit_analytics_event(
+        task="material_exchange.sell_order_completed",
+        label=contract_status,
+        result="success",
+    )
+    return True
+
+
+def _complete_buy_order(
+    order: MaterialExchangeBuyOrder,
+    *,
+    config: MaterialExchangeConfig,
+    contract_id: int,
+    contract_status: str,
+    completed_at=None,
+) -> bool:
+    if order.status == MaterialExchangeBuyOrder.Status.COMPLETED:
+        return False
+
+    order.status = MaterialExchangeBuyOrder.Status.COMPLETED
+    order.delivered_at = completed_at or timezone.now()
+    order.save(
+        update_fields=[
+            "status",
+            "delivered_at",
+            "updated_at",
+        ]
+    )
+
+    try:
+        _log_buy_order_transactions(order)
+    except Exception as exc:
+        logger.exception(
+            "Failed to log completed buy order transactions for order %s: %s",
+            order.id,
+            exc,
+        )
+
+    try:
+        _notify_material_exchange_admins(
+            config,
+            _("Buy Order Completed"),
+            _(
+                _build_contract_state_webhook_line(
+                    order.buyer.username,
+                    "completed",
+                    relation="for",
+                )
+            ),
+            level="success",
+            link=(
+                f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                f"?next=/indy_hub/material-exchange/%23admin-panel"
+            ),
+        )
+    except Exception as exc:
+        logger.exception(
+            "Failed to send buy-order completion admin/webhook notification for order %s: %s",
+            order.id,
+            exc,
+        )
+
+    logger.info(
+        "Buy order %s completed: contract %s accepted (status: %s)",
+        order.id,
+        contract_id,
+        contract_status,
+    )
+    emit_analytics_event(
+        task="material_exchange.buy_order_completed",
+        label=contract_status,
+        result="success",
+    )
+    return True
+
+
 def _floor_isk_amount(value: Decimal | str | int | float | None) -> Decimal:
     try:
         parsed = Decimal(str(value or 0))
@@ -1946,7 +2111,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         expected_sell_location_names,
         expected_sell_locations_label,
     ) = _get_sell_order_expected_locations(order, config)
-    finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
     rejected_statuses = {"cancelled", "rejected", "failed", "expired", "deleted"}
 
     def _format_contract_location(
@@ -1985,11 +2149,17 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         contract_price,
         override: bool,
         contract_location: str = "",
+        contract_status: str = "",
+        contract_completed_at=None,
         override_reason: str = "",
         override_details: str | None = None,
     ):
         now = timezone.now()
         normalized_contract_id = int(contract_id or 0)
+        normalized_contract_status = str(contract_status or "").strip().lower()
+        contract_already_completed = _is_finished_contract_status(
+            normalized_contract_status
+        )
         previous_notes = str(order.notes or "").strip()
 
         if override:
@@ -2118,8 +2288,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 f"Your sell order {order.order_reference} has been validated!\n"
                 f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
                 + (f"Location: {contract_location}\n" if contract_location else "")
-                + f"Status: Awaiting corporation to accept the contract.\n"
-                f"Once accepted, you will receive payment."
+                + (
+                    "Status: Contract was already completed in-game before validation finished.\n"
+                    "Completion has been recorded."
+                    if contract_already_completed
+                    else "Status: Awaiting corporation to accept the contract.\n"
+                    "Once accepted, you will receive payment."
+                )
             ),
             level="success",
             link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
@@ -2151,6 +2326,16 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             label="standard",
             result="success",
         )
+
+        if contract_already_completed:
+            _complete_sell_order(
+                order,
+                config=config,
+                contract_id=normalized_contract_id,
+                contract_status=normalized_contract_status,
+                completed_at=contract_completed_at,
+            )
+
     def _set_sell_order_anomaly_rejected(*, contract_id: int, contract_status: str):
         anomaly_rejected_notes = (
             f"Anomaly contract {contract_id} was {contract_status} in-game. "
@@ -2341,29 +2526,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             contract_price=matching_contract.price,
             override=False,
             contract_location=matching_contract_location,
+            contract_status=matching_contract.status,
+            contract_completed_at=getattr(matching_contract, "date_completed", None),
         )
     elif contract_with_correct_ref_wrong_structure:
         contract_status = str(
             contract_with_correct_ref_wrong_structure.get("status") or ""
         ).lower()
-        if contract_status in finished_statuses:
-            contract_location = _format_contract_location(
-                contract_with_correct_ref_wrong_structure.get("start_location_id"),
-                contract_with_correct_ref_wrong_structure.get("end_location_id"),
-            )
-            _set_sell_order_validated(
-                contract_id=contract_with_correct_ref_wrong_structure["contract_id"],
-                contract_price=contract_with_correct_ref_wrong_structure.get("price"),
-                override=True,
-                contract_location=contract_location,
-                override_reason="wrong contract location",
-                override_details=(
-                    f"Expected location(s): {expected_sell_locations_label}\n"
-                    f"Contract location: "
-                    f"{contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}"
-                ),
-            )
-            return
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_wrong_structure["contract_id"],
@@ -2455,25 +2624,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         except (InvalidOperation, TypeError):
             contract_price = str(contract_value)
 
-        if contract_status in finished_statuses:
-            contract_location = _format_contract_location(
-                contract_with_correct_ref_wrong_price.get("start_location_id"),
-                contract_with_correct_ref_wrong_price.get("end_location_id"),
-            )
-            _set_sell_order_validated(
-                contract_id=contract_with_correct_ref_wrong_price["contract_id"],
-                contract_price=contract_with_correct_ref_wrong_price.get(
-                    "contract_price"
-                ),
-                override=True,
-                contract_location=contract_location,
-                override_reason="price mismatch",
-                override_details=(
-                    f"Expected price: {expected_price}\n"
-                    f"Contract price: {contract_price}"
-                ),
-            )
-            return
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_wrong_price["contract_id"],
@@ -2546,27 +2696,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         contract_status = str(
             contract_with_correct_ref_items_mismatch.get("status") or ""
         ).lower()
-        if contract_status in finished_statuses:
-            contract_location = _format_contract_location(
-                contract_with_correct_ref_items_mismatch.get("start_location_id"),
-                contract_with_correct_ref_items_mismatch.get("end_location_id"),
-            )
-            _set_sell_order_validated(
-                contract_id=contract_with_correct_ref_items_mismatch["contract_id"],
-                contract_price=contract_with_correct_ref_items_mismatch.get("price"),
-                override=True,
-                contract_location=contract_location,
-                override_reason="items mismatch",
-                override_details=(
-                    (
-                        f"{contract_with_correct_ref_items_mismatch.get('details')}\n\n"
-                        if contract_with_correct_ref_items_mismatch.get("details")
-                        else ""
-                    )
-                    + (location_guidance_block or "")
-                ).strip() or None,
-            )
-            return
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_items_mismatch["contract_id"],
@@ -2712,19 +2841,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         found_title = (contract_with_wrong_ref_only.get("title") or "").strip()
         title_display = found_title or _("(empty title)")
         contract_status = str(contract_with_wrong_ref_only.get("status") or "").lower()
-
-        if contract_status in finished_statuses:
-            _set_sell_order_validated(
-                contract_id=contract_id,
-                contract_price=contract_with_wrong_ref_only.get("price"),
-                override=True,
-                override_reason="wrong contract reference",
-                override_details=(
-                    f"Found title: {title_display}\n"
-                    f"Expected reference: {order_ref}"
-                ),
-            )
-            return
 
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
@@ -2877,6 +2993,16 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     last_reason: str | None = None
     last_items_mismatch_details: str | None = None
     last_issue_contract = None
+    previous_issue_contract_lines = _extract_contract_issue_lines(order.notes)
+    issue_contract_lines: list[str] = []
+
+    def _remember_issue_contract(contract) -> None:
+        line = _format_contract_issue_line(
+            getattr(contract, "contract_id", 0),
+            getattr(contract, "status", ""),
+        )
+        if line and line not in issue_contract_lines:
+            issue_contract_lines.append(line)
 
     def _set_buy_order_validated(
         contract,
@@ -2887,6 +3013,12 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     ):
         now = timezone.now()
         normalized_contract_id = int(getattr(contract, "contract_id", 0) or 0)
+        normalized_contract_status = str(
+            getattr(contract, "status", "") or ""
+        ).strip().lower()
+        contract_already_completed = _is_finished_contract_status(
+            normalized_contract_status
+        )
         previous_notes = str(order.notes or "").strip()
 
         if override:
@@ -3019,8 +3151,11 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             _(
                 f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
                 f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
-                f"Next step: accept the in-game contract to receive your items.\n"
-                f"You will receive another notification once delivery is completed."
+                + (
+                    "Status: The contract had already been accepted in-game before validation completed."
+                    if contract_already_completed
+                    else "Next step: accept the in-game contract to receive your items."
+                )
             ),
             level="success",
         )
@@ -3051,6 +3186,16 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             label="standard",
             result="success",
         )
+
+        if contract_already_completed:
+            _complete_buy_order(
+                order,
+                config=config,
+                contract_id=normalized_contract_id,
+                contract_status=normalized_contract_status,
+                completed_at=getattr(contract, "date_completed", None),
+            )
+
     order_ref_lower = str(order_ref or "").strip().lower()
     for contract in contracts:
         title = str(contract.title or "")
@@ -3081,6 +3226,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                         active_contract_ref_mismatch = contract
                         last_reason = "wrong contract reference"
                         last_issue_contract = contract
+                        _remember_issue_contract(contract)
                     if (
                         contract_status in finished_statuses
                         and finished_contract_ref_mismatch is None
@@ -3088,6 +3234,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                         finished_contract_ref_mismatch = contract
                         last_reason = "wrong contract reference"
                         last_issue_contract = contract
+                        _remember_issue_contract(contract)
 
         # Require title reference before further checks.
         if not has_correct_ref:
@@ -3106,6 +3253,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             contract_status = str(contract.status or "").lower()
             last_reason = "contract criteria mismatch"
             last_issue_contract = contract
+            _remember_issue_contract(contract)
             if (
                 contract_status in finished_statuses
                 and finished_contract_criteria_mismatch is None
@@ -3116,6 +3264,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         if not _contract_items_match_order_db(contract, order):
             last_reason = "items mismatch"
             last_issue_contract = contract
+            _remember_issue_contract(contract)
             mismatch_details = _build_items_mismatch_details(contract, order)
             if mismatch_details and last_items_mismatch_details is None:
                 last_items_mismatch_details = mismatch_details
@@ -3133,6 +3282,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             last_price_issue = price_msg
             last_reason = price_msg
             last_issue_contract = contract
+            _remember_issue_contract(contract)
             contract_status = str(contract.status or "").lower()
             if (
                 contract_status in finished_statuses
@@ -3152,39 +3302,6 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         _set_buy_order_validated(active_contract_ref_mismatch, override=False)
         return
 
-    if finished_contract_ref_mismatch:
-        _set_buy_order_validated(
-            finished_contract_ref_mismatch,
-            override=True,
-            override_reason="wrong contract reference",
-        )
-        return
-
-    if finished_contract_criteria_mismatch:
-        _set_buy_order_validated(
-            finished_contract_criteria_mismatch,
-            override=True,
-            override_reason="contract criteria mismatch",
-        )
-        return
-
-    if finished_contract_items_mismatch:
-        _set_buy_order_validated(
-            finished_contract_items_mismatch,
-            override=True,
-            override_reason="items mismatch",
-            override_details=finished_contract_items_mismatch_details,
-        )
-        return
-
-    if finished_contract_price_mismatch:
-        _set_buy_order_validated(
-            finished_contract_price_mismatch,
-            override=True,
-            override_reason="price mismatch",
-        )
-        return
-
     # No matching contract found yet
     issues: list[str] = []
     for issue in [last_price_issue, last_reason]:
@@ -3195,25 +3312,24 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     mismatch_block = (
         f"\n\n{last_items_mismatch_details}" if last_items_mismatch_details else ""
     )
-    issue_contract_id = int(getattr(last_issue_contract, "contract_id", 0) or 0)
-    issue_contract_status = (
-        str(getattr(last_issue_contract, "status", "") or "").strip().lower()
+    merged_issue_contract_lines = issue_contract_lines + [
+        line
+        for line in previous_issue_contract_lines
+        if line not in issue_contract_lines
+    ]
+    issue_contract_block = "\n".join(
+        line for line in merged_issue_contract_lines if str(line).strip()
     )
     issue_header = (
         f"Contract anomaly detected for {order_ref} before completion."
         if issues
         else f"Pending contract for {order_ref}."
     )
-    issue_contract_line = ""
-    if issue_contract_id > 0:
-        issue_contract_line = f"Contract: #{issue_contract_id}"
-        if issue_contract_status:
-            issue_contract_line += f" ({issue_contract_status})"
 
     new_notes = "\n".join(
         [
             issue_header,
-            issue_contract_line,
+            issue_contract_block,
             f"Required contract location: {expected_buy_location_label}",
             "Ensure corp issues item exchange contract to buyer at this location.",
             f"Expected price: {order.total_price:,.0f} ISK",
@@ -3243,7 +3359,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     if immediate_issue_alert_sent:
         anomaly_message = (
             f"Contract anomaly detected for buy order {order.order_reference} before completion.\n"
-            + (f"{issue_contract_line}\n" if issue_contract_line else "")
+            + (f"{issue_contract_block}\n" if issue_contract_block else "")
             + "Reason: contract mismatch.\n"
             + f"Buyer: {order.buyer.username}\n"
             + f"Required location: {expected_buy_location_label}\n"
@@ -3291,7 +3407,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 if issues
                 else f"Buy order {order.order_reference} has no matching contract yet.\n"
             )
-            + (f"{issue_contract_line}\n" if issue_contract_line else "")
+            + (f"{issue_contract_block}\n" if issue_contract_block else "")
             + (
                 "Reason: contract mismatch.\n"
                 if issues
@@ -3916,17 +4032,11 @@ def _contract_items_match_order_db(contract, order):
     included_items = contract.items.filter(is_included=True)
     if not included_items.exists():
         # Some contracts can temporarily return no items from ESI even while
-        # still outstanding/in-progress. When that happens, keep the same
-        # fallback behavior we already apply to finished contracts and rely on
-        # title/location/price checks in the caller.
+        # still outstanding/in-progress. Allow a temporary fallback only while
+        # the contract is still pending so finished contracts cannot validate
+        # without a real item-level match.
         normalized_status = str(getattr(contract, "status", "") or "").strip().lower()
-        return normalized_status in {
-            "outstanding",
-            "in_progress",
-            "finished",
-            "finished_issuer",
-            "finished_contractor",
-        }
+        return normalized_status in {"outstanding", "in_progress"}
 
     order_items = list(order.items.all())
     expected_by_type: dict[int, int] = {}
@@ -5682,62 +5792,16 @@ def check_completed_material_exchange_contracts():
             continue
 
         # Handle contract status
-        contract_status = contract.get("status", "")
+        contract_status = str(contract.get("status", "") or "").strip().lower()
 
         # Contract completed successfully
-        if contract_status in ["finished", "finished_issuer", "finished_contractor"]:
-            completed_at = contract.get("date_completed") or timezone.now()
-            order.status = MaterialExchangeSellOrder.Status.COMPLETED
-            order.payment_verified_at = completed_at
-            order.save(
-                update_fields=[
-                    "status",
-                    "payment_verified_at",
-                    "updated_at",
-                ]
-            )
-
-            try:
-                _log_sell_order_transactions(order)
-            except Exception as exc:
-                logger.exception(
-                    "Failed to log completed sell order transactions for order %s: %s",
-                    order.id,
-                    exc,
-                )
-
-            try:
-                _notify_material_exchange_admins(
-                    config,
-                    _("Sell Order Completed"),
-                    _(
-                        _build_contract_state_webhook_line(
-                            order.seller.username, "completed", relation="from"
-                        )
-                    ),
-                    level="success",
-                    link=(
-                        f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-                        f"?next=/indy_hub/material-exchange/%23admin-panel"
-                    ),
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send sell-order completion admin/webhook notification for order %s: %s",
-                    order.id,
-                    exc,
-                )
-
-            logger.info(
-                "Sell order %s completed: contract %s accepted (status: %s)",
-                order.id,
-                contract_id,
-                contract_status,
-            )
-            emit_analytics_event(
-                task="material_exchange.sell_order_completed",
-                label=contract_status,
-                result="success",
+        if _is_finished_contract_status(contract_status):
+            _complete_sell_order(
+                order,
+                config=config,
+                contract_id=contract_id,
+                contract_status=contract_status,
+                completed_at=contract.get("date_completed"),
             )
 
         # Contract cancelled, rejected, failed, expired or deleted
@@ -5815,61 +5879,16 @@ def check_completed_material_exchange_contracts():
             continue
 
         # Handle contract status
-        contract_status = contract.get("status", "")
+        contract_status = str(contract.get("status", "") or "").strip().lower()
 
         # Contract completed successfully
-        if contract_status in ["finished", "finished_issuer", "finished_contractor"]:
-            order.status = MaterialExchangeBuyOrder.Status.COMPLETED
-            order.delivered_at = contract.get("date_completed") or timezone.now()
-            order.save(
-                update_fields=[
-                    "status",
-                    "delivered_at",
-                    "updated_at",
-                ]
-            )
-
-            try:
-                _log_buy_order_transactions(order)
-            except Exception as exc:
-                logger.exception(
-                    "Failed to log completed buy order transactions for order %s: %s",
-                    order.id,
-                    exc,
-                )
-
-            try:
-                _notify_material_exchange_admins(
-                    config,
-                    _("Buy Order Completed"),
-                    _(
-                        _build_contract_state_webhook_line(
-                            order.buyer.username, "completed", relation="for"
-                        )
-                    ),
-                    level="success",
-                    link=(
-                        f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-                        f"?next=/indy_hub/material-exchange/%23admin-panel"
-                    ),
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Failed to send buy-order completion admin/webhook notification for order %s: %s",
-                    order.id,
-                    exc,
-                )
-
-            logger.info(
-                "Buy order %s completed: contract %s accepted (status: %s)",
-                order.id,
-                contract_id,
-                contract_status,
-            )
-            emit_analytics_event(
-                task="material_exchange.buy_order_completed",
-                label=contract_status,
-                result="success",
+        if _is_finished_contract_status(contract_status):
+            _complete_buy_order(
+                order,
+                config=config,
+                contract_id=contract_id,
+                contract_status=contract_status,
+                completed_at=contract.get("date_completed"),
             )
 
         # Contract cancelled, rejected, failed, expired or deleted
