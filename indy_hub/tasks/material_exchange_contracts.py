@@ -218,6 +218,7 @@ def _build_contract_validation_webhook_message(
     *,
     relation: str = "from",
     anomaly_reason: str | None = None,
+    completed_before_validation: bool = False,
 ) -> str:
     summary_line = _build_contract_state_webhook_line(
         actor_name,
@@ -226,7 +227,21 @@ def _build_contract_validation_webhook_message(
     )
     reason_text = str(anomaly_reason or "").strip()
     if not reason_text:
+        if completed_before_validation:
+            return (
+                f"{summary_line}\n"
+                "Validation passed. Contract had already been accepted in-game before "
+                "validation finished and is now completed."
+            )
         return f"{summary_line}\nValidation passed. No anomalies detected before completion."
+    if completed_before_validation:
+        return (
+            f"{summary_line}\n"
+            "Validation anomaly detected.\n"
+            "Contract had already been accepted in-game before validation finished "
+            "and is now completed.\n"
+            f"Reason: {reason_text}"
+        )
     return (
         f"{summary_line}\n"
         "Validation anomaly detected before completion.\n"
@@ -263,6 +278,15 @@ def _is_finished_contract_status(status: str | None) -> bool:
     }
 
 
+def _build_completed_before_validation_note(status: str | None) -> str:
+    if not _is_finished_contract_status(status):
+        return ""
+    return (
+        "Contract had already been accepted in-game before validation finished "
+        "and is now completed."
+    )
+
+
 def _complete_sell_order(
     order: MaterialExchangeSellOrder,
     *,
@@ -270,6 +294,7 @@ def _complete_sell_order(
     contract_id: int,
     contract_status: str,
     completed_at=None,
+    notify_admins: bool = True,
 ) -> bool:
     if order.status == MaterialExchangeSellOrder.Status.COMPLETED:
         return False
@@ -293,29 +318,30 @@ def _complete_sell_order(
             exc,
         )
 
-    try:
-        _notify_material_exchange_admins(
-            config,
-            _("Sell Order Completed"),
-            _(
-                _build_contract_state_webhook_line(
-                    order.seller.username,
-                    "completed",
-                    relation="from",
-                )
-            ),
-            level="success",
-            link=(
-                f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-                f"?next=/indy_hub/material-exchange/%23admin-panel"
-            ),
-        )
-    except Exception as exc:
-        logger.exception(
-            "Failed to send sell-order completion admin/webhook notification for order %s: %s",
-            order.id,
-            exc,
-        )
+    if notify_admins:
+        try:
+            _notify_material_exchange_admins(
+                config,
+                _("Sell Order Completed"),
+                _(
+                    _build_contract_state_webhook_line(
+                        order.seller.username,
+                        "completed",
+                        relation="from",
+                    )
+                ),
+                level="success",
+                link=(
+                    f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+                    f"?next=/indy_hub/material-exchange/%23admin-panel"
+                ),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to send sell-order completion admin/webhook notification for order %s: %s",
+                order.id,
+                exc,
+            )
 
     logger.info(
         "Sell order %s completed: contract %s accepted (status: %s)",
@@ -338,6 +364,7 @@ def _complete_buy_order(
     contract_id: int,
     contract_status: str,
     completed_at=None,
+    notify_admins: bool = True,
 ) -> bool:
     if order.status == MaterialExchangeBuyOrder.Status.COMPLETED:
         return False
@@ -361,29 +388,30 @@ def _complete_buy_order(
             exc,
         )
 
-    try:
-        _notify_material_exchange_admins(
-            config,
-            _("Buy Order Completed"),
-            _(
-                _build_contract_state_webhook_line(
-                    order.buyer.username,
-                    "completed",
-                    relation="for",
-                )
-            ),
-            level="success",
-            link=(
-                f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
-                f"?next=/indy_hub/material-exchange/%23admin-panel"
-            ),
-        )
-    except Exception as exc:
-        logger.exception(
-            "Failed to send buy-order completion admin/webhook notification for order %s: %s",
-            order.id,
-            exc,
-        )
+    if notify_admins:
+        try:
+            _notify_material_exchange_admins(
+                config,
+                _("Buy Order Completed"),
+                _(
+                    _build_contract_state_webhook_line(
+                        order.buyer.username,
+                        "completed",
+                        relation="for",
+                    )
+                ),
+                level="success",
+                link=(
+                    f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
+                    f"?next=/indy_hub/material-exchange/%23admin-panel"
+                ),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to send buy-order completion admin/webhook notification for order %s: %s",
+                order.id,
+                exc,
+            )
 
     logger.info(
         "Buy order %s completed: contract %s accepted (status: %s)",
@@ -2161,6 +2189,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             normalized_contract_status
         )
         previous_notes = str(order.notes or "").strip()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            normalized_contract_status
+        )
 
         if override:
             try:
@@ -2289,8 +2320,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
                 + (f"Location: {contract_location}\n" if contract_location else "")
                 + (
-                    "Status: Contract was already completed in-game before validation finished.\n"
-                    "Completion has been recorded."
+                    f"Status: {completed_before_validation_note}"
                     if contract_already_completed
                     else "Status: Awaiting corporation to accept the contract.\n"
                     "Once accepted, you will receive payment."
@@ -2307,6 +2337,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _build_contract_validation_webhook_message(
                     order.seller.username,
                     relation="from",
+                    completed_before_validation=contract_already_completed,
                 )
             ),
             level="success",
@@ -2334,6 +2365,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 contract_id=normalized_contract_id,
                 contract_status=normalized_contract_status,
                 completed_at=contract_completed_at,
+                notify_admins=False,
             )
 
     def _set_sell_order_anomaly_rejected(*, contract_id: int, contract_status: str):
@@ -2533,6 +2565,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         contract_status = str(
             contract_with_correct_ref_wrong_structure.get("status") or ""
         ).lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_wrong_structure["contract_id"],
@@ -2545,6 +2580,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             f"Anomaly: contract {contract_with_correct_ref_wrong_structure['contract_id']} has the correct title ({order_ref}) "
             f"but wrong location. Expected: {expected_sell_locations_label}\n"
             f"Contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}"
+            + (
+                f"\n\n{completed_before_validation_note}"
+                if completed_before_validation_note
+                else ""
+            )
         )
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY
@@ -2569,8 +2609,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"You submitted contract #{contract_with_correct_ref_wrong_structure['contract_id']} which has the correct title, "
                         f"but it's located at the wrong structure.\n\n"
                         f"Required location(s): {expected_sell_locations_label}\n"
-                        f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n\n"
-                        f"You can either create a new contract at the correct location, or contact an admin (they have been notified)."
+                        f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n"
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
+                        + "You can either create a new contract at the correct location, or contact an admin (they have been notified)."
                     )
                     if notify_admins_on_sell_anomaly
                     else _(
@@ -2578,8 +2623,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"You submitted contract #{contract_with_correct_ref_wrong_structure['contract_id']} which has the correct title, "
                         f"but it's located at the wrong structure.\n\n"
                         f"Required location(s): {expected_sell_locations_label}\n"
-                        f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n\n"
-                        f"Please create a new compliant contract at the correct location."
+                        f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n"
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
+                        + "Please create a new compliant contract at the correct location."
                     )
                 ),
                 level="warning",
@@ -2593,7 +2643,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     "Reason: wrong contract location.\n"
-                    f"User: {order.seller.username}"
+                    + (
+                        f"In-game status: {completed_before_validation_note}\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
+                    + f"User: {order.seller.username}"
                 ),
                 level="warning",
                 link=admin_link,
@@ -2608,6 +2663,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         contract_status = str(
             contract_with_correct_ref_wrong_price.get("status") or ""
         ).lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
         expected_value = contract_with_correct_ref_wrong_price.get("expected_price")
         contract_value = contract_with_correct_ref_wrong_price.get("contract_price")
         try:
@@ -2634,6 +2692,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         anomaly_notes = (
             f"Anomaly: contract {contract_with_correct_ref_wrong_price['contract_id']} has the correct title ({order_ref}) "
             f"but wrong price ({contract_with_correct_ref_wrong_price['price_msg']})."
+            + (
+                f"\n\n{completed_before_validation_note}"
+                if completed_before_validation_note
+                else ""
+            )
         )
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY
@@ -2657,16 +2720,26 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"Your sell order {order_ref} is in anomaly status.\n\n"
                         f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the price does not match the agreed total.\n\n"
                         f"Expected price: {expected_price}\n"
-                        f"Contract price: {contract_price}\n\n"
-                        f"You can either create a new contract with the correct price at {expected_sell_locations_label}, or wait for admin review (admins have been notified)."
+                        f"Contract price: {contract_price}\n"
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
+                        + f"You can either create a new contract with the correct price at {expected_sell_locations_label}, or wait for admin review (admins have been notified)."
                     )
                     if notify_admins_on_sell_anomaly
                     else _(
                         f"Your sell order {order_ref} is in anomaly status.\n\n"
                         f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the price does not match the agreed total.\n\n"
                         f"Expected price: {expected_price}\n"
-                        f"Contract price: {contract_price}\n\n"
-                        f"Please create a new compliant contract with the correct price at {expected_sell_locations_label}."
+                        f"Contract price: {contract_price}\n"
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
+                        + f"Please create a new compliant contract with the correct price at {expected_sell_locations_label}."
                     )
                 ),
                 level="warning",
@@ -2680,7 +2753,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     "Reason: contract price mismatch.\n"
-                    f"User: {order.seller.username}"
+                    + (
+                        f"In-game status: {completed_before_validation_note}\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
+                    + f"User: {order.seller.username}"
                 ),
                 level="warning",
                 link=admin_link,
@@ -2696,6 +2774,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         contract_status = str(
             contract_with_correct_ref_items_mismatch.get("status") or ""
         ).lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_items_mismatch["contract_id"],
@@ -2754,6 +2835,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 if contract_with_correct_ref_items_mismatch.get("details")
                 else ""
             )
+            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
             + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
         )
         mismatch_details_block = (
@@ -2783,16 +2865,26 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Your sell order {order_ref} is in anomaly status.\n\n"
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
-                    f"{guidance_details_block}"
-                    "Please create a corrected contract, or contact a Hub admin (they have been notified)."
+                    + (
+                        f"{completed_before_validation_note}\n\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
+                    + f"{guidance_details_block}"
+                    + "Please create a corrected contract, or contact a Hub admin (they have been notified)."
                 )
                 if notify_admins_on_sell_anomaly
                 else _(
                     f"Your sell order {order_ref} is in anomaly status.\n\n"
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
-                    f"{guidance_details_block}"
-                    "Please create a corrected and compliant contract."
+                    + (
+                        f"{completed_before_validation_note}\n\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
+                    + f"{guidance_details_block}"
+                    + "Please create a corrected and compliant contract."
                 )
             )
             notify_user(
@@ -2810,7 +2902,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _(
                     f"Order {order_ref} requires your intervention.\n"
                     "Reason: contract items mismatch.\n"
-                    f"User: {order.seller.username}"
+                    + (
+                        f"In-game status: {completed_before_validation_note}\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
+                    + f"User: {order.seller.username}"
                     + (
                         f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}"
                         if contract_with_correct_ref_items_mismatch.get("details")
@@ -2841,6 +2938,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         found_title = (contract_with_wrong_ref_only.get("title") or "").strip()
         title_display = found_title or _("(empty title)")
         contract_status = str(contract_with_wrong_ref_only.get("status") or "").lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
 
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
@@ -2852,6 +2952,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         anomaly_notes = (
             f"Anomaly: contract {contract_id} matches seller/corp/location/items/price but title reference is incorrect. "
             f"Found title: '{title_display}'. Expected reference: '{order_ref}'."
+            + (
+                f"\n\n{completed_before_validation_note}"
+                if completed_before_validation_note
+                else ""
+            )
         )
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY
@@ -2869,8 +2974,13 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"We found contract #{contract_id} that matches your sell order items, structure and price, "
                     f"but the title/reference is incorrect.\n\n"
                     f"Found title: {title_display}\n"
-                    f"Expected reference: {order_ref}\n\n"
-                    f"Please recreate/update the contract title with the exact order reference."
+                    f"Expected reference: {order_ref}\n"
+                    + (
+                        f"{completed_before_validation_note}\n\n"
+                        if completed_before_validation_note
+                        else "\n"
+                    )
+                    + "Please recreate/update the contract title with the exact order reference."
                 ),
                 level="warning",
                 link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
@@ -2883,7 +2993,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     _(
                         f"Order {order_ref} has a near-match contract #{contract_id}.\n"
                         "Reason: wrong contract reference in title.\n"
-                        f"Found title: {title_display}\n"
+                        + (
+                            f"In-game status: {completed_before_validation_note}\n"
+                            if completed_before_validation_note
+                            else ""
+                        )
+                        + f"Found title: {title_display}\n"
                         f"Expected reference: {order_ref}\n"
                         f"User: {order.seller.username}"
                     ),
@@ -3020,6 +3135,9 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             normalized_contract_status
         )
         previous_notes = str(order.notes or "").strip()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            normalized_contract_status
+        )
 
         if override:
             notes = (
@@ -3152,7 +3270,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
                 f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
                 + (
-                    "Status: The contract had already been accepted in-game before validation completed."
+                    f"Status: {completed_before_validation_note}"
                     if contract_already_completed
                     else "Next step: accept the in-game contract to receive your items."
                 )
@@ -3167,6 +3285,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 _build_contract_validation_webhook_message(
                     order.buyer.username,
                     relation="for",
+                    completed_before_validation=contract_already_completed,
                 )
             ),
             level="success",
@@ -3194,6 +3313,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 contract_id=normalized_contract_id,
                 contract_status=normalized_contract_status,
                 completed_at=getattr(contract, "date_completed", None),
+                notify_admins=False,
             )
 
     order_ref_lower = str(order_ref or "").strip().lower()
@@ -3317,11 +3437,23 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         for line in previous_issue_contract_lines
         if line not in issue_contract_lines
     ]
+    completed_before_validation_note = (
+        _build_completed_before_validation_note("finished")
+        if any(
+            "(finished" in str(line).strip().lower()
+            for line in merged_issue_contract_lines
+        )
+        else ""
+    )
     issue_contract_block = "\n".join(
         line for line in merged_issue_contract_lines if str(line).strip()
     )
     issue_header = (
-        f"Contract anomaly detected for {order_ref} before completion."
+        (
+            f"Contract anomaly detected for {order_ref} after in-game completion."
+            if completed_before_validation_note
+            else f"Contract anomaly detected for {order_ref} before completion."
+        )
         if issues
         else f"Pending contract for {order_ref}."
     )
@@ -3330,6 +3462,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         [
             issue_header,
             issue_contract_block,
+            completed_before_validation_note,
             f"Required contract location: {expected_buy_location_label}",
             "Ensure corp issues item exchange contract to buyer at this location.",
             f"Expected price: {order.total_price:,.0f} ISK",
@@ -3358,8 +3491,17 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
     if immediate_issue_alert_sent:
         anomaly_message = (
-            f"Contract anomaly detected for buy order {order.order_reference} before completion.\n"
+            (
+                f"Contract anomaly detected for buy order {order.order_reference} after in-game completion.\n"
+                if completed_before_validation_note
+                else f"Contract anomaly detected for buy order {order.order_reference} before completion.\n"
+            )
             + (f"{issue_contract_block}\n" if issue_contract_block else "")
+            + (
+                f"{completed_before_validation_note}\n"
+                if completed_before_validation_note
+                else ""
+            )
             + "Reason: contract mismatch.\n"
             + f"Buyer: {order.buyer.username}\n"
             + f"Required location: {expected_buy_location_label}\n"
@@ -3403,11 +3545,20 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     if should_notify and not immediate_issue_alert_sent:
         pending_message = (
             (
-                f"Contract anomaly detected for buy order {order.order_reference} before completion.\n"
+                (
+                    f"Contract anomaly detected for buy order {order.order_reference} after in-game completion.\n"
+                    if completed_before_validation_note
+                    else f"Contract anomaly detected for buy order {order.order_reference} before completion.\n"
+                )
                 if issues
                 else f"Buy order {order.order_reference} has no matching contract yet.\n"
             )
             + (f"{issue_contract_block}\n" if issue_contract_block else "")
+            + (
+                f"{completed_before_validation_note}\n"
+                if completed_before_validation_note
+                else ""
+            )
             + (
                 "Reason: contract mismatch.\n"
                 if issues
