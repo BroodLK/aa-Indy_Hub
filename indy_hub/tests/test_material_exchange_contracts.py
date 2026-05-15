@@ -33,6 +33,7 @@ from indy_hub.tasks.material_exchange_contracts import (
     check_completed_material_exchange_contracts,
     handle_material_exchange_buy_order_created,
     handle_material_exchange_sell_order_created,
+    schedule_material_exchange_quick_validation,
     sync_esi_contracts,
     validate_material_exchange_buy_orders,
     validate_material_exchange_sell_orders,
@@ -296,6 +297,22 @@ class ContractValidationTaskTest(TestCase):
             contract_id=contract_id,
             character_id=111111111,
             force_refresh=True,
+        )
+
+    @patch("indy_hub.tasks.material_exchange_contracts.run_material_exchange_validation_cycle")
+    def test_schedule_material_exchange_quick_validation_queues_follow_up_passes(
+        self, mock_validation_cycle
+    ) -> None:
+        schedule_material_exchange_quick_validation()
+
+        self.assertEqual(mock_validation_cycle.apply_async.call_count, 2)
+        self.assertEqual(
+            mock_validation_cycle.apply_async.call_args_list[0].kwargs,
+            {"countdown": 15, "expires": 915},
+        )
+        self.assertEqual(
+            mock_validation_cycle.apply_async.call_args_list[1].kwargs,
+            {"countdown": 90, "expires": 990},
         )
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")

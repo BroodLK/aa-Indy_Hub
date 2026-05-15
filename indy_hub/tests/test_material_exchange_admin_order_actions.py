@@ -12,9 +12,12 @@ from allianceauth.eveonline.models import EveCharacter
 
 # AA Example App
 from indy_hub.models import (
+    MaterialExchangeBuyOrderItem,
     MaterialExchangeBuyOrder,
     MaterialExchangeConfig,
     MaterialExchangeSellOrder,
+    MaterialExchangeSellOrderItem,
+    MaterialExchangeStock,
 )
 
 
@@ -182,3 +185,70 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
         self.assertContains(
             response, reverse("indy_hub:material_exchange_reopen_buy", args=[buy_order.id])
         )
+
+    @patch("indy_hub.views.material_exchange.schedule_material_exchange_quick_validation")
+    def test_approve_sell_queues_quick_validation_follow_up(
+        self, mock_schedule_quick_validation
+    ) -> None:
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.member,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=100,
+            unit_price="5.00",
+            total_price="500.00",
+        )
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("indy_hub:material_exchange_approve_sell", args=[order.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(
+            order.status, MaterialExchangeSellOrder.Status.AWAITING_VALIDATION
+        )
+        mock_schedule_quick_validation.assert_called_once_with()
+
+    @patch("indy_hub.views.material_exchange.schedule_material_exchange_quick_validation")
+    def test_approve_buy_queues_quick_validation_follow_up(
+        self, mock_schedule_quick_validation
+    ) -> None:
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.member,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+        )
+        MaterialExchangeBuyOrderItem.objects.create(
+            order=order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=100,
+            unit_price="6.00",
+            total_price="600.00",
+            stock_available_at_creation=500,
+        )
+        MaterialExchangeStock.objects.create(
+            config=self.config,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1000,
+        )
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("indy_hub:material_exchange_approve_buy", args=[order.id])
+        )
+
+        self.assertEqual(response.status_code, 302)
+        order.refresh_from_db()
+        self.assertEqual(
+            order.status, MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION
+        )
+        mock_schedule_quick_validation.assert_called_once_with()
