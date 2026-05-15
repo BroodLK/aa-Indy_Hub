@@ -1685,6 +1685,26 @@ def _sync_contracts_for_corporation(corporation_id: int):
     """Sync ESI contracts for a single corporation."""
     logger.info("Syncing ESI contracts for corporation %s", corporation_id)
 
+    # Get pending orders to determine which contracts need item data
+    pending_sell_orders = MaterialExchangeSellOrder.objects.filter(
+        config__corporation_id=corporation_id,
+        status__in=_SELL_ORDER_VALIDATION_SOURCE_STATUSES,
+    ).values_list('issuer_character_id', flat=True)
+
+    pending_buy_orders = MaterialExchangeBuyOrder.objects.filter(
+        config__corporation_id=corporation_id,
+        status__in=_BUY_ORDER_VALIDATION_SOURCE_STATUSES,
+    ).values_list('buyer_character_id', flat=True)
+
+    # Combine all character IDs that have pending orders
+    pending_character_ids = set(pending_sell_orders) | set(pending_buy_orders)
+
+    logger.info(
+        "Found %s pending orders for %s unique characters",
+        len(pending_sell_orders) + len(pending_buy_orders),
+        len(pending_character_ids),
+    )
+
     try:
         # Get character with required scope
         character_id = _get_character_for_scope(
@@ -1810,15 +1830,27 @@ def _sync_contracts_for_corporation(corporation_id: int):
                 },
             )
 
-            # Fetch and store contract items for item_exchange contracts while
-            # the contract is still in a state where sent-stage validation may
-            # need to inspect the contents, including fast turnarounds.
-            contract_status = contract_payload.get("status", "")
-            if (
+            # Fetch and store contract items only for item_exchange contracts that:
+            # 1. Match a pending order (issuer or assignee has an open order)
+            # 2. Don't already have items cached
+            # This prevents rate limit exhaustion from fetching items for unrelated contracts.
+            contract_status = str(contract_payload.get("status", "")).strip().lower()
+            issuer_id = int(contract_payload.get("issuer_id", 0))
+            assignee_id = int(contract_payload.get("assignee_id", 0))
+
+            # Check if this contract is relevant to any pending order
+            is_relevant_to_pending_order = (
+                issuer_id in pending_character_ids or assignee_id in pending_character_ids
+            )
+
+            # Only fetch items for contracts related to pending orders that don't have cached items
+            should_fetch_items = (
                 contract_type == "item_exchange"
-                and str(contract_status or "").strip().lower()
-                in _CORPORATION_CONTRACT_ITEM_SYNC_STATUSES
-            ):
+                and is_relevant_to_pending_order
+                and not ESIContractItem.objects.filter(contract=contract).exists()
+            )
+
+            if should_fetch_items:
                 try:
                     contract_items = shared_client.fetch_corporation_contract_items(
                         corporation_id=corporation_id,
@@ -1866,6 +1898,14 @@ def _sync_contracts_for_corporation(corporation_id: int):
                         contract_id,
                     )
                     # Keep existing items in database - they're still valid
+                except ESIRateLimitError as exc:
+                    # Rate limit hit - log and skip remaining items for this cycle
+                    logger.warning(
+                        "ESI rate limit hit while fetching items for contract %s. "
+                        "Skipping remaining contract items for this sync cycle.",
+                        contract_id,
+                    )
+                    break  # Exit the contract loop to avoid further rate limit errors
                 except ESIClientError as exc:
                     # 404 is normal for contracts without items or expired contracts
                     if "404" in str(exc):
