@@ -1838,10 +1838,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
                 },
             )
 
-            # Fetch and store contract items only for item_exchange contracts that:
-            # 1. Match a pending order (issuer or assignee has an open order)
-            # 2. Don't already have items cached
-            # This prevents rate limit exhaustion from fetching items for unrelated contracts.
+            # Fetch and store contract items for item_exchange contracts that:
+            # 1. Match a pending order (issuer or assignee has an open order), OR
+            # 2. Are recent outstanding contracts (within 24h) - user may create order after contract
+            # 3. Don't already have items cached
+            # This prevents rate limit exhaustion while ensuring new contracts get validated.
             contract_status = str(contract_payload.get("status", "")).strip().lower()
             issuer_id = int(contract_payload.get("issuer_id", 0))
             assignee_id = int(contract_payload.get("assignee_id", 0))
@@ -1851,12 +1852,22 @@ def _sync_contracts_for_corporation(corporation_id: int):
                 issuer_id in pending_character_ids or assignee_id in pending_character_ids
             )
 
-            # Only fetch items for contracts related to pending orders that don't have cached items
-            # Check if items exist AND are non-empty (count > 0) to handle failed fetch attempts
+            # Also fetch items for recent outstanding contracts (user may create order later)
+            date_issued = contract_payload.get("date_issued")
+            is_recent_outstanding = False
+            if contract_status == "outstanding" and date_issued:
+                try:
+                    age = timezone.now() - date_issued
+                    is_recent_outstanding = age.total_seconds() < (24 * 60 * 60)  # 24 hours
+                except Exception:
+                    is_recent_outstanding = False
+
+            # Only fetch items for relevant contracts that don't have cached items
+            # Check if items exist to handle failed fetch attempts
             has_items = ESIContractItem.objects.filter(contract=contract).exists()
             should_fetch_items = (
                 contract_type == "item_exchange"
-                and is_relevant_to_pending_order
+                and (is_relevant_to_pending_order or is_recent_outstanding)
                 and not has_items
             )
 
@@ -2893,7 +2904,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             type_names=mismatch_type_names,
         )
 
-        anomaly_notes = (
+        # Build core anomaly notes without completion status (for comparison)
+        core_anomaly_notes = (
             f"Anomaly: contract {contract_with_correct_ref_items_mismatch['contract_id']} has the correct title ({order_ref}) "
             f"but item list/quantities do not match this order."
             + (
@@ -2901,9 +2913,15 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 if contract_with_correct_ref_items_mismatch.get("details")
                 else ""
             )
-            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
             + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
         )
+
+        # Full notes include completion status
+        anomaly_notes = (
+            core_anomaly_notes
+            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
+        )
+
         mismatch_details_block = (
             f"{contract_with_correct_ref_items_mismatch.get('details')}\n\n"
             if contract_with_correct_ref_items_mismatch.get("details")
@@ -2912,9 +2930,16 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         guidance_details_block = (
             f"{location_guidance_block}\n\n" if location_guidance_block else ""
         )
+
+        # Extract previous core notes (without completion status) for comparison
+        previous_notes = str(order.notes or "")
+        previous_core_notes = previous_notes.split("\n\nContract had already been accepted")[0] if "Contract had already been accepted" in previous_notes else previous_notes
+
+        # Only treat as updated if status changed OR core mismatch details changed
+        # Don't re-notify just because contract completion status was appended
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY
-            or order.notes != anomaly_notes
+            or previous_core_notes != core_anomaly_notes
         )
         order.status = MaterialExchangeSellOrder.Status.ANOMALY
         order.notes = anomaly_notes
