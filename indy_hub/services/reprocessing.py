@@ -11,6 +11,7 @@ from typing import Iterable
 
 # Django
 from django.db import connection
+from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
@@ -925,53 +926,25 @@ def contract_items_match_with_tolerance(
     return (len(errors) == 0), errors
 
 
-def calculate_compressed_ore_for_minerals(
-    *,
-    mineral_requirements: dict[int, int],
-    refine_rate_percent: Decimal,
-) -> dict[str, object]:
+def _populate_compressed_ore_cache() -> tuple[bool, str]:
     """
-    Calculate the optimal compressed ore types needed to satisfy mineral requirements.
-
-    Args:
-        mineral_requirements: Dict of {mineral_type_id: quantity_needed}
-        refine_rate_percent: Refining efficiency percentage (e.g., 84.2 for 84.2%)
+    Populate the CompressedOreCache with all compressed ore reprocessing data.
 
     Returns:
-        Dict containing:
-            - compressed_ores: List of {type_id, type_name, quantity, cost, mineral_yields}
-            - total_cost: Total ISK cost
-            - excess_minerals: Dict of excess minerals produced
+        Tuple of (success, status_message)
     """
-    if not mineral_requirements:
-        return {
-            "compressed_ores": [],
-            "total_cost": Decimal("0.00"),
-            "excess_minerals": {},
-            "error": None,
-        }
+    from indy_hub.models import CompressedOreCache
 
     try:
         import eve_sde.models as sde_models
     except Exception as e:
-        return {
-            "compressed_ores": [],
-            "total_cost": Decimal("0.00"),
-            "excess_minerals": {},
-            "error": f"EVE SDE not available: {e}",
-        }
+        return False, f"EVE SDE not available: {e}"
 
-    # Get all compressed ore types (they have "Compressed" in the name and reprocess to minerals)
     item_type_model = getattr(sde_models, "ItemType", None)
     if not item_type_model:
-        return {
-            "compressed_ores": [],
-            "total_cost": Decimal("0.00"),
-            "excess_minerals": {},
-            "error": "ItemType model not found",
-        }
+        return False, "ItemType model not found"
 
-    # Find compressed ores
+    # Find all compressed ores
     try:
         compressed_ore_types = list(
             item_type_model.objects.filter(
@@ -983,112 +956,153 @@ def calculate_compressed_ore_for_minerals(
             ).values_list("id", "name")
         )
     except Exception as e:
+        return False, f"Failed to query compressed ores: {e}"
+
+    if not compressed_ore_types:
+        return False, "No compressed ores found"
+
+    logger.info(f"Populating cache with {len(compressed_ore_types)} compressed ore types")
+
+    # Get reprocessing data for all compressed ores
+    for ore_type_id, ore_name in compressed_ore_types:
+        outputs = get_reprocessing_outputs_for_type(ore_type_id)
+        if outputs:
+            CompressedOreCache.objects.update_or_create(
+                ore_type_id=ore_type_id,
+                defaults={
+                    "ore_name": ore_name,
+                    "reprocessing_outputs": outputs,
+                }
+            )
+
+    return True, f"Populated cache with {len(compressed_ore_types)} compressed ores"
+
+
+def _update_compressed_ore_prices() -> tuple[bool, str]:
+    """
+    Update prices for all compressed ores in the cache.
+
+    Returns:
+        Tuple of (success, status_message)
+    """
+    from indy_hub.models import CompressedOreCache
+
+    ore_type_ids = list(CompressedOreCache.objects.values_list("ore_type_id", flat=True))
+
+    if not ore_type_ids:
+        return False, "No ores in cache to update prices for"
+
+    try:
+        price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=10)
+
+        # Update prices in bulk
+        for ore_type_id, prices in price_map.items():
+            CompressedOreCache.objects.filter(ore_type_id=ore_type_id).update(
+                buy_price=_to_decimal(prices.get("buy", 0)),
+                sell_price=_to_decimal(prices.get("sell", 0)),
+                pricing_data_updated=timezone.now(),
+            )
+
+        return True, f"Updated prices for {len(price_map)} compressed ores"
+    except Exception as e:
+        logger.warning(f"Failed to update prices: {e}")
+        return False, f"Failed to update prices: {e}"
+
+
+def calculate_compressed_ore_for_minerals(
+    *,
+    mineral_requirements: dict[int, int],
+    refine_rate_percent: Decimal,
+    progress_callback=None,
+) -> dict[str, object]:
+    """
+    Calculate the optimal compressed ore types needed to satisfy mineral requirements.
+
+    Args:
+        mineral_requirements: Dict of {mineral_type_id: quantity_needed}
+        refine_rate_percent: Refining efficiency percentage (e.g., 84.2 for 84.2%)
+        progress_callback: Optional callback function(status_message) for progress updates
+
+    Returns:
+        Dict containing:
+            - compressed_ores: List of {type_id, type_name, quantity, cost, mineral_yields}
+            - total_cost: Total ISK cost
+            - excess_minerals: Dict of excess minerals produced
+            - prices_estimated: Boolean indicating if prices are estimated (not from Fuzzwork)
+    """
+    from indy_hub.models import CompressedOreCache
+
+    def update_progress(message: str):
+        """Helper to call progress callback if provided."""
+        if progress_callback:
+            progress_callback(message)
+        logger.info(message)
+    if not mineral_requirements:
         return {
             "compressed_ores": [],
             "total_cost": Decimal("0.00"),
             "excess_minerals": {},
-            "error": f"Failed to query compressed ores: {e}",
+            "prices_estimated": False,
+            "error": None,
         }
 
-    # Build ore info: what minerals each compressed ore produces
-    # Batch load all reprocessing data to avoid N queries
-    ore_type_ids_to_check = [ore_id for ore_id, _ in compressed_ore_types]
+    # Check if cache needs initial setup
+    if CompressedOreCache.needs_initial_setup():
+        update_progress("Running first-time setup...")
+        update_progress("Populating database with compressed ore data...")
+        success, message = _populate_compressed_ore_cache()
+        if not success:
+            return {
+                "compressed_ores": [],
+                "total_cost": Decimal("0.00"),
+                "excess_minerals": {},
+                "prices_estimated": False,
+                "error": message,
+            }
+        update_progress(message)
 
+    # Check if prices need updating
+    if CompressedOreCache.needs_price_update():
+        update_progress("Updating prices from market data...")
+        _update_compressed_ore_prices()  # Don't fail if this doesn't work
+
+    # Load ore data from cache
+    update_progress("Running calculation...")
+    cached_ores = CompressedOreCache.objects.all().values(
+        "ore_type_id", "ore_name", "reprocessing_outputs", "sell_price"
+    )
+
+    # Build ore_mineral_yields from cache, filtering to only ores that produce requested minerals
     ore_mineral_yields: dict[int, dict[int, int]] = {}
+    price_map: dict[int, dict[str, Decimal]] = {}
+    prices_estimated = False
 
-    # Try to batch-query all reprocessing materials at once
-    # Try multiple field name combinations (different eve_sde versions use different names)
-    candidates = [
-        ("TypeMaterial", ("eve_type_id", "material_eve_type_id", "quantity")),
-        ("ItemTypeMaterial", ("eve_type_id", "material_eve_type_id", "quantity")),
-        ("TypeMaterials", ("eve_type_id", "material_eve_type_id", "quantity")),
-        ("TypeMaterial", ("type_id", "material_type_id", "quantity")),
-        ("ItemTypeMaterial", ("type_id", "material_type_id", "quantity")),
-        ("ItemTypeMaterials", ("item_type_id", "material_item_type_id", "quantity")),
-        ("ItemTypeMaterials", ("item_type", "material_item_type", "quantity")),
-    ]
+    for ore in cached_ores:
+        # Convert JSON field back to dict[int, int]
+        outputs = {int(k): int(v) for k, v in ore["reprocessing_outputs"].items()}
 
-    batch_query_succeeded = False
-    try:
-        import eve_sde.models as sde_models
+        # Only include ores that produce at least one requested mineral
+        if any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
+            ore_type_id = ore["ore_type_id"]
+            ore_mineral_yields[ore_type_id] = outputs
 
-        for model_name, (source_field, output_field, qty_field) in candidates:
-            model = getattr(sde_models, model_name, None)
-            if model is None:
-                continue
-
-            # Check if fields exist in this model
-            field_names = {field.name for field in model._meta.get_fields()}
-            if source_field not in field_names or output_field not in field_names or qty_field not in field_names:
-                continue
-
-            # Get all materials for compressed ores in one query
-            materials_qs = model.objects.filter(
-                **{f"{source_field}__in": ore_type_ids_to_check}
-            ).values_list(source_field, output_field, qty_field)
-
-            # Group by ore type
-            for ore_type_id, material_id, quantity in materials_qs:
-                try:
-                    ore_id = int(ore_type_id)
-                    mat_id = int(material_id)
-                    qty = int(quantity or 0)
-                    if mat_id > 0 and qty > 0:
-                        if ore_id not in ore_mineral_yields:
-                            ore_mineral_yields[ore_id] = {}
-                        ore_mineral_yields[ore_id][mat_id] = ore_mineral_yields[ore_id].get(mat_id, 0) + qty
-                except (TypeError, ValueError):
-                    continue
-
-            # If we got results, filter and break
-            if ore_mineral_yields:
-                # Filter to only ores that produce requested minerals
-                ore_mineral_yields = {
-                    ore_id: outputs
-                    for ore_id, outputs in ore_mineral_yields.items()
-                    if any(mineral_id in mineral_requirements for mineral_id in outputs.keys())
-                }
-                batch_query_succeeded = True
-                logger.info(f"Batch query succeeded using {model_name} with fields {source_field}/{output_field}")
-                break
-
-    except Exception as e:
-        logger.warning(f"Batch query exception: {e}")
-
-    # Fallback to individual queries if batch query didn't work
-    if not batch_query_succeeded:
-        logger.info("Falling back to individual queries for reprocessing data")
-        for ore_type_id, ore_name in compressed_ore_types:
-            outputs = get_reprocessing_outputs_for_type(ore_type_id)
-            if outputs:
-                # Check if this ore produces any of the requested minerals
-                if any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
-                    ore_mineral_yields[ore_type_id] = outputs
+            # Get price
+            sell_price = ore.get("sell_price")
+            if sell_price and sell_price > 0:
+                price_map[ore_type_id] = {"sell": sell_price}
+            else:
+                # Use fallback pricing
+                price_map[ore_type_id] = {"sell": Decimal("1.0")}
+                prices_estimated = True
 
     if not ore_mineral_yields:
         return {
             "compressed_ores": [],
             "total_cost": Decimal("0.00"),
             "excess_minerals": {},
+            "prices_estimated": False,
             "error": "No compressed ores found that produce the required minerals",
         }
-
-    # Get prices for all compressed ores (optional - will use fallback if unavailable)
-    ore_type_ids = list(ore_mineral_yields.keys())
-    price_map = {}
-    prices_available = False
-
-    try:
-        # Reduce timeout to 3 seconds - if Fuzzwork is slow, skip it
-        price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=3)
-        prices_available = True
-        logger.info(f"Successfully fetched Fuzzwork prices for {len(price_map)} compressed ores")
-    except FuzzworkError as e:
-        logger.info(f"Fuzzwork prices unavailable: {e}, using fallback heuristic")
-        price_map = {}
-    except Exception as e:
-        logger.info(f"Error fetching prices: {e}, using fallback heuristic")
-        price_map = {}
 
     # Calculate refine rate ratio
     refine_ratio = _to_decimal(refine_rate_percent) / Decimal("100")
@@ -1112,14 +1126,9 @@ def calculate_compressed_ore_for_minerals(
             ore_prices = price_map.get(ore_type_id, {})
             ore_unit_price = _to_decimal(ore_prices.get("sell", 0))
 
-            # If no price available, use a simple heuristic based on mineral yield
+            # If no price available, use fallback
             if ore_unit_price <= 0:
-                if not prices_available:
-                    # Fallback: estimate price based on mineral output value
-                    # Use 1 ISK per unit of mineral yield as a simple heuristic
-                    ore_unit_price = Decimal("1.0")
-                else:
-                    continue  # Skip ores without prices only if some prices are available
+                ore_unit_price = Decimal("1.0")
 
             # Get portion size for this ore
             portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
@@ -1209,6 +1218,6 @@ def calculate_compressed_ore_for_minerals(
         "compressed_ores": compressed_ore_list,
         "total_cost": total_cost.quantize(Decimal("0.01")),
         "excess_minerals": excess_minerals,
-        "prices_available": prices_available,
+        "prices_estimated": prices_estimated,
         "error": None,
     }

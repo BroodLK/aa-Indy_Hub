@@ -4755,3 +4755,51 @@ class SdeMarketGroup(models.Model):
     def __str__(self):
         return f"{self.name} ({self.id})"
 
+
+class CompressedOreCache(models.Model):
+    """Cache for compressed ore reprocessing data and prices."""
+
+    ore_type_id = models.IntegerField(primary_key=True)
+    ore_name = models.CharField(max_length=255)
+
+    # Reprocessing outputs (JSON field storing {mineral_type_id: quantity})
+    reprocessing_outputs = models.JSONField(default=dict)
+
+    # Pricing data
+    buy_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    sell_price = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+
+    # Cache metadata
+    reprocessing_data_updated = models.DateTimeField(auto_now_add=True)
+    pricing_data_updated = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        default_permissions = ()
+        indexes = [
+            models.Index(fields=["pricing_data_updated"]),
+        ]
+
+    def __str__(self):
+        return f"{self.ore_name} ({self.ore_type_id})"
+
+    @property
+    def is_pricing_stale(self):
+        """Check if pricing data is older than 7 days."""
+        if not self.pricing_data_updated:
+            return True
+        return timezone.now() - self.pricing_data_updated > timedelta(days=7)
+
+    @classmethod
+    def needs_initial_setup(cls):
+        """Check if we need to populate the cache for the first time."""
+        return cls.objects.count() == 0
+
+    @classmethod
+    def needs_price_update(cls):
+        """Check if any prices are stale or missing."""
+        stale_cutoff = timezone.now() - timedelta(days=7)
+        return cls.objects.filter(
+            models.Q(pricing_data_updated__isnull=True) |
+            models.Q(pricing_data_updated__lt=stale_cutoff)
+        ).exists()
+

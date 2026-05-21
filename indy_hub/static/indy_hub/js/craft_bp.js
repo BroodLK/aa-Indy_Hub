@@ -9664,9 +9664,9 @@ function calculateCompressedOres() {
     document.getElementById('conversionLoading').style.display = 'block';
     document.getElementById('calculateOresBtn').disabled = true;
 
-    // Make API call with timeout
+    // Make API call with timeout (30 seconds for first-time setup)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
     fetch('/indy_hub/api/convert-minerals-to-ore/', {
         method: 'POST',
@@ -9708,7 +9708,7 @@ function calculateCompressedOres() {
         document.getElementById('calculateOresBtn').disabled = false;
 
         if (error.name === 'AbortError') {
-            showConversionError('Request timed out after 10 seconds. Please try again.');
+            showConversionError('Request timed out after 30 seconds. This may happen during first-time setup. Please try again.');
         } else {
             showConversionError('Failed to calculate compressed ores: ' + error.message);
         }
@@ -9737,9 +9737,9 @@ function displayConversionResults(data) {
     // Display total cost
     totalCostElement.textContent = data.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ISK';
 
-    // Show warning if prices weren't available
-    if (data.prices_available === false) {
-        totalCostElement.innerHTML += ' <span class="badge bg-warning text-dark ms-2" title="Fuzzwork prices unavailable, using fallback calculation">Estimated</span>';
+    // Show warning if prices are estimated
+    if (data.prices_estimated === true) {
+        totalCostElement.innerHTML += ' <span class="badge bg-warning text-dark ms-2" title="Some prices unavailable, using fallback calculation">Estimated</span>';
     }
 
     // Display excess minerals if any

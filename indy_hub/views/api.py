@@ -1356,6 +1356,7 @@ def convert_minerals_to_compressed_ore(request):
             ],
             "total_cost": float(result["total_cost"]),
             "excess_minerals": {str(k): v for k, v in result["excess_minerals"].items()},
+            "prices_estimated": result.get("prices_estimated", False),
             "error": result.get("error"),
         }
 

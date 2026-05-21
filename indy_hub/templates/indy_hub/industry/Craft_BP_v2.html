@@ -1488,9 +1488,14 @@
                     </div>
                 </div>
                 <div id="conversionError" class="alert alert-danger" style="display: none;"></div>
-                <div id="conversionLoading" class="text-center" style="display: none;">
+                <div id="conversionLoading" class="text-center py-3" style="display: none;">
                     <div class="spinner-border text-primary" role="status">
                         <span class="visually-hidden">{% trans "Loading..." %}</span>
+                    </div>
+                    <div class="mt-2 text-muted">
+                        <small>{% trans "Calculating optimal compressed ore purchases..." %}</small>
+                        <br>
+                        <small class="text-info">{% trans "First-time setup may take up to 30 seconds" %}</small>
                     </div>
                 </div>
             </div>
