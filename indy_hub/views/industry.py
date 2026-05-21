@@ -1753,9 +1753,9 @@ def all_bp_list(request):
     activity_id = request.GET.get("activity_id", "")
     market_group_id = request.GET.get("market_group_id", "")
 
-    # Base SQL
+    # Base SQL with DISTINCT to avoid duplicates when blueprints have multiple products/activities
     sql = (
-        "SELECT t.id, t.name "
+        "SELECT DISTINCT t.id, t.name "
         "FROM eve_sde_itemtype t "
         "JOIN indy_hub_sdeindustryactivityproduct a ON t.id = a.eve_type_id "
         "WHERE t.published = 1"
