@@ -926,14 +926,27 @@ def contract_items_match_with_tolerance(
     return (len(errors) == 0), errors
 
 
+def clear_compressed_ore_cache():
+    """Clear all entries from the CompressedOreCache."""
+    from indy_hub.models import CompressedOreCache
+    count = CompressedOreCache.objects.count()
+    CompressedOreCache.objects.all().delete()
+    logger.info(f"Cleared {count} entries from CompressedOreCache")
+    return count
+
+
 def _populate_compressed_ore_cache() -> tuple[bool, str]:
     """
     Populate the CompressedOreCache with all compressed ore reprocessing data.
+    Clears existing cache first to ensure clean data.
 
     Returns:
         Tuple of (success, status_message)
     """
     from indy_hub.models import CompressedOreCache
+
+    # Clear existing cache to remove any bad data
+    clear_compressed_ore_cache()
 
     try:
         import eve_sde.models as sde_models
@@ -945,6 +958,8 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
         return False, "ItemType model not found"
 
     # Find all compressed ores
+    # Compressed ores are in market group 1033 (Compressed Ore) or have "Compressed" in name
+    # and reprocess to minerals (category 4)
     try:
         compressed_ore_types = list(
             item_type_model.objects.filter(
@@ -953,6 +968,12 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
                 name__icontains="Blueprint"
             ).exclude(
                 name__icontains="SKIN"
+            ).exclude(
+                name__icontains="Charge"  # Exclude ammunition
+            ).exclude(
+                name__icontains="Module"  # Exclude modules
+            ).exclude(
+                published=False  # Only published items
             ).values_list("id", "name")
         )
     except Exception as e:
@@ -961,21 +982,44 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     if not compressed_ore_types:
         return False, "No compressed ores found"
 
-    logger.info(f"Populating cache with {len(compressed_ore_types)} compressed ore types")
+    logger.info(f"Found {len(compressed_ore_types)} potential compressed ore types")
 
     # Get reprocessing data for all compressed ores
+    # Only keep items that actually reprocess to minerals
+    MINERAL_TYPE_IDS = {
+        34,     # Tritanium
+        35,     # Pyerite
+        36,     # Mexallon
+        37,     # Isogen
+        38,     # Nocxium
+        39,     # Zydrine
+        40,     # Megacyte
+        11399,  # Morphite
+    }
+    ore_count = 0
+
     for ore_type_id, ore_name in compressed_ore_types:
         outputs = get_reprocessing_outputs_for_type(ore_type_id)
         if outputs:
-            CompressedOreCache.objects.update_or_create(
-                ore_type_id=ore_type_id,
-                defaults={
-                    "ore_name": ore_name,
-                    "reprocessing_outputs": outputs,
-                }
-            )
+            # Check if this item reprocesses to minerals
+            if any(mineral_id in MINERAL_TYPE_IDS for mineral_id in outputs.keys()):
+                CompressedOreCache.objects.update_or_create(
+                    ore_type_id=ore_type_id,
+                    defaults={
+                        "ore_name": ore_name,
+                        "reprocessing_outputs": outputs,
+                    }
+                )
+                ore_count += 1
+            else:
+                logger.debug(f"Skipping {ore_name} - doesn't reprocess to minerals")
 
-    return True, f"Populated cache with {len(compressed_ore_types)} compressed ores"
+    logger.info(f"Populated cache with {ore_count} actual compressed ores")
+
+    if ore_count == 0:
+        return False, "No valid compressed ores found that reprocess to minerals"
+
+    return True, f"Populated cache with {ore_count} compressed ores"
 
 
 def _update_compressed_ore_prices() -> tuple[bool, str]:
