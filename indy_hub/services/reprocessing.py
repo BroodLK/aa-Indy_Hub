@@ -997,33 +997,67 @@ def calculate_compressed_ore_for_minerals(
     ore_mineral_yields: dict[int, dict[int, int]] = {}
 
     # Try to batch-query all reprocessing materials at once
+    # Try multiple field name combinations (different eve_sde versions use different names)
+    candidates = [
+        ("TypeMaterial", ("eve_type_id", "material_eve_type_id", "quantity")),
+        ("ItemTypeMaterial", ("eve_type_id", "material_eve_type_id", "quantity")),
+        ("TypeMaterials", ("eve_type_id", "material_eve_type_id", "quantity")),
+        ("TypeMaterial", ("type_id", "material_type_id", "quantity")),
+        ("ItemTypeMaterial", ("type_id", "material_type_id", "quantity")),
+        ("ItemTypeMaterials", ("item_type_id", "material_item_type_id", "quantity")),
+        ("ItemTypeMaterials", ("item_type", "material_item_type", "quantity")),
+    ]
+
+    batch_query_succeeded = False
     try:
         import eve_sde.models as sde_models
 
-        # Try TypeMaterial model first (most common)
-        model = getattr(sde_models, "TypeMaterial", None) or getattr(sde_models, "ItemTypeMaterial", None)
+        for model_name, (source_field, output_field, qty_field) in candidates:
+            model = getattr(sde_models, model_name, None)
+            if model is None:
+                continue
 
-        if model:
+            # Check if fields exist in this model
+            field_names = {field.name for field in model._meta.get_fields()}
+            if source_field not in field_names or output_field not in field_names or qty_field not in field_names:
+                continue
+
             # Get all materials for compressed ores in one query
             materials_qs = model.objects.filter(
-                eve_type_id__in=ore_type_ids_to_check
-            ).values_list('eve_type_id', 'material_eve_type_id', 'quantity')
+                **{f"{source_field}__in": ore_type_ids_to_check}
+            ).values_list(source_field, output_field, qty_field)
 
             # Group by ore type
             for ore_type_id, material_id, quantity in materials_qs:
-                if ore_type_id not in ore_mineral_yields:
-                    ore_mineral_yields[ore_type_id] = {}
-                ore_mineral_yields[ore_type_id][material_id] = quantity
+                try:
+                    ore_id = int(ore_type_id)
+                    mat_id = int(material_id)
+                    qty = int(quantity or 0)
+                    if mat_id > 0 and qty > 0:
+                        if ore_id not in ore_mineral_yields:
+                            ore_mineral_yields[ore_id] = {}
+                        ore_mineral_yields[ore_id][mat_id] = ore_mineral_yields[ore_id].get(mat_id, 0) + qty
+                except (TypeError, ValueError):
+                    continue
 
-            # Filter to only ores that produce requested minerals
-            ore_mineral_yields = {
-                ore_id: outputs
-                for ore_id, outputs in ore_mineral_yields.items()
-                if any(mineral_id in mineral_requirements for mineral_id in outputs.keys())
-            }
+            # If we got results, filter and break
+            if ore_mineral_yields:
+                # Filter to only ores that produce requested minerals
+                ore_mineral_yields = {
+                    ore_id: outputs
+                    for ore_id, outputs in ore_mineral_yields.items()
+                    if any(mineral_id in mineral_requirements for mineral_id in outputs.keys())
+                }
+                batch_query_succeeded = True
+                logger.info(f"Batch query succeeded using {model_name} with fields {source_field}/{output_field}")
+                break
+
     except Exception as e:
-        logger.warning(f"Batch query failed, falling back to individual queries: {e}")
-        # Fallback to individual queries
+        logger.warning(f"Batch query exception: {e}")
+
+    # Fallback to individual queries if batch query didn't work
+    if not batch_query_succeeded:
+        logger.info("Falling back to individual queries for reprocessing data")
         for ore_type_id, ore_name in compressed_ore_types:
             outputs = get_reprocessing_outputs_for_type(ore_type_id)
             if outputs:
