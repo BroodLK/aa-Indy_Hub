@@ -9712,7 +9712,7 @@ function displayConversionResults(data) {
     // Display ores
     if (data.compressed_ores && data.compressed_ores.length > 0) {
         oresListContent.innerHTML = data.compressed_ores.map(ore =>
-            `<div class="mb-2">
+            `<div class="mb-2 text-nowrap">
                 <strong>${ore.type_name}</strong>: ${ore.quantity.toLocaleString()}
                 @ ${ore.unit_price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK
                 = ${ore.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK

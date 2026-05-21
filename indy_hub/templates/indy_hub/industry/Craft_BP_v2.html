@@ -1458,7 +1458,7 @@
 
 <!-- MODALS -->
 <div class="modal fade" id="convertMineralsModal" tabindex="-1" aria-labelledby="convertMineralsModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-xl">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="convertMineralsModalLabel">{% trans "Convert Minerals to Compressed Ore" %}</h5>
@@ -1478,7 +1478,7 @@
                 </form>
                 <div id="conversionResults" style="display: none;">
                     <h6 class="fw-semibold mb-2">{% trans "Recommended Compressed Ores:" %}</h6>
-                    <div id="oresListContent" class="mb-3"></div>
+                    <div id="oresListContent" class="mb-3 overflow-auto"></div>
                     <div class="alert alert-success">
                         <strong>{% trans "Total Cost:" %}</strong> <span id="totalCost">0 ISK</span>
                     </div>
