@@ -4,12 +4,12 @@
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 # Django
 from django.contrib.auth.models import Permission, User
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
@@ -30,6 +30,7 @@ from indy_hub.tasks.material_exchange_contracts import (
     sync_reprocessing_character_contracts,
 )
 from indy_hub.services.reprocessing import (
+    _populate_compressed_ore_cache,
     build_reprocessing_estimate,
     compute_estimated_yield_percent,
     contract_items_match_exact,
@@ -547,6 +548,153 @@ class ReprocessingEstimateTests(TestCase):
         )
 
         self.assertEqual(estimate["outputs"][0]["expected_quantity"], 100)
+
+
+class CompressedOreCachePopulationTests(SimpleTestCase):
+    class _FakeMarketGroup:
+        def __init__(self, name, parent_group=None):
+            self.name = name
+            self.parent_group = parent_group
+
+    class _FakeItemType:
+        def __init__(self, type_id, name, *, published, market_group):
+            self.id = type_id
+            self.name = name
+            self.published = published
+            self.market_group = market_group
+
+    class _FakeQuerySet:
+        def __init__(self, rows):
+            self.rows = list(rows)
+
+        def filter(self, *args, **kwargs):
+            filtered = list(self.rows)
+            for query in args:
+                filtered = [row for row in filtered if self._matches_q(row, query)]
+            for lookup, expected in kwargs.items():
+                filtered = [
+                    row for row in filtered if self._matches_lookup(row, lookup, expected)
+                ]
+            return self.__class__(filtered)
+
+        def values_list(self, *fields):
+            return [
+                tuple(self._resolve_attr(row, field) for field in fields)
+                for row in self.rows
+            ]
+
+        def _resolve_attr(self, obj, lookup):
+            value = obj
+            for part in str(lookup or "").split("__"):
+                value = getattr(value, part, None)
+                if value is None:
+                    break
+            return value
+
+        def _matches_lookup(self, obj, lookup, expected):
+            parts = str(lookup or "").split("__")
+            operator = "exact"
+            if parts and parts[-1] in {"icontains"}:
+                operator = parts.pop()
+            value = self._resolve_attr(obj, "__".join(parts))
+            if operator == "icontains":
+                return str(expected or "").lower() in str(value or "").lower()
+            return value == expected
+
+        def _matches_q(self, obj, query):
+            results = []
+            for child in query.children:
+                if isinstance(child, tuple):
+                    results.append(self._matches_lookup(obj, child[0], child[1]))
+                else:
+                    results.append(self._matches_q(obj, child))
+            matched = all(results) if query.connector == "AND" else any(results)
+            return not matched if query.negated else matched
+
+    @patch("indy_hub.services.reprocessing.clear_compressed_ore_cache")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_outputs_for_type")
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_populate_cache_only_stores_types_in_compressed_ore_market_groups(
+        self,
+        mock_cache_model,
+        mock_outputs,
+        _mock_clear_cache,
+    ):
+        veldspar_group = self._FakeMarketGroup(
+            "Veldspar",
+            parent_group=self._FakeMarketGroup(
+                "Standard Ore",
+                parent_group=self._FakeMarketGroup("Compressed Ore"),
+            ),
+        )
+        bitumens_group = self._FakeMarketGroup(
+            "Bitumens",
+            parent_group=self._FakeMarketGroup(
+                "Ubiquitous Moon Ore",
+                parent_group=self._FakeMarketGroup("Compressed Moon Ore"),
+            ),
+        )
+        module_group = self._FakeMarketGroup("Hybrid Turrets")
+
+        ore_type = self._FakeItemType(
+            3001,
+            "Compressed Veldspar",
+            published=True,
+            market_group=veldspar_group,
+        )
+        moon_ore_type = self._FakeItemType(
+            3002,
+            "Compressed Bitumens",
+            published=True,
+            market_group=bitumens_group,
+        )
+        module_type = self._FakeItemType(
+            3003,
+            "Compressed Enduring Dual 1000mm Railgun",
+            published=True,
+            market_group=module_group,
+        )
+
+        fake_item_type_model = SimpleNamespace(
+            objects=self._FakeQuerySet([ore_type, moon_ore_type, module_type])
+        )
+        mock_outputs.side_effect = {
+            ore_type.id: {34: 400},
+            moon_ore_type.id: {34: 200},
+            module_type.id: {34: 10},
+        }.__getitem__
+        mock_cache_model.CACHE_VERSION = 3
+
+        with patch("eve_sde.models.ItemType", fake_item_type_model):
+            success, message = _populate_compressed_ore_cache()
+
+        self.assertTrue(success, message)
+        mock_cache_model.objects.update_or_create.assert_has_calls(
+            [
+                call(
+                    ore_type_id=ore_type.id,
+                    defaults={
+                        "ore_name": ore_type.name,
+                        "reprocessing_outputs": {34: 400},
+                        "cache_version": 3,
+                    },
+                ),
+                call(
+                    ore_type_id=moon_ore_type.id,
+                    defaults={
+                        "ore_name": moon_ore_type.name,
+                        "reprocessing_outputs": {34: 200},
+                        "cache_version": 3,
+                    },
+                ),
+            ],
+            any_order=True,
+        )
+        stored_type_ids = {
+            kwargs["ore_type_id"]
+            for _args, kwargs in mock_cache_model.objects.update_or_create.call_args_list
+        }
+        self.assertEqual(stored_type_ids, {ore_type.id, moon_ore_type.id})
 
 
 class ReprocessingYieldFormulaTests(TestCase):

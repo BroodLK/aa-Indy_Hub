@@ -10,7 +10,7 @@ import re
 from typing import Iterable
 
 # Django
-from django.db import connection
+from django.db import connection, models
 from django.utils import timezone
 
 # Alliance Auth
@@ -935,6 +935,19 @@ def clear_compressed_ore_cache():
     return count
 
 
+def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
+    """Match only market-group ancestry that represents compressed ore."""
+    relation = "market_group"
+    market_group_filter = models.Q()
+    for _ in range(max_depth):
+        market_group_filter |= (
+            models.Q(**{f"{relation}__name__icontains": "compressed"})
+            & models.Q(**{f"{relation}__name__icontains": "ore"})
+        )
+        relation = f"{relation}__parent_group"
+    return market_group_filter
+
+
 def _populate_compressed_ore_cache() -> tuple[bool, str]:
     """
     Populate the CompressedOreCache with all compressed ore reprocessing data.
@@ -957,23 +970,14 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     if not item_type_model:
         return False, "ItemType model not found"
 
-    # Find all compressed ores
-    # Compressed ores are in market group 1033 (Compressed Ore) or have "Compressed" in name
-    # and reprocess to minerals (category 4)
+    # Find all compressed ores via market-group ancestry instead of type names.
+    # Name-only matching pulls in compressed modules and other non-ore items.
     try:
         compressed_ore_types = list(
             item_type_model.objects.filter(
-                name__icontains="Compressed"
-            ).exclude(
-                name__icontains="Blueprint"
-            ).exclude(
-                name__icontains="SKIN"
-            ).exclude(
-                name__icontains="Charge"  # Exclude ammunition
-            ).exclude(
-                name__icontains="Module"  # Exclude modules
-            ).exclude(
-                published=False  # Only published items
+                published=True
+            ).filter(
+                _compressed_ore_market_group_filter()
             ).values_list("id", "name")
         )
     except Exception as e:

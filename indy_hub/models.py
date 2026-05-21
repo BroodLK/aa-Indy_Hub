@@ -4760,7 +4760,7 @@ class CompressedOreCache(models.Model):
     """Cache for compressed ore reprocessing data and prices."""
 
     # Cache version - increment when filtering logic changes to force rebuild
-    CACHE_VERSION = 2  # Incremented to fix non-ore items in cache
+    CACHE_VERSION = 3  # Incremented to force rebuild after tightening ore-only filtering
 
     ore_type_id = models.IntegerField(primary_key=True)
     ore_name = models.CharField(max_length=255)
