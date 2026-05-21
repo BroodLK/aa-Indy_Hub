@@ -9980,129 +9980,111 @@ function gatherJobsDataForSchedule() {
 }
 
 // ============================================================================
-// SLOT MANAGEMENT
+// CHARACTER SLOT MANAGEMENT
 // ============================================================================
 
 let characterSlots = [];
-let nextSlotId = 1;
 
-function initSlotManagement() {
-    const addSlotBtn = document.getElementById('addSlotBtn');
-    if (addSlotBtn) {
-        addSlotBtn.addEventListener('click', addSlot);
-    }
+async function initSlotManagement() {
+    // Fetch character slots from API
+    await loadCharacterSlots();
+}
 
-    // Load slots from localStorage if available
-    const savedSlots = localStorage.getItem('craftBuildSlots');
-    if (savedSlots) {
-        try {
-            characterSlots = JSON.parse(savedSlots);
-            nextSlotId = Math.max(...characterSlots.map(s => s.id), 0) + 1;
-            renderSlots();
-        } catch (e) {
-            console.error('Error loading saved slots:', e);
+async function loadCharacterSlots() {
+    try {
+        const response = await fetch('/indy_hub/api/character-slots/', {
+            method: 'GET',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            console.error('Error loading character slots:', data.error);
+            renderSlotsError(data.error);
+            return;
         }
-    }
 
-    // If no slots, show the "no slots" message
-    updateNoSlotsMessage();
-}
+        characterSlots = data.characters || [];
+        renderSlots();
 
-function addSlot() {
-    const slot = {
-        id: nextSlotId++,
-        characterName: `Character ${characterSlots.length + 1}`,
-        maxJobs: 1
-    };
-
-    characterSlots.push(slot);
-    saveSlots();
-    renderSlots();
-}
-
-function removeSlot(slotId) {
-    characterSlots = characterSlots.filter(s => s.id !== slotId);
-    saveSlots();
-    renderSlots();
-}
-
-function updateSlot(slotId, field, value) {
-    const slot = characterSlots.find(s => s.id === slotId);
-    if (slot) {
-        slot[field] = value;
-        saveSlots();
+    } catch (error) {
+        console.error('Error fetching character slots:', error);
+        renderSlotsError('Failed to load character slots');
     }
 }
 
-function saveSlots() {
-    localStorage.setItem('craftBuildSlots', JSON.stringify(characterSlots));
-    updateNoSlotsMessage();
-}
-
-function updateNoSlotsMessage() {
+function renderSlotsError(errorMessage) {
+    const container = document.getElementById('slotsContainer');
     const noSlotsMsg = document.getElementById('noSlotsMessage');
+
+    if (container) {
+        container.innerHTML = `
+            <div class="alert alert-warning">
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                ${errorMessage}
+            </div>
+        `;
+    }
+
     if (noSlotsMsg) {
-        noSlotsMsg.style.display = characterSlots.length === 0 ? '' : 'none';
+        noSlotsMsg.style.display = 'none';
     }
 }
 
 function renderSlots() {
     const container = document.getElementById('slotsContainer');
+    const noSlotsMsg = document.getElementById('noSlotsMessage');
+
     if (!container) return;
+
+    // Show/hide empty message
+    if (noSlotsMsg) {
+        noSlotsMsg.style.display = characterSlots.length === 0 ? '' : 'none';
+    }
+
+    if (characterSlots.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
 
     container.innerHTML = '';
 
-    characterSlots.forEach(slot => {
+    characterSlots.forEach(char => {
         const slotDiv = document.createElement('div');
         slotDiv.className = 'card mb-2';
         slotDiv.innerHTML = `
             <div class="card-body p-3">
                 <div class="row g-2 align-items-center">
-                    <div class="col-md-6">
-                        <label class="form-label small mb-1">Character Name</label>
-                        <input type="text" class="form-control form-control-sm slot-name"
-                               value="${escapeHtml(slot.characterName)}"
-                               data-slot-id="${slot.id}">
+                    <div class="col-md-5">
+                        <div class="d-flex align-items-center">
+                            <i class="fas fa-user-circle fa-2x text-primary me-2"></i>
+                            <div>
+                                <div class="fw-semibold">${escapeHtml(char.character_name)}</div>
+                                <div class="small text-muted">Character ID: ${char.character_id}</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="col-md-4">
-                        <label class="form-label small mb-1">Max Concurrent Jobs</label>
-                        <input type="number" class="form-control form-control-sm slot-max-jobs"
-                               min="1" max="10" value="${slot.maxJobs}"
-                               data-slot-id="${slot.id}">
+                    <div class="col-md-2 text-center">
+                        <div class="small text-muted mb-1">Manufacturing</div>
+                        <div class="badge bg-primary">${char.manufacturing_slots} slots</div>
                     </div>
-                    <div class="col-md-2 text-end">
-                        <label class="form-label small mb-1">&nbsp;</label>
-                        <button type="button" class="btn btn-sm btn-outline-danger d-block w-100 remove-slot-btn"
-                                data-slot-id="${slot.id}">
-                            <i class="fas fa-trash"></i>
-                        </button>
+                    <div class="col-md-2 text-center">
+                        <div class="small text-muted mb-1">Reactions</div>
+                        <div class="badge bg-info">${char.reaction_slots} slots</div>
+                    </div>
+                    <div class="col-md-2 text-center">
+                        <div class="small text-muted mb-1">Research</div>
+                        <div class="badge bg-secondary">${char.research_slots} slots</div>
                     </div>
                 </div>
             </div>
         `;
 
         container.appendChild(slotDiv);
-
-        // Add event listeners
-        const nameInput = slotDiv.querySelector('.slot-name');
-        nameInput.addEventListener('change', (e) => {
-            updateSlot(slot.id, 'characterName', e.target.value);
-        });
-
-        const maxJobsInput = slotDiv.querySelector('.slot-max-jobs');
-        maxJobsInput.addEventListener('change', (e) => {
-            updateSlot(slot.id, 'maxJobs', parseInt(e.target.value) || 1);
-        });
-
-        const removeBtn = slotDiv.querySelector('.remove-slot-btn');
-        removeBtn.addEventListener('click', () => {
-            if (confirm(`Remove slot "${slot.characterName}"?`)) {
-                removeSlot(slot.id);
-            }
-        });
     });
-
-    updateNoSlotsMessage();
 }
 
 function escapeHtml(text) {
@@ -10112,17 +10094,16 @@ function escapeHtml(text) {
 }
 
 function gatherSlotsDataForSchedule() {
-    // Use the slots from our slot management system
+    // Use manufacturing slots from loaded character data
     if (characterSlots.length > 0) {
-        return characterSlots.map((slot, index) => ({
-            character_id: slot.id,
-            character_name: slot.characterName,
-            max_concurrent_jobs: slot.maxJobs,
+        return characterSlots.map(char => ({
+            character_id: char.character_id,
+            character_name: char.character_name,
+            max_concurrent_jobs: char.manufacturing_slots,
         }));
     }
 
-    // Fallback: return empty array if no slots
-    // The caller should handle this and show an error
+    // Return empty array if no characters available
     return [];
 }
 

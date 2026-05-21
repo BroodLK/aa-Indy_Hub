@@ -12,6 +12,7 @@ from .views.api import (
     craft_industry_fees,
     craft_bp_payload,
     fuzzwork_price,
+    get_character_slots,
     load_production_config,
     menu_badge_count,
     save_production_config,
@@ -255,6 +256,11 @@ urlpatterns = [
         "api/calculate-import-fees/",
         calculate_import_fees,
         name="calculate_import_fees",
+    ),
+    path(
+        "api/character-slots/",
+        get_character_slots,
+        name="get_character_slots",
     ),
     path(
         "api/craft-build-environment/",

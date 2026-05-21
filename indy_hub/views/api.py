@@ -28,6 +28,7 @@ from ..decorators import indy_hub_access_required, indy_hub_permission_required
 from ..models import (
     BlueprintEfficiency,
     CustomPrice,
+    IndustrySkillSnapshot,
     ProductionConfig,
     ProductionSimulation,
 )
@@ -1362,6 +1363,63 @@ def convert_minerals_to_compressed_ore(request):
 
     except Exception as e:
         logger.error(f"Error converting minerals to compressed ore: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["GET"])
+def get_character_slots(request):
+    """
+    Get industry slot information for user's characters.
+
+    Returns:
+    {
+        "characters": [
+            {
+                "character_id": 12345,
+                "character_name": "Character Name",
+                "manufacturing_slots": 5,
+                "reaction_slots": 3,
+                "research_slots": 3
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # Get all skill snapshots for the user
+        snapshots = IndustrySkillSnapshot.objects.filter(
+            owner_user=request.user
+        ).select_related()
+
+        characters = []
+        for snapshot in snapshots:
+            # Get character name from ESI or cache
+            character_name = f"Character {snapshot.character_id}"
+
+            # Try to get character name from tokens
+            try:
+                token = Token.objects.filter(
+                    user=request.user,
+                    character_id=snapshot.character_id
+                ).first()
+                if token:
+                    character_name = token.character_name
+            except Exception:
+                pass
+
+            characters.append({
+                'character_id': snapshot.character_id,
+                'character_name': character_name,
+                'manufacturing_slots': snapshot.manufacturing_slots,
+                'reaction_slots': snapshot.reaction_slots,
+                'research_slots': snapshot.research_slots,
+            })
+
+        return JsonResponse({'characters': characters})
+
+    except Exception as e:
+        logger.error(f"Error fetching character slots: {e}")
         return JsonResponse({"error": str(e)}, status=500)
 
 

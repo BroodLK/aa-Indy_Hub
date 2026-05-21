@@ -558,23 +558,20 @@
                         <h3 class="craft-section-title">
                             <i class="fas fa-users text-primary"></i> {% trans "Character Slots" %}
                         </h3>
-                        <button id="addSlotBtn" type="button" class="btn btn-outline-success btn-sm">
-                            <i class="fas fa-plus me-1"></i>{% trans "Add Slot" %}
-                        </button>
                     </div>
 
                     <div class="alert alert-info small mb-3">
                         <i class="fas fa-info-circle me-1"></i>
-                        {% trans "Configure your available industry slots. Each character typically has 1 concurrent job slot (or more with skills)." %}
+                        {% trans "Industry slots calculated from your characters' Mass Production and Advanced Mass Production skills." %}
                     </div>
 
                     <div id="slotsContainer" class="mb-3">
-                        <!-- Slots will be added here dynamically -->
+                        <!-- Slots loaded from API will be displayed here -->
                     </div>
 
                     <div id="noSlotsMessage" class="text-center text-muted py-3">
-                        <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
-                        <p class="mb-0">{% trans "No slots configured. Click 'Add Slot' to begin." %}</p>
+                        <i class="fas fa-sync fa-2x mb-2 d-block"></i>
+                        <p class="mb-0">{% trans "No characters found. Please sync your industry skills from the ESI token management page." %}</p>
                     </div>
                 </section>
 
