@@ -1008,6 +1008,7 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
                     defaults={
                         "ore_name": ore_name,
                         "reprocessing_outputs": outputs,
+                        "cache_version": CompressedOreCache.CACHE_VERSION,
                     }
                 )
                 ore_count += 1

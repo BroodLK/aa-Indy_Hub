@@ -4759,6 +4759,9 @@ class SdeMarketGroup(models.Model):
 class CompressedOreCache(models.Model):
     """Cache for compressed ore reprocessing data and prices."""
 
+    # Cache version - increment when filtering logic changes to force rebuild
+    CACHE_VERSION = 2  # Incremented to fix non-ore items in cache
+
     ore_type_id = models.IntegerField(primary_key=True)
     ore_name = models.CharField(max_length=255)
 
@@ -4772,6 +4775,7 @@ class CompressedOreCache(models.Model):
     # Cache metadata
     reprocessing_data_updated = models.DateTimeField(auto_now_add=True)
     pricing_data_updated = models.DateTimeField(null=True, blank=True)
+    cache_version = models.IntegerField(default=1)
 
     class Meta:
         default_permissions = ()
@@ -4791,8 +4795,17 @@ class CompressedOreCache(models.Model):
 
     @classmethod
     def needs_initial_setup(cls):
-        """Check if we need to populate the cache for the first time."""
-        return cls.objects.count() == 0
+        """Check if we need to populate the cache for the first time or if version is outdated."""
+        if cls.objects.count() == 0:
+            return True
+
+        # Check if any entries have old cache version
+        old_version_exists = cls.objects.filter(
+            models.Q(cache_version__lt=cls.CACHE_VERSION) |
+            models.Q(cache_version__isnull=True)
+        ).exists()
+
+        return old_version_exists
 
     @classmethod
     def needs_price_update(cls):
