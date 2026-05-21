@@ -295,6 +295,9 @@
                             <i class="fas fa-list-ul me-2"></i>{% trans "Purchase Planner" %}
                         </h4>
                         <div class="craft-financial-actions">
+                            <button id="convertMineralsToOreBtn" type="button" class="btn btn-outline-primary btn-sm" title="{% trans 'Convert minerals to compressed ore' %}" style="display: none;">
+                                <i class="fas fa-cubes me-1"></i>{% trans "Convert to Compressed Ore" %}
+                            </button>
                             <button id="calculateIndustryFeesBtn" type="button" class="btn btn-outline-warning btn-sm" title="{% trans 'Calculate industry fees from current planner state' %}">
                                 <i class="fas fa-receipt me-1"></i>{% trans "Calculate Fees" %}
                             </button>
@@ -1309,6 +1312,52 @@
 </div>
 
 <!-- MODALS -->
+<div class="modal fade" id="convertMineralsModal" tabindex="-1" aria-labelledby="convertMineralsModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="convertMineralsModalLabel">{% trans "Convert Minerals to Compressed Ore" %}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+            </div>
+            <div class="modal-body">
+                <form id="convertMineralsForm">
+                    <div class="mb-3">
+                        <label for="refineRate" class="form-label">{% trans "Refine Rate (%)" %}</label>
+                        <input type="number" class="form-control" id="refineRate" min="0" max="100" step="0.01" value="84.20" required>
+                        <div class="form-text">{% trans "Enter your refining efficiency percentage (0-100)" %}</div>
+                    </div>
+                    <div id="mineralsList" class="alert alert-info">
+                        <strong>{% trans "Minerals to convert:" %}</strong>
+                        <div id="mineralsListContent"></div>
+                    </div>
+                </form>
+                <div id="conversionResults" style="display: none;">
+                    <h6 class="fw-semibold mb-2">{% trans "Recommended Compressed Ores:" %}</h6>
+                    <div id="oresListContent" class="mb-3"></div>
+                    <div class="alert alert-success">
+                        <strong>{% trans "Total Cost:" %}</strong> <span id="totalCost">0 ISK</span>
+                    </div>
+                    <div id="excessMineralsDiv" style="display: none;" class="alert alert-warning">
+                        <strong>{% trans "Excess Minerals:" %}</strong>
+                        <div id="excessMineralsList"></div>
+                    </div>
+                </div>
+                <div id="conversionError" class="alert alert-danger" style="display: none;"></div>
+                <div id="conversionLoading" class="text-center" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">{% trans "Loading..." %}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+                <button type="button" class="btn btn-primary" id="calculateOresBtn">{% trans "Calculate" %}</button>
+                <button type="button" class="btn btn-success" id="applyOresBtn" style="display: none;">{% trans "Apply" %}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="modal fade" id="saveSimulationModal" tabindex="-1" aria-labelledby="saveSimulationModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">

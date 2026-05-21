@@ -9529,7 +9529,327 @@ try {
                 updateBuildTabFromState();
             });
         }
+
+        // Initialize mineral conversion functionality
+        initMineralConversion();
     });
 } catch (e) {
     // ignore
+}
+
+// ==================== MINERAL TO COMPRESSED ORE CONVERSION ====================
+
+// Common mineral type IDs from EVE Online
+const MINERAL_TYPE_IDS = [
+    34,    // Tritanium
+    35,    // Pyerite
+    36,    // Mexallon
+    37,    // Isogen
+    38,    // Nocxium
+    39,    // Zydrine
+    40,    // Megacyte
+    11399, // Morphite
+];
+
+let conversionResultData = null;
+
+function initMineralConversion() {
+    const convertBtn = document.getElementById('convertMineralsToOreBtn');
+    const calculateBtn = document.getElementById('calculateOresBtn');
+    const applyBtn = document.getElementById('applyOresBtn');
+
+    if (!convertBtn || !calculateBtn || !applyBtn) return;
+
+    // Check for minerals on initial load
+    checkForMineralsAndShowButton();
+
+    // Re-check when financial table is updated (when materials change)
+    const observer = new MutationObserver(() => {
+        checkForMineralsAndShowButton();
+    });
+
+    const financialBody = document.getElementById('financialItemsBody');
+    if (financialBody) {
+        observer.observe(financialBody, { childList: true, subtree: true });
+    }
+
+    // Button click handlers
+    convertBtn.addEventListener('click', openMineralConversionModal);
+    calculateBtn.addEventListener('click', calculateCompressedOres);
+    applyBtn.addEventListener('click', applyCompressedOres);
+}
+
+function checkForMineralsAndShowButton() {
+    const convertBtn = document.getElementById('convertMineralsToOreBtn');
+    if (!convertBtn) return;
+
+    const minerals = getMineralsFromFinancialTable();
+    if (minerals.length > 0) {
+        convertBtn.style.display = '';
+    } else {
+        convertBtn.style.display = 'none';
+    }
+}
+
+function getMineralsFromFinancialTable() {
+    const minerals = [];
+    const financialBody = document.getElementById('financialItemsBody');
+    if (!financialBody) return minerals;
+
+    const rows = financialBody.querySelectorAll('tr[data-type-id]');
+    rows.forEach(row => {
+        const typeId = parseInt(row.getAttribute('data-type-id'));
+        const qtyElement = row.querySelector('td[data-qty]');
+
+        if (MINERAL_TYPE_IDS.includes(typeId) && qtyElement) {
+            const quantity = parseInt(qtyElement.getAttribute('data-qty'));
+            if (quantity > 0) {
+                // Get type name from the row
+                const nameElement = row.querySelector('.craft-planner-item-name');
+                const typeName = nameElement ? nameElement.textContent.trim() : `Type ${typeId}`;
+
+                minerals.push({ type_id: typeId, type_name: typeName, quantity: quantity });
+            }
+        }
+    });
+
+    return minerals;
+}
+
+function openMineralConversionModal() {
+    const minerals = getMineralsFromFinancialTable();
+    if (minerals.length === 0) {
+        alert('No minerals found in the purchase planner.');
+        return;
+    }
+
+    // Populate minerals list in modal
+    const mineralsListContent = document.getElementById('mineralsListContent');
+    if (mineralsListContent) {
+        mineralsListContent.innerHTML = minerals.map(m =>
+            `<div>${m.type_name}: ${m.quantity.toLocaleString()}</div>`
+        ).join('');
+    }
+
+    // Reset modal state
+    document.getElementById('conversionResults').style.display = 'none';
+    document.getElementById('conversionError').style.display = 'none';
+    document.getElementById('conversionLoading').style.display = 'none';
+    document.getElementById('calculateOresBtn').style.display = '';
+    document.getElementById('applyOresBtn').style.display = 'none';
+    conversionResultData = null;
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('convertMineralsModal'));
+    modal.show();
+}
+
+function calculateCompressedOres() {
+    const refineRate = parseFloat(document.getElementById('refineRate').value);
+
+    if (isNaN(refineRate) || refineRate < 0 || refineRate > 100) {
+        showConversionError('Please enter a valid refine rate between 0 and 100.');
+        return;
+    }
+
+    const minerals = getMineralsFromFinancialTable();
+    if (minerals.length === 0) {
+        showConversionError('No minerals found to convert.');
+        return;
+    }
+
+    // Show loading
+    document.getElementById('conversionResults').style.display = 'none';
+    document.getElementById('conversionError').style.display = 'none';
+    document.getElementById('conversionLoading').style.display = 'block';
+    document.getElementById('calculateOresBtn').disabled = true;
+
+    // Make API call
+    fetch('/indy_hub/api/convert-minerals-to-ore/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+        },
+        body: JSON.stringify({
+            minerals: minerals,
+            refine_rate: refineRate,
+        }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        document.getElementById('conversionLoading').style.display = 'none';
+        document.getElementById('calculateOresBtn').disabled = false;
+
+        if (data.error) {
+            showConversionError(data.error);
+            return;
+        }
+
+        // Store result for later application
+        conversionResultData = data;
+
+        // Display results
+        displayConversionResults(data);
+    })
+    .catch(error => {
+        document.getElementById('conversionLoading').style.display = 'none';
+        document.getElementById('calculateOresBtn').disabled = false;
+        showConversionError('Failed to calculate compressed ores: ' + error.message);
+    });
+}
+
+function displayConversionResults(data) {
+    const oresListContent = document.getElementById('oresListContent');
+    const totalCostElement = document.getElementById('totalCost');
+    const excessMineralsDiv = document.getElementById('excessMineralsDiv');
+    const excessMineralsList = document.getElementById('excessMineralsList');
+
+    // Display ores
+    if (data.compressed_ores && data.compressed_ores.length > 0) {
+        oresListContent.innerHTML = data.compressed_ores.map(ore =>
+            `<div class="mb-2">
+                <strong>${ore.type_name}</strong>: ${ore.quantity.toLocaleString()}
+                @ ${ore.unit_price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK
+                = ${ore.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK
+            </div>`
+        ).join('');
+    } else {
+        oresListContent.innerHTML = '<div class="text-muted">No compressed ores calculated.</div>';
+    }
+
+    // Display total cost
+    totalCostElement.textContent = data.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ISK';
+
+    // Display excess minerals if any
+    if (data.excess_minerals && Object.keys(data.excess_minerals).length > 0) {
+        excessMineralsList.innerHTML = Object.entries(data.excess_minerals).map(([typeId, qty]) => {
+            const mineral = getMineralNameById(parseInt(typeId));
+            return `<div>${mineral}: +${qty.toLocaleString()}</div>`;
+        }).join('');
+        excessMineralsDiv.style.display = 'block';
+    } else {
+        excessMineralsDiv.style.display = 'none';
+    }
+
+    // Show results and apply button
+    document.getElementById('conversionResults').style.display = 'block';
+    document.getElementById('calculateOresBtn').style.display = 'none';
+    document.getElementById('applyOresBtn').style.display = '';
+}
+
+function showConversionError(message) {
+    const errorDiv = document.getElementById('conversionError');
+    errorDiv.textContent = message;
+    errorDiv.style.display = 'block';
+}
+
+function applyCompressedOres() {
+    if (!conversionResultData || !conversionResultData.compressed_ores) {
+        alert('No conversion results to apply.');
+        return;
+    }
+
+    // Remove minerals from financial table
+    const mineralsToRemove = getMineralsFromFinancialTable();
+    const financialBody = document.getElementById('financialItemsBody');
+
+    mineralsToRemove.forEach(mineral => {
+        const row = financialBody.querySelector(`tr[data-type-id="${mineral.type_id}"]`);
+        if (row) {
+            row.remove();
+        }
+    });
+
+    // Add compressed ores to the financial table
+    conversionResultData.compressed_ores.forEach(ore => {
+        // Check if ore already exists in the table
+        let existingRow = financialBody.querySelector(`tr[data-type-id="${ore.type_id}"]`);
+
+        if (existingRow) {
+            // Update existing row quantity
+            const qtyCell = existingRow.querySelector('td[data-qty]');
+            if (qtyCell) {
+                const existingQty = parseInt(qtyCell.getAttribute('data-qty')) || 0;
+                const newQty = existingQty + ore.quantity;
+                qtyCell.setAttribute('data-qty', newQty);
+                const badge = qtyCell.querySelector('.badge');
+                if (badge) {
+                    badge.textContent = newQty.toLocaleString();
+                }
+            }
+
+            // Update price
+            const priceInput = existingRow.querySelector('.real-price');
+            if (priceInput) {
+                priceInput.value = ore.unit_price.toFixed(2);
+            }
+        } else {
+            // Create new row for the ore
+            const newRow = document.createElement('tr');
+            newRow.setAttribute('data-type-id', ore.type_id);
+            newRow.innerHTML = `
+                <td class="fw-semibold" data-manual-label="Manual">
+                    <div class="d-flex align-items-center gap-2 craft-planner-item-flex">
+                        <img src="https://images.evetech.net/types/${ore.type_id}/icon?size=32" alt="${ore.type_name}" class="rounded eve-type-icon eve-type-icon--28" onerror="this.style.display='none';">
+                        <span class="craft-planner-item-name-wrap">
+                            <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 text-xs craft-planner-item-name">${ore.type_name}</span>
+                        </span>
+                    </div>
+                </td>
+                <td class="text-end text-xs" data-qty="${ore.quantity}">
+                    <span class="badge bg-primary text-white">${ore.quantity.toLocaleString()}</span>
+                </td>
+                <td class="text-end">
+                    <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs" data-type-id="${ore.type_id}" value="${ore.unit_price.toFixed(2)}" readonly>
+                </td>
+                <td class="text-end">
+                    <input type="number" min="0" step="0.01" class="form-control form-control-sm real-price text-end text-xs" data-type-id="${ore.type_id}" value="${ore.unit_price.toFixed(2)}">
+                </td>
+                <td class="text-end text-xs total-cost fw-semibold">${ore.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td class="text-end text-xs item-margin">-</td>
+            `;
+
+            // Insert before the final product row
+            const finalProductRow = document.getElementById('finalProductRow');
+            if (finalProductRow) {
+                financialBody.insertBefore(newRow, finalProductRow);
+            } else {
+                financialBody.appendChild(newRow);
+            }
+        }
+    });
+
+    // Trigger recalculation
+    updateFinancialSummary();
+
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('convertMineralsModal'));
+    if (modal) {
+        modal.hide();
+    }
+
+    // Show success message
+    alert(`Successfully replaced minerals with ${conversionResultData.compressed_ores.length} compressed ore type(s).`);
+}
+
+function getMineralNameById(typeId) {
+    const minerals = getMineralsFromFinancialTable();
+    const found = minerals.find(m => m.type_id === typeId);
+    return found ? found.type_name : `Mineral ${typeId}`;
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
 }

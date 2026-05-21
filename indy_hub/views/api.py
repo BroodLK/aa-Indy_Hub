@@ -1262,3 +1262,83 @@ def load_production_config(request):
         logger.error(f"Error loading production config: {e}")
         return JsonResponse({"error": "Internal server error"}, status=500)
 
+
+@login_required
+@require_http_methods(["POST"])
+def convert_minerals_to_compressed_ore(request):
+    """
+    Convert mineral requirements to optimal compressed ore purchases.
+
+    Expects JSON body:
+    {
+        "minerals": [{"type_id": 34, "quantity": 1000}, ...],
+        "refine_rate": 84.2
+    }
+
+    Returns:
+    {
+        "compressed_ores": [{"type_id": ..., "type_name": ..., "quantity": ..., "unit_price": ..., "total_cost": ...}],
+        "total_cost": 12345.67,
+        "excess_minerals": {"34": 50, ...},
+        "error": null or error message
+    }
+    """
+    try:
+        # Local import to avoid circular dependency
+        from ..services.reprocessing import calculate_compressed_ore_for_minerals
+
+        # Parse request body
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        minerals_list = data.get("minerals", [])
+        refine_rate = data.get("refine_rate", 84.2)
+
+        if not minerals_list:
+            return JsonResponse({"error": "No minerals provided"}, status=400)
+
+        # Convert to dict format expected by the function
+        mineral_requirements = {}
+        for mineral in minerals_list:
+            try:
+                type_id = int(mineral.get("type_id", 0))
+                quantity = int(mineral.get("quantity", 0))
+                if type_id > 0 and quantity > 0:
+                    mineral_requirements[type_id] = quantity
+            except (TypeError, ValueError):
+                continue
+
+        if not mineral_requirements:
+            return JsonResponse({"error": "No valid minerals provided"}, status=400)
+
+        # Perform calculation
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements=mineral_requirements,
+            refine_rate_percent=Decimal(str(refine_rate))
+        )
+
+        # Convert Decimal values to float for JSON serialization
+        json_result = {
+            "compressed_ores": [
+                {
+                    "type_id": ore["type_id"],
+                    "type_name": ore["type_name"],
+                    "quantity": ore["quantity"],
+                    "unit_price": float(ore["unit_price"]),
+                    "total_cost": float(ore["total_cost"]),
+                }
+                for ore in result["compressed_ores"]
+            ],
+            "total_cost": float(result["total_cost"]),
+            "excess_minerals": {str(k): v for k, v in result["excess_minerals"].items()},
+            "error": result.get("error"),
+        }
+
+        return JsonResponse(json_result)
+
+    except Exception as e:
+        logger.error(f"Error converting minerals to compressed ore: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
+

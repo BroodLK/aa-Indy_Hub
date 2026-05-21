@@ -923,3 +923,209 @@ def contract_items_match_with_tolerance(
             )
 
     return (len(errors) == 0), errors
+
+
+def calculate_compressed_ore_for_minerals(
+    *,
+    mineral_requirements: dict[int, int],
+    refine_rate_percent: Decimal,
+) -> dict[str, object]:
+    """
+    Calculate the optimal compressed ore types needed to satisfy mineral requirements.
+
+    Args:
+        mineral_requirements: Dict of {mineral_type_id: quantity_needed}
+        refine_rate_percent: Refining efficiency percentage (e.g., 84.2 for 84.2%)
+
+    Returns:
+        Dict containing:
+            - compressed_ores: List of {type_id, type_name, quantity, cost, mineral_yields}
+            - total_cost: Total ISK cost
+            - excess_minerals: Dict of excess minerals produced
+    """
+    if not mineral_requirements:
+        return {
+            "compressed_ores": [],
+            "total_cost": Decimal("0.00"),
+            "excess_minerals": {},
+            "error": None,
+        }
+
+    try:
+        import eve_sde.models as sde_models
+    except Exception as e:
+        return {
+            "compressed_ores": [],
+            "total_cost": Decimal("0.00"),
+            "excess_minerals": {},
+            "error": f"EVE SDE not available: {e}",
+        }
+
+    # Get all compressed ore types (they have "Compressed" in the name and reprocess to minerals)
+    item_type_model = getattr(sde_models, "ItemType", None)
+    if not item_type_model:
+        return {
+            "compressed_ores": [],
+            "total_cost": Decimal("0.00"),
+            "excess_minerals": {},
+            "error": "ItemType model not found",
+        }
+
+    # Find compressed ores
+    try:
+        compressed_ore_types = list(
+            item_type_model.objects.filter(
+                name__icontains="Compressed"
+            ).exclude(
+                name__icontains="Blueprint"
+            ).exclude(
+                name__icontains="SKIN"
+            ).values_list("id", "name")
+        )
+    except Exception as e:
+        return {
+            "compressed_ores": [],
+            "total_cost": Decimal("0.00"),
+            "excess_minerals": {},
+            "error": f"Failed to query compressed ores: {e}",
+        }
+
+    # Build ore info: what minerals each compressed ore produces
+    ore_mineral_yields: dict[int, dict[int, int]] = {}
+    for ore_type_id, ore_name in compressed_ore_types:
+        outputs = get_reprocessing_outputs_for_type(ore_type_id)
+        if outputs:
+            # Check if this ore produces any of the requested minerals
+            if any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
+                ore_mineral_yields[ore_type_id] = outputs
+
+    if not ore_mineral_yields:
+        return {
+            "compressed_ores": [],
+            "total_cost": Decimal("0.00"),
+            "excess_minerals": {},
+            "error": "No compressed ores found that produce the required minerals",
+        }
+
+    # Get prices for all compressed ores
+    ore_type_ids = list(ore_mineral_yields.keys())
+    try:
+        price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=15)
+    except FuzzworkError:
+        price_map = {}
+
+    # Calculate refine rate ratio
+    refine_ratio = _to_decimal(refine_rate_percent) / Decimal("100")
+    if refine_ratio <= Decimal("0") or refine_ratio > Decimal("1"):
+        refine_ratio = Decimal("0.842")  # Default to 84.2%
+
+    # Greedy algorithm: repeatedly pick the most cost-effective ore for remaining minerals
+    remaining_minerals = {int(k): int(v) for k, v in mineral_requirements.items()}
+    selected_ores: dict[int, int] = {}  # {ore_type_id: quantity}
+
+    max_iterations = 10000  # Safety limit
+    iteration = 0
+
+    while any(qty > 0 for qty in remaining_minerals.values()) and iteration < max_iterations:
+        iteration += 1
+        best_ore_id = None
+        best_cost_per_need = None
+
+        for ore_type_id, mineral_outputs in ore_mineral_yields.items():
+            # Calculate how much of each needed mineral this ore provides per unit
+            ore_prices = price_map.get(ore_type_id, {})
+            ore_unit_price = _to_decimal(ore_prices.get("sell", 0))
+
+            if ore_unit_price <= 0:
+                continue  # Skip ores without prices
+
+            # Get portion size for this ore
+            portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
+
+            # Calculate minerals produced per portion at given refine rate
+            minerals_per_portion: dict[int, int] = {}
+            for mineral_id, base_qty in mineral_outputs.items():
+                refined_qty = int((Decimal(base_qty) * refine_ratio).quantize(Decimal("1"), rounding=ROUND_FLOOR))
+                if refined_qty > 0:
+                    minerals_per_portion[mineral_id] = refined_qty
+
+            # Calculate how much this ore helps with remaining needs
+            need_coverage = Decimal("0")
+            for mineral_id, produced_qty in minerals_per_portion.items():
+                if mineral_id in remaining_minerals and remaining_minerals[mineral_id] > 0:
+                    # This ore produces something we need
+                    need_coverage += Decimal(produced_qty)
+
+            if need_coverage <= 0:
+                continue
+
+            # Cost per portion
+            cost_per_portion = ore_unit_price * Decimal(portion_size)
+
+            # Cost efficiency: cost per unit of "need coverage"
+            cost_efficiency = cost_per_portion / need_coverage
+
+            if best_cost_per_need is None or cost_efficiency < best_cost_per_need:
+                best_cost_per_need = cost_efficiency
+                best_ore_id = ore_type_id
+
+        if best_ore_id is None:
+            # No ore can satisfy remaining needs (possibly due to missing prices)
+            break
+
+        # Add one portion of the best ore
+        portion_size = max(get_reprocessing_portion_size(best_ore_id), 1)
+        selected_ores[best_ore_id] = selected_ores.get(best_ore_id, 0) + portion_size
+
+        # Update remaining minerals
+        for mineral_id, base_qty in ore_mineral_yields[best_ore_id].items():
+            refined_qty = int((Decimal(base_qty) * refine_ratio).quantize(Decimal("1"), rounding=ROUND_FLOOR))
+            if mineral_id in remaining_minerals:
+                remaining_minerals[mineral_id] -= refined_qty
+                if remaining_minerals[mineral_id] < 0:
+                    remaining_minerals[mineral_id] = 0
+
+    # Calculate total minerals produced and excess
+    total_minerals_produced: dict[int, int] = {}
+    for ore_type_id, ore_qty in selected_ores.items():
+        portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
+        num_portions = ore_qty // portion_size
+
+        for mineral_id, base_qty in ore_mineral_yields[ore_type_id].items():
+            refined_qty = int((Decimal(base_qty) * refine_ratio * Decimal(num_portions)).quantize(Decimal("1"), rounding=ROUND_FLOOR))
+            total_minerals_produced[mineral_id] = total_minerals_produced.get(mineral_id, 0) + refined_qty
+
+    excess_minerals: dict[int, int] = {}
+    for mineral_id, produced in total_minerals_produced.items():
+        required = mineral_requirements.get(mineral_id, 0)
+        if produced > required:
+            excess_minerals[mineral_id] = produced - required
+
+    # Build result with ore details and costs
+    compressed_ore_list = []
+    total_cost = Decimal("0.00")
+
+    for ore_type_id, ore_qty in selected_ores.items():
+        ore_prices = price_map.get(ore_type_id, {})
+        ore_unit_price = _to_decimal(ore_prices.get("sell", 0)).quantize(Decimal("0.01"))
+        ore_total_cost = (_to_decimal(ore_qty) * ore_unit_price).quantize(Decimal("0.01"))
+        total_cost += ore_total_cost
+
+        compressed_ore_list.append({
+            "type_id": ore_type_id,
+            "type_name": get_type_name(ore_type_id),
+            "quantity": ore_qty,
+            "unit_price": ore_unit_price,
+            "total_cost": ore_total_cost,
+            "mineral_yields": ore_mineral_yields[ore_type_id],
+        })
+
+    # Sort by type name for consistent ordering
+    compressed_ore_list.sort(key=lambda x: x["type_name"])
+
+    return {
+        "compressed_ores": compressed_ore_list,
+        "total_cost": total_cost.quantize(Decimal("0.01")),
+        "excess_minerals": excess_minerals,
+        "error": None,
+    }

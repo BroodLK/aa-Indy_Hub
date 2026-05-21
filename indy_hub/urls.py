@@ -3,6 +3,7 @@ from django.http import HttpResponse
 from django.urls import path
 
 from .views.api import (
+    convert_minerals_to_compressed_ore,
     craft_build_environment,
     craft_bpc_contracts,
     craft_sync_owned_bpcs,
@@ -238,6 +239,11 @@ urlpatterns = [
     ),
     path("craft/<int:type_id>/", craft_bp, name="craft_bp"),
     path("api/fuzzwork-price/", fuzzwork_price, name="fuzzwork_price"),
+    path(
+        "api/convert-minerals-to-ore/",
+        convert_minerals_to_compressed_ore,
+        name="convert_minerals_to_compressed_ore",
+    ),
     path(
         "api/craft-build-environment/",
         craft_build_environment,
