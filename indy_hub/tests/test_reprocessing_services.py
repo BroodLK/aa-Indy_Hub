@@ -3,12 +3,15 @@
 # Standard Library
 from datetime import timedelta
 from decimal import Decimal
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import call, patch
 
 # Django
 from django.contrib.auth.models import Permission, User
 from django.core.cache import cache
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -30,8 +33,10 @@ from indy_hub.tasks.material_exchange_contracts import (
     sync_reprocessing_character_contracts,
 )
 from indy_hub.services.reprocessing import (
+    COMPRESSED_ORE_CACHE_LOAD_COMMAND,
     _populate_compressed_ore_cache,
     build_reprocessing_estimate,
+    calculate_compressed_ore_for_minerals,
     compute_estimated_yield_percent,
     contract_items_match_exact,
     contract_items_match_with_tolerance,
@@ -723,6 +728,51 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
 
         self.assertFalse(success)
         self.assertIn("esde_load_sde", message)
+
+
+class CompressedOreCalculationSetupTests(SimpleTestCase):
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_calculation_requires_preloaded_cache(self, mock_cache_model):
+        mock_cache_model.needs_initial_setup.return_value = True
+
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 1000},
+            refine_rate_percent=Decimal("84.2"),
+        )
+
+        self.assertEqual(result["compressed_ores"], [])
+        self.assertIn(COMPRESSED_ORE_CACHE_LOAD_COMMAND, str(result["error"]))
+
+
+class CompressedOreCacheCommandTests(SimpleTestCase):
+    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache.clear_compressed_ore_cache")
+    def test_clear_only_option(self, mock_clear_cache):
+        mock_clear_cache.return_value = 12
+        out = StringIO()
+
+        call_command("indy_hub_load_compressed_ore_cache", "--clear-only", stdout=out)
+
+        self.assertIn("Cleared 12 compressed ore cache rows.", out.getvalue())
+
+    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache._update_compressed_ore_prices")
+    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache._populate_compressed_ore_cache")
+    def test_populates_cache_and_updates_prices(self, mock_populate, mock_update_prices):
+        mock_populate.return_value = (True, "Populated cache with 99 compressed ores")
+        mock_update_prices.return_value = (True, "Updated prices for 99 compressed ores")
+        out = StringIO()
+
+        call_command("indy_hub_load_compressed_ore_cache", stdout=out)
+
+        output = out.getvalue()
+        self.assertIn("Populated cache with 99 compressed ores", output)
+        self.assertIn("Updated prices for 99 compressed ores", output)
+
+    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache._populate_compressed_ore_cache")
+    def test_raises_command_error_when_population_fails(self, mock_populate):
+        mock_populate.return_value = (False, "bad cache state")
+
+        with self.assertRaises(CommandError):
+            call_command("indy_hub_load_compressed_ore_cache")
 
 
 class ReprocessingYieldFormulaTests(TestCase):

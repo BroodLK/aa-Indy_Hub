@@ -936,6 +936,7 @@ def clear_compressed_ore_cache():
 
 
 ASTEROID_CATEGORY_ID = 25
+COMPRESSED_ORE_CACHE_LOAD_COMMAND = "python manage.py indy_hub_load_compressed_ore_cache"
 
 
 def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
@@ -1128,22 +1129,20 @@ def calculate_compressed_ore_for_minerals(
             "error": None,
         }
 
-    # Check if cache needs initial setup
     if CompressedOreCache.needs_initial_setup():
-        update_progress("Running first-time setup...")
-        update_progress("Populating database with compressed ore data...")
-        success, message = _populate_compressed_ore_cache()
-        if not success:
-            return {
-                "compressed_ores": [],
-                "total_cost": Decimal("0.00"),
-                "excess_minerals": {},
-                "prices_estimated": False,
-                "error": message,
-            }
-        update_progress(message)
+        return {
+            "compressed_ores": [],
+            "total_cost": Decimal("0.00"),
+            "excess_minerals": {},
+            "prices_estimated": False,
+            "error": (
+                "Compressed ore cache is not initialized or is outdated. "
+                f"Run `{COMPRESSED_ORE_CACHE_LOAD_COMMAND}` in your Alliance Auth installation."
+            ),
+        }
 
-    # Check if prices need updating
+    # Refresh prices lazily when stale; this is the only networked step allowed
+    # on the request path.
     if CompressedOreCache.needs_price_update():
         update_progress("Updating prices from market data...")
         _update_compressed_ore_prices()  # Don't fail if this doesn't work
