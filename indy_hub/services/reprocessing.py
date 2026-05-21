@@ -935,8 +935,11 @@ def clear_compressed_ore_cache():
     return count
 
 
+ASTEROID_CATEGORY_ID = 25
+
+
 def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
-    """Match only market-group ancestry that represents compressed ore."""
+    """Match only market-group ancestry that represents compressed ore/resources."""
     relation = "market_group"
     market_group_filter = models.Q()
     for _ in range(max_depth):
@@ -946,6 +949,17 @@ def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
         )
         relation = f"{relation}__parent_group"
     return market_group_filter
+
+
+def _compressed_ore_type_filter() -> models.Q:
+    """Match compressed ore-like resources while excluding compressed modules."""
+    return (
+        models.Q(name__icontains="Compressed")
+        & (
+            models.Q(group__category_id=ASTEROID_CATEGORY_ID)
+            | _compressed_ore_market_group_filter()
+        )
+    )
 
 
 def _populate_compressed_ore_cache() -> tuple[bool, str]:
@@ -988,14 +1002,15 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     except Exception:
         pass
 
-    # Find all compressed ores via market-group ancestry instead of type names.
-    # Name-only matching pulls in compressed modules and other non-ore items.
+    # Find all compressed ores/resources using the SDE item category first.
+    # Category 25 (Asteroid) covers ore, moon ore, and ice while excluding modules.
+    # Market-group ancestry remains as a fallback because SDE layouts vary.
     try:
         compressed_ore_types = list(
             item_type_model.objects.filter(
                 published=True
             ).filter(
-                _compressed_ore_market_group_filter()
+                _compressed_ore_type_filter()
             ).values_list("id", "name")
         )
     except Exception as e:

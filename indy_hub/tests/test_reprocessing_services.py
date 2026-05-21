@@ -551,17 +551,22 @@ class ReprocessingEstimateTests(TestCase):
 
 
 class CompressedOreCachePopulationTests(SimpleTestCase):
+    class _FakeGroup:
+        def __init__(self, category_id):
+            self.category_id = category_id
+
     class _FakeMarketGroup:
         def __init__(self, name, parent_group=None):
             self.name = name
             self.parent_group = parent_group
 
     class _FakeItemType:
-        def __init__(self, type_id, name, *, published, market_group):
+        def __init__(self, type_id, name, *, published, market_group, group):
             self.id = type_id
             self.name = name
             self.published = published
             self.market_group = market_group
+            self.group = group
 
     class _FakeQuerySet:
         def __init__(self, rows):
@@ -620,18 +625,20 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
         mock_outputs,
         _mock_clear_cache,
     ):
+        asteroid_group = self._FakeGroup(category_id=25)
+        module_group_type = self._FakeGroup(category_id=7)
         veldspar_group = self._FakeMarketGroup(
             "Veldspar",
             parent_group=self._FakeMarketGroup(
-                "Standard Ore",
-                parent_group=self._FakeMarketGroup("Compressed Ore"),
+                "Standard Ores",
+                parent_group=self._FakeMarketGroup("Harvestable Resources"),
             ),
         )
         bitumens_group = self._FakeMarketGroup(
             "Bitumens",
             parent_group=self._FakeMarketGroup(
-                "Ubiquitous Moon Ore",
-                parent_group=self._FakeMarketGroup("Compressed Moon Ore"),
+                "Exceptional Moon Ores",
+                parent_group=self._FakeMarketGroup("Moon Materials"),
             ),
         )
         module_group = self._FakeMarketGroup("Hybrid Turrets")
@@ -641,18 +648,21 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             "Compressed Veldspar",
             published=True,
             market_group=veldspar_group,
+            group=asteroid_group,
         )
         moon_ore_type = self._FakeItemType(
             3002,
             "Compressed Bitumens",
             published=True,
             market_group=bitumens_group,
+            group=asteroid_group,
         )
         module_type = self._FakeItemType(
             3003,
             "Compressed Enduring Dual 1000mm Railgun",
             published=True,
             market_group=module_group,
+            group=module_group_type,
         )
 
         fake_item_type_model = SimpleNamespace(
@@ -663,7 +673,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             moon_ore_type.id: {34: 200},
             module_type.id: {34: 10},
         }.__getitem__
-        mock_cache_model.CACHE_VERSION = 3
+        mock_cache_model.CACHE_VERSION = 4
 
         with patch("eve_sde.models.ItemType", fake_item_type_model):
             success, message = _populate_compressed_ore_cache()
@@ -676,7 +686,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
                     defaults={
                         "ore_name": ore_type.name,
                         "reprocessing_outputs": {34: 400},
-                        "cache_version": 3,
+                        "cache_version": 4,
                     },
                 ),
                 call(
@@ -684,7 +694,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
                     defaults={
                         "ore_name": moon_ore_type.name,
                         "reprocessing_outputs": {34: 200},
-                        "cache_version": 3,
+                        "cache_version": 4,
                     },
                 ),
             ],
