@@ -744,6 +744,39 @@ class CompressedOreCalculationSetupTests(SimpleTestCase):
         self.assertIn(COMPRESSED_ORE_CACHE_LOAD_COMMAND, str(result["error"]))
 
 
+class CompressedOreCalculationPerformanceTests(SimpleTestCase):
+    @patch("indy_hub.services.reprocessing.get_type_name", return_value="Compressed Veldspar")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=1)
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_large_static_requirement_is_solved_without_single_portion_loop(
+        self,
+        mock_cache_model,
+        _mock_portion_size,
+        _mock_type_name,
+    ):
+        mock_cache_model.needs_initial_setup.return_value = False
+        mock_cache_model.needs_price_update.return_value = False
+        mock_cache_model.objects.all.return_value.values.return_value = [
+            {
+                "ore_type_id": 123,
+                "ore_name": "Compressed Veldspar",
+                "reprocessing_outputs": {"34": 1},
+                "sell_price": Decimal("2.00"),
+            }
+        ]
+
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 50000},
+            refine_rate_percent=Decimal("100.0"),
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertEqual(len(result["compressed_ores"]), 1)
+        self.assertEqual(result["compressed_ores"][0]["type_id"], 123)
+        self.assertEqual(result["compressed_ores"][0]["quantity"], 50000)
+        self.assertEqual(result["total_cost"], Decimal("100000.00"))
+
+
 class CompressedOreCacheCommandTests(SimpleTestCase):
     @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache.clear_compressed_ore_cache")
     def test_clear_only_option(self, mock_clear_cache):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 # Standard Library
-from decimal import Decimal, ROUND_FLOOR
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from functools import lru_cache
 import math
 import re
@@ -1190,11 +1190,35 @@ def calculate_compressed_ore_for_minerals(
     if refine_ratio <= Decimal("0") or refine_ratio > Decimal("1"):
         refine_ratio = Decimal("0.842")  # Default to 84.2%
 
-    # Greedy algorithm: repeatedly pick the most cost-effective ore for remaining minerals
+    # Precompute per-portion yields and costs once so the solver only does cheap math.
+    ore_portion_data: dict[int, dict[str, object]] = {}
+    for ore_type_id, mineral_outputs in ore_mineral_yields.items():
+        portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
+        ore_prices = price_map.get(ore_type_id, {})
+        ore_unit_price = _to_decimal(ore_prices.get("sell", 0))
+        if ore_unit_price <= 0:
+            ore_unit_price = Decimal("1.0")
+
+        refined_per_portion: dict[int, Decimal] = {}
+        for mineral_id, base_qty in mineral_outputs.items():
+            refined_qty = _to_decimal(base_qty) * refine_ratio
+            if refined_qty > 0:
+                refined_per_portion[mineral_id] = refined_qty
+
+        if refined_per_portion:
+            ore_portion_data[ore_type_id] = {
+                "portion_size": portion_size,
+                "unit_price": ore_unit_price,
+                "cost_per_portion": ore_unit_price * Decimal(portion_size),
+                "refined_per_portion": refined_per_portion,
+            }
+
+    # Greedy algorithm: repeatedly pick the most cost-effective ore for the
+    # current deficits, but buy enough portions to close at least one mineral
+    # deficit each iteration. This avoids millions of single-portion loops.
     remaining_minerals = {int(k): int(v) for k, v in mineral_requirements.items()}
     selected_ores: dict[int, int] = {}  # {ore_type_id: quantity}
-
-    max_iterations = 10000  # Safety limit
+    max_iterations = max(16, len(remaining_minerals) * 8)
     iteration = 0
 
     while any(qty > 0 for qty in remaining_minerals.values()) and iteration < max_iterations:
@@ -1202,37 +1226,19 @@ def calculate_compressed_ore_for_minerals(
         best_ore_id = None
         best_cost_per_need = None
 
-        for ore_type_id, mineral_outputs in ore_mineral_yields.items():
-            # Calculate how much of each needed mineral this ore provides per unit
-            ore_prices = price_map.get(ore_type_id, {})
-            ore_unit_price = _to_decimal(ore_prices.get("sell", 0))
+        for ore_type_id, portion_data in ore_portion_data.items():
+            refined_per_portion = portion_data["refined_per_portion"]
+            cost_per_portion = portion_data["cost_per_portion"]
 
-            # If no price available, use fallback
-            if ore_unit_price <= 0:
-                ore_unit_price = Decimal("1.0")
-
-            # Get portion size for this ore
-            portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
-
-            # Calculate minerals produced per portion at given refine rate
-            minerals_per_portion: dict[int, int] = {}
-            for mineral_id, base_qty in mineral_outputs.items():
-                refined_qty = int((Decimal(base_qty) * refine_ratio).quantize(Decimal("1"), rounding=ROUND_FLOOR))
-                if refined_qty > 0:
-                    minerals_per_portion[mineral_id] = refined_qty
-
-            # Calculate how much this ore helps with remaining needs
+            # Count only coverage we still need right now.
             need_coverage = Decimal("0")
-            for mineral_id, produced_qty in minerals_per_portion.items():
-                if mineral_id in remaining_minerals and remaining_minerals[mineral_id] > 0:
-                    # This ore produces something we need
-                    need_coverage += Decimal(produced_qty)
+            for mineral_id, produced_qty in refined_per_portion.items():
+                remaining_qty = remaining_minerals.get(mineral_id, 0)
+                if remaining_qty > 0:
+                    need_coverage += min(Decimal(remaining_qty), produced_qty)
 
             if need_coverage <= 0:
                 continue
-
-            # Cost per portion
-            cost_per_portion = ore_unit_price * Decimal(portion_size)
 
             # Cost efficiency: cost per unit of "need coverage"
             cost_efficiency = cost_per_portion / need_coverage
@@ -1245,13 +1251,40 @@ def calculate_compressed_ore_for_minerals(
             # No ore can satisfy remaining needs (possibly due to missing prices)
             break
 
-        # Add one portion of the best ore
-        portion_size = max(get_reprocessing_portion_size(best_ore_id), 1)
-        selected_ores[best_ore_id] = selected_ores.get(best_ore_id, 0) + portion_size
+        best_portion_data = ore_portion_data[best_ore_id]
+        best_refined_per_portion = best_portion_data["refined_per_portion"]
+        portion_size = int(best_portion_data["portion_size"])
+
+        # Add enough portions to satisfy at least one remaining mineral that this ore
+        # contributes to. This keeps the iteration count bounded by the number of
+        # meaningful deficit changes instead of the requested ore quantity.
+        relevant_portion_counts = []
+        for mineral_id, produced_qty in best_refined_per_portion.items():
+            remaining_qty = remaining_minerals.get(mineral_id, 0)
+            if remaining_qty <= 0 or produced_qty <= 0:
+                continue
+            portions_needed = (
+                Decimal(remaining_qty) / produced_qty
+            ).to_integral_value(rounding=ROUND_CEILING)
+            if portions_needed > 0:
+                relevant_portion_counts.append(int(portions_needed))
+
+        if not relevant_portion_counts:
+            break
+
+        portions_to_add = max(1, min(relevant_portion_counts))
+        selected_ores[best_ore_id] = (
+            selected_ores.get(best_ore_id, 0) + (portion_size * portions_to_add)
+        )
 
         # Update remaining minerals
-        for mineral_id, base_qty in ore_mineral_yields[best_ore_id].items():
-            refined_qty = int((Decimal(base_qty) * refine_ratio).quantize(Decimal("1"), rounding=ROUND_FLOOR))
+        for mineral_id, refined_per_portion in best_refined_per_portion.items():
+            refined_qty = int(
+                (refined_per_portion * Decimal(portions_to_add)).quantize(
+                    Decimal("1"),
+                    rounding=ROUND_FLOOR,
+                )
+            )
             if mineral_id in remaining_minerals:
                 remaining_minerals[mineral_id] -= refined_qty
                 if remaining_minerals[mineral_id] < 0:
@@ -1260,11 +1293,16 @@ def calculate_compressed_ore_for_minerals(
     # Calculate total minerals produced and excess
     total_minerals_produced: dict[int, int] = {}
     for ore_type_id, ore_qty in selected_ores.items():
-        portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
+        portion_size = int(ore_portion_data[ore_type_id]["portion_size"])
         num_portions = ore_qty // portion_size
 
-        for mineral_id, base_qty in ore_mineral_yields[ore_type_id].items():
-            refined_qty = int((Decimal(base_qty) * refine_ratio * Decimal(num_portions)).quantize(Decimal("1"), rounding=ROUND_FLOOR))
+        for mineral_id, refined_per_portion in ore_portion_data[ore_type_id]["refined_per_portion"].items():
+            refined_qty = int(
+                (refined_per_portion * Decimal(num_portions)).quantize(
+                    Decimal("1"),
+                    rounding=ROUND_FLOOR,
+                )
+            )
             total_minerals_produced[mineral_id] = total_minerals_produced.get(mineral_id, 0) + refined_qty
 
     excess_minerals: dict[int, int] = {}
