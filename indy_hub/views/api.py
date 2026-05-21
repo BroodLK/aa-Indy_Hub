@@ -870,9 +870,30 @@ def craft_industry_fees(request):
     total_api_cost = Decimal("0")
 
     for product_id, runs in jobs:
+        # Detect if this is a reaction or manufacturing blueprint
+        # by checking which blueprint produces this product
+        try:
+            from indy_hub.models import SdeIndustryActivityProduct
+
+            # Try to find the blueprint for this product
+            blueprint_activity = SdeIndustryActivityProduct.objects.filter(
+                product_eve_type_id=product_id
+            ).values_list('eve_type_id', 'activity_id').first()
+
+            if blueprint_activity:
+                blueprint_id, activity_id = blueprint_activity
+                is_reaction = (activity_id == 11)  # 11 is reactions
+            else:
+                is_reaction = False
+        except Exception:
+            is_reaction = False
+
+        # Determine which section to use for fee calculation
+        fee_section = "reactions" if is_reaction else "manufacturing"
+
         cache_key = (
-            "indy_hub:craft_industry_fee:v1:"
-            f"{product_id}:{runs}:"
+            "indy_hub:craft_industry_fee:v2:"
+            f"{product_id}:{runs}:{fee_section}:"
             f"{json.dumps(optional_query, sort_keys=True, default=str)}"
         )
         cached = cache.get(cache_key)
@@ -890,7 +911,7 @@ def craft_industry_fees(request):
             )
             summary = summarize_job_fees(
                 payload,
-                included_sections={"manufacturing"},
+                included_sections={fee_section},
             )
             row = {
                 "product_id": product_id,
@@ -898,6 +919,7 @@ def craft_industry_fees(request):
                 "total_job_cost": float(summary["total_job_cost"]),
                 "total_api_cost": float(summary["total_api_cost"]),
                 "section_job_costs": summary["section_job_costs"],
+                "activity_type": fee_section,
             }
             cache.set(cache_key, row, 300)
             response_jobs.append(row)
@@ -1446,8 +1468,8 @@ def calculate_build_schedule(request):
                 # Calculate runs required
                 runs_required = ceil(quantity_needed / max(quantity_per_run, 1))
 
-                # Get base manufacturing time
-                base_time = get_base_manufacturing_time(blueprint_type_id)
+                # Get base manufacturing time and detect activity type
+                base_time, activity_id = get_base_manufacturing_time(blueprint_type_id)
 
                 if base_time == 0:
                     # Fallback: estimate based on quantity if no time data
@@ -1473,6 +1495,7 @@ def calculate_build_schedule(request):
                     base_time_seconds=base_time,
                     adjusted_time_seconds=adjusted_time,
                     total_time_seconds=adjusted_time * runs_required,
+                    activity_id=activity_id,
                     material_efficiency=me,
                     time_efficiency=te,
                     dependencies=dependencies.get(item_type_id, []),

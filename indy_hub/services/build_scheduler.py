@@ -41,6 +41,7 @@ class ManufacturingJob:
     base_time_seconds: int  # Base manufacturing time per run
     adjusted_time_seconds: int  # After TE, skills, structure bonuses
     total_time_seconds: int  # Total for all runs
+    activity_id: int = ACTIVITY_MANUFACTURING  # 1=manufacturing, 11=reactions
     material_efficiency: int = 0
     time_efficiency: int = 0
     dependencies: List[int] = field(default_factory=list)  # List of item_type_ids that must be built first
@@ -54,6 +55,16 @@ class ManufacturingJob:
         """Calculate total time after initialization."""
         if self.total_time_seconds == 0:
             self.total_time_seconds = self.adjusted_time_seconds * self.runs_required
+
+    @property
+    def activity_name(self) -> str:
+        """Get human-readable activity name."""
+        if self.activity_id == ACTIVITY_REACTION:
+            return "Reaction"
+        elif self.activity_id == ACTIVITY_MANUFACTURING:
+            return "Manufacturing"
+        else:
+            return f"Activity {self.activity_id}"
 
 
 @dataclass
@@ -122,6 +133,8 @@ class BuildSchedule:
                     'end_time_seconds': job.end_time_seconds,
                     'end_time_formatted': format_time_duration(job.end_time_seconds),
                     'dependencies': job.dependencies,
+                    'activity_id': job.activity_id,
+                    'activity_name': job.activity_name,
                 }
                 for job in self.jobs
             ],
@@ -214,21 +227,64 @@ def calculate_manufacturing_time(
     return max(1, math.ceil(adjusted))
 
 
-def get_base_manufacturing_time(blueprint_type_id: int) -> int:
+def detect_blueprint_activity_type(blueprint_type_id: int) -> int:
     """
-    Get base manufacturing time for a blueprint from eve_sde.
+    Detect whether a blueprint is for manufacturing (1) or reactions (11).
 
     Args:
         blueprint_type_id: Blueprint type ID
 
     Returns:
-        Base manufacturing time in seconds, or 0 if not found
+        Activity ID (1 for manufacturing, 11 for reactions), defaults to 1
+    """
+    try:
+        from indy_hub.models import SdeIndustryActivityProduct
+
+        # Check if this blueprint has products for reaction activity
+        has_reaction = SdeIndustryActivityProduct.objects.filter(
+            eve_type_id=blueprint_type_id,
+            activity_id=ACTIVITY_REACTION
+        ).exists()
+
+        if has_reaction:
+            return ACTIVITY_REACTION
+
+        # Check if it has manufacturing products
+        has_manufacturing = SdeIndustryActivityProduct.objects.filter(
+            eve_type_id=blueprint_type_id,
+            activity_id=ACTIVITY_MANUFACTURING
+        ).exists()
+
+        if has_manufacturing:
+            return ACTIVITY_MANUFACTURING
+
+        # Default to manufacturing
+        return ACTIVITY_MANUFACTURING
+
+    except Exception as e:
+        logger.warning(f"Error detecting activity type for {blueprint_type_id}: {e}")
+        return ACTIVITY_MANUFACTURING
+
+
+def get_base_manufacturing_time(blueprint_type_id: int, activity_id: int = None) -> Tuple[int, int]:
+    """
+    Get base manufacturing/reaction time for a blueprint from eve_sde.
+
+    Args:
+        blueprint_type_id: Blueprint type ID
+        activity_id: Activity ID (1=manufacturing, 11=reactions), auto-detected if None
+
+    Returns:
+        Tuple of (base_time_seconds, activity_id)
     """
     try:
         import eve_sde.models as sde_models
     except ImportError:
         logger.warning("eve_sde not available for time lookup")
-        return 0
+        return (0, ACTIVITY_MANUFACTURING)
+
+    if activity_id is None:
+        activity_id = detect_blueprint_activity_type(blueprint_type_id)
 
     try:
         # Try to get manufacturing time from blueprint attributes
@@ -236,25 +292,29 @@ def get_base_manufacturing_time(blueprint_type_id: int) -> int:
         item_type = sde_models.ItemType.objects.filter(id=blueprint_type_id).first()
 
         if not item_type:
-            return 0
+            return (0, activity_id)
 
         # Check for time attribute in dogma attributes
-        # Manufacturing time attribute ID is typically 1210
+        # Manufacturing time attribute ID is typically 1210 for manufacturing
+        # Reaction time attribute ID is typically 1210 as well
         time_attr = sde_models.TypeDogma.objects.filter(
             item_type_id=blueprint_type_id,
-            dogma_attribute_id=1210  # Manufacturing time attribute
+            dogma_attribute_id=1210  # Manufacturing/reaction time attribute
         ).first()
 
         if time_attr and time_attr.value:
-            return int(time_attr.value)
+            return (int(time_attr.value), activity_id)
 
-        # Fallback: estimate based on item complexity
-        # This is a rough estimate and should be replaced with actual data
-        return 3600  # Default 1 hour
+        # Fallback: estimate based on activity type
+        # Reactions are typically faster than manufacturing
+        if activity_id == ACTIVITY_REACTION:
+            return (1800, activity_id)  # Default 30 minutes for reactions
+        else:
+            return (3600, activity_id)  # Default 1 hour for manufacturing
 
     except Exception as e:
-        logger.error(f"Error getting manufacturing time for {blueprint_type_id}: {e}")
-        return 0
+        logger.error(f"Error getting time for blueprint {blueprint_type_id}: {e}")
+        return (0, activity_id)
 
 
 def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
