@@ -9556,9 +9556,10 @@ let conversionResultData = null;
 function initMineralConversion() {
     const convertBtn = document.getElementById('convertMineralsToOreBtn');
     const calculateBtn = document.getElementById('calculateOresBtn');
+    const copyBtn = document.getElementById('copyOresBtn');
     const applyBtn = document.getElementById('applyOresBtn');
 
-    if (!convertBtn || !calculateBtn || !applyBtn) return;
+    if (!convertBtn || !calculateBtn || !copyBtn || !applyBtn) return;
 
     // Check for minerals on initial load
     checkForMineralsAndShowButton();
@@ -9576,6 +9577,7 @@ function initMineralConversion() {
     // Button click handlers
     convertBtn.addEventListener('click', openMineralConversionModal);
     calculateBtn.addEventListener('click', calculateCompressedOres);
+    copyBtn.addEventListener('click', copyCompressedOresToClipboard);
     applyBtn.addEventListener('click', applyCompressedOres);
 }
 
@@ -9662,11 +9664,13 @@ function openMineralConversionModal() {
     document.getElementById('conversionError').style.display = 'none';
     document.getElementById('conversionLoading').style.display = 'none';
     document.getElementById('calculateOresBtn').style.display = '';
+    document.getElementById('copyOresBtn').style.display = 'none';
+    document.getElementById('copyOresBtn').textContent = 'Copy Ores';
     document.getElementById('applyOresBtn').style.display = 'none';
     conversionResultData = null;
 
     // Show modal
-    const modal = new bootstrap.Modal(document.getElementById('convertMineralsModal'));
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('convertMineralsModal'));
     modal.show();
 }
 
@@ -9784,6 +9788,7 @@ function displayConversionResults(data) {
     // Show results and apply button
     document.getElementById('conversionResults').style.display = 'block';
     document.getElementById('calculateOresBtn').style.display = 'none';
+    document.getElementById('copyOresBtn').style.display = '';
     document.getElementById('applyOresBtn').style.display = '';
 }
 
@@ -9873,13 +9878,45 @@ function applyCompressedOres() {
     updateFinancialSummary();
 
     // Close modal
-    const modal = bootstrap.Modal.getInstance(document.getElementById('convertMineralsModal'));
-    if (modal) {
-        modal.hide();
+    const modalEl = document.getElementById('convertMineralsModal');
+    bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+}
+
+async function copyCompressedOresToClipboard() {
+    if (!conversionResultData || !Array.isArray(conversionResultData.compressed_ores) || conversionResultData.compressed_ores.length === 0) {
+        showConversionError('No compressed ores to copy.');
+        return;
     }
 
-    // Show success message
-    alert(`Successfully replaced minerals with ${conversionResultData.compressed_ores.length} compressed ore type(s).`);
+    const payload = conversionResultData.compressed_ores
+        .map(ore => `${ore.type_name}\t${ore.quantity}`)
+        .join('\n');
+    const copyBtn = document.getElementById('copyOresBtn');
+
+    try {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+            await navigator.clipboard.writeText(payload);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = payload;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'absolute';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        }
+
+        if (copyBtn) {
+            copyBtn.textContent = 'Copied';
+            window.setTimeout(() => {
+                copyBtn.textContent = 'Copy Ores';
+            }, 1500);
+        }
+    } catch (error) {
+        showConversionError(`Failed to copy compressed ores: ${error.message}`);
+    }
 }
 
 function getMineralNameById(typeId) {
