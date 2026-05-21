@@ -10345,7 +10345,6 @@ function initImportFees() {
             if (!isNaN(value) && value >= 0) {
                 importFeesManualOverride = value;
                 updateImportFeesDisplay();
-                recalculateFinancialSummary();
             }
         });
     }
@@ -10357,12 +10356,33 @@ function initImportFees() {
                 overrideInput.value = '';
             }
             updateImportFeesDisplay();
-            recalculateFinancialSummary();
         });
     }
 
-    // Calculate import fees whenever items change
-    // We'll hook into existing recalculation triggers
+    // Watch for changes to real price inputs to trigger recalculation
+    const tbody = document.getElementById('financialItemsBody');
+    if (tbody) {
+        // Use event delegation for input changes
+        tbody.addEventListener('input', (e) => {
+            if (e.target && e.target.classList.contains('real-price')) {
+                // Debounce the recalculation
+                clearTimeout(window.importFeesRecalcTimeout);
+                window.importFeesRecalcTimeout = setTimeout(() => {
+                    recalculateImportFeesIfNeeded();
+                }, 500);
+            }
+        });
+
+        // Also watch for row additions/removals (when items change)
+        const observer = new MutationObserver(() => {
+            clearTimeout(window.importFeesRecalcTimeout);
+            window.importFeesRecalcTimeout = setTimeout(() => {
+                recalculateImportFeesIfNeeded();
+            }, 500);
+        });
+
+        observer.observe(tbody, { childList: true, subtree: false });
+    }
 }
 
 async function calculateImportFees() {
@@ -10455,7 +10475,7 @@ function updateImportFeesDisplay() {
             overrideGroup.style.display = '';
         }
 
-        valueSpan.textContent = formatISK(fees);
+        valueSpan.textContent = formatPrice(fees);
 
         if (importFeesManualOverride !== null) {
             routeSpan.textContent = '(Manual Override)';
@@ -10495,20 +10515,6 @@ async function recalculateImportFeesIfNeeded() {
         updateImportFeesDisplay();
     }
 }
-
-// Hook into existing financial recalculation
-// We need to find where recalculateFinancialSummary is defined and extend it
-const originalRecalculateFinancialSummary = window.recalculateFinancialSummary || (() => {});
-
-window.recalculateFinancialSummary = function() {
-    originalRecalculateFinancialSummary.apply(this, arguments);
-
-    // Trigger import fee recalculation (async)
-    recalculateImportFeesIfNeeded().then(() => {
-        // After import fees are calculated, we might need to update profit calculations
-        // to include import fees in total costs
-    });
-};
 
 // Initialize on load
 document.addEventListener('DOMContentLoaded', () => {
