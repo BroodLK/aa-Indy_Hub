@@ -1480,7 +1480,9 @@
                     <h6 class="fw-semibold mb-2">{% trans "Recommended Compressed Ores:" %}</h6>
                     <div id="oresListContent" class="mb-3 overflow-auto"></div>
                     <div class="alert alert-success">
-                        <strong>{% trans "Total Cost:" %}</strong> <span id="totalCost">0 ISK</span>
+                        <div><strong>{% trans "Compressed Ore Cost:" %}</strong> <span id="totalCost">0 ISK</span></div>
+                        <div><strong>{% trans "Price of Minerals:" %}</strong> <span id="mineralsCost">0 ISK</span></div>
+                        <div><strong>{% trans "Difference:" %}</strong> <span id="priceDifference">0 ISK</span></div>
                     </div>
                     <div id="excessMineralsDiv" style="display: none;" class="alert alert-warning">
                         <strong>{% trans "Excess Minerals:" %}</strong>

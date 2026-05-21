@@ -9616,6 +9616,32 @@ function getMineralsFromFinancialTable() {
     return minerals;
 }
 
+function getMineralsBuyCostFromFinancialTable(minerals = null) {
+    const mineralRows = Array.isArray(minerals) ? minerals : getMineralsFromFinancialTable();
+    const api = window.SimulationAPI;
+
+    return mineralRows.reduce((total, mineral) => {
+        const typeId = Number(mineral.type_id) || 0;
+        const quantity = Number(mineral.quantity) || 0;
+        if (!typeId || quantity <= 0) return total;
+
+        let unitPrice = 0;
+        if (api && typeof api.getPrice === 'function') {
+            const unit = api.getPrice(typeId, 'buy');
+            unitPrice = unit && typeof unit.value === 'number' ? unit.value : 0;
+        }
+
+        if (unitPrice <= 0) {
+            const row = document.querySelector(`#financialItemsBody tr[data-type-id="${typeId}"]`);
+            const realInput = row ? row.querySelector('.real-price') : null;
+            const fuzzInput = row ? row.querySelector('.fuzzwork-price') : null;
+            unitPrice = parseFloat(realInput?.value || fuzzInput?.value || 0) || 0;
+        }
+
+        return total + (Math.max(0, unitPrice) * quantity);
+    }, 0);
+}
+
 function openMineralConversionModal() {
     const minerals = getMineralsFromFinancialTable();
     if (minerals.length === 0) {
@@ -9706,6 +9732,8 @@ function calculateCompressedOres() {
 function displayConversionResults(data) {
     const oresListContent = document.getElementById('oresListContent');
     const totalCostElement = document.getElementById('totalCost');
+    const mineralsCostElement = document.getElementById('mineralsCost');
+    const priceDifferenceElement = document.getElementById('priceDifference');
     const excessMineralsDiv = document.getElementById('excessMineralsDiv');
     const excessMineralsList = document.getElementById('excessMineralsList');
 
@@ -9723,7 +9751,19 @@ function displayConversionResults(data) {
     }
 
     // Display total cost
-    totalCostElement.textContent = data.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ISK';
+    const compressedOreCost = Number(data.total_cost) || 0;
+    const mineralsCost = getMineralsBuyCostFromFinancialTable();
+    const priceDifference = compressedOreCost - mineralsCost;
+
+    totalCostElement.textContent = formatPrice(compressedOreCost);
+    if (mineralsCostElement) {
+        mineralsCostElement.textContent = formatPrice(mineralsCost);
+    }
+    if (priceDifferenceElement) {
+        priceDifferenceElement.textContent = `${priceDifference >= 0 ? '+' : '-'}${formatPrice(Math.abs(priceDifference))}`;
+        priceDifferenceElement.classList.remove('text-danger', 'text-success');
+        priceDifferenceElement.classList.add(priceDifference > 0 ? 'text-danger' : 'text-success');
+    }
 
     // Show warning if prices are estimated
     if (data.prices_estimated === true) {
