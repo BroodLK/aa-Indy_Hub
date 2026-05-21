@@ -340,10 +340,13 @@ def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
             dependencies[item_type_id] = []
             continue
 
+        # Detect activity type (manufacturing vs reactions)
+        activity_id = detect_blueprint_activity_type(blueprint_type_id)
+
         # Get materials required for this blueprint
         materials = SdeIndustryActivityMaterial.objects.filter(
             eve_type_id=blueprint_type_id,
-            activity_id=ACTIVITY_MANUFACTURING
+            activity_id=activity_id
         ).values_list('material_eve_type_id', flat=True)
 
         # Only include dependencies that are also being produced in this plan

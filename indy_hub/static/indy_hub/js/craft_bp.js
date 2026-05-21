@@ -9919,8 +9919,8 @@ async function calculateBuildSchedule() {
                 slots: slots,
                 structure_time_bonus: structureBonus,
                 rig_time_bonus: rigBonus,
-                skill_industry: 5,  // Could be made configurable
-                skill_advanced_industry: 5,
+                skill_industry: getBuildSkillIndustry(),
+                skill_advanced_industry: getBuildSkillAdvanced(),
             }),
         });
 
@@ -9979,59 +9979,195 @@ function gatherJobsDataForSchedule() {
     return jobs;
 }
 
-function gatherSlotsDataForSchedule() {
-    const slots = [];
+// ============================================================================
+// SLOT MANAGEMENT
+// ============================================================================
 
-    // Get slots from build planner state
-    // This would need to be adapted to your actual slot configuration
-    const slotCharacters = document.querySelectorAll('.craft-build-slot-character');
+let characterSlots = [];
+let nextSlotId = 1;
 
-    slotCharacters.forEach((char, index) => {
-        const characterId = parseInt(char.getAttribute('data-character-id')) || index;
-        const characterName = char.querySelector('.character-name')?.textContent?.trim() || `Character ${index + 1}`;
-        const maxJobs = parseInt(char.getAttribute('data-max-jobs')) || 1;
+function initSlotManagement() {
+    const addSlotBtn = document.getElementById('addSlotBtn');
+    if (addSlotBtn) {
+        addSlotBtn.addEventListener('click', addSlot);
+    }
 
-        slots.push({
-            character_id: characterId,
-            character_name: characterName,
-            max_concurrent_jobs: maxJobs,
+    // Load slots from localStorage if available
+    const savedSlots = localStorage.getItem('craftBuildSlots');
+    if (savedSlots) {
+        try {
+            characterSlots = JSON.parse(savedSlots);
+            nextSlotId = Math.max(...characterSlots.map(s => s.id), 0) + 1;
+            renderSlots();
+        } catch (e) {
+            console.error('Error loading saved slots:', e);
+        }
+    }
+
+    // If no slots, show the "no slots" message
+    updateNoSlotsMessage();
+}
+
+function addSlot() {
+    const slot = {
+        id: nextSlotId++,
+        characterName: `Character ${characterSlots.length + 1}`,
+        maxJobs: 1
+    };
+
+    characterSlots.push(slot);
+    saveSlots();
+    renderSlots();
+}
+
+function removeSlot(slotId) {
+    characterSlots = characterSlots.filter(s => s.id !== slotId);
+    saveSlots();
+    renderSlots();
+}
+
+function updateSlot(slotId, field, value) {
+    const slot = characterSlots.find(s => s.id === slotId);
+    if (slot) {
+        slot[field] = value;
+        saveSlots();
+    }
+}
+
+function saveSlots() {
+    localStorage.setItem('craftBuildSlots', JSON.stringify(characterSlots));
+    updateNoSlotsMessage();
+}
+
+function updateNoSlotsMessage() {
+    const noSlotsMsg = document.getElementById('noSlotsMessage');
+    if (noSlotsMsg) {
+        noSlotsMsg.style.display = characterSlots.length === 0 ? '' : 'none';
+    }
+}
+
+function renderSlots() {
+    const container = document.getElementById('slotsContainer');
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    characterSlots.forEach(slot => {
+        const slotDiv = document.createElement('div');
+        slotDiv.className = 'card mb-2';
+        slotDiv.innerHTML = `
+            <div class="card-body p-3">
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-6">
+                        <label class="form-label small mb-1">Character Name</label>
+                        <input type="text" class="form-control form-control-sm slot-name"
+                               value="${escapeHtml(slot.characterName)}"
+                               data-slot-id="${slot.id}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small mb-1">Max Concurrent Jobs</label>
+                        <input type="number" class="form-control form-control-sm slot-max-jobs"
+                               min="1" max="10" value="${slot.maxJobs}"
+                               data-slot-id="${slot.id}">
+                    </div>
+                    <div class="col-md-2 text-end">
+                        <label class="form-label small mb-1">&nbsp;</label>
+                        <button type="button" class="btn btn-sm btn-outline-danger d-block w-100 remove-slot-btn"
+                                data-slot-id="${slot.id}">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.appendChild(slotDiv);
+
+        // Add event listeners
+        const nameInput = slotDiv.querySelector('.slot-name');
+        nameInput.addEventListener('change', (e) => {
+            updateSlot(slot.id, 'characterName', e.target.value);
+        });
+
+        const maxJobsInput = slotDiv.querySelector('.slot-max-jobs');
+        maxJobsInput.addEventListener('change', (e) => {
+            updateSlot(slot.id, 'maxJobs', parseInt(e.target.value) || 1);
+        });
+
+        const removeBtn = slotDiv.querySelector('.remove-slot-btn');
+        removeBtn.addEventListener('click', () => {
+            if (confirm(`Remove slot "${slot.characterName}"?`)) {
+                removeSlot(slot.id);
+            }
         });
     });
 
-    // Fallback: if no slots configured, create a default one
-    if (slots.length === 0) {
-        slots.push({
-            character_id: 0,
-            character_name: 'Default Character',
-            max_concurrent_jobs: 1,
-        });
+    updateNoSlotsMessage();
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function gatherSlotsDataForSchedule() {
+    // Use the slots from our slot management system
+    if (characterSlots.length > 0) {
+        return characterSlots.map((slot, index) => ({
+            character_id: slot.id,
+            character_name: slot.characterName,
+            max_concurrent_jobs: slot.maxJobs,
+        }));
     }
 
-    return slots;
+    // Fallback: return empty array if no slots
+    // The caller should handle this and show an error
+    return [];
 }
 
 function getBuildStructureTimeBonus() {
-    // Get structure bonus from configuration
-    // This would need to match your actual structure selection
-    const structureSelect = document.getElementById('buildStructureType');
-    if (structureSelect) {
-        const value = structureSelect.value;
-        if (value === 'sotiyo') return 0.25;
-        if (value === 'azbel') return 0.10;
-        if (value === 'raitaru') return 0.0;
+    const input = document.getElementById('buildStructureBonus');
+    if (input && input.value) {
+        const percent = parseFloat(input.value);
+        if (!isNaN(percent) && percent >= 0 && percent <= 100) {
+            return percent / 100; // Convert percentage to decimal (25 -> 0.25)
+        }
     }
     return 0.0;
 }
 
 function getBuildRigTimeBonus() {
-    // Get rig bonus from configuration
-    const rigSelect = document.getElementById('buildRigType');
-    if (rigSelect) {
-        const value = rigSelect.value;
-        if (value && value.includes('t2')) return 0.20;
-        if (value && value.includes('t1')) return 0.15;
+    const input = document.getElementById('buildRigBonus');
+    if (input && input.value) {
+        const percent = parseFloat(input.value);
+        if (!isNaN(percent) && percent >= 0 && percent <= 100) {
+            return percent / 100; // Convert percentage to decimal (20 -> 0.20)
+        }
     }
     return 0.0;
+}
+
+function getBuildSkillIndustry() {
+    const select = document.getElementById('buildSkillIndustry');
+    if (select && select.value) {
+        const level = parseInt(select.value);
+        if (!isNaN(level) && level >= 0 && level <= 5) {
+            return level;
+        }
+    }
+    return 5; // Default to max level
+}
+
+function getBuildSkillAdvanced() {
+    const select = document.getElementById('buildSkillAdvanced');
+    if (select && select.value) {
+        const level = parseInt(select.value);
+        if (!isNaN(level) && level >= 0 && level <= 5) {
+            return level;
+        }
+    }
+    return 5; // Default to max level
 }
 
 function displayBuildSchedule(schedule) {
@@ -10326,6 +10462,7 @@ function hideScheduleError() {
 // Initialize build schedule on load
 document.addEventListener('DOMContentLoaded', () => {
     initBuildSchedule();
+    initSlotManagement();
 });
 
 // ============================================================================

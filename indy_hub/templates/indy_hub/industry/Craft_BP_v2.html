@@ -552,6 +552,80 @@
 
             <!-- ========== BUILD TAB (V2 - ENHANCED) ========== -->
             <div class="tab-pane fade" id="build-pane" role="tabpanel" aria-labelledby="build-tab-btn">
+                <!-- Character Slots Configuration -->
+                <section class="craft-section mb-4">
+                    <div class="craft-section-header-with-actions">
+                        <h3 class="craft-section-title">
+                            <i class="fas fa-users text-primary"></i> {% trans "Character Slots" %}
+                        </h3>
+                        <button id="addSlotBtn" type="button" class="btn btn-outline-success btn-sm">
+                            <i class="fas fa-plus me-1"></i>{% trans "Add Slot" %}
+                        </button>
+                    </div>
+
+                    <div class="alert alert-info small mb-3">
+                        <i class="fas fa-info-circle me-1"></i>
+                        {% trans "Configure your available industry slots. Each character typically has 1 concurrent job slot (or more with skills)." %}
+                    </div>
+
+                    <div id="slotsContainer" class="mb-3">
+                        <!-- Slots will be added here dynamically -->
+                    </div>
+
+                    <div id="noSlotsMessage" class="text-center text-muted py-3">
+                        <i class="fas fa-inbox fa-2x mb-2 d-block"></i>
+                        <p class="mb-0">{% trans "No slots configured. Click 'Add Slot' to begin." %}</p>
+                    </div>
+                </section>
+
+                <!-- Build Environment Settings -->
+                <section class="craft-section mb-4">
+                    <div class="craft-section-header-with-actions">
+                        <h3 class="craft-section-title">
+                            <i class="fas fa-cogs text-secondary"></i> {% trans "Build Environment" %}
+                        </h3>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="buildStructureBonus" class="form-label">{% trans "Structure Time Bonus (%)" %}</label>
+                            <input type="number" class="form-control" id="buildStructureBonus" min="0" max="100" step="0.1" value="0"
+                                   placeholder="{% trans 'e.g., 25 for Sotiyo' %}">
+                            <div class="form-text">{% trans "Structure manufacturing time reduction (e.g., Sotiyo = 25%)" %}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="buildRigBonus" class="form-label">{% trans "Rig Time Bonus (%)" %}</label>
+                            <input type="number" class="form-control" id="buildRigBonus" min="0" max="100" step="0.1" value="0"
+                                   placeholder="{% trans 'e.g., 20 for T2 rig' %}">
+                            <div class="form-text">{% trans "Rig manufacturing time reduction (e.g., T2 rig = 20%)" %}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="buildSkillIndustry" class="form-label">{% trans "Industry Skill" %}</label>
+                            <select class="form-select" id="buildSkillIndustry">
+                                <option value="0">0</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5" selected>5</option>
+                            </select>
+                            <div class="form-text">{% trans "4% time reduction per level" %}</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="buildSkillAdvanced" class="form-label">{% trans "Advanced Industry Skill" %}</label>
+                            <select class="form-select" id="buildSkillAdvanced">
+                                <option value="0">0</option>
+                                <option value="1">1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5" selected>5</option>
+                            </select>
+                            <div class="form-text">{% trans "3% time reduction per level" %}</div>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- Time Estimates Hero Section -->
                 <section class="craft-section mb-4">
                     <div class="craft-section-header-with-actions">
