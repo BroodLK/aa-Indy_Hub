@@ -669,16 +669,24 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             market_group=module_group,
             group=module_group_type,
         )
+        batch_ore_type = self._FakeItemType(
+            3004,
+            "Batch Compressed Arkonor IV-Grade",
+            published=True,
+            market_group=veldspar_group,
+            group=asteroid_group,
+        )
 
         fake_item_type_model = SimpleNamespace(
-            objects=self._FakeQuerySet([ore_type, moon_ore_type, module_type])
+            objects=self._FakeQuerySet([ore_type, moon_ore_type, module_type, batch_ore_type])
         )
         mock_outputs.side_effect = {
             ore_type.id: {34: 400},
             moon_ore_type.id: {34: 200},
             module_type.id: {34: 10},
+            batch_ore_type.id: {34: 500},
         }.__getitem__
-        mock_cache_model.CACHE_VERSION = 4
+        mock_cache_model.CACHE_VERSION = 5
 
         with patch("eve_sde.models.ItemType", fake_item_type_model):
             success, message = _populate_compressed_ore_cache()
@@ -691,7 +699,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
                     defaults={
                         "ore_name": ore_type.name,
                         "reprocessing_outputs": {34: 400},
-                        "cache_version": 4,
+                        "cache_version": 5,
                     },
                 ),
                 call(
@@ -699,7 +707,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
                     defaults={
                         "ore_name": moon_ore_type.name,
                         "reprocessing_outputs": {34: 200},
-                        "cache_version": 4,
+                        "cache_version": 5,
                     },
                 ),
             ],

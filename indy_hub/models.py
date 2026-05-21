@@ -4760,7 +4760,7 @@ class CompressedOreCache(models.Model):
     """Cache for compressed ore reprocessing data and prices."""
 
     # Cache version - increment when filtering logic changes to force rebuild
-    CACHE_VERSION = 4  # Incremented to force rebuild after broadening ore detection to SDE asteroid category
+    CACHE_VERSION = 5  # Incremented to force rebuild after excluding batch compressed ore variants
 
     ore_type_id = models.IntegerField(primary_key=True)
     ore_name = models.CharField(max_length=255)

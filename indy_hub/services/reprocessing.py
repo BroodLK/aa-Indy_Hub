@@ -956,6 +956,7 @@ def _compressed_ore_type_filter() -> models.Q:
     """Match compressed ore-like resources while excluding compressed modules."""
     return (
         models.Q(name__icontains="Compressed")
+        & ~models.Q(name__icontains="Batch Compressed")
         & (
             models.Q(group__category_id=ASTEROID_CATEGORY_ID)
             | _compressed_ore_market_group_filter()
