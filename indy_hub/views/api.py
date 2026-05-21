@@ -1342,3 +1342,181 @@ def convert_minerals_to_compressed_ore(request):
         logger.error(f"Error converting minerals to compressed ore: {e}")
         return JsonResponse({"error": str(e)}, status=500)
 
+
+@login_required
+@require_http_methods(["POST"])
+def calculate_build_schedule(request):
+    """
+    Calculate optimized build schedule with time estimates and slot assignments.
+
+    Expects JSON body:
+    {
+        "jobs": [
+            {
+                "item_type_id": 123,
+                "item_name": "Tritanium",
+                "blueprint_type_id": 124,
+                "quantity_needed": 1000,
+                "quantity_per_run": 100,
+                "material_efficiency": 10,
+                "time_efficiency": 20
+            },
+            ...
+        ],
+        "slots": [
+            {
+                "character_id": 12345,
+                "character_name": "Character Name",
+                "max_concurrent_jobs": 1
+            },
+            ...
+        ],
+        "structure_time_bonus": 0.25,  # 25% reduction (Sotiyo)
+        "rig_time_bonus": 0.20,  # 20% reduction (T2 rig)
+        "skill_industry": 5,
+        "skill_advanced_industry": 5
+    }
+
+    Returns:
+    {
+        "schedule": {
+            "total_sequential_time_seconds": 12345,
+            "total_parallel_time_seconds": 5678,
+            "total_sequential_time_formatted": "3h 25m 45s",
+            "total_parallel_time_formatted": "1h 34m 38s",
+            "time_saved_seconds": 6667,
+            "time_saved_formatted": "1h 51m 7s",
+            "efficiency_percent": 54.1,
+            "jobs": [...],
+            "slots": [...],
+            "critical_path": [123, 456, 789],
+            "recommendations": [...]
+        },
+        "error": null or error message
+    }
+    """
+    try:
+        from ..services.build_scheduler import (
+            ManufacturingJob,
+            IndustrySlot,
+            calculate_manufacturing_time,
+            get_base_manufacturing_time,
+            build_dependency_tree,
+            schedule_jobs_critical_path,
+        )
+
+        # Parse request body
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+        jobs_data = data.get("jobs", [])
+        slots_data = data.get("slots", [])
+
+        if not jobs_data:
+            return JsonResponse({"error": "No jobs provided"}, status=400)
+
+        if not slots_data:
+            return JsonResponse({"error": "No slots provided"}, status=400)
+
+        # Extract build environment parameters
+        structure_time_bonus = float(data.get("structure_time_bonus", 0.0))
+        rig_time_bonus = float(data.get("rig_time_bonus", 0.0))
+        skill_industry = int(data.get("skill_industry", 5))
+        skill_advanced_industry = int(data.get("skill_advanced_industry", 5))
+
+        # Build dependency tree
+        dependencies = build_dependency_tree(jobs_data)
+
+        # Create ManufacturingJob objects
+        jobs = []
+        for job_data in jobs_data:
+            try:
+                item_type_id = int(job_data.get("item_type_id", 0))
+                blueprint_type_id = int(job_data.get("blueprint_type_id", 0))
+                quantity_needed = int(job_data.get("quantity_needed", 0))
+                quantity_per_run = int(job_data.get("quantity_per_run", 1))
+                me = int(job_data.get("material_efficiency", 0))
+                te = int(job_data.get("time_efficiency", 0))
+
+                if item_type_id <= 0 or quantity_needed <= 0:
+                    continue
+
+                # Calculate runs required
+                runs_required = ceil(quantity_needed / max(quantity_per_run, 1))
+
+                # Get base manufacturing time
+                base_time = get_base_manufacturing_time(blueprint_type_id)
+
+                if base_time == 0:
+                    # Fallback: estimate based on quantity if no time data
+                    base_time = max(60, quantity_needed * 10)  # Rough estimate
+
+                # Calculate adjusted time per run
+                adjusted_time = calculate_manufacturing_time(
+                    base_time_seconds=base_time,
+                    time_efficiency=te,
+                    structure_bonus=structure_time_bonus,
+                    rig_bonus=rig_time_bonus,
+                    skill_industry=skill_industry,
+                    skill_advanced_industry=skill_advanced_industry,
+                )
+
+                job = ManufacturingJob(
+                    item_type_id=item_type_id,
+                    item_name=job_data.get("item_name", f"Item {item_type_id}"),
+                    blueprint_type_id=blueprint_type_id,
+                    quantity_needed=quantity_needed,
+                    quantity_per_run=quantity_per_run,
+                    runs_required=runs_required,
+                    base_time_seconds=base_time,
+                    adjusted_time_seconds=adjusted_time,
+                    total_time_seconds=adjusted_time * runs_required,
+                    material_efficiency=me,
+                    time_efficiency=te,
+                    dependencies=dependencies.get(item_type_id, []),
+                )
+
+                jobs.append(job)
+
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping invalid job data: {e}")
+                continue
+
+        if not jobs:
+            return JsonResponse({"error": "No valid jobs to schedule"}, status=400)
+
+        # Create IndustrySlot objects
+        slots = []
+        for idx, slot_data in enumerate(slots_data):
+            try:
+                slot = IndustrySlot(
+                    slot_id=idx,
+                    character_id=int(slot_data.get("character_id", 0)),
+                    character_name=slot_data.get("character_name", f"Slot {idx + 1}"),
+                    max_concurrent_jobs=int(slot_data.get("max_concurrent_jobs", 1)),
+                )
+                slots.append(slot)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping invalid slot data: {e}")
+                continue
+
+        if not slots:
+            return JsonResponse({"error": "No valid slots to schedule"}, status=400)
+
+        # Calculate optimized schedule
+        schedule = schedule_jobs_critical_path(jobs, slots)
+
+        # Convert to JSON-serializable format
+        result = {
+            "schedule": schedule.to_dict(),
+            "error": None,
+        }
+
+        return JsonResponse(result)
+
+    except Exception as e:
+        logger.error(f"Error calculating build schedule: {e}", exc_info=True)
+        return JsonResponse({"error": str(e)}, status=500)
+

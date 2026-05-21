@@ -9853,3 +9853,477 @@ function getCookie(name) {
     }
     return cookieValue;
 }
+
+// ==================== BUILD SCHEDULE & GANTT CHART ====================
+
+let buildScheduleData = null;
+let ganttZoomLevel = 1.0;
+
+// Initialize build schedule functionality
+function initBuildSchedule() {
+    const calculateBtn = document.getElementById('calculateScheduleBtn');
+    const zoomInBtn = document.getElementById('ganttZoomIn');
+    const zoomOutBtn = document.getElementById('ganttZoomOut');
+
+    if (calculateBtn) {
+        calculateBtn.addEventListener('click', calculateBuildSchedule);
+    }
+
+    if (zoomInBtn) {
+        zoomInBtn.addEventListener('click', () => {
+            ganttZoomLevel = Math.min(ganttZoomLevel * 1.2, 3.0);
+            renderGanttChart(buildScheduleData);
+        });
+    }
+
+    if (zoomOutBtn) {
+        zoomOutBtn.addEventListener('click', () => {
+            ganttZoomLevel = Math.max(ganttZoomLevel / 1.2, 0.3);
+            renderGanttChart(buildScheduleData);
+        });
+    }
+}
+
+async function calculateBuildSchedule() {
+    // Gather jobs data from current state
+    const jobs = gatherJobsDataForSchedule();
+    const slots = gatherSlotsDataForSchedule();
+
+    if (jobs.length === 0) {
+        showScheduleError('No items selected for production. Please select items in the Dashboard tab.');
+        return;
+    }
+
+    if (slots.length === 0) {
+        showScheduleError('No character slots configured. Please add characters in the Build tab configuration.');
+        return;
+    }
+
+    // Show loading
+    showScheduleLoading(true);
+    hideScheduleError();
+
+    // Get build environment settings
+    const structureBonus = getBuildStructureTimeBonus();
+    const rigBonus = getBuildRigTimeBonus();
+
+    try {
+        const response = await fetch('/indy_hub/api/calculate-build-schedule/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                jobs: jobs,
+                slots: slots,
+                structure_time_bonus: structureBonus,
+                rig_time_bonus: rigBonus,
+                skill_industry: 5,  // Could be made configurable
+                skill_advanced_industry: 5,
+            }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+            showScheduleError(data.error);
+            return;
+        }
+
+        // Store and display schedule
+        buildScheduleData = data.schedule;
+        displayBuildSchedule(data.schedule);
+
+    } catch (error) {
+        showScheduleError('Failed to calculate build schedule: ' + error.message);
+    } finally {
+        showScheduleLoading(false);
+    }
+}
+
+function gatherJobsDataForSchedule() {
+    const jobs = [];
+
+    // Get all items from the dashboard that are set to "prod" mode
+    const dashboardRows = document.querySelectorAll('[data-prod-item-id]');
+
+    dashboardRows.forEach(row => {
+        const itemId = parseInt(row.getAttribute('data-prod-item-id'));
+        const decisionSelect = row.querySelector('.prod-decision-select');
+
+        if (!decisionSelect || decisionSelect.value !== 'prod') {
+            return; // Skip items not set to production
+        }
+
+        const itemName = row.querySelector('.prod-item-name')?.textContent?.trim() || `Item ${itemId}`;
+        const blueprintTypeId = parseInt(row.getAttribute('data-blueprint-type-id')) || itemId + 1;
+        const quantityNeeded = parseInt(row.querySelector('.prod-quantity-needed')?.textContent?.replace(/,/g, '') || 0);
+        const quantityPerRun = parseInt(row.getAttribute('data-quantity-per-run')) || 1;
+        const me = parseInt(row.getAttribute('data-me')) || 0;
+        const te = parseInt(row.getAttribute('data-te')) || 0;
+
+        if (quantityNeeded > 0) {
+            jobs.push({
+                item_type_id: itemId,
+                item_name: itemName,
+                blueprint_type_id: blueprintTypeId,
+                quantity_needed: quantityNeeded,
+                quantity_per_run: quantityPerRun,
+                material_efficiency: me,
+                time_efficiency: te,
+            });
+        }
+    });
+
+    return jobs;
+}
+
+function gatherSlotsDataForSchedule() {
+    const slots = [];
+
+    // Get slots from build planner state
+    // This would need to be adapted to your actual slot configuration
+    const slotCharacters = document.querySelectorAll('.craft-build-slot-character');
+
+    slotCharacters.forEach((char, index) => {
+        const characterId = parseInt(char.getAttribute('data-character-id')) || index;
+        const characterName = char.querySelector('.character-name')?.textContent?.trim() || `Character ${index + 1}`;
+        const maxJobs = parseInt(char.getAttribute('data-max-jobs')) || 1;
+
+        slots.push({
+            character_id: characterId,
+            character_name: characterName,
+            max_concurrent_jobs: maxJobs,
+        });
+    });
+
+    // Fallback: if no slots configured, create a default one
+    if (slots.length === 0) {
+        slots.push({
+            character_id: 0,
+            character_name: 'Default Character',
+            max_concurrent_jobs: 1,
+        });
+    }
+
+    return slots;
+}
+
+function getBuildStructureTimeBonus() {
+    // Get structure bonus from configuration
+    // This would need to match your actual structure selection
+    const structureSelect = document.getElementById('buildStructureType');
+    if (structureSelect) {
+        const value = structureSelect.value;
+        if (value === 'sotiyo') return 0.25;
+        if (value === 'azbel') return 0.10;
+        if (value === 'raitaru') return 0.0;
+    }
+    return 0.0;
+}
+
+function getBuildRigTimeBonus() {
+    // Get rig bonus from configuration
+    const rigSelect = document.getElementById('buildRigType');
+    if (rigSelect) {
+        const value = rigSelect.value;
+        if (value && value.includes('t2')) return 0.20;
+        if (value && value.includes('t1')) return 0.15;
+    }
+    return 0.0;
+}
+
+function displayBuildSchedule(schedule) {
+    // Hide empty state
+    document.getElementById('buildEmptyState').style.display = 'none';
+
+    // Update time summaries
+    document.getElementById('scheduleSequentialTime').textContent = schedule.total_sequential_time_formatted;
+    document.getElementById('scheduleParallelTime').textContent = schedule.total_parallel_time_formatted;
+    document.getElementById('scheduleTimeSaved').textContent = schedule.time_saved_formatted;
+    document.getElementById('scheduleEfficiency').textContent = `${schedule.efficiency_percent}% efficiency`;
+
+    // Show sections
+    document.getElementById('ganttSection').style.display = 'block';
+    document.getElementById('slotUtilizationSection').style.display = 'block';
+    document.getElementById('jobDetailsSection').style.display = 'block';
+
+    if (schedule.recommendations && schedule.recommendations.length > 0) {
+        document.getElementById('recommendationsSection').style.display = 'block';
+        displayRecommendations(schedule.recommendations);
+    }
+
+    // Render visualizations
+    renderGanttChart(schedule);
+    renderSlotUtilization(schedule);
+    renderJobDetailsTable(schedule);
+}
+
+function renderGanttChart(schedule) {
+    if (!schedule) return;
+
+    const container = document.getElementById('ganttChart');
+    if (!container) return;
+
+    const jobs = schedule.jobs;
+    const slots = schedule.slots;
+    const maxTime = schedule.total_parallel_time_seconds;
+
+    if (jobs.length === 0) {
+        container.innerHTML = '<p class="text-muted">No jobs to display</p>';
+        return;
+    }
+
+    // Calculate dimensions
+    const baseWidth = 1000;
+    const chartWidth = baseWidth * ganttZoomLevel;
+    const rowHeight = 40;
+    const headerHeight = 30;
+    const chartHeight = (slots.length * rowHeight) + headerHeight;
+
+    // Create SVG
+    let svg = `<svg width="${chartWidth}" height="${chartHeight}" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px;">`;
+
+    // Time scale
+    const pixelsPerSecond = chartWidth / maxTime;
+
+    // Draw time axis
+    const timeMarkers = calculateTimeMarkers(maxTime);
+    svg += `<g class="time-axis">`;
+    timeMarkers.forEach(marker => {
+        const x = marker.seconds * pixelsPerSecond;
+        svg += `<line x1="${x}" y1="0" x2="${x}" y2="${chartHeight}" stroke="#e0e0e0" stroke-width="1"/>`;
+        svg += `<text x="${x + 5}" y="15" fill="#666" font-size="11px">${marker.label}</text>`;
+    });
+    svg += `</g>`;
+
+    // Draw slot rows and jobs
+    slots.forEach((slot, slotIndex) => {
+        const y = headerHeight + (slotIndex * rowHeight);
+
+        // Row background
+        const fillColor = slotIndex % 2 === 0 ? '#f9f9f9' : '#ffffff';
+        svg += `<rect x="0" y="${y}" width="${chartWidth}" height="${rowHeight}" fill="${fillColor}"/>`;
+
+        // Slot label
+        svg += `<text x="10" y="${y + rowHeight / 2 + 5}" fill="#333" font-weight="600">${escapeHtml(slot.character_name)}</text>`;
+
+        // Draw jobs for this slot
+        const slotJobs = jobs.filter(job => job.assigned_slot === slot.slot_id);
+
+        slotJobs.forEach(job => {
+            const startX = job.start_time_seconds * pixelsPerSecond;
+            const width = job.total_time_seconds * pixelsPerSecond;
+            const barY = y + 8;
+            const barHeight = rowHeight - 16;
+
+            // Job bar
+            const color = getJobColor(job.item_type_id);
+            svg += `<rect x="${startX}" y="${barY}" width="${width}" height="${barHeight}" fill="${color}" rx="4" opacity="0.8"/>`;
+            svg += `<rect x="${startX}" y="${barY}" width="${width}" height="${barHeight}" fill="none" stroke="${darkenColor(color)}" stroke-width="2" rx="4"/>`;
+
+            // Job label (if wide enough)
+            if (width > 60) {
+                const textX = startX + width / 2;
+                const textY = barY + barHeight / 2 + 4;
+                svg += `<text x="${textX}" y="${textY}" fill="#fff" font-size="10px" font-weight="600" text-anchor="middle">${escapeHtml(truncateText(job.item_name, 20))}</text>`;
+            }
+
+            // Tooltip simulation (title attribute)
+            svg += `<title>${escapeHtml(job.item_name)}\nStart: ${job.start_time_formatted}\nDuration: ${job.total_time_formatted}\nRuns: ${job.runs_required}</title>`;
+        });
+    });
+
+    svg += `</svg>`;
+    container.innerHTML = svg;
+}
+
+function calculateTimeMarkers(maxTimeSeconds) {
+    const markers = [];
+
+    // Determine appropriate interval
+    let interval;
+    if (maxTimeSeconds < 3600) {
+        interval = 600; // 10 minutes
+    } else if (maxTimeSeconds < 86400) {
+        interval = 3600; // 1 hour
+    } else {
+        interval = 86400; // 1 day
+    }
+
+    for (let t = 0; t <= maxTimeSeconds; t += interval) {
+        markers.push({
+            seconds: t,
+            label: formatTimeDuration(t),
+        });
+    }
+
+    return markers;
+}
+
+function formatTimeDuration(seconds) {
+    if (seconds === 0) return '0s';
+
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+
+    return parts.slice(0, 2).join(' '); // Show max 2 units
+}
+
+function getJobColor(itemTypeId) {
+    // Generate consistent color based on item ID
+    const hue = (itemTypeId * 137.508) % 360; // Golden angle for distribution
+    return `hsl(${hue}, 70%, 50%)`;
+}
+
+function darkenColor(hslColor) {
+    // Darken HSL color for border
+    return hslColor.replace(/50%\)$/, '35%)');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function truncateText(text, maxLength) {
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength - 3) + '...';
+}
+
+function renderSlotUtilization(schedule) {
+    const container = document.getElementById('slotUtilizationGrid');
+    if (!container) return;
+
+    const slots = schedule.slots;
+    container.innerHTML = '';
+
+    slots.forEach(slot => {
+        const card = document.createElement('div');
+        card.className = 'col-md-6 col-lg-4';
+
+        const utilizationClass = slot.utilization_percent > 75 ? 'success' : slot.utilization_percent > 50 ? 'warning' : 'secondary';
+
+        card.innerHTML = `
+            <div class="card border-0 shadow-sm">
+                <div class="card-body">
+                    <h6 class="card-title fw-semibold mb-3">
+                        <i class="fas fa-user-circle me-2"></i>${escapeHtml(slot.character_name)}
+                    </h6>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small text-muted">Jobs Assigned</span>
+                        <span class="fw-semibold">${slot.jobs_count}</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small text-muted">Completion Time</span>
+                        <span class="fw-semibold">${slot.completion_time_formatted}</span>
+                    </div>
+                    <div class="progress" style="height: 20px;">
+                        <div class="progress-bar bg-${utilizationClass}" role="progressbar"
+                             style="width: ${slot.utilization_percent}%"
+                             aria-valuenow="${slot.utilization_percent}" aria-valuemin="0" aria-valuemax="100">
+                            ${slot.utilization_percent}%
+                        </div>
+                    </div>
+                    <div class="small text-muted mt-2 text-center">Utilization</div>
+                </div>
+            </div>
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+function renderJobDetailsTable(schedule) {
+    const tbody = document.getElementById('jobDetailsBody');
+    if (!tbody) return;
+
+    const jobs = schedule.jobs;
+    const slots = schedule.slots;
+    tbody.innerHTML = '';
+
+    jobs.forEach(job => {
+        const slot = slots.find(s => s.slot_id === job.assigned_slot);
+        const slotName = slot ? slot.character_name : '-';
+
+        const isOnCriticalPath = schedule.critical_path && schedule.critical_path.includes(job.item_type_id);
+        const rowClass = isOnCriticalPath ? 'table-warning' : '';
+
+        const deps = job.dependencies && job.dependencies.length > 0
+            ? job.dependencies.map(depId => {
+                const depJob = jobs.find(j => j.item_type_id === depId);
+                return depJob ? depJob.item_name : `Item ${depId}`;
+              }).join(', ')
+            : '-';
+
+        const row = document.createElement('tr');
+        row.className = rowClass;
+        row.innerHTML = `
+            <td>
+                <span class="badge bg-info-subtle text-info-emphasis">${escapeHtml(job.item_name)}</span>
+                ${isOnCriticalPath ? '<i class="fas fa-star text-warning ms-2" title="On critical path"></i>' : ''}
+            </td>
+            <td class="text-end">${job.runs_required}</td>
+            <td class="text-end">${job.total_time_formatted}</td>
+            <td class="text-end">${job.start_time_formatted}</td>
+            <td class="text-end">${job.end_time_formatted}</td>
+            <td>${escapeHtml(slotName)}</td>
+            <td><small class="text-muted">${escapeHtml(deps)}</small></td>
+        `;
+
+        tbody.appendChild(row);
+    });
+}
+
+function displayRecommendations(recommendations) {
+    const container = document.getElementById('recommendationsList');
+    if (!container) return;
+
+    container.innerHTML = recommendations.map(rec => `
+        <div class="alert alert-warning d-flex align-items-start mb-2">
+            <i class="fas fa-info-circle me-2 mt-1"></i>
+            <div>${escapeHtml(rec)}</div>
+        </div>
+    `).join('');
+}
+
+function showScheduleLoading(show) {
+    const alert = document.getElementById('scheduleLoadingAlert');
+    if (alert) {
+        if (show) {
+            alert.classList.remove('d-none');
+        } else {
+            alert.classList.add('d-none');
+        }
+    }
+}
+
+function showScheduleError(message) {
+    const alert = document.getElementById('scheduleErrorAlert');
+    if (alert) {
+        alert.textContent = message;
+        alert.classList.remove('d-none');
+    }
+}
+
+function hideScheduleError() {
+    const alert = document.getElementById('scheduleErrorAlert');
+    if (alert) {
+        alert.classList.add('d-none');
+    }
+}
+
+// Initialize build schedule on load
+document.addEventListener('DOMContentLoaded', () => {
+    initBuildSchedule();
+});

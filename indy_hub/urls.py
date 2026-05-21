@@ -3,6 +3,7 @@ from django.http import HttpResponse
 from django.urls import path
 
 from .views.api import (
+    calculate_build_schedule,
     convert_minerals_to_compressed_ore,
     craft_build_environment,
     craft_bpc_contracts,
@@ -243,6 +244,11 @@ urlpatterns = [
         "api/convert-minerals-to-ore/",
         convert_minerals_to_compressed_ore,
         name="convert_minerals_to_compressed_ore",
+    ),
+    path(
+        "api/calculate-build-schedule/",
+        calculate_build_schedule,
+        name="calculate_build_schedule",
     ),
     path(
         "api/craft-build-environment/",
