@@ -8,6 +8,10 @@ const CRAFT_BP = {
     fuzzworkUrl: null, // Will be set from Django template
     productTypeId: null, // Will be set from Django template
 };
+const CRAFT_MANUAL_FINANCIAL_STATE = {
+    itemsByRowKey: new Map(),
+    excludedTypeIds: new Set(),
+};
 let CRAFT_COMPUTED_NEEDED_ROWS = null;
 const CRAFT_BPC_CONTRACT_STATE = {
     loaded: false,
@@ -3797,9 +3801,6 @@ function initializeFinancialCalculations() {
     if (computeButton) {
         computeButton.addEventListener('click', () => {
             CRAFT_COMPUTED_NEEDED_ROWS = null;
-            if (typeof updateFinancialTabFromState === 'function') {
-                updateFinancialTabFromState();
-            }
             computeNeededPurchases();
         });
     }
@@ -5681,6 +5682,122 @@ function formatNumber(num) {
     return num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 }
 
+function normalizeManualFinancialStateItem(item) {
+    const typeId = Number(item?.typeId ?? item?.type_id) || 0;
+    if (!typeId) {
+        return null;
+    }
+
+    const quantity = Math.max(
+        0,
+        Math.ceil(Number(item?.quantity ?? item?.requiredQuantity ?? item?.qty ?? 0) || 0)
+    );
+    const typeName = String(item?.typeName || item?.type_name || item?.name || '').trim();
+    if (!typeName || quantity <= 0) {
+        return null;
+    }
+
+    const parsedRealPrice = Number.parseFloat(String(item?.realPrice ?? '0'));
+    const parsedFuzzworkPrice = Number.parseFloat(String(item?.fuzzworkPrice ?? item?.fuzzPrice ?? '0'));
+
+    return {
+        typeId,
+        typeName,
+        quantity,
+        marketGroup: String(item?.marketGroup || item?.market_group || '').trim(),
+        rowKind: 'material',
+        rowKey: String(item?.rowKey || `manual-material:${typeId}`),
+        isManualFinancial: true,
+        realPrice: Number.isFinite(parsedRealPrice) && parsedRealPrice > 0 ? parsedRealPrice : 0,
+        fuzzworkPrice: Number.isFinite(parsedFuzzworkPrice) && parsedFuzzworkPrice > 0 ? parsedFuzzworkPrice : 0,
+    };
+}
+
+function upsertManualFinancialStateItem(item) {
+    const normalizedItem = normalizeManualFinancialStateItem(item);
+    if (!normalizedItem) {
+        return null;
+    }
+    CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.set(normalizedItem.rowKey, normalizedItem);
+    return normalizedItem;
+}
+
+function removeManualFinancialStateItemsByTypeIds(typeIds) {
+    const normalizedTypeIds = new Set(
+        (Array.isArray(typeIds) ? typeIds : [])
+            .map((typeId) => Number(typeId) || 0)
+            .filter((typeId) => typeId > 0)
+    );
+    if (normalizedTypeIds.size === 0) {
+        return;
+    }
+
+    Array.from(CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.entries()).forEach(([rowKey, item]) => {
+        const typeId = Number(item?.typeId ?? item?.type_id) || 0;
+        if (normalizedTypeIds.has(typeId)) {
+            CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.delete(rowKey);
+        }
+    });
+}
+
+function excludeBaseFinancialTypeIds(typeIds) {
+    (Array.isArray(typeIds) ? typeIds : []).forEach((typeId) => {
+        const numericTypeId = Number(typeId) || 0;
+        if (numericTypeId > 0) {
+            CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.add(numericTypeId);
+        }
+    });
+}
+
+function getManualFinancialStateItems() {
+    return Array.from(CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.values());
+}
+
+function syncManualFinancialStateFromDom() {
+    const financialBody = document.getElementById('financialItemsBody');
+    if (!financialBody) {
+        return;
+    }
+
+    financialBody.querySelectorAll('tr[data-manual-financial="true"][data-type-id]').forEach((row) => {
+        const typeId = Number(row.getAttribute('data-type-id')) || 0;
+        if (!typeId) {
+            return;
+        }
+
+        const qtyElement = row.querySelector('[data-qty]');
+        const requiredQuantity = Math.max(
+            0,
+            Math.ceil(
+                Number(qtyElement?.getAttribute('data-qty-required') ?? qtyElement?.dataset?.qtyRequired ?? qtyElement?.getAttribute('data-qty') ?? 0) || 0
+            )
+        );
+        if (requiredQuantity <= 0) {
+            return;
+        }
+
+        const nameElement = row.querySelector('.craft-planner-item-name');
+        const fallbackCell = row.querySelector('td');
+        const typeName = String(nameElement?.textContent || fallbackCell?.textContent || '').trim();
+        if (!typeName) {
+            return;
+        }
+
+        const realInput = row.querySelector('.real-price');
+        const fuzzInput = row.querySelector('.fuzzwork-price');
+        const rowKey = String(row.getAttribute('data-row-key') || `manual-material:${typeId}`);
+
+        upsertManualFinancialStateItem({
+            typeId,
+            typeName,
+            quantity: requiredQuantity,
+            rowKey,
+            realPrice: realInput?.value || 0,
+            fuzzworkPrice: fuzzInput?.value || 0,
+        });
+    });
+}
+
 /**
  * Recalculate financial totals
  */
@@ -6252,6 +6369,7 @@ function buildFinancialRow(item, pricesMap) {
     const rowKind = String(item.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
     const rowKey = String(item.rowKey || `${rowKind}:${item.typeId}`);
     const isBpc = rowKind === 'bpc';
+    const isManualFinancial = item.isManualFinancial === true;
     const imagePath = isBpc ? 'bp' : 'icon';
     const itemTypeName = String(item.typeName || item.name || item.type_id || item.typeId || '');
     const rowTagHtml = isBpc
@@ -6260,6 +6378,10 @@ function buildFinancialRow(item, pricesMap) {
     const qtyBadgeClass = isBpc ? 'bg-warning text-dark' : 'bg-primary text-white';
     const fixedUnitPrice = Number(item.unitPrice);
     const hasFixedUnitPrice = Number.isFinite(fixedUnitPrice) && fixedUnitPrice > 0;
+    const seededRealPrice = Number(item.realPrice);
+    const hasSeededRealPrice = Number.isFinite(seededRealPrice) && seededRealPrice > 0;
+    const seededFuzzPrice = Number(item.fuzzworkPrice ?? item.fuzzPrice);
+    const hasSeededFuzzPrice = Number.isFinite(seededFuzzPrice) && seededFuzzPrice > 0;
     const requiredQty = Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.quantity) || 0));
     const ownedQty = Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
     const payableQty = Math.max(0, Math.ceil(Number(item.quantity) || 0));
@@ -6269,6 +6391,7 @@ function buildFinancialRow(item, pricesMap) {
     row.setAttribute('data-type-id', String(item.typeId));
     row.setAttribute('data-row-kind', rowKind);
     row.setAttribute('data-row-key', rowKey);
+    row.setAttribute('data-manual-financial', isManualFinancial ? 'true' : 'false');
     row.classList.toggle('table-warning', isBpc);
 
     row.innerHTML = `
@@ -6310,8 +6433,9 @@ function buildFinancialRow(item, pricesMap) {
             window.SimulationAPI.setPrice(item.typeId, 'fuzzwork', 0);
         }
     } else {
-        fuzzInput.value = fuzzPrice.toFixed(2);
-        if (fuzzPrice <= 0) {
+        const effectiveFuzzPrice = hasSeededFuzzPrice ? seededFuzzPrice : fuzzPrice;
+        fuzzInput.value = effectiveFuzzPrice.toFixed(2);
+        if (effectiveFuzzPrice <= 0) {
             fuzzInput.classList.add('bg-warning', 'border-warning');
             fuzzInput.setAttribute('title', __('Price not available (Fuzzwork)'));
         } else {
@@ -6322,6 +6446,9 @@ function buildFinancialRow(item, pricesMap) {
 
     if (realPrice > 0) {
         realInput.value = realPrice.toFixed(2);
+        updatePriceInputManualState(realInput, true);
+    } else if (hasSeededRealPrice) {
+        realInput.value = seededRealPrice.toFixed(2);
         updatePriceInputManualState(realInput, true);
     } else {
         realInput.value = '0.00';
@@ -6344,13 +6471,14 @@ function buildFinancialRow(item, pricesMap) {
         attachPriceInputListener(realInput);
     }
 
-    return { row, typeId: item.typeId, fuzzInput, realInput, isBpc };
+    return { row, typeId: item.typeId, fuzzInput, realInput, isBpc, isManualFinancial };
 }
 
 function updateFinancialRow(row, item) {
     const rowKind = String(item.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
     const rowKey = String(item.rowKey || `${rowKind}:${item.typeId}`);
     const isBpc = rowKind === 'bpc';
+    const isManualFinancial = item.isManualFinancial === true;
     const imagePath = isBpc ? 'bp' : 'icon';
     const itemTypeName = String(item.typeName || item.name || item.type_id || item.typeId || '');
     const fixedUnitPrice = Number(item.unitPrice);
@@ -6362,6 +6490,7 @@ function updateFinancialRow(row, item) {
     row.setAttribute('data-type-id', String(item.typeId));
     row.setAttribute('data-row-kind', rowKind);
     row.setAttribute('data-row-key', rowKey);
+    row.setAttribute('data-manual-financial', isManualFinancial ? 'true' : 'false');
     row.classList.toggle('table-warning', isBpc);
 
     const nameBadge = row.querySelector('.craft-planner-item-name');
@@ -8590,6 +8719,8 @@ function updateFinancialTabFromState() {
         return;
     }
 
+    syncManualFinancialStateFromDom();
+
     const finalRow = document.getElementById('finalProductRow');
     const productTypeId = getProductTypeIdValue();
     const pricesMap = getSimulationPricesMap();
@@ -8599,7 +8730,7 @@ function updateFinancialTabFromState() {
 
     items.forEach(item => {
         const typeId = Number(item.typeId ?? item.type_id);
-        if (!typeId || (productTypeId && typeId === productTypeId)) {
+        if (!typeId || (productTypeId && typeId === productTypeId) || CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.has(typeId)) {
             return;
         }
         const quantity = Math.ceil(Number(item.quantity ?? item.qty ?? 0));
@@ -8619,6 +8750,30 @@ function updateFinancialTabFromState() {
             existing.marketGroup = item.marketGroup || item.market_group || '';
         }
         aggregated.set(typeId, existing);
+    });
+
+    getManualFinancialStateItems().forEach((item) => {
+        const typeId = Number(item.typeId ?? item.type_id) || 0;
+        if (!typeId) {
+            return;
+        }
+
+        const quantity = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0) || 0));
+        if (quantity <= 0) {
+            return;
+        }
+
+        aggregated.set(typeId, {
+            typeId,
+            typeName: item.typeName || item.type_name || item.name || '',
+            quantity,
+            marketGroup: item.marketGroup || item.market_group || '',
+            rowKind: 'material',
+            rowKey: String(item.rowKey || `manual-material:${typeId}`),
+            isManualFinancial: true,
+            realPrice: Number(item.realPrice) || 0,
+            fuzzworkPrice: Number(item.fuzzworkPrice ?? item.fuzzPrice) || 0,
+        });
     });
 
     const ordering = getDashboardMaterialsOrdering();
@@ -8751,7 +8906,7 @@ function updateFinancialTabFromState() {
     }
 
     if (newRows.length > 0) {
-        const pricedRows = newRows.filter((entry) => !entry.isBpc);
+        const pricedRows = newRows.filter((entry) => !entry.isBpc && !entry.isManualFinancial);
         newRows
             .filter((entry) => entry.isBpc)
             .forEach(({ typeId, fuzzInput }) => {
@@ -9191,6 +9346,8 @@ function buildOwnedTypeLookupFromPayload(ownedByName, labelsByName) {
     walkTree(payload.materials_tree);
     addArrayEntries(payload.materials);
     addArrayEntries(payload.direct_materials);
+    addArrayEntries(getManualFinancialStateItems());
+    addArrayEntries(getPurchasePlannerItemsFromDom());
 
     const grouped = payload.materials_by_group || payload.materialsByGroup || {};
     Object.values(grouped).forEach((group) => {
@@ -9332,6 +9489,86 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType) {
     return Array.from(results.values());
 }
 
+function getPurchasePlannerItemsFromDom() {
+    const financialBody = document.getElementById('financialItemsBody');
+    if (!financialBody) {
+        return [];
+    }
+
+    const items = [];
+    Array.from(financialBody.querySelectorAll('tr[data-type-id]')).forEach((row, index) => {
+        if (row.id === 'finalProductRow') {
+            return;
+        }
+
+        const rowKind = String(row.getAttribute('data-row-kind') || 'material').toLowerCase();
+        if (rowKind === 'bpc') {
+            return;
+        }
+
+        const typeId = Number(row.getAttribute('data-type-id')) || 0;
+        if (!typeId) {
+            return;
+        }
+
+        const qtyElement = row.querySelector('[data-qty]');
+        const requiredQuantity = Math.max(
+            0,
+            Math.ceil(
+                Number(
+                    qtyElement?.getAttribute('data-qty-required')
+                    ?? qtyElement?.dataset?.qtyRequired
+                    ?? qtyElement?.getAttribute('data-qty')
+                    ?? qtyElement?.dataset?.qty
+                    ?? 0
+                )
+            )
+        ) || 0;
+        if (!requiredQuantity) {
+            return;
+        }
+
+        const quantity = Math.max(
+            0,
+            Math.ceil(Number(qtyElement?.getAttribute('data-qty') ?? qtyElement?.dataset?.qty ?? 0))
+        ) || 0;
+        const ownedQuantity = Math.max(
+            0,
+            Math.ceil(Number(qtyElement?.getAttribute('data-qty-owned') ?? qtyElement?.dataset?.qtyOwned ?? 0))
+        ) || 0;
+
+        const nameElement = row.querySelector('.craft-planner-item-name');
+        const fallbackCell = row.querySelector('td');
+        const typeName = String(nameElement?.textContent || fallbackCell?.textContent || '').trim();
+        if (!typeName) {
+            return;
+        }
+
+        const realInput = row.querySelector('.real-price');
+        const fuzzInput = row.querySelector('.fuzzwork-price');
+        const parsedUnitPrice = Number.parseFloat(realInput?.value || fuzzInput?.value || '0');
+        const unitPrice = Number.isFinite(parsedUnitPrice) && parsedUnitPrice > 0 ? parsedUnitPrice : 0;
+
+        items.push({
+            typeId,
+            name: typeName,
+            typeName,
+            qty: quantity,
+            quantity,
+            requiredQuantity,
+            ownedQuantity,
+            realPrice: Number.parseFloat(realInput?.value || '0') || 0,
+            fuzzworkPrice: Number.parseFloat(fuzzInput?.value || '0') || 0,
+            order: index,
+            rowKey: String(row.getAttribute('data-row-key') || ''),
+            isManualFinancial: row.getAttribute('data-manual-financial') === 'true',
+            unitPrice,
+        });
+    });
+
+    return items;
+}
+
 /**
  * Compute needed purchase list based on user selections
  */
@@ -9361,70 +9598,133 @@ function computeNeededPurchases() {
         ownedData.labelsByName
     );
 
-    // Recompute needed materials from the tree with owned quantities applied as supply.
-    // This supports:
-    // - BUY items: subtract directly
-    // - PROD craftables you already built: subtract their downstream component demand
-    const treeItems = computeNeededItemsFromTreeWithOwned(api, ownedLookup.byType);
-    const usedTreeComputation = Array.isArray(treeItems);
-    const items = usedTreeComputation ? treeItems : (api.getNeededMaterials() || []);
-    const aggregated = new Map(); // typeId -> { typeId, name, qty, marketGroup }
-    items.forEach((item) => {
-        const typeId = Number(item.typeId ?? item.type_id) || 0;
-        if (!typeId) return;
-        const qty = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0))) || 0;
-        if (!qty) return;
-        const name = String(item.typeName || item.type_name || '');
-        const marketGroup = String(item.marketGroup || item.market_group || '');
-        const existing = aggregated.get(typeId) || { typeId, name, qty: 0, marketGroup };
-        existing.qty += qty;
-        if (!existing.name && name) existing.name = name;
-        if (!existing.marketGroup && marketGroup) existing.marketGroup = marketGroup;
-        aggregated.set(typeId, existing);
-    });
+    const plannerItems = getPurchasePlannerItemsFromDom();
+    const usingPlannerItems = plannerItems.length > 0;
+    let rowsToDisplay = plannerItems;
 
-    const ordering = getDashboardMaterialsOrdering();
-    const rows = Array.from(aggregated.values()).sort((a, b) => {
-        const typeA = Number(a.typeId) || 0;
-        const typeB = Number(b.typeId) || 0;
+    if (!usingPlannerItems) {
+        // Recompute needed materials from the tree with owned quantities applied as supply.
+        // This supports:
+        // - BUY items: subtract directly
+        // - PROD craftables you already built: subtract their downstream component demand
+        const treeItems = computeNeededItemsFromTreeWithOwned(api, ownedLookup.byType);
+        const usedTreeComputation = Array.isArray(treeItems);
+        const items = usedTreeComputation ? treeItems : (api.getNeededMaterials() || []);
+        const aggregated = new Map(); // typeId -> { typeId, name, qty, marketGroup }
+        items.forEach((item) => {
+            const typeId = Number(item.typeId ?? item.type_id) || 0;
+            if (!typeId) return;
+            const qty = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0))) || 0;
+            if (!qty) return;
+            const name = String(item.typeName || item.type_name || '');
+            const marketGroup = String(item.marketGroup || item.market_group || '');
+            const existing = aggregated.get(typeId) || { typeId, name, qty: 0, marketGroup, unitPrice: 0 };
+            existing.qty += qty;
+            if (!existing.name && name) existing.name = name;
+            if (!existing.marketGroup && marketGroup) existing.marketGroup = marketGroup;
+            aggregated.set(typeId, existing);
+        });
 
-        const dashboardA = ordering.itemOrder.get(typeA);
-        const dashboardB = ordering.itemOrder.get(typeB);
-        const groupA = (a.marketGroup || ordering.fallbackGroupName);
-        const groupB = (b.marketGroup || ordering.fallbackGroupName);
+        const ordering = getDashboardMaterialsOrdering();
+        const rows = Array.from(aggregated.values()).sort((a, b) => {
+            const typeA = Number(a.typeId) || 0;
+            const typeB = Number(b.typeId) || 0;
 
-        const groupIdxA = dashboardA ? dashboardA.groupIdx : (ordering.groupOrder.has(groupA) ? ordering.groupOrder.get(groupA) : Number.POSITIVE_INFINITY);
-        const groupIdxB = dashboardB ? dashboardB.groupIdx : (ordering.groupOrder.has(groupB) ? ordering.groupOrder.get(groupB) : Number.POSITIVE_INFINITY);
-        if (groupIdxA !== groupIdxB) {
-            return groupIdxA - groupIdxB;
-        }
+            const dashboardA = ordering.itemOrder.get(typeA);
+            const dashboardB = ordering.itemOrder.get(typeB);
+            const groupA = (a.marketGroup || ordering.fallbackGroupName);
+            const groupB = (b.marketGroup || ordering.fallbackGroupName);
 
-        const itemIdxA = dashboardA ? dashboardA.itemIdx : Number.POSITIVE_INFINITY;
-        const itemIdxB = dashboardB ? dashboardB.itemIdx : Number.POSITIVE_INFINITY;
-        if (itemIdxA !== itemIdxB) {
-            return itemIdxA - itemIdxB;
-        }
+            const groupIdxA = dashboardA ? dashboardA.groupIdx : (ordering.groupOrder.has(groupA) ? ordering.groupOrder.get(groupA) : Number.POSITIVE_INFINITY);
+            const groupIdxB = dashboardB ? dashboardB.groupIdx : (ordering.groupOrder.has(groupB) ? ordering.groupOrder.get(groupB) : Number.POSITIVE_INFINITY);
+            if (groupIdxA !== groupIdxB) {
+                return groupIdxA - groupIdxB;
+            }
 
-        const groupCmp = String(groupA).localeCompare(String(groupB), undefined, { sensitivity: 'base' });
-        if (groupCmp !== 0) {
-            return groupCmp;
-        }
-        return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
-    });
+            const itemIdxA = dashboardA ? dashboardA.itemIdx : Number.POSITIVE_INFINITY;
+            const itemIdxB = dashboardB ? dashboardB.itemIdx : Number.POSITIVE_INFINITY;
+            if (itemIdxA !== itemIdxB) {
+                return itemIdxA - itemIdxB;
+            }
 
-    const rowsToDisplay = usedTreeComputation
-        ? rows
-        : rows
+            const groupCmp = String(groupA).localeCompare(String(groupB), undefined, { sensitivity: 'base' });
+            if (groupCmp !== 0) {
+                return groupCmp;
+            }
+            return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
+        });
+
+        rowsToDisplay = usedTreeComputation
+            ? rows
+            : rows
+                .map((item) => {
+                    const normalizedName = normalizeOwnedMaterialName(item.name || String(item.typeId));
+                    const ownedQty = ownedData.byName.get(normalizedName) || 0;
+                    const adjustedQty = Math.max(0, Number(item.qty) - ownedQty);
+                    return {
+                        ...item,
+                        qty: adjustedQty,
+                    };
+                })
+                .filter((item) => item.qty > 0);
+    } else {
+        const remainingOwnedByType = new Map(ownedLookup.byType || []);
+        const remainingOwnedByName = new Map();
+        ownedData.byName.forEach((qty, normalizedName) => {
+            if (!normalizedName) {
+                return;
+            }
+            if (ownedLookup.matchedNames && ownedLookup.matchedNames.has(normalizedName)) {
+                return;
+            }
+            remainingOwnedByName.set(normalizedName, Math.max(0, Number(qty) || 0));
+        });
+
+        rowsToDisplay = plannerItems
             .map((item) => {
-                const normalizedName = normalizeOwnedMaterialName(item.name || String(item.typeId));
-                const ownedQty = ownedData.byName.get(normalizedName) || 0;
-                const adjustedQty = Math.max(0, Number(item.qty) - ownedQty);
+                const typeId = Number(item.typeId ?? item.type_id) || 0;
+                const requiredQty = Math.max(
+                    0,
+                    Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? item.qty ?? 0) || 0)
+                );
+                if (!typeId || requiredQty <= 0) {
+                    return null;
+                }
+
+                let ownedQty = 0;
+                const availableOwnedByType = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
+                const coveredByType = Math.min(requiredQty, availableOwnedByType);
+                if (coveredByType > 0) {
+                    remainingOwnedByType.set(typeId, availableOwnedByType - coveredByType);
+                    ownedQty += coveredByType;
+                }
+
+                const remainingRequiredAfterType = Math.max(0, requiredQty - ownedQty);
+                if (remainingRequiredAfterType > 0) {
+                    const normalizedTypeName = normalizeOwnedMaterialName(
+                        item.typeName || item.type_name || item.name || String(typeId)
+                    );
+                    if (normalizedTypeName) {
+                        const availableByName = Math.max(0, Number(remainingOwnedByName.get(normalizedTypeName) || 0));
+                        const coveredByName = Math.min(remainingRequiredAfterType, availableByName);
+                        if (coveredByName > 0) {
+                            remainingOwnedByName.set(normalizedTypeName, availableByName - coveredByName);
+                            ownedQty += coveredByName;
+                        }
+                    }
+                }
+
+                const payableQty = Math.max(0, requiredQty - ownedQty);
                 return {
                     ...item,
-                    qty: adjustedQty,
+                    qty: payableQty,
+                    quantity: payableQty,
+                    requiredQuantity: requiredQty,
+                    ownedQuantity: ownedQty,
                 };
             })
-            .filter((item) => item.qty > 0);
+            .filter((item) => item && item.qty > 0);
+    }
 
     CRAFT_COMPUTED_NEEDED_ROWS = rowsToDisplay.map((item) => ({
         typeId: Number(item.typeId) || 0,
@@ -9456,6 +9756,9 @@ function computeNeededPurchases() {
 
     // Ensure we have fuzzwork prices where possible, but keep real prices as user overrides.
     const ensurePrices = (typeIdsToFetch) => {
+        if (usingPlannerItems) {
+            return Promise.resolve({});
+        }
         if (!typeIdsToFetch || typeIdsToFetch.length === 0) {
             return Promise.resolve({});
         }
@@ -9481,8 +9784,10 @@ function computeNeededPurchases() {
     ensurePrices(typeIds).finally(() => {
         let totalCost = 0;
         rowsToDisplay.forEach((item) => {
+            const storedUnitPrice = Number(item.unitPrice);
             const unitInfo = (api && typeof api.getPrice === 'function') ? api.getPrice(item.typeId, 'buy') : { value: 0 };
-            const unit = unitInfo && typeof unitInfo.value === 'number' ? unitInfo.value : 0;
+            const apiUnit = unitInfo && typeof unitInfo.value === 'number' ? unitInfo.value : 0;
+            const unit = storedUnitPrice > 0 ? storedUnitPrice : apiUnit;
             const line = (unit > 0 ? unit : 0) * item.qty;
             totalCost += line;
 
@@ -9601,10 +9906,15 @@ function getMineralsFromFinancialTable() {
     const rows = financialBody.querySelectorAll('tr[data-type-id]');
     rows.forEach(row => {
         const typeId = parseInt(row.getAttribute('data-type-id'));
-        const qtyElement = row.querySelector('td[data-qty]');
+        const qtyElement = row.querySelector('[data-qty]');
 
         if (MINERAL_TYPE_IDS.includes(typeId) && qtyElement) {
-            const quantity = parseInt(qtyElement.getAttribute('data-qty'));
+            const quantity = parseInt(
+                qtyElement.getAttribute('data-qty')
+                || qtyElement.dataset?.qty
+                || '0',
+                10
+            );
             if (quantity > 0) {
                 // Get type name from the row
                 const nameElement = row.querySelector('.craft-planner-item-name');
@@ -9804,78 +10114,38 @@ function applyCompressedOres() {
         return;
     }
 
-    // Remove minerals from financial table
     const mineralsToRemove = getMineralsFromFinancialTable();
-    const financialBody = document.getElementById('financialItemsBody');
+    const mineralTypeIds = mineralsToRemove
+        .map((mineral) => Number(mineral.type_id) || 0)
+        .filter((typeId) => typeId > 0);
+    excludeBaseFinancialTypeIds(mineralTypeIds);
+    removeManualFinancialStateItemsByTypeIds(mineralTypeIds);
 
-    mineralsToRemove.forEach(mineral => {
-        const row = financialBody.querySelector(`tr[data-type-id="${mineral.type_id}"]`);
-        if (row) {
-            row.remove();
-        }
-    });
-
-    // Add compressed ores to the financial table
     conversionResultData.compressed_ores.forEach(ore => {
-        // Check if ore already exists in the table
-        let existingRow = financialBody.querySelector(`tr[data-type-id="${ore.type_id}"]`);
-
-        if (existingRow) {
-            // Update existing row quantity
-            const qtyCell = existingRow.querySelector('td[data-qty]');
-            if (qtyCell) {
-                const existingQty = parseInt(qtyCell.getAttribute('data-qty')) || 0;
-                const newQty = existingQty + ore.quantity;
-                qtyCell.setAttribute('data-qty', newQty);
-                const badge = qtyCell.querySelector('.badge');
-                if (badge) {
-                    badge.textContent = newQty.toLocaleString();
-                }
-            }
-
-            // Update price
-            const priceInput = existingRow.querySelector('.real-price');
-            if (priceInput) {
-                priceInput.value = ore.unit_price.toFixed(2);
-            }
-        } else {
-            // Create new row for the ore
-            const newRow = document.createElement('tr');
-            newRow.setAttribute('data-type-id', ore.type_id);
-            newRow.innerHTML = `
-                <td class="fw-semibold" data-manual-label="Manual">
-                    <div class="d-flex align-items-center gap-2 craft-planner-item-flex">
-                        <img src="https://images.evetech.net/types/${ore.type_id}/icon?size=32" alt="${ore.type_name}" class="rounded eve-type-icon eve-type-icon--28" onerror="this.style.display='none';">
-                        <span class="craft-planner-item-name-wrap">
-                            <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 text-xs craft-planner-item-name">${ore.type_name}</span>
-                        </span>
-                    </div>
-                </td>
-                <td class="text-end text-xs" data-qty="${ore.quantity}">
-                    <span class="badge bg-primary text-white">${ore.quantity.toLocaleString()}</span>
-                </td>
-                <td class="text-end">
-                    <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs" data-type-id="${ore.type_id}" value="${ore.unit_price.toFixed(2)}" readonly>
-                </td>
-                <td class="text-end">
-                    <input type="number" min="0" step="0.01" class="form-control form-control-sm real-price text-end text-xs" data-type-id="${ore.type_id}" value="${ore.unit_price.toFixed(2)}">
-                </td>
-                <td class="text-end text-xs total-cost fw-semibold">${ore.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                <td class="text-end text-xs item-margin">-</td>
-            `;
-
-            // Insert before the final product row
-            const finalProductRow = document.getElementById('finalProductRow');
-            if (finalProductRow) {
-                financialBody.insertBefore(newRow, finalProductRow);
-            } else {
-                financialBody.appendChild(newRow);
-            }
+        const rowKey = `manual-material:${Number(ore.type_id) || 0}`;
+        const existingItem = CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.get(rowKey) || null;
+        const existingQuantity = Math.max(0, Math.ceil(Number(existingItem?.quantity) || 0));
+        const oreQuantity = Math.max(0, Math.ceil(Number(ore.quantity) || 0));
+        if (oreQuantity <= 0) {
+            return;
         }
+
+        upsertManualFinancialStateItem({
+            typeId: ore.type_id,
+            typeName: ore.type_name,
+            quantity: existingQuantity + oreQuantity,
+            marketGroup: ore.market_group || ore.marketGroup || '',
+            rowKey,
+            realPrice: ore.unit_price,
+            fuzzworkPrice: ore.unit_price,
+        });
     });
 
-    // Trigger recalculation
-    updateFinancialSummary();
+    if (typeof updateFinancialTabFromState === 'function') {
+        updateFinancialTabFromState();
+    } else if (typeof recalcFinancials === 'function') {
+        recalcFinancials();
+    }
 
     // Close modal
     const modalEl = document.getElementById('convertMineralsModal');
