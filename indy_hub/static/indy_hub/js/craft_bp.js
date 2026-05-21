@@ -9703,9 +9703,15 @@ function calculateCompressedOres() {
         displayConversionResults(data);
     })
     .catch(error => {
+        clearTimeout(timeoutId);
         document.getElementById('conversionLoading').style.display = 'none';
         document.getElementById('calculateOresBtn').disabled = false;
-        showConversionError('Failed to calculate compressed ores: ' + error.message);
+
+        if (error.name === 'AbortError') {
+            showConversionError('Request timed out after 10 seconds. Please try again.');
+        } else {
+            showConversionError('Failed to calculate compressed ores: ' + error.message);
+        }
     });
 }
 

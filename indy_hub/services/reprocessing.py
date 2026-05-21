@@ -991,13 +991,45 @@ def calculate_compressed_ore_for_minerals(
         }
 
     # Build ore info: what minerals each compressed ore produces
+    # Batch load all reprocessing data to avoid N queries
+    ore_type_ids_to_check = [ore_id for ore_id, _ in compressed_ore_types]
+
     ore_mineral_yields: dict[int, dict[int, int]] = {}
-    for ore_type_id, ore_name in compressed_ore_types:
-        outputs = get_reprocessing_outputs_for_type(ore_type_id)
-        if outputs:
-            # Check if this ore produces any of the requested minerals
-            if any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
-                ore_mineral_yields[ore_type_id] = outputs
+
+    # Try to batch-query all reprocessing materials at once
+    try:
+        import eve_sde.models as sde_models
+
+        # Try TypeMaterial model first (most common)
+        model = getattr(sde_models, "TypeMaterial", None) or getattr(sde_models, "ItemTypeMaterial", None)
+
+        if model:
+            # Get all materials for compressed ores in one query
+            materials_qs = model.objects.filter(
+                eve_type_id__in=ore_type_ids_to_check
+            ).values_list('eve_type_id', 'material_eve_type_id', 'quantity')
+
+            # Group by ore type
+            for ore_type_id, material_id, quantity in materials_qs:
+                if ore_type_id not in ore_mineral_yields:
+                    ore_mineral_yields[ore_type_id] = {}
+                ore_mineral_yields[ore_type_id][material_id] = quantity
+
+            # Filter to only ores that produce requested minerals
+            ore_mineral_yields = {
+                ore_id: outputs
+                for ore_id, outputs in ore_mineral_yields.items()
+                if any(mineral_id in mineral_requirements for mineral_id in outputs.keys())
+            }
+    except Exception as e:
+        logger.warning(f"Batch query failed, falling back to individual queries: {e}")
+        # Fallback to individual queries
+        for ore_type_id, ore_name in compressed_ore_types:
+            outputs = get_reprocessing_outputs_for_type(ore_type_id)
+            if outputs:
+                # Check if this ore produces any of the requested minerals
+                if any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
+                    ore_mineral_yields[ore_type_id] = outputs
 
     if not ore_mineral_yields:
         return {
