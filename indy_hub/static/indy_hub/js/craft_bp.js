@@ -9945,36 +9945,61 @@ async function calculateBuildSchedule() {
 function gatherJobsDataForSchedule() {
     const jobs = [];
 
-    // Get all items from the dashboard that are set to "prod" mode
-    const dashboardRows = document.querySelectorAll('[data-prod-item-id]');
+    // Try to get data from SimulationAPI if available
+    if (window.SimulationAPI && typeof window.SimulationAPI.getState === 'function') {
+        const state = window.SimulationAPI.getState();
 
-    dashboardRows.forEach(row => {
-        const itemId = parseInt(row.getAttribute('data-prod-item-id'));
-        const decisionSelect = row.querySelector('.prod-decision-select');
-
-        if (!decisionSelect || decisionSelect.value !== 'prod') {
-            return; // Skip items not set to production
-        }
-
-        const itemName = row.querySelector('.prod-item-name')?.textContent?.trim() || `Item ${itemId}`;
-        const blueprintTypeId = parseInt(row.getAttribute('data-blueprint-type-id')) || itemId + 1;
-        const quantityNeeded = parseInt(row.querySelector('.prod-quantity-needed')?.textContent?.replace(/,/g, '') || 0);
-        const quantityPerRun = parseInt(row.getAttribute('data-quantity-per-run')) || 1;
-        const me = parseInt(row.getAttribute('data-me')) || 0;
-        const te = parseInt(row.getAttribute('data-te')) || 0;
-
-        if (quantityNeeded > 0) {
-            jobs.push({
-                item_type_id: itemId,
-                item_name: itemName,
-                blueprint_type_id: blueprintTypeId,
-                quantity_needed: quantityNeeded,
-                quantity_per_run: quantityPerRun,
-                material_efficiency: me,
-                time_efficiency: te,
+        if (state && state.items) {
+            // Iterate through items in the production state
+            Object.values(state.items).forEach(item => {
+                // Only include items marked for production
+                if (item.decision === 'prod' && item.quantity_needed > 0) {
+                    jobs.push({
+                        item_type_id: item.type_id,
+                        item_name: item.name || `Item ${item.type_id}`,
+                        blueprint_type_id: item.blueprint_type_id || item.type_id + 1,
+                        quantity_needed: item.quantity_needed,
+                        quantity_per_run: item.quantity_per_run || 1,
+                        material_efficiency: item.me || 0,
+                        time_efficiency: item.te || 0,
+                    });
+                }
             });
         }
-    });
+    }
+
+    // Fallback: try to read from DOM if SimulationAPI not available
+    if (jobs.length === 0) {
+        const dashboardRows = document.querySelectorAll('[data-prod-item-id]');
+
+        dashboardRows.forEach(row => {
+            const itemId = parseInt(row.getAttribute('data-prod-item-id'));
+            const decisionSelect = row.querySelector('.prod-decision-select');
+
+            if (!decisionSelect || decisionSelect.value !== 'prod') {
+                return; // Skip items not set to production
+            }
+
+            const itemName = row.querySelector('.prod-item-name')?.textContent?.trim() || `Item ${itemId}`;
+            const blueprintTypeId = parseInt(row.getAttribute('data-blueprint-type-id')) || itemId + 1;
+            const quantityNeeded = parseInt(row.querySelector('.prod-quantity-needed')?.textContent?.replace(/,/g, '') || 0);
+            const quantityPerRun = parseInt(row.getAttribute('data-quantity-per-run')) || 1;
+            const me = parseInt(row.getAttribute('data-me')) || 0;
+            const te = parseInt(row.getAttribute('data-te')) || 0;
+
+            if (quantityNeeded > 0) {
+                jobs.push({
+                    item_type_id: itemId,
+                    item_name: itemName,
+                    blueprint_type_id: blueprintTypeId,
+                    quantity_needed: quantityNeeded,
+                    quantity_per_run: quantityPerRun,
+                    material_efficiency: me,
+                    time_efficiency: te,
+                });
+            }
+        });
+    }
 
     return jobs;
 }
