@@ -9721,6 +9721,11 @@ function displayConversionResults(data) {
     // Display total cost
     totalCostElement.textContent = data.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' ISK';
 
+    // Show warning if prices weren't available
+    if (data.prices_available === false) {
+        totalCostElement.innerHTML += ' <span class="badge bg-warning text-dark ms-2" title="Fuzzwork prices unavailable, using fallback calculation">Estimated</span>';
+    }
+
     // Display excess minerals if any
     if (data.excess_minerals && Object.keys(data.excess_minerals).length > 0) {
         excessMineralsList.innerHTML = Object.entries(data.excess_minerals).map(([typeId, qty]) => {

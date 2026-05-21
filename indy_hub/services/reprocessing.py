@@ -1007,11 +1007,19 @@ def calculate_compressed_ore_for_minerals(
             "error": "No compressed ores found that produce the required minerals",
         }
 
-    # Get prices for all compressed ores
+    # Get prices for all compressed ores (optional - will use fallback if unavailable)
     ore_type_ids = list(ore_mineral_yields.keys())
+    price_map = {}
+    prices_available = False
+
     try:
         price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=15)
-    except FuzzworkError:
+        prices_available = True
+    except FuzzworkError as e:
+        logger.warning(f"Fuzzwork prices unavailable: {e}, using volume-based fallback")
+        price_map = {}
+    except Exception as e:
+        logger.warning(f"Error fetching prices: {e}, using volume-based fallback")
         price_map = {}
 
     # Calculate refine rate ratio
@@ -1036,8 +1044,14 @@ def calculate_compressed_ore_for_minerals(
             ore_prices = price_map.get(ore_type_id, {})
             ore_unit_price = _to_decimal(ore_prices.get("sell", 0))
 
+            # If no price available, use a simple heuristic based on mineral yield
             if ore_unit_price <= 0:
-                continue  # Skip ores without prices
+                if not prices_available:
+                    # Fallback: estimate price based on mineral output value
+                    # Use 1 ISK per unit of mineral yield as a simple heuristic
+                    ore_unit_price = Decimal("1.0")
+                else:
+                    continue  # Skip ores without prices only if some prices are available
 
             # Get portion size for this ore
             portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
@@ -1127,5 +1141,6 @@ def calculate_compressed_ore_for_minerals(
         "compressed_ores": compressed_ore_list,
         "total_cost": total_cost.quantize(Decimal("0.01")),
         "excess_minerals": excess_minerals,
+        "prices_available": prices_available,
         "error": None,
     }
