@@ -4,6 +4,7 @@ from django.urls import path
 
 from .views.api import (
     calculate_build_schedule,
+    calculate_import_fees,
     convert_minerals_to_compressed_ore,
     craft_build_environment,
     craft_bpc_contracts,
@@ -249,6 +250,11 @@ urlpatterns = [
         "api/calculate-build-schedule/",
         calculate_build_schedule,
         name="calculate_build_schedule",
+    ),
+    path(
+        "api/calculate-import-fees/",
+        calculate_import_fees,
+        name="calculate_import_fees",
     ),
     path(
         "api/craft-build-environment/",

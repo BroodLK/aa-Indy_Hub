@@ -1367,6 +1367,62 @@ def convert_minerals_to_compressed_ore(request):
 
 @login_required
 @require_http_methods(["POST"])
+def calculate_import_fees(request):
+    """
+    Calculate import fees from Jita 4-4 to destination location.
+
+    POST body:
+    {
+        "destination_location_id": 60003760,
+        "total_volume_m3": 100000.0,
+        "total_collateral_isk": 5000000000.0
+    }
+
+    Returns:
+    {
+        "freight_cost": 150000000.0,
+        "route_name": "Jita <-> Destination",
+        "pricing_id": 1,
+        "issues": []
+    }
+    Or {"route_exists": false} if no route found.
+    """
+    try:
+        data = json.loads(request.body)
+
+        destination_location_id = data.get("destination_location_id")
+        total_volume_m3 = data.get("total_volume_m3", 0)
+        total_collateral_isk = data.get("total_collateral_isk", 0)
+
+        if not destination_location_id:
+            return JsonResponse({"error": "destination_location_id is required"}, status=400)
+
+        from indy_hub.services.freight_fees import calculate_import_fees
+
+        result = calculate_import_fees(
+            destination_location_id=destination_location_id,
+            total_volume_m3=total_volume_m3,
+            total_collateral_isk=total_collateral_isk,
+        )
+
+        if result is None:
+            return JsonResponse({"route_exists": False})
+
+        return JsonResponse({
+            "route_exists": True,
+            "freight_cost": result["freight_cost"],
+            "route_name": result["route_name"],
+            "pricing_id": result["pricing_id"],
+            "issues": result["issues"],
+        })
+
+    except Exception as e:
+        logger.error(f"Error calculating import fees: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@login_required
+@require_http_methods(["POST"])
 def calculate_build_schedule(request):
     """
     Calculate optimized build schedule with time estimates and slot assignments.

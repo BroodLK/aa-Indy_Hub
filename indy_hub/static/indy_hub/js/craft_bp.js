@@ -10327,3 +10327,190 @@ function hideScheduleError() {
 document.addEventListener('DOMContentLoaded', () => {
     initBuildSchedule();
 });
+
+// ============================================================================
+// IMPORT FEES CALCULATION
+// ============================================================================
+
+let importFeesCache = null;
+let importFeesManualOverride = null;
+
+function initImportFees() {
+    const overrideInput = document.getElementById('importFeesOverride');
+    const clearBtn = document.getElementById('clearImportFeesOverride');
+
+    if (overrideInput) {
+        overrideInput.addEventListener('input', () => {
+            const value = parseFloat(overrideInput.value);
+            if (!isNaN(value) && value >= 0) {
+                importFeesManualOverride = value;
+                updateImportFeesDisplay();
+                recalculateFinancialSummary();
+            }
+        });
+    }
+
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            importFeesManualOverride = null;
+            if (overrideInput) {
+                overrideInput.value = '';
+            }
+            updateImportFeesDisplay();
+            recalculateFinancialSummary();
+        });
+    }
+
+    // Calculate import fees whenever items change
+    // We'll hook into existing recalculation triggers
+}
+
+async function calculateImportFees() {
+    // Get destination location from production config
+    const destinationLocationId = window.productionConfig?.location_id;
+
+    if (!destinationLocationId) {
+        console.debug('No destination location configured, skipping import fee calculation');
+        return null;
+    }
+
+    // Calculate total volume and collateral from purchase planner
+    const tbody = document.getElementById('financialItemsBody');
+    if (!tbody) return null;
+
+    let totalVolume = 0;
+    let totalCollateral = 0;
+
+    const rows = tbody.querySelectorAll('tr[data-type-id]');
+    rows.forEach(row => {
+        const qtyCell = row.querySelector('[data-qty]');
+        const realPriceInput = row.querySelector('.real-price');
+        const typeId = parseInt(row.dataset.typeId);
+
+        if (qtyCell && realPriceInput) {
+            const quantity = parseInt(qtyCell.dataset.qty || qtyCell.textContent.replace(/[^0-9]/g, '')) || 0;
+            const realPrice = parseFloat(realPriceInput.value) || 0;
+
+            // Estimate volume - use 0.01 m3 as minimum per item
+            // In reality we'd need to fetch actual volume from EVE SDE
+            // For now, use a conservative estimate based on typical items
+            const volume = 0.01; // m3 per item (conservative minimum)
+
+            totalVolume += quantity * volume;
+            totalCollateral += quantity * realPrice;
+        }
+    });
+
+    if (totalVolume <= 0) {
+        console.debug('No volume to transport, skipping import fee calculation');
+        return null;
+    }
+
+    try {
+        const response = await fetch('/indy_hub/api/calculate-import-fees/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                destination_location_id: destinationLocationId,
+                total_volume_m3: totalVolume,
+                total_collateral_isk: totalCollateral,
+            }),
+        });
+
+        const data = await response.json();
+
+        if (data.route_exists) {
+            return {
+                freight_cost: data.freight_cost,
+                route_name: data.route_name,
+                pricing_id: data.pricing_id,
+                issues: data.issues,
+            };
+        } else {
+            console.debug('No freight route exists from Jita 4-4 to destination');
+            return null;
+        }
+    } catch (error) {
+        console.error('Error calculating import fees:', error);
+        return null;
+    }
+}
+
+function updateImportFeesDisplay() {
+    const kpi = document.getElementById('importFeesKpi');
+    const valueSpan = document.getElementById('financialSummaryImportFees');
+    const routeSpan = document.getElementById('importFeesRoute');
+    const overrideGroup = document.getElementById('importFeesOverrideGroup');
+
+    if (!kpi || !valueSpan || !routeSpan) return;
+
+    const fees = getEffectiveImportFees();
+
+    if (fees !== null && fees > 0) {
+        kpi.style.display = '';
+        if (overrideGroup) {
+            overrideGroup.style.display = '';
+        }
+
+        valueSpan.textContent = formatISK(fees);
+
+        if (importFeesManualOverride !== null) {
+            routeSpan.textContent = '(Manual Override)';
+            routeSpan.style.color = 'var(--bs-warning)';
+        } else if (importFeesCache) {
+            routeSpan.textContent = importFeesCache.route_name;
+            routeSpan.style.color = '';
+
+            if (importFeesCache.issues && importFeesCache.issues.length > 0) {
+                routeSpan.textContent += ' ⚠️';
+                routeSpan.title = 'Issues: ' + importFeesCache.issues.join(', ');
+            }
+        }
+    } else {
+        kpi.style.display = 'none';
+        if (overrideGroup) {
+            overrideGroup.style.display = 'none';
+        }
+    }
+}
+
+function getEffectiveImportFees() {
+    if (importFeesManualOverride !== null) {
+        return importFeesManualOverride;
+    }
+    if (importFeesCache && importFeesCache.freight_cost) {
+        return importFeesCache.freight_cost;
+    }
+    return null;
+}
+
+async function recalculateImportFeesIfNeeded() {
+    // Only recalculate if we don't have a manual override
+    if (importFeesManualOverride === null) {
+        const fees = await calculateImportFees();
+        importFeesCache = fees;
+        updateImportFeesDisplay();
+    }
+}
+
+// Hook into existing financial recalculation
+// We need to find where recalculateFinancialSummary is defined and extend it
+const originalRecalculateFinancialSummary = window.recalculateFinancialSummary || (() => {});
+
+window.recalculateFinancialSummary = function() {
+    originalRecalculateFinancialSummary.apply(this, arguments);
+
+    // Trigger import fee recalculation (async)
+    recalculateImportFeesIfNeeded().then(() => {
+        // After import fees are calculated, we might need to update profit calculations
+        // to include import fees in total costs
+    });
+};
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', () => {
+    initImportFees();
+});
