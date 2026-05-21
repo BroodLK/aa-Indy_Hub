@@ -35,6 +35,7 @@ from indy_hub.tasks.material_exchange_contracts import (
 from indy_hub.services.reprocessing import (
     COMPRESSED_ORE_CACHE_LOAD_COMMAND,
     _populate_compressed_ore_cache,
+    _update_compressed_ore_prices,
     build_reprocessing_estimate,
     calculate_compressed_ore_for_minerals,
     compute_estimated_yield_percent,
@@ -783,6 +784,84 @@ class CompressedOreCalculationPerformanceTests(SimpleTestCase):
         self.assertEqual(result["compressed_ores"][0]["type_id"], 123)
         self.assertEqual(result["compressed_ores"][0]["quantity"], 50000)
         self.assertEqual(result["total_cost"], Decimal("100000.00"))
+
+    @patch("indy_hub.services.reprocessing.get_type_name", return_value="Compressed Veldspar")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=1)
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_ignores_ores_with_sell_price_at_or_below_one_isk(
+        self,
+        mock_cache_model,
+        _mock_portion_size,
+        _mock_type_name,
+    ):
+        mock_cache_model.needs_initial_setup.return_value = False
+        mock_cache_model.needs_price_update.return_value = False
+        mock_cache_model.objects.all.return_value.values.return_value = [
+            {
+                "ore_type_id": 123,
+                "ore_name": "Compressed Veldspar",
+                "reprocessing_outputs": {"34": 1},
+                "sell_price": Decimal("1.00"),
+            },
+            {
+                "ore_type_id": 456,
+                "ore_name": "Compressed Scordite",
+                "reprocessing_outputs": {"34": 2},
+                "sell_price": Decimal("2.50"),
+            },
+        ]
+
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 10},
+            refine_rate_percent=Decimal("100.0"),
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertEqual(len(result["compressed_ores"]), 1)
+        self.assertEqual(result["compressed_ores"][0]["type_id"], 456)
+
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_returns_error_when_only_unmarketed_ores_match(self, mock_cache_model):
+        mock_cache_model.needs_initial_setup.return_value = False
+        mock_cache_model.needs_price_update.return_value = False
+        mock_cache_model.objects.all.return_value.values.return_value = [
+            {
+                "ore_type_id": 123,
+                "ore_name": "Compressed Veldspar",
+                "reprocessing_outputs": {"34": 1},
+                "sell_price": Decimal("1.00"),
+            }
+        ]
+
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 10},
+            refine_rate_percent=Decimal("100.0"),
+        )
+
+        self.assertEqual(result["compressed_ores"], [])
+        self.assertIn("sell prices above 1 ISK", str(result["error"]))
+
+
+class CompressedOrePriceUpdateTests(SimpleTestCase):
+    @patch("indy_hub.services.reprocessing.fetch_fuzzwork_prices")
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_updates_all_cached_ores_and_zeros_missing_prices(
+        self,
+        mock_cache_model,
+        mock_fetch_prices,
+    ):
+        mock_cache_model.objects.values_list.return_value = [101, 202]
+        mock_fetch_prices.return_value = {
+            101: {"buy": Decimal("5.00"), "sell": Decimal("7.00")},
+        }
+
+        success, message = _update_compressed_ore_prices()
+
+        self.assertTrue(success, message)
+        self.assertIn("Updated prices for 2 compressed ores", message)
+        self.assertEqual(mock_cache_model.objects.filter.call_count, 2)
+        second_update = mock_cache_model.objects.filter.return_value.update.call_args_list[-1]
+        self.assertEqual(second_update.kwargs["sell_price"], Decimal("0"))
 
 
 class CompressedOreCacheCommandTests(SimpleTestCase):

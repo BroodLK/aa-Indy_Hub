@@ -1078,16 +1078,19 @@ def _update_compressed_ore_prices() -> tuple[bool, str]:
 
     try:
         price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=10)
+        updated_at = timezone.now()
 
-        # Update prices in bulk
-        for ore_type_id, prices in price_map.items():
+        # Update every cached ore so missing-market items get an explicit zero
+        # price and a fresh timestamp rather than staying perpetually stale.
+        for ore_type_id in ore_type_ids:
+            prices = price_map.get(ore_type_id, {})
             CompressedOreCache.objects.filter(ore_type_id=ore_type_id).update(
                 buy_price=_to_decimal(prices.get("buy", 0)),
                 sell_price=_to_decimal(prices.get("sell", 0)),
-                pricing_data_updated=timezone.now(),
+                pricing_data_updated=updated_at,
             )
 
-        return True, f"Updated prices for {len(price_map)} compressed ores"
+        return True, f"Updated prices for {len(ore_type_ids)} compressed ores"
     except Exception as e:
         logger.warning(f"Failed to update prices: {e}")
         return False, f"Failed to update prices: {e}"
@@ -1163,19 +1166,18 @@ def calculate_compressed_ore_for_minerals(
         # Convert JSON field back to dict[int, int]
         outputs = {int(k): int(v) for k, v in ore["reprocessing_outputs"].items()}
 
-        # Only include ores that produce at least one requested mineral
-        if any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
-            ore_type_id = ore["ore_type_id"]
-            ore_mineral_yields[ore_type_id] = outputs
+        # Only include ores that produce at least one requested mineral and have
+        # a real sell-side market price. 1 ISK or 0 ISK means no usable market.
+        if not any(mineral_id in mineral_requirements for mineral_id in outputs.keys()):
+            continue
 
-            # Get price
-            sell_price = ore.get("sell_price")
-            if sell_price and sell_price > 0:
-                price_map[ore_type_id] = {"sell": sell_price}
-            else:
-                # Use fallback pricing
-                price_map[ore_type_id] = {"sell": Decimal("1.0")}
-                prices_estimated = True
+        sell_price = _to_decimal(ore.get("sell_price", 0))
+        if sell_price <= Decimal("1"):
+            continue
+
+        ore_type_id = ore["ore_type_id"]
+        ore_mineral_yields[ore_type_id] = outputs
+        price_map[ore_type_id] = {"sell": sell_price}
 
     if not ore_mineral_yields:
         return {
@@ -1183,7 +1185,7 @@ def calculate_compressed_ore_for_minerals(
             "total_cost": Decimal("0.00"),
             "excess_minerals": {},
             "prices_estimated": False,
-            "error": "No compressed ores found that produce the required minerals",
+            "error": "No compressed ores with sell prices above 1 ISK were found for the required minerals",
         }
 
     # Calculate refine rate ratio
@@ -1197,8 +1199,8 @@ def calculate_compressed_ore_for_minerals(
         portion_size = max(get_reprocessing_portion_size(ore_type_id), 1)
         ore_prices = price_map.get(ore_type_id, {})
         ore_unit_price = _to_decimal(ore_prices.get("sell", 0))
-        if ore_unit_price <= 0:
-            ore_unit_price = Decimal("1.0")
+        if ore_unit_price <= Decimal("1"):
+            continue
 
         refined_per_portion: dict[int, Decimal] = {}
         for mineral_id, base_qty in mineral_outputs.items():
