@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("indy_hub", "0118_compressedorecache"),
+        ("indy_hub", "0117_compressedorecache"),
     ]
 
     operations = [
