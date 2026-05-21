@@ -439,6 +439,81 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertIsInstance(row.get("buy_markup_percent_override"), str)
         self.assertEqual(str(row.get("buy_markup_base_override") or ""), "sell")
 
+    def test_market_group_profiles_are_saved_separately_for_sell_and_buy(self):
+        post_data = self._base_post_data()
+        post_data["sell_market_group_profiles_json"] = (
+            '[{"name":"Trade Hub","allow_all":true,"is_default":true,"market_group_ids":[200]},'
+            '{"name":"Ore Only","allow_all":false,"is_default":false,"market_group_ids":[300]}]'
+        )
+        post_data["buy_market_group_profiles_json"] = (
+            '[{"name":"Trade Hub","is_default":true,"market_group_ids":[400]}]'
+        )
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.sell_market_group_profiles,
+            [
+                {
+                    "name": "Ore Only",
+                    "is_default": False,
+                    "allow_all": False,
+                    "market_group_ids": [300],
+                },
+                {
+                    "name": "Trade Hub",
+                    "is_default": True,
+                    "allow_all": True,
+                    "market_group_ids": [],
+                },
+            ],
+        )
+        self.assertEqual(
+            self.config.buy_market_group_profiles,
+            [
+                {
+                    "name": "Trade Hub",
+                    "is_default": True,
+                    "allow_all": False,
+                    "market_group_ids": [400],
+                }
+            ],
+        )
+
+    def test_market_group_profiles_normalize_duplicate_names_and_default(self):
+        post_data = self._base_post_data()
+        post_data["sell_market_group_profiles_json"] = (
+            '[{"name":"Ore","allow_all":false,"is_default":true,"market_group_ids":[200]},'
+            '{"name":"ore","allow_all":true,"is_default":false,"market_group_ids":[300]},'
+            '{"name":"Minerals","allow_all":false,"is_default":true,"market_group_ids":[400]}]'
+        )
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.sell_market_group_profiles,
+            [
+                {
+                    "name": "Minerals",
+                    "is_default": True,
+                    "allow_all": False,
+                    "market_group_ids": [400],
+                },
+                {
+                    "name": "ore",
+                    "is_default": False,
+                    "allow_all": True,
+                    "market_group_ids": [],
+                },
+            ],
+        )
+
     def test_container_price_overrides_are_saved(self):
         post_data = self._base_post_data()
         post_data["container_sell_markup_percent_override"] = "-7.50"

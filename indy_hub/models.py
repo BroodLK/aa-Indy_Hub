@@ -2361,6 +2361,22 @@ class MaterialExchangeConfig(models.Model):
             "Value = list of market group IDs, or null to allow all groups."
         ),
     )
+    sell_market_group_profiles = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Saved sell-side market-group profiles. Each row can define name, "
+            "default flag, allow_all, and selected market group IDs."
+        ),
+    )
+    buy_market_group_profiles = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Saved buy-side market-group profiles. Each row can define name, "
+            "default flag, and selected market group IDs."
+        ),
+    )
     market_group_price_overrides = models.JSONField(
         blank=True,
         default=list,

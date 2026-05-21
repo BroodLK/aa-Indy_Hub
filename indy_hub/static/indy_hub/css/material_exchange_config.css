@@ -698,6 +698,42 @@ html[data-theme="darkly"] .me-config .me-market-selection-summary {
     background: rgba(255, 255, 255, 0.08);
 }
 
+.me-config .me-market-profile-box {
+    margin-bottom: 0.75rem;
+    padding: 0.7rem;
+    border: 1px solid var(--me-border);
+    border-radius: 0.65rem;
+    background: rgba(var(--bs-secondary-rgb), 0.05);
+}
+
+html[data-theme="darkly"] .me-config .me-market-profile-box {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.me-config .me-market-profile-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: flex-end;
+}
+
+.me-config .me-market-profile-row + .me-market-profile-row {
+    margin-top: 0.65rem;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--me-border);
+}
+
+.me-config .me-market-profile-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 12rem;
+}
+
+.me-config .me-market-profile-actions .form-check {
+    margin-bottom: 0;
+}
+
 .me-config .me-market-tree {
     max-height: 24rem;
     overflow: auto;
@@ -834,6 +870,11 @@ html[data-theme="darkly"] .me-config .me-market-tree-row.is-selected {
 
     .me-config .me-market-selection-summary {
         white-space: normal;
+    }
+
+    .me-config .me-market-profile-actions {
+        min-width: 0;
+        width: 100%;
     }
 }
 

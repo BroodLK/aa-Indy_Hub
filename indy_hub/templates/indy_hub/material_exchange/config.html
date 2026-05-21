@@ -736,6 +736,8 @@
                                                 id="allowedMarketGroupsSellByStructureJson">
                                             <input type="hidden" name="allowed_market_groups_sell_json" id="allowedMarketGroupsSellJson">
                                             <input type="hidden" name="allowed_market_groups_buy_json" id="allowedMarketGroupsBuyJson">
+                                            <input type="hidden" name="sell_market_group_profiles_json" id="sellMarketGroupProfilesJson">
+                                            <input type="hidden" name="buy_market_group_profiles_json" id="buyMarketGroupProfilesJson">
                                             <div class="me-market-panel me-market-panel-sell">
                                                 <div class="me-market-panel-header">
                                                     <label class="form-label fw-semibold mb-0"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span></label>
@@ -757,6 +759,39 @@
                                                     {% trans "Disable 'all' to choose only specific accepted groups for this location." %}
                                                 </div>
                                             </div>
+                                            <div class="me-market-profile-box">
+                                                <div class="me-market-profile-row">
+                                                    <div class="flex-grow-1">
+                                                        <label class="form-label fw-semibold mb-1" for="sellMarketGroupProfileSelect">{% trans "Saved Sell Profiles" %}</label>
+                                                        <select class="form-select form-select-sm" id="sellMarketGroupProfileSelect"></select>
+                                                    </div>
+                                                    <div class="d-flex flex-wrap gap-2 align-self-end">
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applySellMarketGroupProfile">{% trans "Apply to Location" %}</button>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applySellMarketGroupProfileToAll">{% trans "Apply to All" %}</button>
+                                                        <button type="button" class="btn btn-outline-danger btn-sm" id="deleteSellMarketGroupProfile">{% trans "Delete" %}</button>
+                                                    </div>
+                                                </div>
+                                                <div class="me-market-profile-row">
+                                                    <div class="flex-grow-1">
+                                                        <label class="form-label fw-semibold mb-1" for="sellMarketGroupProfileName">{% trans "Save Active Sell Location as Profile" %}</label>
+                                                        <input
+                                                            type="text"
+                                                            class="form-control form-control-sm"
+                                                            id="sellMarketGroupProfileName"
+                                                            maxlength="80"
+                                                            placeholder="{% trans 'Profile name' %}">
+                                                    </div>
+                                                    <div class="me-market-profile-actions">
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="checkbox" id="sellMarketGroupProfileDefault">
+                                                            <label class="form-check-label" for="sellMarketGroupProfileDefault">
+                                                                {% trans "Default for new sell locations" %}
+                                                            </label>
+                                                        </div>
+                                                        <button type="button" class="btn btn-primary btn-sm" id="saveSellMarketGroupProfile">{% trans "Save Profile" %}</button>
+                                                    </div>
+                                                </div>
+                                            </div>
                                             <div class="me-market-tree" id="sellMarketGroupTree"></div>
                                             </div>
                                         </div>
@@ -767,6 +802,38 @@
                                                     <span class="me-market-selection-summary" id="buyMarketGroupSummary">{% trans "No groups selected" %}</span>
                                                 </div>
                                                 <div class="form-text mb-2">{% trans "Granular mode applies to both SELL and BUY trees." %}</div>
+                                                <div class="me-market-profile-box">
+                                                    <div class="me-market-profile-row">
+                                                        <div class="flex-grow-1">
+                                                            <label class="form-label fw-semibold mb-1" for="buyMarketGroupProfileSelect">{% trans "Saved Buy Profiles" %}</label>
+                                                            <select class="form-select form-select-sm" id="buyMarketGroupProfileSelect"></select>
+                                                        </div>
+                                                        <div class="d-flex flex-wrap gap-2 align-self-end">
+                                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="applyBuyMarketGroupProfile">{% trans "Apply" %}</button>
+                                                            <button type="button" class="btn btn-outline-danger btn-sm" id="deleteBuyMarketGroupProfile">{% trans "Delete" %}</button>
+                                                        </div>
+                                                    </div>
+                                                    <div class="me-market-profile-row">
+                                                        <div class="flex-grow-1">
+                                                            <label class="form-label fw-semibold mb-1" for="buyMarketGroupProfileName">{% trans "Save Current Buy Groups as Profile" %}</label>
+                                                            <input
+                                                                type="text"
+                                                                class="form-control form-control-sm"
+                                                                id="buyMarketGroupProfileName"
+                                                                maxlength="80"
+                                                                placeholder="{% trans 'Profile name' %}">
+                                                        </div>
+                                                        <div class="me-market-profile-actions">
+                                                            <div class="form-check">
+                                                                <input class="form-check-input" type="checkbox" id="buyMarketGroupProfileDefault">
+                                                                <label class="form-check-label" for="buyMarketGroupProfileDefault">
+                                                                    {% trans "Mark as default" %}
+                                                                </label>
+                                                            </div>
+                                                            <button type="button" class="btn btn-primary btn-sm" id="saveBuyMarketGroupProfile">{% trans "Save Profile" %}</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                                 <div class="me-market-tree" id="buyMarketGroupTree"></div>
                                             </div>
                                         </div>
@@ -849,6 +916,8 @@
 {{ item_override_type_choices|json_script:"itemOverrideTypeChoicesData" }}
 {{ market_group_override_choices|json_script:"marketGroupOverrideChoicesData" }}
 {{ market_group_price_overrides|json_script:"marketGroupPriceOverridesData" }}
+{{ sell_market_group_profiles|json_script:"sellMarketGroupProfilesData" }}
+{{ buy_market_group_profiles|json_script:"buyMarketGroupProfilesData" }}
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -1885,6 +1954,23 @@ document.addEventListener('DOMContentLoaded', function() {
     const modeBadgeEl = document.getElementById('marketGroupModeBadge');
     const sellSummaryEl = document.getElementById('sellMarketGroupSummary');
     const buySummaryEl = document.getElementById('buyMarketGroupSummary');
+    const sellProfilesDataEl = document.getElementById('sellMarketGroupProfilesData');
+    const buyProfilesDataEl = document.getElementById('buyMarketGroupProfilesData');
+    const sellProfilesInput = document.getElementById('sellMarketGroupProfilesJson');
+    const buyProfilesInput = document.getElementById('buyMarketGroupProfilesJson');
+    const sellProfileSelect = document.getElementById('sellMarketGroupProfileSelect');
+    const buyProfileSelect = document.getElementById('buyMarketGroupProfileSelect');
+    const sellProfileNameInput = document.getElementById('sellMarketGroupProfileName');
+    const buyProfileNameInput = document.getElementById('buyMarketGroupProfileName');
+    const sellProfileDefaultToggle = document.getElementById('sellMarketGroupProfileDefault');
+    const buyProfileDefaultToggle = document.getElementById('buyMarketGroupProfileDefault');
+    const saveSellProfileBtn = document.getElementById('saveSellMarketGroupProfile');
+    const saveBuyProfileBtn = document.getElementById('saveBuyMarketGroupProfile');
+    const applySellProfileBtn = document.getElementById('applySellMarketGroupProfile');
+    const applySellProfileToAllBtn = document.getElementById('applySellMarketGroupProfileToAll');
+    const applyBuyProfileBtn = document.getElementById('applyBuyMarketGroupProfile');
+    const deleteSellProfileBtn = document.getElementById('deleteSellMarketGroupProfile');
+    const deleteBuyProfileBtn = document.getElementById('deleteBuyMarketGroupProfile');
 
     if (
         !searchInput ||
@@ -1894,7 +1980,9 @@ document.addEventListener('DOMContentLoaded', function() {
         !sellMarketGroupStructureSelect ||
         !sellGroupMapInput ||
         !sellTreeContainer ||
-        !buyTreeContainer
+        !buyTreeContainer ||
+        !sellProfilesInput ||
+        !buyProfilesInput
     ) {
         return;
     }
@@ -1903,6 +1991,8 @@ document.addEventListener('DOMContentLoaded', function() {
     let marketTree = [];
     let initialSellGroupMap = {};
     let initialBuyGroups = [];
+    let initialSellProfiles = [];
+    let initialBuyProfiles = [];
 
     try {
         searchIndex = JSON.parse(searchDataEl.textContent || '{}');
@@ -1920,6 +2010,20 @@ document.addEventListener('DOMContentLoaded', function() {
         );
     } catch (e) {
         initialBuyGroups = [];
+    }
+    try {
+        initialSellProfiles = JSON.parse(
+            (sellProfilesDataEl ? sellProfilesDataEl.textContent : '[]') || '[]'
+        );
+    } catch (e) {
+        initialSellProfiles = [];
+    }
+    try {
+        initialBuyProfiles = JSON.parse(
+            (buyProfilesDataEl ? buyProfilesDataEl.textContent : '[]') || '[]'
+        );
+    } catch (e) {
+        initialBuyProfiles = [];
     }
 
     const sellGroupMapDataEl = document.getElementById('selectedSellMarketGroupsByStructure');
@@ -1968,6 +2072,49 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         return normalized;
     };
+
+    const normalizeProfileList = (rawList, { allowAllSupported = false } = {}) => {
+        const normalizedByName = {};
+        let defaultProfileKey = '';
+        if (!Array.isArray(rawList)) {
+            return [];
+        }
+        rawList.forEach(rawProfile => {
+            if (!rawProfile || typeof rawProfile !== 'object') {
+                return;
+            }
+            const name = String(rawProfile.name || '').trim();
+            if (!name) {
+                return;
+            }
+            const key = name.toLowerCase();
+            const allowAll = allowAllSupported && !!rawProfile.allow_all;
+            normalizedByName[key] = {
+                name: name.slice(0, 80),
+                is_default: false,
+                allow_all: allowAll,
+                market_group_ids: allowAll
+                    ? []
+                    : normalizeGroupIdList(
+                        rawProfile.market_group_ids || rawProfile.group_ids || []
+                    ),
+            };
+            if (rawProfile.is_default) {
+                defaultProfileKey = key;
+            }
+        });
+        if (defaultProfileKey && normalizedByName[defaultProfileKey]) {
+            normalizedByName[defaultProfileKey].is_default = true;
+        }
+        return Object.values(normalizedByName).sort((left, right) =>
+            String(left.name || '').localeCompare(String(right.name || ''))
+        );
+    };
+
+    const getDefaultProfile = (profiles) =>
+        Array.isArray(profiles)
+            ? profiles.find(profile => profile && profile.is_default)
+            : null;
 
     const nodeHasChildren = (node) => Array.isArray(node.children) && node.children.length > 0;
 
@@ -2026,6 +2173,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let sellGroupsByStructure = normalizeSellGroupMap(initialSellGroupMap);
     let buySelectedGroupIds = normalizeGroupIdList(initialBuyGroups);
+    let sellProfiles = normalizeProfileList(initialSellProfiles, { allowAllSupported: true });
+    let buyProfiles = normalizeProfileList(initialBuyProfiles, { allowAllSupported: false });
     let granularMode = false;
     let activeSellStructureId = '';
     let expandedNodeIds = new Set();
@@ -2063,6 +2212,111 @@ document.addEventListener('DOMContentLoaded', function() {
         if (buyGroupsJsonInput) {
             buyGroupsJsonInput.value = JSON.stringify(normalizeGroupIdList(buySelectedGroupIds));
         }
+    };
+
+    const serializeSellProfiles = () => {
+        sellProfilesInput.value = JSON.stringify(
+            normalizeProfileList(sellProfiles, { allowAllSupported: true })
+        );
+    };
+
+    const serializeBuyProfiles = () => {
+        buyProfilesInput.value = JSON.stringify(
+            normalizeProfileList(buyProfiles, { allowAllSupported: false })
+        );
+    };
+
+    const syncProfileSelectOptions = (
+        selectEl,
+        profiles,
+        {
+            emptyLabel = "{% trans 'No saved profiles' %}",
+            selectedName = '',
+        } = {}
+    ) => {
+        if (!selectEl) {
+            return;
+        }
+        const previousValue = selectedName || selectEl.value || '';
+        selectEl.innerHTML = '';
+        if (!profiles.length) {
+            selectEl.add(new Option(emptyLabel, '', true, true));
+            selectEl.disabled = true;
+            return;
+        }
+
+        selectEl.disabled = false;
+        selectEl.add(new Option("{% trans 'Choose a profile...' %}", '', false, false));
+        profiles.forEach(profile => {
+            const suffix = profile.is_default ? " ({% trans 'default' %})" : '';
+            selectEl.add(new Option(`${profile.name}${suffix}`, profile.name, false, false));
+        });
+        const nextValue = profiles.some(profile => profile.name === previousValue)
+            ? previousValue
+            : '';
+        selectEl.value = nextValue;
+    };
+
+    const getSelectedSellProfile = () =>
+        (sellProfiles || []).find(profile => profile.name === (sellProfileSelect ? sellProfileSelect.value : '')) || null;
+
+    const getSelectedBuyProfile = () =>
+        (buyProfiles || []).find(profile => profile.name === (buyProfileSelect ? buyProfileSelect.value : '')) || null;
+
+    const applySellProfileToLocationId = (profile, structureId) => {
+        if (!profile || !structureId) {
+            return;
+        }
+        sellGroupsByStructure[String(structureId)] = profile.allow_all
+            ? null
+            : normalizeGroupIdList(profile.market_group_ids || []);
+    };
+
+    const renderSellProfiles = ({ selectedName = '' } = {}) => {
+        sellProfiles = normalizeProfileList(sellProfiles, { allowAllSupported: true });
+        syncProfileSelectOptions(sellProfileSelect, sellProfiles, {
+            emptyLabel: "{% trans 'No saved sell profiles' %}",
+            selectedName,
+        });
+        const selectedProfile = getSelectedSellProfile();
+        if (sellProfileNameInput) {
+            sellProfileNameInput.value = selectedProfile ? selectedProfile.name : '';
+        }
+        if (sellProfileDefaultToggle) {
+            sellProfileDefaultToggle.checked = !!(selectedProfile && selectedProfile.is_default);
+        }
+        if (applySellProfileBtn) {
+            applySellProfileBtn.disabled = !selectedProfile || !activeSellStructureId;
+        }
+        if (applySellProfileToAllBtn) {
+            applySellProfileToAllBtn.disabled = !selectedProfile || !getSelectedSellStructures().length;
+        }
+        if (deleteSellProfileBtn) {
+            deleteSellProfileBtn.disabled = !selectedProfile;
+        }
+        serializeSellProfiles();
+    };
+
+    const renderBuyProfiles = ({ selectedName = '' } = {}) => {
+        buyProfiles = normalizeProfileList(buyProfiles, { allowAllSupported: false });
+        syncProfileSelectOptions(buyProfileSelect, buyProfiles, {
+            emptyLabel: "{% trans 'No saved buy profiles' %}",
+            selectedName,
+        });
+        const selectedProfile = getSelectedBuyProfile();
+        if (buyProfileNameInput) {
+            buyProfileNameInput.value = selectedProfile ? selectedProfile.name : '';
+        }
+        if (buyProfileDefaultToggle) {
+            buyProfileDefaultToggle.checked = !!(selectedProfile && selectedProfile.is_default);
+        }
+        if (applyBuyProfileBtn) {
+            applyBuyProfileBtn.disabled = !selectedProfile;
+        }
+        if (deleteBuyProfileBtn) {
+            deleteBuyProfileBtn.disabled = !selectedProfile;
+        }
+        serializeBuyProfiles();
     };
 
     const getSelectedStructureName = (structureId) => {
@@ -2344,6 +2598,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 sellGroupsByStructure[activeSellStructureId] = Array.from(nextSet).sort((a, b) => a - b);
                 serializeSellGroupMap();
                 serializeSellUnionGroups();
+                renderSellProfiles();
                 renderSellTree();
             },
         });
@@ -2357,6 +2612,7 @@ document.addEventListener('DOMContentLoaded', function() {
             onToggle: (nextSet) => {
                 buySelectedGroupIds = Array.from(nextSet).sort((a, b) => a - b);
                 serializeBuyGroups();
+                renderBuyProfiles();
                 renderBuyTree();
             },
         });
@@ -2391,6 +2647,7 @@ document.addEventListener('DOMContentLoaded', function() {
             sellTreeContainer.innerHTML = '';
             serializeSellGroupMap();
             serializeSellUnionGroups();
+            renderSellProfiles();
             updateSelectionSummaries();
             return;
         }
@@ -2402,7 +2659,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         selectedIds.forEach(structureId => {
             if (!(structureId in sellGroupsByStructure)) {
-                sellGroupsByStructure[structureId] = null;
+                const defaultSellProfile = getDefaultProfile(sellProfiles);
+                if (defaultSellProfile) {
+                    applySellProfileToLocationId(defaultSellProfile, structureId);
+                } else {
+                    sellGroupsByStructure[structureId] = null;
+                }
             }
         });
 
@@ -2422,6 +2684,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         serializeSellGroupMap();
         serializeSellUnionGroups();
+        renderSellProfiles();
         renderSellTree();
         updateSelectionSummaries();
     };
@@ -2467,6 +2730,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         serializeSellGroupMap();
         serializeSellUnionGroups();
+        renderSellProfiles();
         renderSellTree();
         updateSelectionSummaries();
     });
@@ -2483,8 +2747,151 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             serializeSellGroupMap();
             serializeSellUnionGroups();
+            renderSellProfiles();
             renderSellTree();
             updateSelectionSummaries();
+        });
+    }
+
+    if (sellProfileSelect) {
+        sellProfileSelect.addEventListener('change', function() {
+            renderSellProfiles({ selectedName: sellProfileSelect.value || '' });
+        });
+    }
+
+    if (buyProfileSelect) {
+        buyProfileSelect.addEventListener('change', function() {
+            renderBuyProfiles({ selectedName: buyProfileSelect.value || '' });
+        });
+    }
+
+    if (saveSellProfileBtn) {
+        saveSellProfileBtn.addEventListener('click', function() {
+            if (!activeSellStructureId || !sellProfileNameInput) {
+                return;
+            }
+            const profileName = String(sellProfileNameInput.value || '').trim();
+            if (!profileName) {
+                sellProfileNameInput.focus();
+                return;
+            }
+            persistActiveSellRule();
+            const nextProfile = {
+                name: profileName.slice(0, 80),
+                is_default: !!(sellProfileDefaultToggle && sellProfileDefaultToggle.checked),
+                allow_all: !!(sellAllowAllToggle && sellAllowAllToggle.checked),
+                market_group_ids: sellAllowAllToggle && sellAllowAllToggle.checked
+                    ? []
+                    : Array.from(getActiveSellSelectionSet()).sort((a, b) => a - b),
+            };
+            sellProfiles = (sellProfiles || []).filter(
+                profile => String(profile.name || '').toLowerCase() !== profileName.toLowerCase()
+            );
+            if (nextProfile.is_default) {
+                sellProfiles = sellProfiles.map(profile => ({ ...profile, is_default: false }));
+            }
+            sellProfiles.push(nextProfile);
+            renderSellProfiles({ selectedName: nextProfile.name });
+        });
+    }
+
+    if (applySellProfileBtn) {
+        applySellProfileBtn.addEventListener('click', function() {
+            const profile = getSelectedSellProfile();
+            if (!profile || !activeSellStructureId) {
+                return;
+            }
+            applySellProfileToLocationId(profile, activeSellStructureId);
+            if (sellAllowAllToggle) {
+                sellAllowAllToggle.checked = profile.allow_all;
+            }
+            serializeSellGroupMap();
+            serializeSellUnionGroups();
+            renderSellProfiles({ selectedName: profile.name });
+            renderSellTree();
+            updateSelectionSummaries();
+        });
+    }
+
+    if (applySellProfileToAllBtn) {
+        applySellProfileToAllBtn.addEventListener('click', function() {
+            const profile = getSelectedSellProfile();
+            if (!profile) {
+                return;
+            }
+            getSelectedSellStructures().forEach(structure => {
+                applySellProfileToLocationId(profile, structure.id);
+            });
+            if (activeSellStructureId && sellAllowAllToggle) {
+                sellAllowAllToggle.checked = sellGroupsByStructure[activeSellStructureId] === null;
+            }
+            serializeSellGroupMap();
+            serializeSellUnionGroups();
+            renderSellProfiles({ selectedName: profile.name });
+            renderSellTree();
+            updateSelectionSummaries();
+        });
+    }
+
+    if (deleteSellProfileBtn) {
+        deleteSellProfileBtn.addEventListener('click', function() {
+            const profile = getSelectedSellProfile();
+            if (!profile) {
+                return;
+            }
+            sellProfiles = (sellProfiles || []).filter(entry => entry.name !== profile.name);
+            renderSellProfiles();
+        });
+    }
+
+    if (saveBuyProfileBtn) {
+        saveBuyProfileBtn.addEventListener('click', function() {
+            if (!buyProfileNameInput) {
+                return;
+            }
+            const profileName = String(buyProfileNameInput.value || '').trim();
+            if (!profileName) {
+                buyProfileNameInput.focus();
+                return;
+            }
+            const nextProfile = {
+                name: profileName.slice(0, 80),
+                is_default: !!(buyProfileDefaultToggle && buyProfileDefaultToggle.checked),
+                allow_all: false,
+                market_group_ids: normalizeGroupIdList(buySelectedGroupIds),
+            };
+            buyProfiles = (buyProfiles || []).filter(
+                profile => String(profile.name || '').toLowerCase() !== profileName.toLowerCase()
+            );
+            if (nextProfile.is_default) {
+                buyProfiles = buyProfiles.map(profile => ({ ...profile, is_default: false }));
+            }
+            buyProfiles.push(nextProfile);
+            renderBuyProfiles({ selectedName: nextProfile.name });
+        });
+    }
+
+    if (applyBuyProfileBtn) {
+        applyBuyProfileBtn.addEventListener('click', function() {
+            const profile = getSelectedBuyProfile();
+            if (!profile) {
+                return;
+            }
+            buySelectedGroupIds = normalizeGroupIdList(profile.market_group_ids || []);
+            serializeBuyGroups();
+            renderBuyProfiles({ selectedName: profile.name });
+            renderBuyTree();
+        });
+    }
+
+    if (deleteBuyProfileBtn) {
+        deleteBuyProfileBtn.addEventListener('click', function() {
+            const profile = getSelectedBuyProfile();
+            if (!profile) {
+                return;
+            }
+            buyProfiles = (buyProfiles || []).filter(entry => entry.name !== profile.name);
+            renderBuyProfiles();
         });
     }
 
@@ -2498,12 +2905,16 @@ document.addEventListener('DOMContentLoaded', function() {
             serializeSellGroupMap();
             serializeSellUnionGroups();
             serializeBuyGroups();
+            serializeSellProfiles();
+            serializeBuyProfiles();
         });
     }
 
     initializeExpandedNodeIds();
     setGranularButtonLabel();
     serializeBuyGroups();
+    renderSellProfiles();
+    renderBuyProfiles();
     rebuildSellStructureRules();
     renderBuyTree();
     updateSelectionSummaries();

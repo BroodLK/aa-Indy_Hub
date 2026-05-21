@@ -679,6 +679,48 @@ def material_exchange_config(request, tokens):
                     normalized.add(int(path_id))
                     break
         return sorted(normalized)
+
+    def _normalize_saved_market_group_profiles(
+        raw_profiles, *, allow_all_supported: bool
+    ) -> list[dict[str, object]]:
+        if not isinstance(raw_profiles, (list, tuple)):
+            return []
+
+        normalized_by_name: dict[str, dict[str, object]] = {}
+        default_profile_key = ""
+
+        for row in raw_profiles:
+            if not isinstance(row, dict):
+                continue
+
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+
+            normalized_name_key = name.casefold()
+            allow_all = (
+                bool(row.get("allow_all")) if allow_all_supported else False
+            )
+            market_group_ids = _normalize_selected_group_ids_for_ui(
+                row.get("market_group_ids") or row.get("group_ids") or []
+            )
+            normalized_by_name[normalized_name_key] = {
+                "name": name[:80],
+                "is_default": False,
+                "allow_all": allow_all,
+                "market_group_ids": [] if allow_all else market_group_ids,
+            }
+            if bool(row.get("is_default")):
+                default_profile_key = normalized_name_key
+
+        if default_profile_key and default_profile_key in normalized_by_name:
+            normalized_by_name[default_profile_key]["is_default"] = True
+
+        return sorted(
+            normalized_by_name.values(),
+            key=lambda payload: str(payload.get("name") or "").lower(),
+        )
+
     selected_market_groups_buy = (
         _normalize_selected_group_ids_for_ui(
             list(getattr(config, "allowed_market_groups_buy", []) or [])
@@ -823,6 +865,8 @@ def material_exchange_config(request, tokens):
     item_price_overrides: list[dict[str, object]] = []
     item_override_type_choices: list[dict[str, object]] = []
     market_group_price_overrides: list[dict[str, object]] = []
+    sell_market_group_profiles: list[dict[str, object]] = []
+    buy_market_group_profiles: list[dict[str, object]] = []
     container_price_override: dict[str, object] = {
         "sell_markup_percent_override": None,
         "sell_markup_base_override": None,
@@ -945,6 +989,15 @@ def material_exchange_config(request, tokens):
                 "buy_price_override": raw_container_override.get("buy_price_override"),
             }
 
+        sell_market_group_profiles = _normalize_saved_market_group_profiles(
+            getattr(config, "sell_market_group_profiles", []) or [],
+            allow_all_supported=True,
+        )
+        buy_market_group_profiles = _normalize_saved_market_group_profiles(
+            getattr(config, "buy_market_group_profiles", []) or [],
+            allow_all_supported=False,
+        )
+
     context = {
         "config": config,
         "available_corps": available_corps,
@@ -1000,6 +1053,8 @@ def material_exchange_config(request, tokens):
         "item_override_type_choices": item_override_type_choices,
         "market_group_override_choices": market_group_override_choices,
         "market_group_price_overrides": market_group_price_overrides,
+        "sell_market_group_profiles": sell_market_group_profiles,
+        "buy_market_group_profiles": buy_market_group_profiles,
         "container_price_override": container_price_override,
     }
 
@@ -2139,6 +2194,12 @@ def _handle_config_save(request, existing_config):
     allowed_market_groups_sell_by_structure_raw = (
         request.POST.get("allowed_market_groups_sell_by_structure_json", "") or ""
     ).strip()
+    sell_market_group_profiles_raw = (
+        request.POST.get("sell_market_group_profiles_json", "") or ""
+    ).strip()
+    buy_market_group_profiles_raw = (
+        request.POST.get("buy_market_group_profiles_json", "") or ""
+    ).strip()
     item_price_overrides_raw = (
         request.POST.get("item_price_overrides_json", "") or ""
     ).strip()
@@ -2232,10 +2293,13 @@ def _handle_config_save(request, existing_config):
 
     raw_is_active = request.POST.get("is_active")
     if raw_is_active is None:
-        try:
-            is_active = bool(MaterialExchangeSettings.get_solo().is_enabled)
-        except Exception:
-            is_active = existing_config.is_active if existing_config is not None else True
+        if existing_config is not None:
+            is_active = bool(existing_config.is_active)
+        else:
+            try:
+                is_active = bool(MaterialExchangeSettings.get_solo().is_enabled)
+            except Exception:
+                is_active = True
     else:
         is_active = raw_is_active == "on"
 
@@ -3030,8 +3094,67 @@ def _handle_config_save(request, existing_config):
                         break
             return sorted(parsed)
 
+        def _parse_market_group_profiles(
+            raw_value: str, *, allow_all_supported: bool
+        ) -> list[dict[str, object]]:
+            if not raw_value:
+                return []
+            try:
+                payload = json.loads(raw_value)
+            except json.JSONDecodeError:
+                return []
+            if not isinstance(payload, list):
+                return []
+
+            parsed_by_name: dict[str, dict[str, object]] = {}
+            default_profile_key = ""
+            for row in payload:
+                if not isinstance(row, dict):
+                    continue
+
+                profile_name = str(row.get("name") or "").strip()
+                if not profile_name:
+                    continue
+
+                profile_key = profile_name.casefold()
+                allow_all = (
+                    bool(row.get("allow_all")) if allow_all_supported else False
+                )
+                market_group_ids = _parse_group_ids(
+                    [
+                        str(group_id)
+                        for group_id in (
+                            row.get("market_group_ids") or row.get("group_ids") or []
+                        )
+                    ]
+                )
+                parsed_by_name[profile_key] = {
+                    "name": profile_name[:80],
+                    "is_default": False,
+                    "allow_all": allow_all,
+                    "market_group_ids": [] if allow_all else market_group_ids,
+                }
+                if bool(row.get("is_default")):
+                    default_profile_key = profile_key
+
+            if default_profile_key and default_profile_key in parsed_by_name:
+                parsed_by_name[default_profile_key]["is_default"] = True
+
+            return sorted(
+                parsed_by_name.values(),
+                key=lambda profile: str(profile.get("name") or "").lower(),
+            )
+
         allowed_market_groups_buy = _parse_group_ids(allowed_market_groups_buy_raw)
         allowed_market_groups_sell = _parse_group_ids(allowed_market_groups_sell_raw)
+        sell_market_group_profiles = _parse_market_group_profiles(
+            sell_market_group_profiles_raw,
+            allow_all_supported=True,
+        )
+        buy_market_group_profiles = _parse_market_group_profiles(
+            buy_market_group_profiles_raw,
+            allow_all_supported=False,
+        )
 
         if not (1 <= hangar_division <= 7):
             raise ValueError("Hangar division must be between 1 and 7")
@@ -3310,6 +3433,8 @@ def _handle_config_save(request, existing_config):
             existing_config.allowed_market_groups_sell_by_structure = (
                 allowed_market_groups_sell_by_structure
             )
+            existing_config.sell_market_group_profiles = sell_market_group_profiles
+            existing_config.buy_market_group_profiles = buy_market_group_profiles
             existing_config.market_group_price_overrides = market_group_price_overrides
             existing_config.container_price_overrides = container_price_overrides
             existing_config.is_active = is_active
@@ -3359,6 +3484,8 @@ def _handle_config_save(request, existing_config):
                 allowed_market_groups_buy=allowed_market_groups_buy,
                 allowed_market_groups_sell=allowed_market_groups_sell,
                 allowed_market_groups_sell_by_structure=allowed_market_groups_sell_by_structure,
+                sell_market_group_profiles=sell_market_group_profiles,
+                buy_market_group_profiles=buy_market_group_profiles,
                 market_group_price_overrides=market_group_price_overrides,
                 container_price_overrides=container_price_overrides,
                 is_active=is_active,
