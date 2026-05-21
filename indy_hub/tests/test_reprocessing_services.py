@@ -696,6 +696,24 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
         }
         self.assertEqual(stored_type_ids, {ore_type.id, moon_ore_type.id})
 
+    @patch("indy_hub.services.reprocessing.clear_compressed_ore_cache")
+    def test_populate_cache_reports_missing_eve_sde_item_data(self, _mock_clear_cache):
+        fake_item_type_model = SimpleNamespace(
+            objects=SimpleNamespace(exists=lambda: False)
+        )
+        fake_item_type_materials_model = SimpleNamespace(
+            objects=SimpleNamespace(exists=lambda: True)
+        )
+
+        with patch("eve_sde.models.ItemType", fake_item_type_model), patch(
+            "eve_sde.models.ItemTypeMaterials",
+            fake_item_type_materials_model,
+        ):
+            success, message = _populate_compressed_ore_cache()
+
+        self.assertFalse(success)
+        self.assertIn("esde_load_sde", message)
+
 
 class ReprocessingYieldFormulaTests(TestCase):
     def test_station_like_formula_matches_reference(self):

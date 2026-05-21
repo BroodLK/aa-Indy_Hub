@@ -969,6 +969,24 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     item_type_model = getattr(sde_models, "ItemType", None)
     if not item_type_model:
         return False, "ItemType model not found"
+    try:
+        if not item_type_model.objects.exists():
+            return (
+                False,
+                "EVE SDE item data is empty. Run `python manage.py esde_load_sde` in your Alliance Auth installation.",
+            )
+    except Exception:
+        pass
+
+    item_type_materials_model = getattr(sde_models, "ItemTypeMaterials", None)
+    try:
+        if item_type_materials_model is not None and not item_type_materials_model.objects.exists():
+            return (
+                False,
+                "EVE SDE reprocessing material data is empty. Run `python manage.py esde_load_sde` in your Alliance Auth installation.",
+            )
+    except Exception:
+        pass
 
     # Find all compressed ores via market-group ancestry instead of type names.
     # Name-only matching pulls in compressed modules and other non-ore items.
