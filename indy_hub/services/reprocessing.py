@@ -1013,13 +1013,15 @@ def calculate_compressed_ore_for_minerals(
     prices_available = False
 
     try:
-        price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=15)
+        # Reduce timeout to 3 seconds - if Fuzzwork is slow, skip it
+        price_map = fetch_fuzzwork_prices(ore_type_ids, timeout=3)
         prices_available = True
+        logger.info(f"Successfully fetched Fuzzwork prices for {len(price_map)} compressed ores")
     except FuzzworkError as e:
-        logger.warning(f"Fuzzwork prices unavailable: {e}, using volume-based fallback")
+        logger.info(f"Fuzzwork prices unavailable: {e}, using fallback heuristic")
         price_map = {}
     except Exception as e:
-        logger.warning(f"Error fetching prices: {e}, using volume-based fallback")
+        logger.info(f"Error fetching prices: {e}, using fallback heuristic")
         price_map = {}
 
     # Calculate refine rate ratio

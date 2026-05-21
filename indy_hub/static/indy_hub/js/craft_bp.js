@@ -9664,7 +9664,10 @@ function calculateCompressedOres() {
     document.getElementById('conversionLoading').style.display = 'block';
     document.getElementById('calculateOresBtn').disabled = true;
 
-    // Make API call
+    // Make API call with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
     fetch('/indy_hub/api/convert-minerals-to-ore/', {
         method: 'POST',
         headers: {
@@ -9675,8 +9678,15 @@ function calculateCompressedOres() {
             minerals: minerals,
             refine_rate: refineRate,
         }),
+        signal: controller.signal,
     })
-    .then(response => response.json())
+    .then(response => {
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+            throw new Error(`HTTP error ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
         document.getElementById('conversionLoading').style.display = 'none';
         document.getElementById('calculateOresBtn').disabled = false;
