@@ -12,6 +12,13 @@ const CRAFT_MANUAL_FINANCIAL_STATE = {
     itemsByRowKey: new Map(),
     excludedTypeIds: new Set(),
 };
+const CRAFT_FULL_UI_STATE = {
+    restoreInProgress: false,
+    restoreAttempted: false,
+    autosaveInitialized: false,
+    saveTimer: null,
+};
+const CRAFT_FULL_UI_STATE_VERSION = 1;
 let CRAFT_COMPUTED_NEEDED_ROWS = null;
 const CRAFT_BPC_CONTRACT_STATE = {
     loaded: false,
@@ -61,6 +68,13 @@ const CRAFT_SELECTION_SCOPE = {
     blueprintTypeId: 0,
     simulationId: null,
     draftId: '',
+};
+const CRAFT_RUN_OPTIMIZED_STATE = {
+    curveResults: [],
+    bestPoint: null,
+    bestLabel: '',
+    statusText: '',
+    statusClass: '',
 };
 
 const __ = (typeof window !== 'undefined' && typeof window.gettext === 'function') ? window.gettext.bind(window) : (msg => msg);
@@ -271,6 +285,7 @@ function setCraftSimulationScope(simulationId) {
     }
     resetCraftSelectionScope();
     ensureCraftSelectionScope();
+    CRAFT_FULL_UI_STATE.restoreAttempted = false;
 }
 
 function getBpcContractStorageKey() {
@@ -283,6 +298,14 @@ function getBuyCraftStorageKey() {
 
 function getBuildPlannerSlotsStorageKey() {
     return getScopedCraftStorageKey('craft_bp_build_slots');
+}
+
+function getCraftFullUiStateStorageKey() {
+    return getScopedCraftStorageKey('craft_bp_full_ui_state');
+}
+
+function getCraftMainTabStorageKey() {
+    return getScopedCraftStorageKey('craft_bp_main_tab');
 }
 
 function saveBuyCraftStateToStorage() {
@@ -901,6 +924,723 @@ function refreshTabsAfterStateChange(options = {}) {
     }
 }
 
+function cloneCraftUiJsonValue(value, fallback = null) {
+    if (value === undefined) {
+        return fallback;
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (error) {
+        return fallback;
+    }
+}
+
+function getActiveBlueprintTabId() {
+    const activeTab = document.querySelector('#bpTabs .nav-link.active');
+    if (!activeTab) {
+        return 'materials';
+    }
+    const target = String(activeTab.getAttribute('data-bs-target') || '').trim();
+    return target ? target.replace('#tab-', '') : 'materials';
+}
+
+function getActiveCraftMainTabName() {
+    const activeTab = document.querySelector('#craftMainTabs .nav-link.active');
+    if (!activeTab) {
+        return 'plan';
+    }
+    return String(activeTab.getAttribute('data-tab-name') || 'plan').trim() || 'plan';
+}
+
+function showBootstrapTab(button) {
+    if (!button) {
+        return;
+    }
+    if (window.bootstrap && window.bootstrap.Tab && typeof window.bootstrap.Tab.getOrCreateInstance === 'function') {
+        window.bootstrap.Tab.getOrCreateInstance(button).show();
+        return;
+    }
+    button.click();
+}
+
+function showBlueprintTab(tabId) {
+    const normalizedTabId = String(tabId || '').trim();
+    if (!normalizedTabId) {
+        return;
+    }
+    const button = document.querySelector(`#bpTabs .nav-link[data-bs-target="#tab-${normalizedTabId}"]`);
+    showBootstrapTab(button);
+}
+
+function showCraftMainTab(tabName) {
+    const normalizedTabName = String(tabName || '').trim();
+    if (!normalizedTabName) {
+        return;
+    }
+    const button = document.querySelector(`#craftMainTabs .nav-link[data-tab-name="${normalizedTabName}"]`);
+    showBootstrapTab(button);
+}
+
+function persistCraftMainTabState(tabName = null) {
+    const resolvedTabName = String(tabName || getActiveCraftMainTabName() || '').trim();
+    if (!resolvedTabName) {
+        return;
+    }
+    try {
+        localStorage.setItem(getCraftMainTabStorageKey(), resolvedTabName);
+    } catch (error) {
+        console.error('[CraftBP] Failed to persist main tab state', error);
+    }
+}
+
+function serializeSelectedBpcContractsState() {
+    const payload = {};
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((offerMap, blueprintTypeId) => {
+        if (!(offerMap instanceof Map) || offerMap.size === 0) {
+            return;
+        }
+        payload[String(Number(blueprintTypeId) || 0)] = Array.from(offerMap.values()).map((offer) => ({
+            blueprint_type_id: Number(offer?.blueprint_type_id) || Number(blueprintTypeId) || 0,
+            contract_id: Number(offer?.contract_id) || 0,
+            title: String(offer?.title || '').trim(),
+            price_total: Number(offer?.price_total) || 0,
+            price_per_run: Number(offer?.price_per_run) || 0,
+            runs: Math.max(1, Number(offer?.runs) || 1),
+            copies: Math.max(1, Number(offer?.copies) || 1),
+            me: Number(offer?.me) || 0,
+            te: Number(offer?.te) || 0,
+            issued_at: String(offer?.issued_at || ''),
+            expires_at: String(offer?.expires_at || ''),
+            selected_at: Number(offer?.selected_at) || Date.now(),
+        })).filter((offer) => offer.contract_id > 0);
+    });
+    return payload;
+}
+
+function applySelectedBpcContractsState(payload) {
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType = new Map();
+    if (!payload || typeof payload !== 'object') {
+        saveSelectedBpcContractsToStorage();
+        if (typeof renderConfigureBoughtBpcsSection === 'function') {
+            renderConfigureBoughtBpcsSection();
+        }
+        if (typeof renderBuyBpcsTab === 'function') {
+            renderBuyBpcsTab();
+        }
+        return;
+    }
+
+    Object.entries(payload).forEach(([blueprintTypeIdRaw, offersRaw]) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (!blueprintTypeId || !Array.isArray(offersRaw)) {
+            return;
+        }
+        const offerMap = new Map();
+        offersRaw.forEach((offerRaw) => {
+            const contractId = Number(offerRaw?.contract_id) || 0;
+            if (!contractId) {
+                return;
+            }
+            offerMap.set(contractId, {
+                blueprint_type_id: blueprintTypeId,
+                contract_id: contractId,
+                title: String(offerRaw?.title || '').trim(),
+                price_total: Number(offerRaw?.price_total) || 0,
+                price_per_run: Number(offerRaw?.price_per_run) || 0,
+                runs: Math.max(1, Number(offerRaw?.runs) || 1),
+                copies: Math.max(1, Number(offerRaw?.copies) || 1),
+                me: Number(offerRaw?.me) || 0,
+                te: Number(offerRaw?.te) || 0,
+                issued_at: String(offerRaw?.issued_at || ''),
+                expires_at: String(offerRaw?.expires_at || ''),
+                selected_at: Number(offerRaw?.selected_at) || Date.now(),
+            });
+        });
+        if (offerMap.size > 0) {
+            CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.set(blueprintTypeId, offerMap);
+        }
+    });
+
+    saveSelectedBpcContractsToStorage();
+    CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.forEach((_offerMap, blueprintTypeId) => {
+        if (typeof syncConfigureCardFromSelectedContracts === 'function') {
+            syncConfigureCardFromSelectedContracts(blueprintTypeId);
+        }
+    });
+    if (typeof renderConfigureBoughtBpcsSection === 'function') {
+        renderConfigureBoughtBpcsSection();
+    }
+    if (typeof renderBuyBpcsTab === 'function') {
+        renderBuyBpcsTab();
+    }
+}
+
+function serializeBuildPlannerSlotAssignments() {
+    const payload = {};
+    CRAFT_BUILD_PLANNER_STATE.slotAssignments.forEach((value, characterId) => {
+        const numericCharacterId = Number(characterId) || 0;
+        if (!numericCharacterId) {
+            return;
+        }
+        payload[String(numericCharacterId)] = Math.max(0, Math.floor(Number(value) || 0));
+    });
+    return payload;
+}
+
+function applyBuildPlannerSlotAssignmentsState(payload) {
+    const nextAssignments = new Map();
+    Object.entries(payload && typeof payload === 'object' ? payload : {}).forEach(([characterIdRaw, valueRaw]) => {
+        const characterId = Number(characterIdRaw) || 0;
+        const value = Number(valueRaw);
+        if (!characterId || !Number.isFinite(value)) {
+            return;
+        }
+        nextAssignments.set(characterId, Math.max(0, Math.floor(value)));
+    });
+    CRAFT_BUILD_PLANNER_STATE.slotAssignments = nextAssignments;
+    saveBuildPlannerSlotAssignmentsToStorage();
+}
+
+function collectStaticCraftInputState() {
+    const entries = [];
+    document.querySelectorAll(
+        '#craftMainTabsContent input[id], #craftMainTabsContent select[id], #craftMainTabsContent textarea[id], '
+        + '#saveSimulationModal input[id], #saveSimulationModal select[id], #saveSimulationModal textarea[id], '
+        + '#convertMineralsModal input[id], #convertMineralsModal select[id], #convertMineralsModal textarea[id], '
+        + '#blueprint-control-form input[id], #blueprint-control-form select[id], #blueprint-control-form textarea[id]'
+    ).forEach((element) => {
+        if (!element || !element.id || element.closest('#financialItemsBody')) {
+            return;
+        }
+        if (element.type === 'hidden' && element.id !== 'activeTabInput') {
+            return;
+        }
+        const entry = {
+            id: element.id,
+            tag: element.tagName.toLowerCase(),
+            type: String(element.type || '').toLowerCase(),
+        };
+        if (entry.type === 'checkbox' || entry.type === 'radio') {
+            entry.checked = Boolean(element.checked);
+        } else {
+            entry.value = element.value;
+        }
+        entries.push(entry);
+    });
+    return entries;
+}
+
+function applyStaticCraftInputState(entries) {
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+        const element = document.getElementById(String(entry?.id || '').trim());
+        if (!element) {
+            return;
+        }
+        const inputType = String(entry?.type || '').toLowerCase();
+        if (inputType === 'checkbox' || inputType === 'radio') {
+            element.checked = Boolean(entry?.checked);
+            return;
+        }
+        element.value = entry?.value == null ? '' : String(entry.value);
+    });
+}
+
+function collectTreeDetailsState() {
+    return Array.from(document.querySelectorAll('#tab-tree details')).map((detailsEl) => Boolean(detailsEl.open));
+}
+
+function applyTreeDetailsState(openStates) {
+    if (!Array.isArray(openStates)) {
+        return;
+    }
+    document.querySelectorAll('#tab-tree details').forEach((detailsEl, index) => {
+        detailsEl.open = Boolean(openStates[index]);
+        if (typeof updateDetailsCaret === 'function') {
+            updateDetailsCaret(detailsEl);
+        }
+    });
+}
+
+function collectConfigureAccordionState() {
+    return Array.from(document.querySelectorAll('#blueprintConfigAccordion .accordion-collapse.show'))
+        .map((element) => String(element.id || '').trim())
+        .filter(Boolean);
+}
+
+function applyConfigureAccordionState(openIds) {
+    if (!Array.isArray(openIds)) {
+        return;
+    }
+    const openSet = new Set(openIds.map((value) => String(value || '').trim()).filter(Boolean));
+    document.querySelectorAll('#blueprintConfigAccordion .accordion-collapse').forEach((element) => {
+        const shouldOpen = openSet.has(String(element.id || '').trim());
+        element.classList.toggle('show', shouldOpen);
+    });
+}
+
+function clearPendingConfigureIndicator() {
+    if (!window.craftBPFlags) {
+        return;
+    }
+    window.craftBPFlags.hasPendingMETEChanges = false;
+    const indicator = document.querySelector('#configure-tab-btn .pending-changes-indicator');
+    if (indicator) {
+        indicator.remove();
+    }
+}
+
+function applyConfigureStateSnapshot(config) {
+    if (!config || typeof config !== 'object') {
+        return;
+    }
+    const blueprintConfigs = config.blueprintConfigs && typeof config.blueprintConfigs === 'object'
+        ? config.blueprintConfigs
+        : {};
+    Object.entries(blueprintConfigs).forEach(([typeId, bpConfig]) => {
+        const meInput = document.querySelector(`input[name="me_${typeId}"]`);
+        if (meInput && bpConfig?.me !== undefined) {
+            meInput.value = String(Number(bpConfig.me) || 0);
+        }
+        const teInput = document.querySelector(`input[name="te_${typeId}"]`);
+        if (teInput && bpConfig?.te !== undefined) {
+            teInput.value = String(Number(bpConfig.te) || 0);
+        }
+        const useInput = document.querySelector(`#configure-pane input.bp-use-input[data-blueprint-type-id="${typeId}"]`);
+        if (useInput && !useInput.disabled && bpConfig?.use !== undefined) {
+            useInput.checked = Boolean(Number(bpConfig.use) || bpConfig.use === true);
+        }
+    });
+    if (config.buildEnvironment && typeof applyBuildEnvironmentToDom === 'function') {
+        applyBuildEnvironmentToDom(config.buildEnvironment);
+    }
+    if (config.industryFee && typeof applyIndustryFeeConfigToDom === 'function') {
+        applyIndustryFeeConfigToDom(config.industryFee);
+    }
+    if (typeof updateBuildEnvironmentSummary === 'function') {
+        updateBuildEnvironmentSummary();
+    }
+    if (typeof syncIndustryFeeManualControls === 'function') {
+        syncIndustryFeeManualControls();
+    }
+    clearPendingConfigureIndicator();
+}
+
+function collectManualFinancialStateSnapshot() {
+    syncManualFinancialStateFromDom();
+    return {
+        items: getManualFinancialStateItems().map((item) => cloneCraftUiJsonValue(item, null)).filter(Boolean),
+        excludedTypeIds: Array.from(CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.values()),
+    };
+}
+
+function applyManualFinancialStateSnapshot(snapshot) {
+    CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey = new Map();
+    CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds = new Set();
+
+    const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+    items.forEach((item) => {
+        upsertManualFinancialStateItem(item);
+    });
+    (Array.isArray(snapshot?.excludedTypeIds) ? snapshot.excludedTypeIds : []).forEach((typeId) => {
+        const numericTypeId = Number(typeId) || 0;
+        if (numericTypeId > 0) {
+            CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.add(numericTypeId);
+        }
+    });
+}
+
+function collectComputedNeededRowsSnapshot() {
+    if (!Array.isArray(CRAFT_COMPUTED_NEEDED_ROWS)) {
+        return null;
+    }
+    return CRAFT_COMPUTED_NEEDED_ROWS
+        .map((item) => ({
+            typeId: Number(item?.typeId || item?.type_id) || 0,
+            typeName: String(item?.typeName || item?.type_name || item?.name || '').trim(),
+            quantity: Math.max(0, Math.ceil(Number(item?.quantity || item?.qty || 0) || 0)),
+            marketGroup: String(item?.marketGroup || item?.market_group || '').trim(),
+        }))
+        .filter((item) => item.typeId > 0 && item.typeName && item.quantity > 0);
+}
+
+function applyComputedNeededRowsSnapshot(rows) {
+    if (!Array.isArray(rows)) {
+        CRAFT_COMPUTED_NEEDED_ROWS = null;
+        return;
+    }
+    CRAFT_COMPUTED_NEEDED_ROWS = rows
+        .map((item) => ({
+            typeId: Number(item?.typeId || item?.type_id) || 0,
+            typeName: String(item?.typeName || item?.type_name || item?.name || '').trim(),
+            quantity: Math.max(0, Math.ceil(Number(item?.quantity || item?.qty || 0) || 0)),
+            marketGroup: String(item?.marketGroup || item?.market_group || '').trim(),
+        }))
+        .filter((item) => item.typeId > 0 && item.typeName && item.quantity > 0);
+}
+
+function collectCustomPriceStateSnapshot() {
+    const prices = [];
+    document.querySelectorAll('input.real-price[data-type-id], input.sale-price-unit[data-type-id]').forEach((input) => {
+        const typeId = Number(input.getAttribute('data-type-id')) || 0;
+        if (!typeId) {
+            return;
+        }
+        const value = Number(input.value);
+        const isSalePrice = input.classList.contains('sale-price-unit');
+        const userModified = input.dataset.userModified === 'true';
+        if (!isSalePrice && !userModified) {
+            return;
+        }
+        if (!Number.isFinite(value) || value <= 0) {
+            return;
+        }
+        prices.push({
+            item_type_id: typeId,
+            unit_price: value,
+            is_sale_price: isSalePrice,
+        });
+    });
+    return prices;
+}
+
+function applyCustomPriceStateSnapshot(prices) {
+    (Array.isArray(prices) ? prices : []).forEach((price) => {
+        const typeId = Number(price?.item_type_id || price?.type_id) || 0;
+        if (!typeId) {
+            return;
+        }
+        const isSalePrice = Boolean(price?.is_sale_price);
+        const selector = isSalePrice ? '.sale-price-unit' : '.real-price';
+        const input = document.querySelector(`${selector}[data-type-id="${typeId}"]`);
+        if (!input) {
+            return;
+        }
+        const value = Number(price?.unit_price) || 0;
+        input.value = value > 0 ? String(value) : '0';
+        if (isSalePrice || value > 0) {
+            updatePriceInputManualState(input, true);
+        }
+        if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
+            window.SimulationAPI.setPrice(typeId, isSalePrice ? 'sale' : 'real', value);
+        }
+    });
+}
+
+function collectBuildScheduleStateSnapshot() {
+    return {
+        schedule: cloneCraftUiJsonValue(buildScheduleData, null),
+        zoomLevel: Number(ganttZoomLevel) || 1,
+    };
+}
+
+function applyBuildScheduleStateSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') {
+        return;
+    }
+    ganttZoomLevel = Math.max(0.3, Math.min(Number(snapshot.zoomLevel) || 1, 3));
+    buildScheduleData = cloneCraftUiJsonValue(snapshot.schedule, null);
+    if (buildScheduleData && typeof displayBuildSchedule === 'function') {
+        displayBuildSchedule(buildScheduleData);
+    }
+}
+
+function collectImportFeesStateSnapshot() {
+    return {
+        cache: cloneCraftUiJsonValue(importFeesCache, null),
+        manualOverride: importFeesManualOverride === null ? null : Number(importFeesManualOverride) || 0,
+    };
+}
+
+function applyImportFeesStateSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') {
+        return;
+    }
+    importFeesCache = cloneCraftUiJsonValue(snapshot.cache, null);
+    importFeesManualOverride = snapshot.manualOverride === null || snapshot.manualOverride === undefined
+        ? null
+        : (Number(snapshot.manualOverride) || 0);
+    const overrideInput = document.getElementById('importFeesOverride');
+    if (overrideInput) {
+        overrideInput.value = importFeesManualOverride === null ? '' : String(importFeesManualOverride);
+    }
+    if (typeof updateImportFeesDisplay === 'function') {
+        updateImportFeesDisplay();
+    }
+}
+
+function collectMineralConversionStateSnapshot() {
+    const refineRateInput = document.getElementById('refineRate');
+    return {
+        refineRate: refineRateInput ? String(refineRateInput.value || '') : '',
+        result: cloneCraftUiJsonValue(conversionResultData, null),
+    };
+}
+
+function applyMineralConversionStateSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') {
+        return;
+    }
+    const refineRateInput = document.getElementById('refineRate');
+    if (refineRateInput && snapshot.refineRate !== undefined) {
+        refineRateInput.value = String(snapshot.refineRate || '');
+    }
+    conversionResultData = cloneCraftUiJsonValue(snapshot.result, null);
+    if (conversionResultData && typeof displayConversionResults === 'function') {
+        displayConversionResults(conversionResultData);
+    }
+}
+
+function collectRunOptimizedStateSnapshot() {
+    return {
+        curveResults: cloneCraftUiJsonValue(CRAFT_RUN_OPTIMIZED_STATE.curveResults, []),
+        bestPoint: cloneCraftUiJsonValue(CRAFT_RUN_OPTIMIZED_STATE.bestPoint, null),
+        bestLabel: String(CRAFT_RUN_OPTIMIZED_STATE.bestLabel || ''),
+        statusText: String(CRAFT_RUN_OPTIMIZED_STATE.statusText || ''),
+        statusClass: String(CRAFT_RUN_OPTIMIZED_STATE.statusClass || ''),
+        detailsOpen: Boolean(document.getElementById('runOptimizedBestConfigDetails')?.open),
+    };
+}
+
+function applyRunOptimizedStateSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') {
+        return;
+    }
+    CRAFT_RUN_OPTIMIZED_STATE.curveResults = Array.isArray(snapshot.curveResults)
+        ? cloneCraftUiJsonValue(snapshot.curveResults, [])
+        : [];
+    CRAFT_RUN_OPTIMIZED_STATE.bestPoint = snapshot.bestPoint ? cloneCraftUiJsonValue(snapshot.bestPoint, null) : null;
+    CRAFT_RUN_OPTIMIZED_STATE.bestLabel = String(snapshot.bestLabel || '');
+    CRAFT_RUN_OPTIMIZED_STATE.statusText = String(snapshot.statusText || '');
+    CRAFT_RUN_OPTIMIZED_STATE.statusClass = String(snapshot.statusClass || '');
+
+    const canvas = document.getElementById('runOptimizedChart');
+    if (canvas && CRAFT_RUN_OPTIMIZED_STATE.curveResults.length > 0 && typeof renderRunOptimizedChart === 'function') {
+        renderRunOptimizedChart(canvas, CRAFT_RUN_OPTIMIZED_STATE.curveResults);
+    }
+
+    const pointsListEl = document.getElementById('runOptimizedPointsList');
+    if (pointsListEl) {
+        const items = CRAFT_RUN_OPTIMIZED_STATE.curveResults
+            .slice()
+            .sort((a, b) => (Number(a?.runs) || 0) - (Number(b?.runs) || 0))
+            .map((row) => {
+                const runs = Number(row?.runs) || 0;
+                const margin = Number.isFinite(Number(row?.margin)) ? Number(row.margin) : 0;
+                return `<span class="badge text-bg-light border me-1 mb-1">${runs}: ${margin.toFixed(1)}%</span>`;
+            })
+            .join('');
+        pointsListEl.innerHTML = items || '';
+    }
+
+    renderBestRunSummary(
+        document.getElementById('runOptimizedBestResult'),
+        CRAFT_RUN_OPTIMIZED_STATE.bestPoint,
+        CRAFT_RUN_OPTIMIZED_STATE.bestLabel || __('Best within chart')
+    );
+    if (typeof renderBestRunConfigDetails === 'function') {
+        renderBestRunConfigDetails(CRAFT_RUN_OPTIMIZED_STATE.bestPoint);
+        const detailsEl = document.getElementById('runOptimizedBestConfigDetails');
+        if (detailsEl) {
+            detailsEl.open = Boolean(snapshot.detailsOpen);
+        }
+    }
+
+    const statusEl = document.getElementById('run-optimized-status');
+    if (statusEl && CRAFT_RUN_OPTIMIZED_STATE.statusText) {
+        statusEl.className = CRAFT_RUN_OPTIMIZED_STATE.statusClass || 'alert alert-info mb-3';
+        statusEl.textContent = CRAFT_RUN_OPTIMIZED_STATE.statusText;
+    }
+}
+
+function collectFullUiState() {
+    const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
+    return {
+        version: CRAFT_FULL_UI_STATE_VERSION,
+        blueprintTab: getActiveBlueprintTabId(),
+        craftMainTab: getActiveCraftMainTabName(),
+        staticInputs: collectStaticCraftInputState(),
+        configure: (typeof getCurrentMETEConfig === 'function') ? cloneCraftUiJsonValue(getCurrentMETEConfig(), {}) : {},
+        buyTypeIds: (typeof getCurrentBuyCraftDecisions === 'function') ? getCurrentBuyCraftDecisions() : [],
+        selectedBpcContracts: serializeSelectedBpcContractsState(),
+        manualFinancial: collectManualFinancialStateSnapshot(),
+        customPrices: collectCustomPriceStateSnapshot(),
+        ownedMaterialsText: ownedMaterialsInput ? String(ownedMaterialsInput.value || '') : '',
+        computedNeededRows: collectComputedNeededRowsSnapshot(),
+        buildPlannerSlots: serializeBuildPlannerSlotAssignments(),
+        buildSchedule: collectBuildScheduleStateSnapshot(),
+        importFees: collectImportFeesStateSnapshot(),
+        mineralConversion: collectMineralConversionStateSnapshot(),
+        runOptimized: collectRunOptimizedStateSnapshot(),
+        treeDetailsOpen: collectTreeDetailsState(),
+        configureAccordionOpenIds: collectConfigureAccordionState(),
+        savedAt: new Date().toISOString(),
+    };
+}
+
+function applyFullUiState(snapshot, options = {}) {
+    if (!snapshot || typeof snapshot !== 'object') {
+        return false;
+    }
+
+    const keepComputedNeeded = Array.isArray(snapshot.computedNeededRows);
+    CRAFT_FULL_UI_STATE.restoreInProgress = true;
+
+    try {
+        applyStaticCraftInputState(snapshot.staticInputs);
+        applyConfigureStateSnapshot(snapshot.configure);
+
+        const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
+        if (ownedMaterialsInput && snapshot.ownedMaterialsText !== undefined) {
+            ownedMaterialsInput.value = String(snapshot.ownedMaterialsText || '');
+        }
+
+        if (Array.isArray(snapshot.buyTypeIds) && typeof applyBuyCraftStateToTree === 'function') {
+            applyBuyCraftStateToTree(snapshot.buyTypeIds);
+        }
+
+        applySelectedBpcContractsState(snapshot.selectedBpcContracts);
+        applyManualFinancialStateSnapshot(snapshot.manualFinancial);
+        applyComputedNeededRowsSnapshot(snapshot.computedNeededRows);
+
+        if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
+            window.SimulationAPI.refreshFromDom();
+        }
+
+        refreshTabsAfterStateChange({
+            forceNeeded: true,
+            keepComputedNeeded,
+        });
+
+        applyCustomPriceStateSnapshot(snapshot.customPrices);
+
+        if (typeof recalcFinancials === 'function') {
+            recalcFinancials();
+        }
+        if (typeof renderBuyBpcsTab === 'function') {
+            renderBuyBpcsTab();
+        }
+
+        applyBuildPlannerSlotAssignmentsState(snapshot.buildPlannerSlots);
+        if (typeof updateBuildTabFromState === 'function') {
+            updateBuildTabFromState();
+        }
+
+        applyImportFeesStateSnapshot(snapshot.importFees);
+        applyBuildScheduleStateSnapshot(snapshot.buildSchedule);
+        applyMineralConversionStateSnapshot(snapshot.mineralConversion);
+        applyRunOptimizedStateSnapshot(snapshot.runOptimized);
+        applyTreeDetailsState(snapshot.treeDetailsOpen);
+        applyConfigureAccordionState(snapshot.configureAccordionOpenIds);
+
+        const blueprintSearchInput = document.getElementById('blueprintSearchInput');
+        if (blueprintSearchInput) {
+            blueprintSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+
+        if (snapshot.blueprintTab) {
+            showBlueprintTab(snapshot.blueprintTab);
+        }
+        if (snapshot.craftMainTab) {
+            showCraftMainTab(snapshot.craftMainTab);
+            persistCraftMainTabState(snapshot.craftMainTab);
+        }
+    } finally {
+        CRAFT_FULL_UI_STATE.restoreInProgress = false;
+    }
+
+    if (options.persistAfterApply) {
+        scheduleCraftUiStateSave(0);
+    }
+    return true;
+}
+
+function saveCraftUiStateToStorage() {
+    if (CRAFT_FULL_UI_STATE.restoreInProgress) {
+        return null;
+    }
+    const payload = collectFullUiState();
+    persistCraftMainTabState(payload.craftMainTab);
+    try {
+        localStorage.setItem(getCraftFullUiStateStorageKey(), JSON.stringify(payload));
+        return payload;
+    } catch (error) {
+        console.error('[CraftBP] Failed to persist full UI state', error);
+        return null;
+    }
+}
+
+function loadCraftUiStateFromStorage() {
+    if (CRAFT_FULL_UI_STATE.restoreAttempted) {
+        return false;
+    }
+    CRAFT_FULL_UI_STATE.restoreAttempted = true;
+    try {
+        const raw = localStorage.getItem(getCraftFullUiStateStorageKey());
+        if (!raw) {
+            return false;
+        }
+        const parsed = JSON.parse(raw);
+        return applyFullUiState(parsed);
+    } catch (error) {
+        console.error('[CraftBP] Failed to restore full UI state', error);
+        return false;
+    }
+}
+
+function scheduleCraftUiStateSave(delayMs = 150) {
+    if (CRAFT_FULL_UI_STATE.restoreInProgress) {
+        return;
+    }
+    if (CRAFT_FULL_UI_STATE.saveTimer) {
+        window.clearTimeout(CRAFT_FULL_UI_STATE.saveTimer);
+    }
+    CRAFT_FULL_UI_STATE.saveTimer = window.setTimeout(() => {
+        CRAFT_FULL_UI_STATE.saveTimer = null;
+        saveCraftUiStateToStorage();
+    }, Math.max(0, Number(delayMs) || 0));
+}
+
+function eventTargetIsCraftPersistable(target) {
+    if (!(target instanceof Element)) {
+        return false;
+    }
+    return Boolean(
+        target.closest('#craftMainTabs')
+        || target.closest('#craftMainTabsContent')
+        || target.closest('#bpTabs')
+        || target.closest('#saveSimulationModal')
+        || target.closest('#convertMineralsModal')
+        || target.closest('#blueprint-control-form')
+    );
+}
+
+function initializeCraftUiStatePersistence() {
+    if (CRAFT_FULL_UI_STATE.autosaveInitialized) {
+        return;
+    }
+    CRAFT_FULL_UI_STATE.autosaveInitialized = true;
+
+    const handleEvent = (event) => {
+        if (!eventTargetIsCraftPersistable(event.target)) {
+            return;
+        }
+        scheduleCraftUiStateSave();
+    };
+
+    document.addEventListener('input', handleEvent, true);
+    document.addEventListener('change', handleEvent, true);
+    document.addEventListener('click', handleEvent, true);
+    document.addEventListener('toggle', handleEvent, true);
+    document.addEventListener('shown.bs.tab', handleEvent, true);
+    window.addEventListener('beforeunload', () => {
+        saveCraftUiStateToStorage();
+    });
+
+    window.setTimeout(() => {
+        loadCraftUiStateFromStorage();
+    }, 0);
+}
+
 /**
  * Public API for configuration
  */
@@ -911,6 +1651,7 @@ window.CraftBP = {
 
         // Initialize financial calculations after configuration
         initializeFinancialCalculations();
+        initializeCraftUiStatePersistence();
     },
 
     loadFuzzworkPrices: function(typeIds) {
@@ -942,6 +1683,30 @@ window.CraftBP = {
         document.dispatchEvent(event);
     },
 
+    getScopedStorageKey: function(prefix) {
+        return getScopedCraftStorageKey(prefix);
+    },
+
+    collectFullUiState: function() {
+        return collectFullUiState();
+    },
+
+    applyFullUiState: function(state, options = {}) {
+        return applyFullUiState(state, options);
+    },
+
+    saveDraftState: function() {
+        return saveCraftUiStateToStorage();
+    },
+
+    loadDraftState: function() {
+        return loadCraftUiStateFromStorage();
+    },
+
+    scheduleDraftSave: function(delayMs = 150) {
+        scheduleCraftUiStateSave(delayMs);
+    },
+
     setSimulationScope: function(simulationId, options = {}) {
         const migrateCurrentState = options.migrateCurrentState !== false;
         setCraftSimulationScope(simulationId);
@@ -961,6 +1726,7 @@ window.CraftBP = {
             if (typeof saveBuyCraftStateToStorage === 'function') {
                 saveBuyCraftStateToStorage();
             }
+            saveCraftUiStateToStorage();
             return;
         }
 
@@ -3375,7 +4141,11 @@ function initializeRunOptimizedTab() {
                 }
 
                 // Show best run within displayed points.
-                renderBestRunSummary(bestResultEl, pickBestRunPoint(results), __('Best within chart'));
+                const bestPointWithinChart = pickBestRunPoint(results);
+                renderBestRunSummary(bestResultEl, bestPointWithinChart, __('Best within chart'));
+                CRAFT_RUN_OPTIMIZED_STATE.curveResults = cloneCraftUiJsonValue(results, []);
+                CRAFT_RUN_OPTIMIZED_STATE.bestPoint = cloneCraftUiJsonValue(bestPointWithinChart, null);
+                CRAFT_RUN_OPTIMIZED_STATE.bestLabel = __('Best within chart');
 
                 // Hint if flat 0.
                 const productTypeIdForHint = Number(window.BLUEPRINT_DATA?.product_type_id || window.BLUEPRINT_DATA?.productTypeId || CRAFT_BP?.productTypeId) || 0;
@@ -3394,14 +4164,20 @@ function initializeRunOptimizedTab() {
                             ? __('Profitability curve computed (dashboard-aligned).')
                             : __('Profitability curve computed (re-optimized per run).');
                     }
+                    CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
+                    CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
                 }
+                scheduleCraftUiStateSave();
             } catch (e) {
                 console.error('[IndyHub] Run optimized failed', e);
                 const statusEl = document.getElementById('run-optimized-status');
                 if (statusEl) {
                     statusEl.className = 'alert alert-warning mb-3';
                     statusEl.textContent = __('Failed to compute profitability curve.');
+                    CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
+                    CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
                 }
+                scheduleCraftUiStateSave();
             } finally {
                 inFlight = false;
             }
@@ -3453,16 +4229,24 @@ function initializeRunOptimizedTab() {
 
                         renderBestRunSummary(state.ui?.bestResultEl, res.best, __(`Best up to ${maxValue}`));
                         renderBestRunConfigDetails(res.best);
+                        CRAFT_RUN_OPTIMIZED_STATE.bestPoint = cloneCraftUiJsonValue(res.best, null);
+                        CRAFT_RUN_OPTIMIZED_STATE.bestLabel = __(`Best up to ${maxValue}`);
                         if (statusEl) {
                             statusEl.className = 'alert alert-success mb-3';
                             statusEl.textContent = __(`Optimal runs found (samples=${res.samples}).`);
+                            CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
+                            CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
                         }
+                        scheduleCraftUiStateSave();
                     } catch (e) {
                         console.error('[IndyHub] Run optimized best-runs search failed', e);
                         if (statusEl) {
                             statusEl.className = 'alert alert-warning mb-3';
                             statusEl.textContent = __('Failed to search optimal runs.');
+                            CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
+                            CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
                         }
+                        scheduleCraftUiStateSave();
                     }
                 });
             }
@@ -9978,6 +10762,7 @@ function openMineralConversionModal() {
     document.getElementById('copyOresBtn').textContent = 'Copy Ores';
     document.getElementById('applyOresBtn').style.display = 'none';
     conversionResultData = null;
+    scheduleCraftUiStateSave();
 
     // Show modal
     const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('convertMineralsModal'));
@@ -10032,6 +10817,7 @@ function calculateCompressedOres() {
 
         // Store result for later application
         conversionResultData = data;
+        scheduleCraftUiStateSave();
 
         // Display results
         displayConversionResults(data);
@@ -10146,6 +10932,7 @@ function applyCompressedOres() {
     } else if (typeof recalcFinancials === 'function') {
         recalcFinancials();
     }
+    scheduleCraftUiStateSave();
 
     // Close modal
     const modalEl = document.getElementById('convertMineralsModal');
@@ -10229,6 +11016,7 @@ function initBuildSchedule() {
         zoomInBtn.addEventListener('click', () => {
             ganttZoomLevel = Math.min(ganttZoomLevel * 1.2, 3.0);
             renderGanttChart(buildScheduleData);
+            scheduleCraftUiStateSave();
         });
     }
 
@@ -10236,6 +11024,7 @@ function initBuildSchedule() {
         zoomOutBtn.addEventListener('click', () => {
             ganttZoomLevel = Math.max(ganttZoomLevel / 1.2, 0.3);
             renderGanttChart(buildScheduleData);
+            scheduleCraftUiStateSave();
         });
     }
 }
@@ -10290,6 +11079,7 @@ async function calculateBuildSchedule() {
         // Store and display schedule
         buildScheduleData = data.schedule;
         displayBuildSchedule(data.schedule);
+        scheduleCraftUiStateSave();
 
     } catch (error) {
         showScheduleError('Failed to calculate build schedule: ' + error.message);
@@ -11012,6 +11802,7 @@ async function recalculateImportFeesIfNeeded() {
         const fees = await calculateImportFees();
         importFeesCache = fees;
         updateImportFeesDisplay();
+        scheduleCraftUiStateSave();
     }
 }
 

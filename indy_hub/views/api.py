@@ -999,6 +999,9 @@ def save_production_config(request):
         # Create or update the simulation
         simulation = None
         created = False
+        ui_state = data.get("ui_state", {})
+        if not isinstance(ui_state, dict):
+            ui_state = {}
         if simulation_id:
             simulation = ProductionSimulation.objects.filter(
                 id=simulation_id,
@@ -1022,6 +1025,7 @@ def save_production_config(request):
                     ),
                     "simulation_name": data.get("simulation_name", ""),
                     "active_tab": data.get("active_tab", "materials"),
+                    "ui_state": ui_state,
                     "estimated_cost": data.get("estimated_cost", 0),
                     "estimated_revenue": data.get("estimated_revenue", 0),
                     "estimated_profit": data.get("estimated_profit", 0),
@@ -1038,6 +1042,7 @@ def save_production_config(request):
                 "simulation_name", simulation.simulation_name
             )
             simulation.active_tab = data.get("active_tab", simulation.active_tab)
+            simulation.ui_state = ui_state
             simulation.estimated_cost = data.get(
                 "estimated_cost", simulation.estimated_cost
             )
@@ -1261,6 +1266,7 @@ def load_production_config(request):
             "items": items,
             "blueprint_efficiencies": blueprint_efficiencies,
             "custom_prices": custom_prices,
+            "ui_state": simulation.ui_state if simulation else {},
         }
 
         if simulation:  # Add simulation metadata when it exists
@@ -1657,4 +1663,3 @@ def calculate_build_schedule(request):
     except Exception as e:
         logger.error(f"Error calculating build schedule: {e}", exc_info=True)
         return JsonResponse({"error": str(e)}, status=500)
-

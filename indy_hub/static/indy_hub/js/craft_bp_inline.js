@@ -258,6 +258,9 @@
             estimated_cost: parseISK(document.getElementById('financialSummaryCost')?.textContent),
             estimated_revenue: parseISK(document.getElementById('financialSummaryRevenue')?.textContent),
             estimated_profit: parseISK(document.getElementById('financialSummaryProfit')?.textContent),
+            ui_state: (window.CraftBP && typeof window.CraftBP.collectFullUiState === 'function')
+                ? window.CraftBP.collectFullUiState()
+                : {},
         };
 
         try {
@@ -492,6 +495,13 @@
 
         if (typeof recalcFinancials === 'function') {
             recalcFinancials();
+        }
+
+        if (config.ui_state && window.CraftBP && typeof window.CraftBP.applyFullUiState === 'function') {
+            window.CraftBP.applyFullUiState(config.ui_state);
+        }
+        if (window.CraftBP && typeof window.CraftBP.saveDraftState === 'function') {
+            window.CraftBP.saveDraftState();
         }
 
         refreshSaveSummary();

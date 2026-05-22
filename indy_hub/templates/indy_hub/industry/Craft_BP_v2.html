@@ -2322,7 +2322,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // ========== TAB PERSISTENCE ==========
-    const STORAGE_KEY = 'craftBP_{{ ui_version|default:"v2" }}_activeTab_{{ bp_type_id|default:"default" }}';
+    const FALLBACK_STORAGE_KEY = 'craftBP_{{ ui_version|default:"v2" }}_activeTab_{{ bp_type_id|default:"default" }}';
+    const getStorageKey = () => {
+        if (window.CraftBP && typeof window.CraftBP.getScopedStorageKey === 'function') {
+            return window.CraftBP.getScopedStorageKey('craft_bp_main_tab');
+        }
+        return FALLBACK_STORAGE_KEY;
+    };
     const tabButtons = document.querySelectorAll('#craftMainTabs .nav-link');
     const tabPanes = document.querySelectorAll('#craftMainTabsContent .tab-pane');
 
@@ -2350,7 +2356,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function restoreActiveTab() {
-        const savedTab = localStorage.getItem(STORAGE_KEY);
+        const savedTab = localStorage.getItem(getStorageKey());
         if (!savedTab) {
             showTab(tabButtons.length > 0 ? tabButtons[0] : null);
             return;
@@ -2368,7 +2374,7 @@ document.addEventListener('DOMContentLoaded', function() {
         button.addEventListener('click', function() {
             const tabName = this.getAttribute('data-tab-name');
             if (tabName) {
-                localStorage.setItem(STORAGE_KEY, tabName);
+                localStorage.setItem(getStorageKey(), tabName);
             }
         });
     });
