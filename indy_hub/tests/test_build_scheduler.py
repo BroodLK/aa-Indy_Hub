@@ -20,6 +20,7 @@ def _make_job(
     quantity_needed: int,
     quantity_per_run: int = 1,
     dependencies=None,
+    required_skills=None,
 ) -> ManufacturingJob:
     return ManufacturingJob(
         job_id=0,
@@ -33,6 +34,7 @@ def _make_job(
         adjusted_time_seconds=adjusted_time_seconds,
         total_time_seconds=adjusted_time_seconds * runs_required,
         dependencies=list(dependencies or []),
+        required_skills=list(required_skills or []),
     )
 
 
@@ -95,3 +97,74 @@ class BuildSchedulerTests(SimpleTestCase):
         self.assertTrue(all(job.start_time_seconds >= 200 for job in child_jobs))
         self.assertEqual(schedule.total_sequential_time_seconds, 500)
         self.assertEqual(schedule.total_parallel_time_seconds, 250)
+
+    def test_schedule_only_assigns_jobs_to_slots_with_required_skills(self):
+        jobs = [
+            _make_job(
+                item_type_id=401,
+                item_name="Capital Core",
+                runs_required=2,
+                adjusted_time_seconds=90,
+                quantity_needed=2,
+                required_skills=[
+                    {
+                        "skill_type_id": 3380,
+                        "level": 4,
+                        "skill_name": "Capital Construction",
+                    }
+                ],
+            )
+        ]
+        slots = [
+            IndustrySlot(
+                slot_id=0,
+                character_id=10,
+                character_name="Builder A",
+                slot_name="Builder A #1",
+                skill_levels={3380: 3},
+            ),
+            IndustrySlot(
+                slot_id=1,
+                character_id=11,
+                character_name="Builder B",
+                slot_name="Builder B #1",
+                skill_levels={3380: 5},
+            ),
+        ]
+
+        schedule = schedule_jobs_critical_path(jobs, slots)
+
+        self.assertEqual(schedule.jobs[0].assigned_slot, 1)
+
+    def test_schedule_raises_when_no_slot_meets_required_skills(self):
+        jobs = [
+            _make_job(
+                item_type_id=501,
+                item_name="Advanced Hull",
+                runs_required=1,
+                adjusted_time_seconds=60,
+                quantity_needed=1,
+                required_skills=[
+                    {
+                        "skill_type_id": 11433,
+                        "level": 5,
+                        "skill_name": "Advanced Industry",
+                    }
+                ],
+            )
+        ]
+        slots = [
+            IndustrySlot(
+                slot_id=0,
+                character_id=10,
+                character_name="Builder A",
+                slot_name="Builder A #1",
+                skill_levels={11433: 4},
+            )
+        ]
+
+        with self.assertRaisesMessage(
+            ValueError,
+            "No selected characters meet the skill requirements for Advanced Hull: Advanced Industry 5.",
+        ):
+            schedule_jobs_critical_path(jobs, slots)

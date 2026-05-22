@@ -63,6 +63,7 @@ const CRAFT_BUILD_PLANNER_STATE = {
     renderedSignature: '',
     slotAssignments: new Map(),
 };
+const CRAFT_BUILD_MAX_SLOTS = 10;
 const CRAFT_SELECTION_SCOPE = {
     initialized: false,
     blueprintTypeId: 0,
@@ -8096,6 +8097,18 @@ function getBuildPlannerSlotOverview() {
     };
 }
 
+function getBuildPlannerPlanningCap(row) {
+    if (!row || typeof row !== 'object') {
+        return 0;
+    }
+    const totalSlots = Number(row.totalSlots);
+    const availableSlots = Number(row.availableSlots);
+    const baseValue = Number.isFinite(totalSlots) && totalSlots > 0
+        ? totalSlots
+        : (Number.isFinite(availableSlots) ? availableSlots : 0);
+    return Math.max(0, Math.min(CRAFT_BUILD_MAX_SLOTS, Math.floor(baseValue)));
+}
+
 function getBuildPlannerCharacterRows() {
     if (Array.isArray(characterSlots) && characterSlots.length > 0) {
         return characterSlots
@@ -8118,7 +8131,7 @@ function getBuildPlannerCharacterRows() {
                 return {
                     characterId: Number(row?.character_id || row?.characterId) || 0,
                     name: String(row?.character_name || row?.name || '').trim() || __('Unknown character'),
-                    skillsMissing: false,
+                    skillsMissing: Boolean(row?.skills_missing ?? row?.skillsMissing),
                     totalSlots,
                     availableSlots,
                     usedSlots,
@@ -8217,12 +8230,18 @@ function ensureBuildPlannerSlotAssignments(rows) {
 
     (Array.isArray(rows) ? rows : []).forEach((row) => {
         const characterId = Number(row.characterId) || 0;
-        const maxSlots = Math.max(0, Math.floor(Number(row.availableSlots) || 0));
+        const maxSlots = getBuildPlannerPlanningCap(row);
         if (!characterId) {
             return;
         }
         const storedValue = storedAssignments.get(characterId);
-        const defaultValue = maxSlots;
+        const defaultValue = Math.max(
+            0,
+            Math.min(
+                maxSlots,
+                Math.floor(Number(row.availableSlots) || 0)
+            )
+        );
         nextAssignments.set(
             characterId,
             clampBuildPlannerSlotValue(storedValue == null ? defaultValue : storedValue, maxSlots)
@@ -8244,7 +8263,7 @@ function getBuildPlannerAssignedSlotsTotal(rows = null) {
         if (!row) {
             return;
         }
-        const maxSlots = Math.max(0, Math.floor(Number(row.availableSlots) || 0));
+        const maxSlots = getBuildPlannerPlanningCap(row);
         total += clampBuildPlannerSlotValue(value, maxSlots);
     });
     return total;
@@ -8446,20 +8465,19 @@ function renderBuildPlannerSlotControls(rows) {
         const availableSlots = Math.max(0, Math.floor(Number(row.availableSlots) || 0));
         const totalSlots = row.totalSlots == null ? null : Math.max(0, Math.floor(Number(row.totalSlots) || 0));
         const usedSlots = row.usedSlots == null ? null : Math.max(0, Math.floor(Number(row.usedSlots) || 0));
+        const planningCap = getBuildPlannerPlanningCap(row);
         const assignedSlots = clampBuildPlannerSlotValue(
             CRAFT_BUILD_PLANNER_STATE.slotAssignments.get(row.characterId) || 0,
-            availableSlots
+            planningCap
         );
-        const disabled = row.skillsMissing || availableSlots <= 0;
+        const disabled = row.skillsMissing || planningCap <= 0;
         let statusText = '';
         if (row.skillsMissing && totalSlots == null) {
             statusText = __('Skills snapshot unavailable for this character.');
-        } else if (availableSlots <= 0 && totalSlots != null) {
-            statusText = __('No free manufacturing slots right now.');
         } else if (totalSlots != null && usedSlots != null) {
-            statusText = `${__('Available')}: ${formatInteger(availableSlots)} / ${formatInteger(totalSlots)} | ${__('Busy')}: ${formatInteger(usedSlots)}`;
+            statusText = `${__('Free now')}: ${formatInteger(availableSlots)} / ${formatInteger(totalSlots)} | ${__('Busy')}: ${formatInteger(usedSlots)}`;
         } else {
-            statusText = `${__('Available')}: ${formatInteger(availableSlots)}`;
+            statusText = `${__('Free now')}: ${formatInteger(availableSlots)}`;
         }
 
         return `
@@ -8479,13 +8497,13 @@ function renderBuildPlannerSlotControls(rows) {
                         type="number"
                         class="form-control text-end"
                         min="0"
-                        max="${availableSlots}"
+                        max="${planningCap}"
                         step="1"
                         value="${assignedSlots}"
                         data-build-slot-character-id="${row.characterId}"
                         ${disabled ? 'disabled' : ''}
                     >
-                    <span class="input-group-text">/ ${formatInteger(availableSlots)}</span>
+                    <span class="input-group-text">/ ${formatInteger(planningCap)}</span>
                 </div>
             </div>
         `;
@@ -8498,7 +8516,7 @@ function renderBuildPlannerSlotControls(rows) {
             if (!characterId || !row) {
                 return;
             }
-            const nextValue = clampBuildPlannerSlotValue(input.value, row.availableSlots);
+            const nextValue = clampBuildPlannerSlotValue(input.value, getBuildPlannerPlanningCap(row));
             input.value = String(nextValue);
             CRAFT_BUILD_PLANNER_STATE.slotAssignments.set(characterId, nextValue);
             saveBuildPlannerSlotAssignmentsToStorage();
@@ -8513,7 +8531,7 @@ function renderBuildPlannerSlotControls(rows) {
     });
 }
 
-function updateBuildPlannerStatus(rows, items, availableSlots, assignedSlots) {
+function updateBuildPlannerStatus(rows, items, availableSlots, assignedSlots, planningCapacity) {
     const alertEl = document.getElementById('buildSlotSelectionAlert');
     if (!alertEl) {
         return;
@@ -8528,14 +8546,19 @@ function updateBuildPlannerStatus(rows, items, availableSlots, assignedSlots) {
         variantClass = 'alert-warning';
     } else if (!Array.isArray(items) || items.length === 0) {
         message = __('Switch items to Produce in the tree to populate the build planner.');
+    } else if (planningCapacity <= 0) {
+        message = __('No manufacturing slots are available for planning on your tracked characters.');
+        variantClass = 'alert-warning';
     } else if (availableSlots <= 0) {
         message = __('No manufacturing slots are currently free on your tracked characters.');
         variantClass = 'alert-warning';
     } else if (assignedSlots <= 0) {
-        message = __('Select how many free slots you want to allocate to this build.');
+        message = __('Select how many slots you want to allocate to this build.');
         variantClass = 'alert-warning';
     } else if (missingSkillCount > 0) {
         message = `${formatInteger(missingSkillCount)} ${missingSkillCount === 1 ? __('character has') : __('characters have')} ${__('no current skill snapshot loaded.')}`;
+    } else if (assignedSlots > availableSlots) {
+        message = __('Planned slots exceed currently free slots. The schedule will be treated as future capacity planning.');
     }
 
     if (!message) {
@@ -8553,6 +8576,10 @@ function updateBuildPlannerOutputs(rows = null) {
     const items = collectBuildPlannerItems();
     const availableSlots = resolvedRows.reduce(
         (total, row) => total + Math.max(0, Math.floor(Number(row.availableSlots) || 0)),
+        0
+    );
+    const planningCapacity = resolvedRows.reduce(
+        (total, row) => total + getBuildPlannerPlanningCap(row),
         0
     );
     const assignedSlots = getBuildPlannerAssignedSlotsTotal(resolvedRows);
@@ -8573,6 +8600,7 @@ function updateBuildPlannerOutputs(rows = null) {
     setText('buildPlannerBuildCount', formatInteger(items.length));
     setText('buildPlannerAvailableSlots', formatInteger(availableSlots));
     setText('buildPlannerUsedSlots', formatInteger(assignedSlots));
+    setText('buildPlannerPlannedSlots', formatInteger(planningCapacity));
     setText('buildPlannerRunCount', formatInteger(totalRuns));
 
     let peakLoad = 0;
@@ -8612,7 +8640,13 @@ function updateBuildPlannerOutputs(rows = null) {
     }).join('');
 
     setText('buildPlannerPeakLoad', formatInteger(peakLoad));
-    updateBuildPlannerStatus(resolvedRows, items, availableSlots, assignedSlots);
+    updateBuildPlannerStatus(
+        resolvedRows,
+        items,
+        availableSlots,
+        assignedSlots,
+        planningCapacity
+    );
 
     if (!body || !emptyState || !tableWrapper) {
         return;
@@ -9815,8 +9849,26 @@ function updateFinancialTabFromState() {
 
 function getCraftFinalProductLabel() {
     const payload = window.BLUEPRINT_DATA || {};
+    const blueprintLabel = String(
+        payload.bp_name
+        || payload.name
+        || payload.type_name
+        || payload.typeName
+        || payload.product_name
+        || payload.productName
+        || ''
+    ).trim();
+    const runCount = Math.max(0, Math.ceil(Number(payload.num_runs || payload.numRuns || 0) || 0));
+    if (blueprintLabel) {
+        if (runCount > 0) {
+            return `${blueprintLabel} (${formatInteger(runCount)} ${runCount === 1 ? __('run') : __('runs')})`;
+        }
+        return blueprintLabel;
+    }
+
     const payloadLabel = String(
         payload.bp_name
+        || payload.name
         || payload.product_name
         || payload.productName
         || payload.type_name
@@ -9836,6 +9888,27 @@ function getCraftFinalProductLabel() {
     }
 
     return __('Final product');
+}
+
+function syncCraftFinalProductLabel() {
+    const finalRow = document.getElementById('finalProductRow');
+    if (!finalRow) {
+        return;
+    }
+
+    const labelEl = finalRow.querySelector('.craft-planner-item-name');
+    if (labelEl) {
+        labelEl.textContent = getCraftFinalProductLabel();
+    }
+
+    const runBadgeEl = document.getElementById('finalProductRunBadge');
+    if (runBadgeEl) {
+        const payload = window.BLUEPRINT_DATA || {};
+        const runCount = Math.max(0, Math.ceil(Number(payload.num_runs || payload.numRuns || 0) || 0));
+        runBadgeEl.textContent = runCount > 0
+            ? `${formatInteger(runCount)} ${runCount === 1 ? __('run') : __('runs')}`
+            : __('No runs');
+    }
 }
 
 function getTreeSwitchModeForType(typeId) {
@@ -11500,7 +11573,7 @@ function gatherSlotsDataForSchedule() {
             .map((row) => {
                 const selectedSlots = clampBuildPlannerSlotValue(
                     CRAFT_BUILD_PLANNER_STATE.slotAssignments.get(row.characterId) ?? row.availableSlots ?? 0,
-                    row.availableSlots
+                    getBuildPlannerPlanningCap(row)
                 );
                 return {
                     character_id: row.characterId,
@@ -11521,7 +11594,7 @@ function getBuildStructureTimeBonus() {
     if (input && input.value) {
         const percent = parseFloat(input.value);
         if (!isNaN(percent) && percent >= 0 && percent <= 100) {
-            return percent / 100; // Convert percentage to decimal (25 -> 0.25)
+            return percent / 100;
         }
     }
     return 0.0;
@@ -11573,16 +11646,20 @@ function displayBuildSchedule(schedule) {
     // Show sections
     document.getElementById('ganttSection').style.display = 'block';
     document.getElementById('slotUtilizationSection').style.display = 'block';
+    document.getElementById('slotRunSummarySection').style.display = 'block';
     document.getElementById('jobDetailsSection').style.display = 'block';
 
     if (schedule.recommendations && schedule.recommendations.length > 0) {
         document.getElementById('recommendationsSection').style.display = 'block';
         displayRecommendations(schedule.recommendations);
+    } else {
+        document.getElementById('recommendationsSection').style.display = 'none';
     }
 
     // Render visualizations
     renderGanttChart(schedule);
     renderSlotUtilization(schedule);
+    renderSlotRunSummary(schedule);
     renderJobDetailsTable(schedule);
 }
 
@@ -11731,12 +11808,16 @@ function renderSlotUtilization(schedule) {
     const container = document.getElementById('slotUtilizationGrid');
     if (!container) return;
 
+    const jobs = Array.isArray(schedule.jobs) ? schedule.jobs : [];
     const slots = schedule.slots;
     container.innerHTML = '';
 
     slots.forEach(slot => {
         const card = document.createElement('div');
         card.className = 'col-md-6 col-lg-4';
+        const slotRuns = jobs
+            .filter((job) => Number(job.assigned_slot) === Number(slot.slot_id))
+            .reduce((total, job) => total + (Number(job.runs_required) || 0), 0);
 
         const utilizationClass = slot.utilization_percent > 75 ? 'success' : slot.utilization_percent > 50 ? 'warning' : 'secondary';
 
@@ -11749,6 +11830,10 @@ function renderSlotUtilization(schedule) {
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <span class="small text-muted">Jobs Assigned</span>
                         <span class="fw-semibold">${slot.jobs_count}</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="small text-muted">Runs Assigned</span>
+                        <span class="fw-semibold">${formatInteger(slotRuns)}</span>
                     </div>
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <span class="small text-muted">Completion Time</span>
@@ -11767,6 +11852,42 @@ function renderSlotUtilization(schedule) {
         `;
 
         container.appendChild(card);
+    });
+}
+
+function renderSlotRunSummary(schedule) {
+    const tbody = document.getElementById('slotRunSummaryBody');
+    if (!tbody) return;
+
+    const jobs = Array.isArray(schedule.jobs) ? schedule.jobs : [];
+    const slots = Array.isArray(schedule.slots) ? schedule.slots : [];
+    tbody.innerHTML = '';
+
+    const rows = slots.map((slot) => {
+        const slotJobs = jobs.filter((job) => Number(job.assigned_slot) === Number(slot.slot_id));
+        const totalRuns = slotJobs.reduce((total, job) => total + (Number(job.runs_required) || 0), 0);
+        const itemLines = slotJobs.map((job) => {
+            const runs = Number(job.runs_required) || 0;
+            return `${job.job_label || job.item_name} x${formatInteger(runs)}`;
+        });
+        return {
+            slot,
+            totalRuns,
+            jobsCount: slotJobs.length,
+            itemsText: itemLines.length > 0 ? itemLines.join(', ') : '-',
+        };
+    });
+
+    rows.forEach(({ slot, totalRuns, jobsCount, itemsText }) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${escapeHtml(slot.character_name || '-')}</td>
+            <td>${escapeHtml(slot.slot_name || slot.character_name || '-')}</td>
+            <td class="text-end fw-semibold">${formatInteger(totalRuns)}</td>
+            <td class="text-end">${formatInteger(jobsCount)}</td>
+            <td><small class="text-muted">${escapeHtml(itemsText)}</small></td>
+        `;
+        tbody.appendChild(row);
     });
 }
 
@@ -11789,12 +11910,17 @@ function renderJobDetailsTable(schedule) {
             || (schedule.critical_path && schedule.critical_path.includes(job.item_type_id));
         const rowClass = isOnCriticalPath ? 'table-warning' : '';
 
-        const deps = job.dependencies && job.dependencies.length > 0
+        const depLabels = job.dependencies && job.dependencies.length > 0
             ? job.dependencies.map(depId => {
                 const depJob = jobs.find(j => j.job_id === depId);
                 return depJob ? (depJob.job_label || depJob.item_name) : `Job ${depId}`;
-              }).join(', ')
+              })
             : '-';
+        const deps = Array.isArray(depLabels)
+            ? (depLabels.length <= 2
+                ? depLabels.join(', ')
+                : `${depLabels.slice(0, 2).join(', ')} +${depLabels.length - 2} more`)
+            : depLabels;
 
         const row = document.createElement('tr');
         row.className = rowClass;
@@ -11864,6 +11990,7 @@ function hideScheduleError() {
 
 // Initialize build schedule on load
 document.addEventListener('DOMContentLoaded', () => {
+    syncCraftFinalProductLabel();
     initBuildSchedule();
     initSlotManagement();
 });

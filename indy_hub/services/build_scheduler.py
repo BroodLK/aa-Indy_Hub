@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict, List, Optional, Set, Tuple
 
 from allianceauth.services.hooks import get_extension_logger
@@ -43,6 +44,7 @@ class ManufacturingJob:
     material_efficiency: int = 0
     time_efficiency: int = 0
     dependencies: List[int] = field(default_factory=list)
+    required_skills: List[dict] = field(default_factory=list)
     chunk_index: int = 1
     chunk_count: int = 1
 
@@ -84,6 +86,7 @@ class IndustrySlot:
     character_name: str
     slot_name: str = ""
     max_concurrent_jobs: int = 1
+    skill_levels: Dict[int, int] = field(default_factory=dict)
 
     # Scheduling state
     jobs: List[ManufacturingJob] = field(default_factory=list)
@@ -96,6 +99,20 @@ class IndustrySlot:
         job.end_time_seconds = start_time + job.total_time_seconds
         self.jobs.append(job)
         self.available_at_seconds = job.end_time_seconds
+
+    def meets_skill_requirements(self, requirements: List[dict]) -> bool:
+        if not requirements:
+            return True
+
+        for requirement in requirements:
+            skill_type_id = int(requirement.get("skill_type_id") or 0)
+            required_level = int(requirement.get("level") or 0)
+            if skill_type_id <= 0 or required_level <= 0:
+                continue
+            if int(self.skill_levels.get(skill_type_id) or 0) < required_level:
+                return False
+
+        return True
 
 
 @dataclass
@@ -163,6 +180,7 @@ class BuildSchedule:
                     "end_time_seconds": job.end_time_seconds,
                     "end_time_formatted": format_time_duration(job.end_time_seconds),
                     "dependencies": job.dependencies,
+                    "required_skills": job.required_skills,
                     "activity_id": job.activity_id,
                     "activity_name": job.activity_name,
                 }
@@ -319,6 +337,72 @@ def get_base_manufacturing_time(
         return (0, activity_id)
 
 
+@lru_cache(maxsize=512)
+def get_blueprint_skill_requirements(
+    blueprint_type_id: int,
+    activity_id: Optional[int] = None,
+) -> Tuple[Tuple[int, int, str], ...]:
+    """Return the blueprint skill requirements for the requested activity."""
+    if blueprint_type_id <= 0:
+        return tuple()
+
+    if activity_id is None:
+        activity_id = detect_blueprint_activity_type(blueprint_type_id)
+
+    try:
+        from eveuniverse.models import EveIndustryActivitySkill
+    except ImportError:
+        logger.warning("eveuniverse not available for blueprint skill lookup")
+        return tuple()
+
+    try:
+        requirements = (
+            EveIndustryActivitySkill.objects.filter(
+                eve_type_id=blueprint_type_id,
+                activity_id=activity_id,
+            )
+            .select_related("skill_eve_type")
+            .order_by("skill_eve_type_id")
+        )
+        normalized: list[tuple[int, int, str]] = []
+        for requirement in requirements:
+            skill_name = (
+                str(getattr(getattr(requirement, "skill_eve_type", None), "name", "")).strip()
+                or f"Skill {int(requirement.skill_eve_type_id)}"
+            )
+            normalized.append(
+                (
+                    int(requirement.skill_eve_type_id),
+                    int(requirement.level or 0),
+                    skill_name,
+                )
+            )
+        return tuple(normalized)
+    except Exception as exc:
+        logger.warning(
+            "Error getting skill requirements for blueprint %s: %s",
+            blueprint_type_id,
+            exc,
+        )
+        return tuple()
+
+
+def format_skill_requirements(requirements: List[dict] | Tuple[Tuple[int, int, str], ...]) -> str:
+    """Return a compact human-readable requirements string."""
+    parts: list[str] = []
+    for requirement in requirements or []:
+        if isinstance(requirement, dict):
+            skill_name = str(requirement.get("skill_name") or "").strip()
+            level = int(requirement.get("level") or 0)
+        else:
+            _skill_type_id, level, skill_name = requirement
+            skill_name = str(skill_name or "").strip()
+        if not skill_name or level <= 0:
+            continue
+        parts.append(f"{skill_name} {level}")
+    return ", ".join(parts)
+
+
 def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
     """
     Build dependency tree for production items.
@@ -413,6 +497,7 @@ def split_jobs_evenly_across_slots(
                 material_efficiency=job.material_efficiency,
                 time_efficiency=job.time_efficiency,
                 dependencies=[],
+                required_skills=list(job.required_skills or []),
                 chunk_index=chunk_index,
                 chunk_count=chunk_count,
             )
@@ -494,7 +579,22 @@ def schedule_jobs_critical_path(
 
     for job in sorted_jobs:
         earliest = earliest_start.get(job.job_id, 0)
-        best_slot = min(slots, key=lambda slot: max(slot.available_at_seconds, earliest))
+        eligible_slots = [
+            slot for slot in slots if slot.meets_skill_requirements(job.required_skills)
+        ]
+        if not eligible_slots:
+            requirements_text = format_skill_requirements(job.required_skills)
+            if requirements_text:
+                raise ValueError(
+                    f"No selected characters meet the skill requirements for "
+                    f"{job.item_name}: {requirements_text}."
+                )
+            raise ValueError(
+                f"No eligible industry slots are available for {job.item_name}."
+            )
+        best_slot = min(
+            eligible_slots, key=lambda slot: max(slot.available_at_seconds, earliest)
+        )
         start_time = max(best_slot.available_at_seconds, earliest)
         best_slot.add_job(job, start_time)
 

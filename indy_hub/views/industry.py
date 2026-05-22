@@ -323,6 +323,15 @@ def _update_skill_snapshot(
     character_id: int,
     levels: dict[int, dict[str, int]],
 ) -> IndustrySkillSnapshot:
+    serialized_levels = {
+        str(int(skill_id)): {
+            "active": int((value or {}).get("active") or 0),
+            "trained": int((value or {}).get("trained") or 0),
+        }
+        for skill_id, value in (levels or {}).items()
+        if int(skill_id or 0) > 0
+    }
+
     def _extract_levels(skill_id: int) -> tuple[int, int]:
         entry = levels.get(skill_id, 0)
         if isinstance(entry, dict):
@@ -350,6 +359,7 @@ def _update_skill_snapshot(
         owner_user=user,
         character_id=character_id,
         defaults={
+            "skill_levels": serialized_levels,
             "mass_production_level": mass_active,
             "advanced_mass_production_level": adv_mass_active,
             "laboratory_operation_level": lab_active,
@@ -3876,6 +3886,7 @@ def craft_bp(request, type_id):
         blueprint_payload = {
             "type_id": type_id,
             "bp_type_id": type_id,
+            "bp_name": bp_name,
             "name": bp_name,
             "num_runs": num_runs,
             "final_product_qty": final_product_qty,

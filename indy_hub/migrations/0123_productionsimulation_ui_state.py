@@ -3,7 +3,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("indy_hub", "0121_merge_0116_weekly_mining_poll_crontab_reference_0120_materialexchangeconfig_market_group_profiles"),
+        ("indy_hub", "0122_merge_20260521_2148"),
     ]
 
     operations = [

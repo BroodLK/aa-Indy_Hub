@@ -82,6 +82,77 @@ def _parse_optional_float(raw_value) -> float | None:
     return parsed
 
 
+def _normalize_snapshot_skill_levels(raw_value) -> dict[int, int]:
+    normalized: dict[int, int] = {}
+    if not isinstance(raw_value, dict):
+        return normalized
+
+    for skill_id, entry in raw_value.items():
+        try:
+            numeric_skill_id = int(skill_id)
+        except (TypeError, ValueError):
+            continue
+
+        if isinstance(entry, dict):
+            level = int(entry.get("active") or entry.get("trained") or 0)
+        else:
+            level = int(entry or 0)
+
+        if numeric_skill_id > 0 and level > 0:
+            normalized[numeric_skill_id] = level
+
+    return normalized
+
+
+def _get_schedule_character_skill_levels(user, character_ids: list[int]) -> dict[int, dict[int, int]]:
+    """Load cached character skill levels and refresh missing entries when possible."""
+    normalized_ids = sorted({int(character_id) for character_id in character_ids if int(character_id) > 0})
+    if not normalized_ids:
+        return {}
+
+    snapshots = {
+        snapshot.character_id: snapshot
+        for snapshot in IndustrySkillSnapshot.objects.filter(
+            owner_user=user,
+            character_id__in=normalized_ids,
+        )
+    }
+    results: dict[int, dict[int, int]] = {
+        character_id: _normalize_snapshot_skill_levels(
+            getattr(snapshots.get(character_id), "skill_levels", {})
+        )
+        for character_id in normalized_ids
+    }
+
+    missing_character_ids = [
+        character_id
+        for character_id in normalized_ids
+        if not results.get(character_id)
+    ]
+    if not missing_character_ids:
+        return results
+
+    try:
+        from ..views.industry import _fetch_character_skill_levels, _update_skill_snapshot
+    except Exception as exc:
+        logger.warning("Unable to import industry skill refresh helpers: %s", exc)
+        return results
+
+    for character_id in missing_character_ids:
+        try:
+            levels = _fetch_character_skill_levels(character_id)
+            snapshot = _update_skill_snapshot(user, character_id, levels)
+            results[character_id] = _normalize_snapshot_skill_levels(snapshot.skill_levels)
+        except Exception as exc:
+            logger.warning(
+                "Unable to refresh schedule skill snapshot for %s: %s",
+                character_id,
+                exc,
+            )
+
+    return results
+
+
 def _normalize_everef_fee_query_params(
     raw_query: dict[str, object],
 ) -> dict[str, object]:
@@ -1414,6 +1485,7 @@ def get_character_slots(request):
                 characters.append({
                     "character_id": int(row.get("character_id") or 0),
                     "character_name": row.get("name") or f"Character {row.get('character_id')}",
+                    "skills_missing": bool(row.get("skills_missing")),
                     "manufacturing_slots": available_manufacturing,
                     "available_manufacturing_slots": available_manufacturing,
                     "used_manufacturing_slots": used_manufacturing,
@@ -1442,6 +1514,7 @@ def get_character_slots(request):
                 characters.append({
                     "character_id": snapshot.character_id,
                     "character_name": character_name,
+                    "skills_missing": False,
                     "manufacturing_slots": snapshot.manufacturing_slots,
                     "available_manufacturing_slots": snapshot.manufacturing_slots,
                     "used_manufacturing_slots": 0,
@@ -1586,6 +1659,7 @@ def calculate_build_schedule(request):
             split_jobs_evenly_across_slots,
             calculate_manufacturing_time,
             get_base_manufacturing_time,
+            get_blueprint_skill_requirements,
             build_dependency_tree,
             schedule_jobs_critical_path,
         )
@@ -1611,6 +1685,25 @@ def calculate_build_schedule(request):
         skill_industry = int(data.get("skill_industry", 5))
         skill_advanced_industry = int(data.get("skill_advanced_industry", 5))
 
+        selected_character_ids = []
+        for slot_data in slots_data:
+            try:
+                character_id = int(slot_data.get("character_id", 0))
+                slot_capacity = int(
+                    slot_data.get(
+                        "available_slots",
+                        slot_data.get("max_concurrent_jobs", 1),
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+            if character_id > 0 and slot_capacity > 0:
+                selected_character_ids.append(character_id)
+        character_skill_levels = _get_schedule_character_skill_levels(
+            request.user,
+            selected_character_ids,
+        )
+
         # Build dependency tree
         dependencies = build_dependency_tree(jobs_data)
 
@@ -1633,6 +1726,17 @@ def calculate_build_schedule(request):
 
                 # Get base manufacturing time and detect activity type
                 base_time, activity_id = get_base_manufacturing_time(blueprint_type_id)
+                required_skills = [
+                    {
+                        "skill_type_id": skill_type_id,
+                        "level": level,
+                        "skill_name": skill_name,
+                    }
+                    for skill_type_id, level, skill_name in get_blueprint_skill_requirements(
+                        blueprint_type_id,
+                        activity_id,
+                    )
+                ]
 
                 if base_time == 0:
                     # Fallback: estimate based on quantity if no time data
@@ -1663,6 +1767,7 @@ def calculate_build_schedule(request):
                     material_efficiency=me,
                     time_efficiency=te,
                     dependencies=dependencies.get(item_type_id, []),
+                    required_skills=required_skills,
                 )
 
                 original_jobs.append(job)
@@ -1703,6 +1808,7 @@ def calculate_build_schedule(request):
                             character_name=character_name,
                             slot_name=slot_name,
                             max_concurrent_jobs=1,
+                            skill_levels=character_skill_levels.get(character_id, {}),
                         )
                     )
                     next_slot_id += 1
@@ -1718,7 +1824,10 @@ def calculate_build_schedule(request):
             return JsonResponse({"error": "No valid jobs to schedule"}, status=400)
 
         # Calculate optimized schedule
-        schedule = schedule_jobs_critical_path(jobs, slots)
+        try:
+            schedule = schedule_jobs_critical_path(jobs, slots)
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
 
         # Convert to JSON-serializable format
         result = {

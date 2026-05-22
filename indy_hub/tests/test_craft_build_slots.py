@@ -41,6 +41,7 @@ class CraftBuildSlotOverviewTests(TestCase):
         IndustrySkillSnapshot.objects.create(
             owner_user=self.user,
             character_id=self.character_id,
+            skill_levels={"3387": {"active": 4, "trained": 4}},
             mass_production_level=4,
             advanced_mass_production_level=1,
         )
@@ -97,3 +98,13 @@ class CraftBuildSlotOverviewTests(TestCase):
             rows[0]["manufacturing"],
             {"total": None, "available": None, "used": None, "percent_used": 0},
         )
+
+    def test_manufacturing_slots_are_capped_at_ten(self) -> None:
+        snapshot = IndustrySkillSnapshot.objects.create(
+            owner_user=self.user,
+            character_id=self.character_id + 1,
+            mass_production_level=5,
+            advanced_mass_production_level=5,
+        )
+
+        self.assertEqual(snapshot.manufacturing_slots, 10)

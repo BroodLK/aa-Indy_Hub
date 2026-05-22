@@ -459,6 +459,7 @@ class IndustrySkillSnapshot(models.Model):
         User, on_delete=models.CASCADE, related_name="industry_skill_snapshots"
     )
     character_id = models.BigIntegerField(unique=True)
+    skill_levels = models.JSONField(default=dict, blank=True)
     mass_production_level = models.PositiveSmallIntegerField(default=0)
     advanced_mass_production_level = models.PositiveSmallIntegerField(default=0)
     laboratory_operation_level = models.PositiveSmallIntegerField(default=0)
@@ -492,7 +493,9 @@ class IndustrySkillSnapshot(models.Model):
 
     @property
     def manufacturing_slots(self) -> int:
-        return 1 + self.mass_production_level + self.advanced_mass_production_level
+        return min(
+            10, 1 + self.mass_production_level + self.advanced_mass_production_level
+        )
 
     @property
     def research_slots(self) -> int:
@@ -507,6 +510,12 @@ class IndustrySkillSnapshot(models.Model):
         return min(
             10, 1 + self.mass_reactions_level + self.advanced_mass_reactions_level
         )
+
+    def get_active_skill_level(self, skill_type_id: int) -> int:
+        entry = (self.skill_levels or {}).get(str(int(skill_type_id)))
+        if isinstance(entry, dict):
+            return int(entry.get("active") or entry.get("trained") or 0)
+        return int(entry or 0)
 
     @property
     def progress_percent(self):
