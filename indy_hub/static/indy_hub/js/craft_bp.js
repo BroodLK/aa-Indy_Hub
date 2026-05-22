@@ -11090,9 +11090,71 @@ async function calculateBuildSchedule() {
 
 function gatherJobsDataForSchedule() {
     const jobs = [];
+    const payload = window.BLUEPRINT_DATA || {};
 
-    // Try to get data from SimulationAPI if available
-    if (window.SimulationAPI && typeof window.SimulationAPI.getState === 'function') {
+    if (window.SimulationAPI && typeof window.SimulationAPI.refreshFromDom === 'function') {
+        window.SimulationAPI.refreshFromDom();
+    }
+
+    // Primary path: reuse the same produced-item model that powers the Build planner.
+    if (typeof collectBuildPlannerItems === 'function') {
+        const blueprintTypeByProductType = new Map();
+        const blueprintConfigs = Array.isArray(payload.blueprint_configs) ? payload.blueprint_configs : [];
+        blueprintConfigs.forEach((config) => {
+            const productTypeId = Number(config?.product_type_id || config?.productTypeId || 0) || 0;
+            const blueprintTypeId = Number(config?.type_id || config?.typeId || 0) || 0;
+            if (productTypeId > 0 && blueprintTypeId > 0 && !blueprintTypeByProductType.has(productTypeId)) {
+                blueprintTypeByProductType.set(productTypeId, blueprintTypeId);
+            }
+        });
+
+        const mainProductTypeId = Number(payload.product_type_id || payload.productTypeId || 0) || 0;
+        const mainBlueprintTypeId = Number(payload.bp_type_id || payload.type_id || 0) || 0;
+        const plannerItems = collectBuildPlannerItems();
+
+        plannerItems.forEach((item) => {
+            const itemTypeId = Number(item?.typeId || item?.type_id || 0) || 0;
+            const quantityNeeded = Math.max(0, Math.ceil(Number(item?.totalNeeded || item?.total_needed || 0) || 0));
+            const quantityPerRun = Math.max(1, Math.ceil(Number(item?.producedPerRun || item?.produced_per_run || 1) || 1));
+            const context = item?.context && typeof item.context === 'object' ? item.context : null;
+            const fallbackBlueprintTypeId = itemTypeId === mainProductTypeId ? mainBlueprintTypeId : 0;
+            const blueprintTypeId = Number(
+                context?.blueprintTypeId
+                || context?.blueprint_type_id
+                || blueprintTypeByProductType.get(itemTypeId)
+                || fallbackBlueprintTypeId
+                || (itemTypeId + 1)
+                || 0
+            ) || 0;
+
+            if (!itemTypeId || quantityNeeded <= 0 || blueprintTypeId <= 0) {
+                return;
+            }
+
+            jobs.push({
+                item_type_id: itemTypeId,
+                item_name: String(item?.typeName || item?.type_name || `Item ${itemTypeId}`).trim(),
+                blueprint_type_id: blueprintTypeId,
+                quantity_needed: quantityNeeded,
+                quantity_per_run: quantityPerRun,
+                material_efficiency: Number(
+                    context?.me
+                    ?? context?.materialEfficiency
+                    ?? (itemTypeId === mainProductTypeId ? payload.me : 0)
+                    ?? 0
+                ) || 0,
+                time_efficiency: Number(
+                    context?.te
+                    ?? context?.timeEfficiency
+                    ?? (itemTypeId === mainProductTypeId ? payload.te : 0)
+                    ?? 0
+                ) || 0,
+            });
+        });
+    }
+
+    // Legacy fallback for older page state shapes.
+    if (jobs.length === 0 && window.SimulationAPI && typeof window.SimulationAPI.getState === 'function') {
         const state = window.SimulationAPI.getState();
 
         if (state && state.items) {
