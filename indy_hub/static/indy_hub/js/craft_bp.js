@@ -6017,6 +6017,12 @@ function applyPendingMETEChanges() {
         // Keep the target tab (where user is switching to)
         const targetTab = window.craftBPFlags.switchingToTab || 'materials';
         cleanUrl.searchParams.set('active_tab', targetTab);
+        persistCraftMainTabState(targetTab);
+
+        // This navigation happens immediately, so do a synchronous full draft save
+        // before leaving the page. Autosave listeners are not reliable here because
+        // the reload can win the race and drop manual prices / fee snapshots.
+        saveCraftUiStateToStorage();
 
         // Reset the flag
         window.craftBPFlags.hasPendingMETEChanges = false;
