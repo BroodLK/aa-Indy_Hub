@@ -1394,34 +1394,61 @@ def get_character_slots(request):
     }
     """
     try:
-        # Get all skill snapshots for the user
-        snapshots = IndustrySkillSnapshot.objects.filter(
-            owner_user=request.user
-        ).select_related()
-
         characters = []
-        for snapshot in snapshots:
-            # Get character name from ESI or cache
-            character_name = f"Character {snapshot.character_id}"
+        from ..views.industry import _build_slot_overview_rows
 
-            # Try to get character name from tokens
-            try:
-                token = Token.objects.filter(
-                    user=request.user,
-                    character_id=snapshot.character_id
-                ).first()
-                if token:
-                    character_name = token.character_name
-            except Exception:
-                pass
+        slot_rows = _build_slot_overview_rows(request.user, refresh_skills=False)
+        if slot_rows:
+            for row in slot_rows:
+                manufacturing = row.get("manufacturing", {}) if isinstance(row, dict) else {}
+                research = row.get("research", {}) if isinstance(row, dict) else {}
+                reactions = row.get("reactions", {}) if isinstance(row, dict) else {}
+                available_manufacturing = int(manufacturing.get("available") or 0)
+                used_manufacturing = int(manufacturing.get("used") or 0)
+                total_manufacturing = (
+                    int(manufacturing.get("total"))
+                    if manufacturing.get("total") is not None
+                    else available_manufacturing + used_manufacturing
+                )
 
-            characters.append({
-                'character_id': snapshot.character_id,
-                'character_name': character_name,
-                'manufacturing_slots': snapshot.manufacturing_slots,
-                'reaction_slots': snapshot.reaction_slots,
-                'research_slots': snapshot.research_slots,
-            })
+                characters.append({
+                    "character_id": int(row.get("character_id") or 0),
+                    "character_name": row.get("name") or f"Character {row.get('character_id')}",
+                    "manufacturing_slots": available_manufacturing,
+                    "available_manufacturing_slots": available_manufacturing,
+                    "used_manufacturing_slots": used_manufacturing,
+                    "total_manufacturing_slots": total_manufacturing,
+                    "reaction_slots": int(reactions.get("available") or 0),
+                    "research_slots": int(research.get("available") or 0),
+                })
+        else:
+            # Fallback to raw snapshots when no cached overview is available
+            snapshots = IndustrySkillSnapshot.objects.filter(
+                owner_user=request.user
+            ).select_related()
+
+            for snapshot in snapshots:
+                character_name = f"Character {snapshot.character_id}"
+                try:
+                    token = Token.objects.filter(
+                        user=request.user,
+                        character_id=snapshot.character_id
+                    ).first()
+                    if token:
+                        character_name = token.character_name
+                except Exception:
+                    pass
+
+                characters.append({
+                    "character_id": snapshot.character_id,
+                    "character_name": character_name,
+                    "manufacturing_slots": snapshot.manufacturing_slots,
+                    "available_manufacturing_slots": snapshot.manufacturing_slots,
+                    "used_manufacturing_slots": 0,
+                    "total_manufacturing_slots": snapshot.manufacturing_slots,
+                    "reaction_slots": snapshot.reaction_slots,
+                    "research_slots": snapshot.research_slots,
+                })
 
         return JsonResponse({'characters': characters})
 
@@ -1556,6 +1583,7 @@ def calculate_build_schedule(request):
         from ..services.build_scheduler import (
             ManufacturingJob,
             IndustrySlot,
+            split_jobs_evenly_across_slots,
             calculate_manufacturing_time,
             get_base_manufacturing_time,
             build_dependency_tree,
@@ -1587,7 +1615,7 @@ def calculate_build_schedule(request):
         dependencies = build_dependency_tree(jobs_data)
 
         # Create ManufacturingJob objects
-        jobs = []
+        original_jobs = []
         for job_data in jobs_data:
             try:
                 item_type_id = int(job_data.get("item_type_id", 0))
@@ -1621,6 +1649,7 @@ def calculate_build_schedule(request):
                 )
 
                 job = ManufacturingJob(
+                    job_id=0,
                     item_type_id=item_type_id,
                     item_name=job_data.get("item_name", f"Item {item_type_id}"),
                     blueprint_type_id=blueprint_type_id,
@@ -1636,32 +1665,57 @@ def calculate_build_schedule(request):
                     dependencies=dependencies.get(item_type_id, []),
                 )
 
-                jobs.append(job)
+                original_jobs.append(job)
 
             except (TypeError, ValueError) as e:
                 logger.warning(f"Skipping invalid job data: {e}")
                 continue
 
-        if not jobs:
+        if not original_jobs:
             return JsonResponse({"error": "No valid jobs to schedule"}, status=400)
 
-        # Create IndustrySlot objects
+        # Expand each character's available lane count into schedulable slots
         slots = []
-        for idx, slot_data in enumerate(slots_data):
+        next_slot_id = 0
+        for slot_data in slots_data:
             try:
-                slot = IndustrySlot(
-                    slot_id=idx,
-                    character_id=int(slot_data.get("character_id", 0)),
-                    character_name=slot_data.get("character_name", f"Slot {idx + 1}"),
-                    max_concurrent_jobs=int(slot_data.get("max_concurrent_jobs", 1)),
+                character_id = int(slot_data.get("character_id", 0))
+                character_name = slot_data.get("character_name", "Unknown Character")
+                slot_capacity = int(
+                    slot_data.get(
+                        "available_slots",
+                        slot_data.get("max_concurrent_jobs", 1),
+                    )
                 )
-                slots.append(slot)
+                if character_id <= 0 or slot_capacity <= 0:
+                    continue
+
+                for lane_index in range(slot_capacity):
+                    slot_name = (
+                        f"{character_name} #{lane_index + 1}"
+                        if slot_capacity > 1
+                        else character_name
+                    )
+                    slots.append(
+                        IndustrySlot(
+                            slot_id=next_slot_id,
+                            character_id=character_id,
+                            character_name=character_name,
+                            slot_name=slot_name,
+                            max_concurrent_jobs=1,
+                        )
+                    )
+                    next_slot_id += 1
             except (TypeError, ValueError) as e:
                 logger.warning(f"Skipping invalid slot data: {e}")
                 continue
 
         if not slots:
             return JsonResponse({"error": "No valid slots to schedule"}, status=400)
+
+        jobs = split_jobs_evenly_across_slots(original_jobs, len(slots))
+        if not jobs:
+            return JsonResponse({"error": "No valid jobs to schedule"}, status=400)
 
         # Calculate optimized schedule
         schedule = schedule_jobs_critical_path(jobs, slots)

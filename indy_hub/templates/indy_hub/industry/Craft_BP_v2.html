@@ -631,6 +631,25 @@
                         <!-- Slots loaded from API will be displayed here -->
                     </div>
 
+                    <div class="border rounded-3 bg-body-tertiary p-3 mb-3">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                            <div>
+                                <div class="fw-semibold">{% trans "Schedule Slot Selection" %}</div>
+                                <div class="small text-muted">{% trans "Choose how many free manufacturing slots to use, then calculate the schedule again." %}</div>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2">
+                                <span class="badge bg-primary-subtle text-primary-emphasis px-3 py-2">
+                                    {% trans "Using" %}: <span id="buildPlannerUsedSlots">0</span>
+                                </span>
+                                <span class="badge bg-secondary-subtle text-secondary-emphasis px-3 py-2">
+                                    {% trans "Free" %}: <span id="buildPlannerAvailableSlots">0</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div id="buildSlotSelectionAlert" class="alert d-none mb-3"></div>
+                        <div id="buildSlotCharacters" class="craft-build-slot-grid"></div>
+                    </div>
+
                     <div id="noSlotsMessage" class="text-center text-muted py-3">
                         <i class="fas fa-sync fa-2x mb-2 d-block"></i>
                         <p class="mb-0">{% trans "No characters found. Please sync your industry skills from the ESI token management page." %}</p>

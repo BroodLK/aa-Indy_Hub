@@ -8097,6 +8097,36 @@ function getBuildPlannerSlotOverview() {
 }
 
 function getBuildPlannerCharacterRows() {
+    if (Array.isArray(characterSlots) && characterSlots.length > 0) {
+        return characterSlots
+            .map((row) => {
+                const totalRaw = Number(
+                    row?.total_manufacturing_slots ?? row?.manufacturing_slots
+                );
+                const availableRaw = Number(
+                    row?.available_manufacturing_slots ?? row?.manufacturing_slots
+                );
+                const usedRaw = Number(
+                    row?.used_manufacturing_slots
+                    ?? (Number.isFinite(totalRaw) && Number.isFinite(availableRaw)
+                        ? Math.max(0, totalRaw - availableRaw)
+                        : 0)
+                );
+                const totalSlots = Number.isFinite(totalRaw) ? Math.max(0, Math.floor(totalRaw)) : null;
+                const availableSlots = Number.isFinite(availableRaw) ? Math.max(0, Math.floor(availableRaw)) : null;
+                const usedSlots = Number.isFinite(usedRaw) ? Math.max(0, Math.floor(usedRaw)) : null;
+                return {
+                    characterId: Number(row?.character_id || row?.characterId) || 0,
+                    name: String(row?.character_name || row?.name || '').trim() || __('Unknown character'),
+                    skillsMissing: false,
+                    totalSlots,
+                    availableSlots,
+                    usedSlots,
+                };
+            })
+            .filter((row) => row.characterId > 0);
+    }
+
     const slotOverview = getBuildPlannerSlotOverview();
     return slotOverview.characters
         .map((row) => {
@@ -8473,6 +8503,10 @@ function renderBuildPlannerSlotControls(rows) {
             CRAFT_BUILD_PLANNER_STATE.slotAssignments.set(characterId, nextValue);
             saveBuildPlannerSlotAssignmentsToStorage();
             updateBuildPlannerOutputs(rows);
+            if (buildScheduleData) {
+                showScheduleNotice('Slot selection changed. Recalculate schedule to refresh the timeline.');
+            }
+            scheduleCraftUiStateSave();
         };
         input.addEventListener('input', syncValue);
         input.addEventListener('change', syncValue);
@@ -11159,7 +11193,7 @@ async function calculateBuildSchedule() {
     }
 
     if (slots.length === 0) {
-        showScheduleError('No character slots configured. Please add characters in the Build tab configuration.');
+        showScheduleError('No build slots selected. Choose at least one free slot in the Build tab before calculating.');
         return;
     }
 
@@ -11361,6 +11395,9 @@ async function loadCharacterSlots() {
 
         characterSlots = data.characters || [];
         renderSlots();
+        if (typeof updateBuildTabFromState === 'function') {
+            updateBuildTabFromState();
+        }
 
     } catch (error) {
         console.error('Error fetching character slots:', error);
@@ -11405,6 +11442,15 @@ function renderSlots() {
     container.innerHTML = '';
 
     characterSlots.forEach(char => {
+        const availableManufacturing = Number(
+            char.available_manufacturing_slots ?? char.manufacturing_slots ?? 0
+        ) || 0;
+        const totalManufacturing = Number(
+            char.total_manufacturing_slots ?? char.manufacturing_slots ?? 0
+        ) || 0;
+        const usedManufacturing = Number(
+            char.used_manufacturing_slots ?? Math.max(0, totalManufacturing - availableManufacturing)
+        ) || 0;
         const slotDiv = document.createElement('div');
         slotDiv.className = 'card mb-2';
         slotDiv.innerHTML = `
@@ -11421,7 +11467,8 @@ function renderSlots() {
                     </div>
                     <div class="col-md-2 text-center">
                         <div class="small text-muted mb-1">Manufacturing</div>
-                        <div class="badge bg-primary">${char.manufacturing_slots} slots</div>
+                        <div class="badge bg-primary">${availableManufacturing} free</div>
+                        <div class="small text-muted mt-1">${usedManufacturing} busy / ${totalManufacturing} total</div>
                     </div>
                     <div class="col-md-2 text-center">
                         <div class="small text-muted mb-1">Reactions</div>
@@ -11446,13 +11493,23 @@ function escapeHtml(text) {
 }
 
 function gatherSlotsDataForSchedule() {
-    // Use manufacturing slots from loaded character data
-    if (characterSlots.length > 0) {
-        return characterSlots.map(char => ({
-            character_id: char.character_id,
-            character_name: char.character_name,
-            max_concurrent_jobs: char.manufacturing_slots,
-        }));
+    const rows = getBuildPlannerCharacterRows();
+    if (rows.length > 0) {
+        ensureBuildPlannerSlotAssignments(rows);
+        return rows
+            .map((row) => {
+                const selectedSlots = clampBuildPlannerSlotValue(
+                    CRAFT_BUILD_PLANNER_STATE.slotAssignments.get(row.characterId) ?? row.availableSlots ?? 0,
+                    row.availableSlots
+                );
+                return {
+                    character_id: row.characterId,
+                    character_name: row.name,
+                    available_slots: selectedSlots,
+                    max_concurrent_jobs: selectedSlots,
+                };
+            })
+            .filter((row) => Number(row.available_slots) > 0);
     }
 
     // Return empty array if no characters available
@@ -11576,7 +11633,7 @@ function renderGanttChart(schedule) {
         svg += `<rect x="0" y="${y}" width="${chartWidth}" height="${rowHeight}" fill="${fillColor}"/>`;
 
         // Slot label
-        svg += `<text x="10" y="${y + rowHeight / 2 + 5}" fill="#333" font-weight="600">${escapeHtml(slot.character_name)}</text>`;
+        svg += `<text x="10" y="${y + rowHeight / 2 + 5}" fill="#333" font-weight="600">${escapeHtml(slot.slot_name || slot.character_name)}</text>`;
 
         // Draw jobs for this slot
         const slotJobs = jobs.filter(job => job.assigned_slot === slot.slot_id);
@@ -11596,11 +11653,11 @@ function renderGanttChart(schedule) {
             if (width > 60) {
                 const textX = startX + width / 2;
                 const textY = barY + barHeight / 2 + 4;
-                svg += `<text x="${textX}" y="${textY}" fill="#fff" font-size="10px" font-weight="600" text-anchor="middle">${escapeHtml(truncateText(job.item_name, 20))}</text>`;
+                svg += `<text x="${textX}" y="${textY}" fill="#fff" font-size="10px" font-weight="600" text-anchor="middle">${escapeHtml(truncateText(job.job_label || job.item_name, 20))}</text>`;
             }
 
             // Tooltip simulation (title attribute)
-            svg += `<title>${escapeHtml(job.item_name)}\nStart: ${job.start_time_formatted}\nDuration: ${job.total_time_formatted}\nRuns: ${job.runs_required}</title>`;
+            svg += `<title>${escapeHtml(job.job_label || job.item_name)}\nStart: ${job.start_time_formatted}\nDuration: ${job.total_time_formatted}\nRuns: ${job.runs_required}</title>`;
         });
     });
 
@@ -11687,7 +11744,7 @@ function renderSlotUtilization(schedule) {
             <div class="card border-0 shadow-sm">
                 <div class="card-body">
                     <h6 class="card-title fw-semibold mb-3">
-                        <i class="fas fa-user-circle me-2"></i>${escapeHtml(slot.character_name)}
+                        <i class="fas fa-user-circle me-2"></i>${escapeHtml(slot.slot_name || slot.character_name)}
                     </h6>
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <span class="small text-muted">Jobs Assigned</span>
@@ -11723,15 +11780,19 @@ function renderJobDetailsTable(schedule) {
 
     jobs.forEach(job => {
         const slot = slots.find(s => s.slot_id === job.assigned_slot);
-        const slotName = slot ? slot.character_name : '-';
+        const slotName = slot ? (slot.slot_name || slot.character_name) : '-';
 
-        const isOnCriticalPath = schedule.critical_path && schedule.critical_path.includes(job.item_type_id);
+        const criticalPathJobIds = Array.isArray(schedule.critical_path_job_ids)
+            ? schedule.critical_path_job_ids
+            : [];
+        const isOnCriticalPath = criticalPathJobIds.includes(job.job_id)
+            || (schedule.critical_path && schedule.critical_path.includes(job.item_type_id));
         const rowClass = isOnCriticalPath ? 'table-warning' : '';
 
         const deps = job.dependencies && job.dependencies.length > 0
             ? job.dependencies.map(depId => {
-                const depJob = jobs.find(j => j.item_type_id === depId);
-                return depJob ? depJob.item_name : `Item ${depId}`;
+                const depJob = jobs.find(j => j.job_id === depId);
+                return depJob ? (depJob.job_label || depJob.item_name) : `Job ${depId}`;
               }).join(', ')
             : '-';
 
@@ -11739,7 +11800,7 @@ function renderJobDetailsTable(schedule) {
         row.className = rowClass;
         row.innerHTML = `
             <td>
-                <span class="badge bg-info-subtle text-info-emphasis">${escapeHtml(job.item_name)}</span>
+                <span class="badge bg-info-subtle text-info-emphasis">${escapeHtml(job.job_label || job.item_name)}</span>
                 ${isOnCriticalPath ? '<i class="fas fa-star text-warning ms-2" title="On critical path"></i>' : ''}
             </td>
             <td class="text-end">${job.runs_required}</td>
@@ -11778,8 +11839,17 @@ function showScheduleLoading(show) {
 }
 
 function showScheduleError(message) {
+    showScheduleMessage(message, 'danger');
+}
+
+function showScheduleNotice(message) {
+    showScheduleMessage(message, 'warning');
+}
+
+function showScheduleMessage(message, variant = 'danger') {
     const alert = document.getElementById('scheduleErrorAlert');
     if (alert) {
+        alert.className = `alert alert-${variant}`;
         alert.textContent = message;
         alert.classList.remove('d-none');
     }
