@@ -1569,6 +1569,43 @@ function applyRunOptimizedStateSnapshot(snapshot) {
     }
 }
 
+function collectIndustryFeeStateSnapshot() {
+    return {
+        signature: String(CRAFT_INDUSTRY_FEE_STATE.signature || ''),
+        loaded: CRAFT_INDUSTRY_FEE_STATE.loaded === true,
+        totalJobCost: Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.totalJobCost) || 0),
+        totalApiCost: Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.totalApiCost) || 0),
+        jobs: cloneCraftUiJsonValue(CRAFT_INDUSTRY_FEE_STATE.jobs, []),
+        errors: cloneCraftUiJsonValue(CRAFT_INDUSTRY_FEE_STATE.errors, []),
+        lastAttemptAtMs: Math.max(0, Number(CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs) || 0),
+    };
+}
+
+function applyIndustryFeeStateSnapshot(snapshot) {
+    const hasSnapshot = Boolean(snapshot && typeof snapshot === 'object');
+    CRAFT_INDUSTRY_FEE_STATE.loading = false;
+    CRAFT_INDUSTRY_FEE_STATE.signature = hasSnapshot ? String(snapshot.signature || '') : '';
+    CRAFT_INDUSTRY_FEE_STATE.loaded = hasSnapshot && snapshot.loaded === true;
+    CRAFT_INDUSTRY_FEE_STATE.totalJobCost = hasSnapshot
+        ? Math.max(0, Number(snapshot.totalJobCost) || 0)
+        : 0;
+    CRAFT_INDUSTRY_FEE_STATE.totalApiCost = hasSnapshot
+        ? Math.max(0, Number(snapshot.totalApiCost) || 0)
+        : 0;
+    CRAFT_INDUSTRY_FEE_STATE.jobs = hasSnapshot && Array.isArray(snapshot.jobs)
+        ? cloneCraftUiJsonValue(snapshot.jobs, [])
+        : [];
+    CRAFT_INDUSTRY_FEE_STATE.errors = hasSnapshot && Array.isArray(snapshot.errors)
+        ? cloneCraftUiJsonValue(snapshot.errors, [])
+        : [];
+    CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = hasSnapshot
+        ? Math.max(0, Number(snapshot.lastAttemptAtMs) || 0)
+        : 0;
+
+    syncIndustryFeeManualControls();
+    renderIndustryFeeBreakdown();
+}
+
 function collectFullUiState() {
     const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
     return {
@@ -1586,6 +1623,7 @@ function collectFullUiState() {
         buildPlannerSlots: serializeBuildPlannerSlotAssignments(),
         buildSchedule: collectBuildScheduleStateSnapshot(),
         importFees: collectImportFeesStateSnapshot(),
+        industryFees: collectIndustryFeeStateSnapshot(),
         mineralConversion: collectMineralConversionStateSnapshot(),
         runOptimized: collectRunOptimizedStateSnapshot(),
         treeDetailsOpen: collectTreeDetailsState(),
@@ -1632,6 +1670,7 @@ function applyFullUiState(snapshot, options = {}) {
         });
 
         applyCustomPriceStateSnapshot(snapshot.customPrices);
+        applyIndustryFeeStateSnapshot(snapshot.industryFees);
 
         if (typeof recalcFinancials === 'function') {
             recalcFinancials();
@@ -6411,6 +6450,7 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
         CRAFT_INDUSTRY_FEE_STATE.errors = [];
         CRAFT_INDUSTRY_FEE_STATE.lastAttemptAtMs = 0;
         syncIndustryFeeManualControls();
+        scheduleCraftUiStateSave();
         return;
     }
 
@@ -6418,6 +6458,7 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
     if (!endpoint) {
         CRAFT_INDUSTRY_FEE_STATE.errors = [{ error: 'industry_fee_endpoint_missing' }];
         syncIndustryFeeManualControls();
+        scheduleCraftUiStateSave();
         return;
     }
     if (!force && CRAFT_INDUSTRY_FEE_STATE.loading && CRAFT_INDUSTRY_FEE_STATE.signature === signature) {
@@ -6568,6 +6609,7 @@ async function ensureIndustryFeeEstimateUpToDate(options = {}) {
         if (typeof recalcFinancials === 'function') {
             recalcFinancials();
         }
+        scheduleCraftUiStateSave();
     }
 }
 
@@ -7290,7 +7332,10 @@ function populatePrices(allInputs, prices) {
         }
 
         if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
-            window.SimulationAPI.setPrice(CRAFT_BP.productTypeId, 'sale', finalPrice);
+            const salePriceForState = (saleInput && saleInput.dataset.userModified === 'true')
+                ? getCraftPriceInputValue(saleInput)
+                : finalPrice;
+            window.SimulationAPI.setPrice(CRAFT_BP.productTypeId, 'sale', salePriceForState);
         }
     }
 }

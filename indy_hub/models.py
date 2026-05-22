@@ -1971,7 +1971,7 @@ class CustomPrice(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("simulation", "item_type_id")
+        unique_together = ("simulation", "item_type_id", "is_sale_price")
         default_permissions = ()
         indexes = [
             models.Index(fields=["user", "item_type_id"]),
@@ -2011,7 +2011,6 @@ class ProductionSimulation(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("user", "blueprint_type_id", "runs")
         default_permissions = ()
         ordering = ["-updated_at"]
         indexes = [

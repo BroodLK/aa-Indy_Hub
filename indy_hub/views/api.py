@@ -13,7 +13,7 @@ from urllib.parse import parse_qsl
 # Django
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
-from django.db import connection
+from django.db import connection, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
@@ -1067,71 +1067,68 @@ def save_production_config(request):
         if not blueprint_type_id:
             return JsonResponse({"error": "blueprint_type_id is required"}, status=400)
 
-        # Create or update the simulation
-        simulation = None
-        created = False
-        ui_state = data.get("ui_state", {})
-        if not isinstance(ui_state, dict):
-            ui_state = {}
-        if simulation_id:
-            simulation = ProductionSimulation.objects.filter(
-                id=simulation_id,
-                user=request.user,
-            ).first()
-            if simulation is None:
-                return JsonResponse({"error": "simulation not found"}, status=404)
-            if int(simulation.blueprint_type_id) != int(blueprint_type_id):
-                return JsonResponse(
-                    {"error": "simulation does not match blueprint_type_id"},
-                    status=400,
-                )
-        else:
-            simulation, created = ProductionSimulation.objects.get_or_create(
-                user=request.user,
-                blueprint_type_id=blueprint_type_id,
-                runs=runs,
-                defaults={
-                    "blueprint_name": data.get(
+        with transaction.atomic():
+            # Create or update the simulation
+            simulation = None
+            created = False
+            ui_state = data.get("ui_state", {})
+            if not isinstance(ui_state, dict):
+                ui_state = {}
+            if simulation_id:
+                simulation = ProductionSimulation.objects.select_for_update().filter(
+                    id=simulation_id,
+                    user=request.user,
+                ).first()
+                if simulation is None:
+                    return JsonResponse({"error": "simulation not found"}, status=404)
+                if int(simulation.blueprint_type_id) != int(blueprint_type_id):
+                    return JsonResponse(
+                        {"error": "simulation does not match blueprint_type_id"},
+                        status=400,
+                    )
+            else:
+                simulation = ProductionSimulation(
+                    user=request.user,
+                    blueprint_type_id=blueprint_type_id,
+                    blueprint_name=data.get(
                         "blueprint_name", f"Blueprint {blueprint_type_id}"
                     ),
-                    "simulation_name": data.get("simulation_name", ""),
-                    "active_tab": data.get("active_tab", "materials"),
-                    "ui_state": ui_state,
-                    "estimated_cost": data.get("estimated_cost", 0),
-                    "estimated_revenue": data.get("estimated_revenue", 0),
-                    "estimated_profit": data.get("estimated_profit", 0),
-                },
-            )
+                    runs=runs,
+                    simulation_name=data.get("simulation_name", ""),
+                    active_tab=data.get("active_tab", "materials"),
+                    ui_state=ui_state,
+                    estimated_cost=data.get("estimated_cost", 0),
+                    estimated_revenue=data.get("estimated_revenue", 0),
+                    estimated_profit=data.get("estimated_profit", 0),
+                )
+                created = True
 
-        if not created:
-            # Update the existing simulation
-            simulation.blueprint_name = data.get(
-                "blueprint_name", simulation.blueprint_name
-            )
-            simulation.runs = runs
-            simulation.simulation_name = data.get(
-                "simulation_name", simulation.simulation_name
-            )
-            simulation.active_tab = data.get("active_tab", simulation.active_tab)
-            simulation.ui_state = ui_state
-            simulation.estimated_cost = data.get(
-                "estimated_cost", simulation.estimated_cost
-            )
-            simulation.estimated_revenue = data.get(
-                "estimated_revenue", simulation.estimated_revenue
-            )
-            simulation.estimated_profit = data.get(
-                "estimated_profit", simulation.estimated_profit
-            )
-            simulation.save()
+            if not created:
+                # Update the existing simulation
+                simulation.blueprint_name = data.get(
+                    "blueprint_name", simulation.blueprint_name
+                )
+                simulation.runs = runs
+                simulation.simulation_name = data.get(
+                    "simulation_name", simulation.simulation_name
+                )
+                simulation.active_tab = data.get("active_tab", simulation.active_tab)
+                simulation.ui_state = ui_state
+                simulation.estimated_cost = data.get(
+                    "estimated_cost", simulation.estimated_cost
+                )
+                simulation.estimated_revenue = data.get(
+                    "estimated_revenue", simulation.estimated_revenue
+                )
+                simulation.estimated_profit = data.get(
+                    "estimated_profit", simulation.estimated_profit
+                )
+            else:
+                simulation.save()
 
-        # 1. Save the Prod/Buy/Useless configurations
-        items = data.get("items", [])
-        if items:
-            # Remove the previous configurations
+            # 1. Save the Prod/Buy/Useless configurations
+            items = data.get("items", [])
             ProductionConfig.objects.filter(simulation=simulation).delete()
-
-            # Create the new configurations
             configs = []
             for item in items:
                 config = ProductionConfig(
@@ -1144,21 +1141,16 @@ def save_production_config(request):
                     runs=runs,
                 )
                 configs.append(config)
+            if configs:
+                ProductionConfig.objects.bulk_create(configs)
 
-            ProductionConfig.objects.bulk_create(configs)
-
-            # Update the simulation statistics
             simulation.total_items = len(items)
             simulation.total_buy_items = len([i for i in items if i["mode"] == "buy"])
             simulation.total_prod_items = len([i for i in items if i["mode"] == "prod"])
 
-        # 2. Save the blueprint ME/TE efficiencies
-        blueprint_efficiencies = data.get("blueprint_efficiencies", [])
-        if blueprint_efficiencies:
-            # Remove previous efficiencies
+            # 2. Save the blueprint ME/TE efficiencies
+            blueprint_efficiencies = data.get("blueprint_efficiencies", [])
             BlueprintEfficiency.objects.filter(simulation=simulation).delete()
-
-            # Create the new efficiencies
             efficiencies = []
             for eff in blueprint_efficiencies:
                 efficiency = BlueprintEfficiency(
@@ -1169,30 +1161,37 @@ def save_production_config(request):
                     time_efficiency=eff.get("time_efficiency", 0),
                 )
                 efficiencies.append(efficiency)
+            if efficiencies:
+                BlueprintEfficiency.objects.bulk_create(efficiencies)
 
-            BlueprintEfficiency.objects.bulk_create(efficiencies)
-
-        # 3. Save the custom prices
-        custom_prices = data.get("custom_prices", [])
-        if custom_prices:
-            # Remove previous prices
+            # 3. Save the custom prices
+            custom_prices = data.get("custom_prices", [])
             CustomPrice.objects.filter(simulation=simulation).delete()
-
-            # Create the new prices
-            prices = []
+            deduped_prices: dict[tuple[int, bool], dict] = {}
             for price in custom_prices:
+                item_type_id = int(price["item_type_id"])
+                is_sale_price = bool(price.get("is_sale_price", False))
+                deduped_prices[(item_type_id, is_sale_price)] = {
+                    "item_type_id": item_type_id,
+                    "unit_price": price.get("unit_price", 0),
+                    "is_sale_price": is_sale_price,
+                }
+
+            prices = []
+            for price in deduped_prices.values():
                 custom_price = CustomPrice(
                     user=request.user,
                     simulation=simulation,
                     item_type_id=price["item_type_id"],
-                    unit_price=price.get("unit_price", 0),
-                    is_sale_price=price.get("is_sale_price", False),
+                    unit_price=price["unit_price"],
+                    is_sale_price=price["is_sale_price"],
                 )
                 prices.append(custom_price)
 
-            CustomPrice.objects.bulk_create(prices)
+            if prices:
+                CustomPrice.objects.bulk_create(prices)
 
-        simulation.save()
+            simulation.save()
 
         return JsonResponse(
             {
@@ -1201,7 +1200,7 @@ def save_production_config(request):
                 "simulation_created": created,
                 "saved_items": len(items),
                 "saved_efficiencies": len(blueprint_efficiencies),
-                "saved_prices": len(custom_prices),
+                "saved_prices": len(prices),
                 "message": "Complete production configuration saved successfully",
             }
         )
@@ -1288,12 +1287,15 @@ def load_production_config(request):
             blueprint_type_id = int(simulation.blueprint_type_id)
             runs = int(simulation.runs or runs)
         else:
-            try:
-                simulation = ProductionSimulation.objects.get(
-                    user=request.user, blueprint_type_id=blueprint_type_id, runs=runs
+            simulation = (
+                ProductionSimulation.objects.filter(
+                    user=request.user,
+                    blueprint_type_id=blueprint_type_id,
+                    runs=runs,
                 )
-            except ProductionSimulation.DoesNotExist:
-                pass
+                .order_by("-updated_at", "-id")
+                .first()
+            )
 
         items = []  # Step 1: production/buy/useless configurations
         if simulation:

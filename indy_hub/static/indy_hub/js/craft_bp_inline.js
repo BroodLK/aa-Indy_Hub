@@ -239,6 +239,64 @@
         }
     }
 
+    function getSaveModalElements() {
+        return {
+            modal: document.getElementById('saveSimulationModal'),
+            overwriteWrap: document.getElementById('saveSimulationOverwriteWrap'),
+            overwriteInput: document.getElementById('saveSimulationOverwriteCurrent'),
+            overwriteLabel: document.getElementById('saveSimulationOverwriteLabel'),
+            saveButton: document.getElementById('confirmSaveSimulation'),
+        };
+    }
+
+    function syncSaveModalState(options = {}) {
+        const resetOverwriteChoice = options.resetOverwriteChoice === true;
+        const {
+            overwriteWrap,
+            overwriteInput,
+            overwriteLabel,
+            saveButton,
+        } = getSaveModalElements();
+        const hasCurrentSimulation = Number(currentSimulationId || getSimulationIdFromUrl()) > 0;
+        const simulationNameInput = document.getElementById('simulationName');
+        const currentName = simulationNameInput ? String(simulationNameInput.value || '').trim() : '';
+
+        if (overwriteWrap) {
+            overwriteWrap.classList.toggle('d-none', !hasCurrentSimulation);
+        }
+        if (overwriteInput) {
+            if (resetOverwriteChoice || overwriteInput.dataset.userTouched !== 'true') {
+                overwriteInput.checked = hasCurrentSimulation;
+            }
+        }
+        const shouldOverwrite = hasCurrentSimulation && Boolean(overwriteInput?.checked);
+        if (overwriteLabel) {
+            if (!hasCurrentSimulation) {
+                overwriteLabel.textContent = __('No loaded simulation selected. Saving will create a new snapshot.');
+            } else if (shouldOverwrite) {
+                overwriteLabel.textContent = currentName
+                    ? `${__('Current save target')}: ${currentName}`
+                    : __('Current loaded simulation will be replaced.');
+            } else {
+                overwriteLabel.textContent = __('Saving will create a new snapshot and keep the current one unchanged.');
+            }
+        }
+        if (saveButton) {
+            saveButton.textContent = shouldOverwrite ? __('Save Changes') : __('Save');
+        }
+    }
+
+    function hideSaveSimulationModal() {
+        const { modal } = getSaveModalElements();
+        if (!modal || typeof bootstrap === 'undefined' || !bootstrap?.Modal) {
+            return;
+        }
+        const modalInstance = bootstrap.Modal.getInstance(modal) || (bootstrap.Modal.getOrCreateInstance ? bootstrap.Modal.getOrCreateInstance(modal) : null);
+        if (modalInstance) {
+            modalInstance.hide();
+        }
+    }
+
     async function saveSimulation(event) {
         if (event) {
             event.preventDefault();
@@ -251,13 +309,15 @@
 
         const runsInput = document.getElementById('runsInput');
         const simulationNameInput = document.getElementById('simulationName');
+        const { overwriteInput, saveButton } = getSaveModalElements();
+        const shouldOverwriteCurrent = Boolean(overwriteInput?.checked) && Number(currentSimulationId || getSimulationIdFromUrl()) > 0;
 
         const payload = {
             blueprint_type_id: blueprintData.bp_type_id || blueprintData.type_id,
             blueprint_name: blueprintData.name || document.querySelector('.blueprint-hero .hero-title')?.textContent?.trim() || document.querySelector('.blueprint-header h1')?.textContent?.trim() || __('Blueprint'),
             runs: runsInput ? Number(runsInput.value) || 1 : 1,
             simulation_name: simulationNameInput ? simulationNameInput.value.trim() : '',
-            simulation_id: currentSimulationId || getSimulationIdFromUrl(),
+            simulation_id: shouldOverwriteCurrent ? (currentSimulationId || getSimulationIdFromUrl()) : null,
             active_tab: getActiveTabId(),
             items: gatherProductionItems(),
             blueprint_efficiencies: gatherBlueprintEfficiencies(),
@@ -271,6 +331,9 @@
         };
 
         try {
+            if (saveButton) {
+                saveButton.disabled = true;
+            }
             const response = await fetch(blueprintData.save_url, {
                 method: 'POST',
                 headers: {
@@ -281,13 +344,13 @@
                 body: JSON.stringify(payload),
             });
 
-            if (!response.ok) {
-                throw new Error(`Request failed with status ${response.status}`);
-            }
-
             const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data?.error || `Request failed with status ${response.status}`);
+            }
             if (data && data.success) {
                 syncSimulationScope(data.simulation_id, { migrateCurrentState: true });
+                hideSaveSimulationModal();
                 showSimulationStatus(__('Simulation saved successfully.'), 'success');
                 cachedSimulations = null; // force refresh next time
             } else {
@@ -295,7 +358,11 @@
             }
         } catch (error) {
             console.error('[CraftBP] Failed to save simulation', error);
-            showSimulationStatus(__('Failed to save simulation.'), 'danger');
+            showSimulationStatus(String(error?.message || __('Failed to save simulation.')), 'danger');
+        } finally {
+            if (saveButton) {
+                saveButton.disabled = false;
+            }
         }
     }
 
@@ -516,6 +583,7 @@
         }
 
         refreshSaveSummary();
+        syncSaveModalState();
 
         const statusLabel = simulationMeta.simulation_name || simulationMeta.display_name || 'Simulation';
         showSimulationStatus(`${__('Loaded')} ${statusLabel}`, 'info');
@@ -567,12 +635,23 @@
     function attachEventHandlers() {
         const saveModal = document.getElementById('saveSimulationModal');
         if (saveModal) {
-            saveModal.addEventListener('show.bs.modal', refreshSaveSummary);
+            saveModal.addEventListener('show.bs.modal', () => {
+                refreshSaveSummary();
+                syncSaveModalState({ resetOverwriteChoice: true });
+            });
         }
 
         const saveButton = document.getElementById('confirmSaveSimulation');
         if (saveButton) {
             saveButton.addEventListener('click', saveSimulation);
+        }
+
+        const overwriteInput = document.getElementById('saveSimulationOverwriteCurrent');
+        if (overwriteInput) {
+            overwriteInput.addEventListener('change', () => {
+                overwriteInput.dataset.userTouched = 'true';
+                syncSaveModalState();
+            });
         }
 
         const loadModal = document.getElementById('loadSimulationModal');

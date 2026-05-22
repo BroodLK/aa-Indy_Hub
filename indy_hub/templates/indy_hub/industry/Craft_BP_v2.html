@@ -1715,6 +1715,13 @@
                         <label for="simulationName" class="form-label">{% trans "Simulation Name" %}</label>
                         <input type="text" class="form-control" id="simulationName" required placeholder="{% trans 'Enter a name for this simulation' %}">
                     </div>
+                    <div class="form-check mb-3 d-none" id="saveSimulationOverwriteWrap">
+                        <input class="form-check-input" type="checkbox" value="" id="saveSimulationOverwriteCurrent" checked>
+                        <label class="form-check-label" for="saveSimulationOverwriteCurrent">
+                            {% trans "Update the currently loaded simulation" %}
+                        </label>
+                        <div class="form-text" id="saveSimulationOverwriteLabel"></div>
+                    </div>
                     <div class="mb-3">
                         <label for="simulationNotes" class="form-label">{% trans "Notes (optional)" %}</label>
                         <textarea class="form-control" id="simulationNotes" rows="3" placeholder="{% trans 'Add any notes about this simulation' %}"></textarea>
