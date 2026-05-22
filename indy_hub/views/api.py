@@ -1656,12 +1656,11 @@ def calculate_build_schedule(request):
         from ..services.build_scheduler import (
             ManufacturingJob,
             IndustrySlot,
-            split_jobs_evenly_across_slots,
+            calculate_schedule_for_mode,
             calculate_manufacturing_time,
             get_base_manufacturing_time,
             get_blueprint_skill_requirements,
             build_dependency_tree,
-            schedule_jobs_critical_path,
         )
 
         # Parse request body
@@ -1684,6 +1683,14 @@ def calculate_build_schedule(request):
         rig_time_bonus = float(data.get("rig_time_bonus", 0.0))
         skill_industry = int(data.get("skill_industry", 5))
         skill_advanced_industry = int(data.get("skill_advanced_industry", 5))
+        schedule_mode = str(data.get("schedule_mode", "fastest") or "fastest")
+        final_product_type_id = int(data.get("final_product_type_id", 0) or 0) or None
+        component_target_days = float(data.get("component_target_days", 0) or 0)
+        component_target_time_seconds = (
+            max(0, ceil(component_target_days * 86400))
+            if component_target_days > 0
+            else None
+        )
 
         selected_character_ids = []
         for slot_data in slots_data:
@@ -1819,13 +1826,15 @@ def calculate_build_schedule(request):
         if not slots:
             return JsonResponse({"error": "No valid slots to schedule"}, status=400)
 
-        jobs = split_jobs_evenly_across_slots(original_jobs, len(slots))
-        if not jobs:
-            return JsonResponse({"error": "No valid jobs to schedule"}, status=400)
-
         # Calculate optimized schedule
         try:
-            schedule = schedule_jobs_critical_path(jobs, slots)
+            schedule = calculate_schedule_for_mode(
+                original_jobs,
+                slots,
+                schedule_mode=schedule_mode,
+                final_product_item_type_id=final_product_type_id,
+                component_target_time_seconds=component_target_time_seconds,
+            )
         except ValueError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
 

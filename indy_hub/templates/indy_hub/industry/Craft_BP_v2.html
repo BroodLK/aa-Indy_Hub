@@ -790,6 +790,23 @@
                     </div>
 
                     <div id="scheduleErrorAlert" class="alert alert-danger d-none"></div>
+
+                    <div class="row g-3 mt-1">
+                        <div class="col-lg-7">
+                            <label for="buildScheduleMode" class="form-label">{% trans "Scheduling Objective" %}</label>
+                            <select class="form-select" id="buildScheduleMode">
+                                <option value="fastest">{% trans "The fastest route possible" %}</option>
+                                <option value="fewest_slots">{% trans "Fewest slots possible" %}</option>
+                                <option value="component_target">{% trans "Finish components within X days" %}</option>
+                            </select>
+                            <div class="form-text">{% trans "Choose whether to optimize for shortest total time, lowest slot usage, or the minimum slots needed to have components ready by a deadline." %}</div>
+                        </div>
+                        <div class="col-lg-5 d-none" id="buildScheduleTargetDaysGroup">
+                            <label for="buildScheduleTargetDays" class="form-label">{% trans "Component target (days)" %}</label>
+                            <input type="number" class="form-control" id="buildScheduleTargetDays" min="0.1" step="0.1" placeholder="{% trans 'e.g. 7' %}">
+                            <div class="form-text">{% trans "Used only for the component deadline mode." %}</div>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- Gantt Chart Timeline -->
@@ -808,27 +825,15 @@
                         </div>
                     </div>
 
-                    <div id="ganttChartContainer" class="border rounded bg-white p-3" style="overflow-x: auto; min-height: 300px;">
+                    <div id="ganttChartContainer" class="craft-gantt-surface border rounded p-3" style="overflow-x: auto; min-height: 300px;">
                         <div id="ganttChart"></div>
                     </div>
                 </section>
 
-                <!-- Slot Assignments & Utilization -->
-                <section class="craft-section mb-4" id="slotUtilizationSection" style="display: none;">
-                    <div class="craft-section-header-with-actions">
-                        <h3 class="craft-section-title">
-                            <i class="fas fa-users text-warning"></i> {% trans "Slot Utilization" %}
-                        </h3>
-                    </div>
-
-                    <div id="slotUtilizationGrid" class="row g-3"></div>
-                </section>
-
-                <!-- Per-Job Details Table -->
                 <section class="craft-section mb-4" id="slotRunSummarySection" style="display: none;">
                     <div class="craft-section-header-with-actions">
                         <h3 class="craft-section-title">
-                            <i class="fas fa-layer-group text-primary"></i> {% trans "Runs Per Slot" %}
+                            <i class="fas fa-layer-group text-primary"></i> {% trans "Runs By Job" %}
                         </h3>
                     </div>
 
@@ -836,39 +841,15 @@
                         <table class="table table-sm align-middle mb-0">
                             <thead class="table-light">
                                 <tr>
+                                    <th>{% trans "Job" %}</th>
                                     <th>{% trans "Character" %}</th>
-                                    <th>{% trans "Slot" %}</th>
+                                    <th class="text-end">{% trans "Slots Used" %}</th>
                                     <th class="text-end">{% trans "Runs" %}</th>
-                                    <th class="text-end">{% trans "Jobs" %}</th>
-                                    <th>{% trans "Assigned Work" %}</th>
+                                    <th>{% trans "Distribution" %}</th>
+                                    <th>{% trans "Window" %}</th>
                                 </tr>
                             </thead>
                             <tbody id="slotRunSummaryBody"></tbody>
-                        </table>
-                    </div>
-                </section>
-
-                <section class="craft-section mb-4" id="jobDetailsSection" style="display: none;">
-                    <div class="craft-section-header-with-actions">
-                        <h3 class="craft-section-title">
-                            <i class="fas fa-list text-info"></i> {% trans "Job Schedule Details" %}
-                        </h3>
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="table table-sm align-middle mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>{% trans "Item" %}</th>
-                                    <th class="text-end">{% trans "Runs" %}</th>
-                                    <th class="text-end">{% trans "Duration" %}</th>
-                                    <th class="text-end">{% trans "Start Time" %}</th>
-                                    <th class="text-end">{% trans "End Time" %}</th>
-                                    <th>{% trans "Assigned Slot" %}</th>
-                                    <th>{% trans "Dependencies" %}</th>
-                                </tr>
-                            </thead>
-                            <tbody id="jobDetailsBody"></tbody>
                         </table>
                     </div>
                 </section>
@@ -1528,9 +1509,12 @@
                     </h3>
                     <div class="d-flex flex-wrap gap-2">
                         <a class="btn btn-outline-primary btn-sm" href="#howto-workflow">{% trans "Workflow" %}</a>
+                        <a class="btn btn-outline-success btn-sm" href="#howto-plan">{% trans "Plan" %}</a>
                         <a class="btn btn-outline-danger btn-sm" href="#howto-configure">{% trans "Configure" %}</a>
-                        <a class="btn btn-outline-warning btn-sm" href="#howto-buy">{% trans "Buy & Shopping" %}</a>
-                        <a class="btn btn-outline-info btn-sm" href="#howto-plan">{% trans "Plan Notes" %}</a>
+                        <a class="btn btn-outline-warning btn-sm" href="#howto-buy">{% trans "Buy" %}</a>
+                        <a class="btn btn-outline-info btn-sm" href="#howto-build">{% trans "Build" %}</a>
+                        <a class="btn btn-outline-secondary btn-sm" href="#howto-bpcs">{% trans "BPCs" %}</a>
+                        <a class="btn btn-outline-dark btn-sm" href="#howto-optimize">{% trans "Optimize & Save" %}</a>
                     </div>
                 </section>
 
@@ -1541,13 +1525,32 @@
                     <div class="card border-0 bg-body-tertiary">
                         <div class="card-body">
                             <ol class="mb-0 ps-3">
-                                <li class="mb-2">{% trans "Set Runs (top control bar), then update if needed." %}</li>
-                                <li class="mb-2">{% trans "Plan tab: choose Buy/Prod in the tree, expand/collapse, or bulk set all to Buy/Prod." %}</li>
-                                <li class="mb-2">{% trans "Configure tab: adjust ME/TE and choose Use this BP for the components you want to craft with a blueprint you already own." %}</li>
-                                <li class="mb-2">{% trans "Leave Configure tab to apply changes (the planner recalculates from your settings)." %}</li>
-                                <li class="mb-2">{% trans "Buy tab: review Purchase Planner, then Compute Shopping List." %}</li>
-                                <li>{% trans "Optional: Run optimized tab to compare profitability across run counts." %}</li>
+                                <li class="mb-2">{% trans "Set the target runs in the header. The workspace also keeps a local draft for this blueprint, but named Save/Load Simulation snapshots are still the clean way to keep scenarios." %}</li>
+                                <li class="mb-2">{% trans "Plan tab: decide what to Produce or Buy in the production tree. Expand, collapse, bulk set all to Produce or Buy, or use Optimize to flip items by profitability." %}</li>
+                                <li class="mb-2">{% trans "Configure tab: set blueprint ME/TE, enable Use this BP where you have owned or shared copies, and review build environment plus fee assumptions." %}</li>
+                                <li class="mb-2">{% trans "While editing Configure, some BPC and material previews update immediately. The full planner configuration is committed when you leave the Configure tab." %}</li>
+                                <li class="mb-2">{% trans "Buy BPCs tab: review missing copy coverage for Produce items, refresh cached offers, and select contracts that should be counted in the plan." %}</li>
+                                <li class="mb-2">{% trans "Buy tab: load prices, review shipping and industry fees, optionally convert minerals to compressed ore, then compute the shopping list and subtract owned materials." %}</li>
+                                <li class="mb-2">{% trans "Build tab: choose how many free manufacturing slots to allocate per character, then calculate the schedule for the items currently set to Produce." %}</li>
+                                <li>{% trans "Run optimized tab: scan for profitable run counts, inspect the best configuration, and copy the result when you want to compare another scenario." %}</li>
                             </ol>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title" id="howto-plan">
+                        <i class="fas fa-sitemap text-success"></i> {% trans "Plan Tab" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ul class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "The Production Tree is the main buy-versus-build control surface. Every downstream tab reads from these Produce/Buy decisions." %}</li>
+                                <li class="mb-2">{% trans "Use Apply selection to all instances of that item when the same component appears in more than one branch and you want one consistent decision." %}</li>
+                                <li class="mb-2">{% trans "Optimize checks current pricing and flips eligible items toward the better margin path, but you should still review the result before buying or scheduling." %}</li>
+                                <li class="mb-2">{% trans "The Materials panel groups current demand after plan choices are applied, so it is the quickest place to sanity-check whether a plan change actually reduced the raw inputs you expect." %}</li>
+                                <li>{% trans "Changing runs in the header preserves your working decisions and updates the plan scope instead of forcing you to rebuild the tree from scratch." %}</li>
+                            </ul>
                         </div>
                     </div>
                 </section>
@@ -1559,11 +1562,12 @@
                     <div class="card border-0 bg-body-tertiary">
                         <div class="card-body">
                             <ul class="mb-0 ps-3">
-                                <li class="mb-2">{% trans "Use this BP defaults to OFF." %}</li>
-                                <li class="mb-2">{% trans "If a component BP is not selected, that component is treated as BUY in shopping/plan calculations." %}</li>
-                                <li class="mb-2">{% trans "Build Environment applies structure + rig material bonuses with formula: ceil(Base x (1-ME) x (1-Structure) x (1-Rig)); rig bonus applies only when rig domain matches the produced item." %}</li>
-                                <li class="mb-2">{% trans "ME/TE presets: Max, From Owned BP, Reset." %}</li>
-                                <li>{% trans "Missing run validation highlights copy shortfalls and can prefill copy requests." %}</li>
+                                <li class="mb-2">{% trans "Quick Presets can push Max, Owned BP values, or Reset across the visible blueprint cards. Sync Owned BPCs queues a fresh ESI import for your copy inventory." %}</li>
+                                <li class="mb-2">{% trans "Use this BP only matters for items you are planning to Produce. If you turn a component back to Buy in Plan, that blueprint drops out of the active craft configuration." %}</li>
+                                <li class="mb-2">{% trans "Owned BPOs, owned BPCs, shared copies, and bought contract copies are all surfaced here. Missing-run warnings show where your selected coverage is still short." %}</li>
+                                <li class="mb-2">{% trans "The Configure Build Environment is the material and fee model. System name resolves system ID and index automatically, structure selection sets structure bonuses, and installed manufacturing rigs apply by domain." %}</li>
+                                <li class="mb-2">{% trans "The Industry Fee Model feeds Buy tab fee calculation. Enable it here, then use Calculate Fees in Buy when you want the current manufacturing fee breakdown." %}</li>
+                                <li>{% trans "Edits are saved locally as you work. Material and BPC previews can refresh live, but the full recalculated configuration is applied when you leave the Configure tab." %}</li>
                             </ul>
                         </div>
                     </div>
@@ -1571,31 +1575,69 @@
 
                 <section class="craft-section mb-3">
                     <h3 class="craft-section-title" id="howto-buy">
-                        <i class="fas fa-shopping-cart text-warning"></i> {% trans "Buy & Shopping Features" %}
+                        <i class="fas fa-shopping-cart text-warning"></i> {% trans "Buy Tab" %}
                     </h3>
                     <div class="card border-0 bg-body-tertiary">
                         <div class="card-body">
                             <ul class="mb-0 ps-3">
-                                <li class="mb-2">{% trans "Purchase Planner supports Fuzzwork prices plus manual Real Price overrides." %}</li>
-                                <li class="mb-2">{% trans "BPC requirements are shown at the top of Purchase Planner and support manual price override." %}</li>
-                                <li class="mb-2">{% trans "BPC entries are excluded from the Shopping List table." %}</li>
-                                <li class="mb-2">{% trans "Owned Materials input subtracts what you already have, including completed components when applicable." %}</li>
-                                <li>{% trans "Copy/Export is available for both Purchase Planner and Shopping List." %}</li>
+                                <li class="mb-2">{% trans "Purchase Planner tracks material buy cost, final product sell value, margin, industry fees, shipping, and any surplus value generated by over-coverage." %}</li>
+                                <li class="mb-2">{% trans "Load Fuzzwork to seed prices, then use Real Price and final sale price fields as your manual overrides. Reset overrides clears the manual layer without removing Fuzzwork data." %}</li>
+                                <li class="mb-2">{% trans "Selecting a shipping rate enables automatic freight quotes and a one-way contract breakdown. The Shipping real-price field lets you replace the quote with the actual fee you expect to pay." %}</li>
+                                <li class="mb-2">{% trans "Calculate Fees uses the Configure fee model and shows a per-produced-item manufacturing fee breakdown. If your assumptions change, run it again because fees are not treated as evergreen." %}</li>
+                                <li class="mb-2">{% trans "Convert to Compressed Ore appears only when mineral rows are present. Apply swaps those minerals for compressed ore lines in the planner; Reset to Minerals restores the original mineral rows." %}</li>
+                                <li class="mb-2">{% trans "Compute builds the Shopping List from the current planner state. Paste Owned Materials as Item Name [tab] Quantity to subtract stock you already hold." %}</li>
+                                <li>{% trans "Shopping List excludes BPC contract rows and stays focused on items you still need to source. Both Purchase Planner and Shopping List support copy/export." %}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title" id="howto-build">
+                        <i class="fas fa-hammer text-info"></i> {% trans "Build Tab" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ul class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "Character Slots are loaded from your synced industry characters and reflect manufacturing capacity from Mass Production and Advanced Mass Production skills." %}</li>
+                                <li class="mb-2">{% trans "Schedule Slot Selection lets you decide how many free slots to allocate per character right now. Changing slot counts updates the preview and requires a fresh schedule calculation to redraw the timeline." %}</li>
+                                <li class="mb-2">{% trans "Planned Run Distribution is a quick preview of how much work the current Produce plan will place on the selected slots before you run the full scheduler." %}</li>
+                                <li class="mb-2">{% trans "The Build tab Build Environment is separate from Configure. It controls time estimates only: structure time bonus, rig time bonus, Industry skill, and Advanced Industry skill." %}</li>
+                                <li class="mb-2">{% trans "Calculate Schedule generates sequential versus parallel time, the production timeline, grouped runs by job and character, and recommendations using your chosen scheduling objective." %}</li>
+                                <li>{% trans "If no items are set to Produce, Build stays informational only. Start by switching the relevant components to Produce in Plan." %}</li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="craft-section mb-3">
+                    <h3 class="craft-section-title" id="howto-bpcs">
+                        <i class="fas fa-copy text-secondary"></i> {% trans "Buy BPCs And Copy Coverage" %}
+                    </h3>
+                    <div class="card border-0 bg-body-tertiary">
+                        <div class="card-body">
+                            <ul class="mb-0 ps-3">
+                                <li class="mb-2">{% trans "Buy BPCs only lists blueprint copies for items currently set to Produce. Buy items do not need copy coverage, so they are intentionally omitted." %}</li>
+                                <li class="mb-2">{% trans "Offers can be sorted by ISK per run, total price, runs, ME, TE, or freshness. Refresh forces a new cache fetch when you want newer contract data." %}</li>
+                                <li class="mb-2">{% trans "Selecting a contract can apply its ME/TE to the matching Configure card and add the contract cost into the planner immediately. Contracts selected from the same pack can cover more than one blueprint row." %}</li>
+                                <li class="mb-2">{% trans "Selected contracts also appear in Configure under Bought BPCs, where removing one immediately updates copy coverage and planner totals." %}</li>
+                                <li>{% trans "Configure cards also support direct copy requests from shared-copy inventory. Missing-run validation will prefill requested runs when a shortfall is detected." %}</li>
                             </ul>
                         </div>
                     </div>
                 </section>
 
                 <section class="craft-section">
-                    <h3 class="craft-section-title" id="howto-plan">
-                        <i class="fas fa-info-circle text-info"></i> {% trans "Plan Tab Notes" %}
+                    <h3 class="craft-section-title" id="howto-optimize">
+                        <i class="fas fa-chart-line text-dark"></i> {% trans "Run Optimization And Saves" %}
                     </h3>
                     <div class="card border-0 bg-body-tertiary">
                         <div class="card-body">
                             <ul class="mb-0 ps-3">
-                                <li class="mb-2">{% trans "After Compute, Plan Materials mirrors the computed shopping scope." %}</li>
-                                <li class="mb-2">{% trans "Each material now shows BPC context when relevant (selected BP, BP ME, default ME, delta)." %}</li>
-                                <li>{% trans "Runs update preserves Buy/Prod decisions when submitted from the header form." %}</li>
+                                <li class="mb-2">{% trans "Run optimized charts profitability across run counts and can search past the visible samples up to your chosen max runs." %}</li>
+                                <li class="mb-2">{% trans "Leave dashboard-aligned mode on when you want the optimization to honor your current Buy/Prod choices. The copied best-configuration block is there for comparison and sharing, not as a hidden second planner." %}</li>
+                                <li class="mb-2">{% trans "The workspace autosaves local draft state per blueprint and simulation scope, including tabs, BPC selections, slot allocations, and other active UI choices." %}</li>
+                                <li>{% trans "Use Save Simulation and Load Simulation when you want named, reusable server-side scenarios instead of just the current local draft." %}</li>
                             </ul>
                         </div>
                     </div>

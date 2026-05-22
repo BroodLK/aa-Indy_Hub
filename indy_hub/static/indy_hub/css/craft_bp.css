@@ -1614,6 +1614,15 @@ div[id="bpTabs"] {
     cursor: not-allowed;
 }
 
+.craft-gantt-surface {
+    background: var(--bs-tertiary-bg);
+    border-color: var(--bs-border-color) !important;
+}
+
+.craft-gantt-surface svg {
+    display: block;
+}
+
 .craft-build-run-split {
     min-width: 220px;
 }

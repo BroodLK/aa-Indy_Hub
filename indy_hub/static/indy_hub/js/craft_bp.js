@@ -1509,6 +1509,9 @@ function applyFullUiState(snapshot, options = {}) {
 
     try {
         applyStaticCraftInputState(snapshot.staticInputs);
+        if (typeof updateBuildScheduleModeControls === 'function') {
+            updateBuildScheduleModeControls();
+        }
         applyConfigureStateSnapshot(snapshot.configure);
 
         const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
@@ -8567,7 +8570,7 @@ function updateBuildPlannerStatus(rows, items, availableSlots, assignedSlots, pl
         return;
     }
 
-    alertEl.className = `alert ${variantClass} mb-0`;
+    alertEl.className = `alert ${variantClass} mb-3`;
     alertEl.textContent = message;
 }
 
@@ -11233,6 +11236,8 @@ function initBuildSchedule() {
     const calculateBtn = document.getElementById('calculateScheduleBtn');
     const zoomInBtn = document.getElementById('ganttZoomIn');
     const zoomOutBtn = document.getElementById('ganttZoomOut');
+    const modeSelect = document.getElementById('buildScheduleMode');
+    const targetDaysInput = document.getElementById('buildScheduleTargetDays');
 
     if (calculateBtn) {
         calculateBtn.addEventListener('click', calculateBuildSchedule);
@@ -11253,12 +11258,69 @@ function initBuildSchedule() {
             scheduleCraftUiStateSave();
         });
     }
+
+    if (modeSelect) {
+        modeSelect.addEventListener('change', () => {
+            updateBuildScheduleModeControls();
+            if (buildScheduleData) {
+                showScheduleNotice(__('Scheduling objective changed. Recalculate schedule to refresh the timeline.'));
+            }
+            scheduleCraftUiStateSave();
+        });
+    }
+
+    if (targetDaysInput) {
+        targetDaysInput.addEventListener('input', () => {
+            scheduleCraftUiStateSave();
+        });
+    }
+
+    updateBuildScheduleModeControls();
+}
+
+function getBuildScheduleMode() {
+    const select = document.getElementById('buildScheduleMode');
+    const rawValue = String(select?.value || '').trim();
+    if (rawValue === 'fewest_slots' || rawValue === 'component_target') {
+        return rawValue;
+    }
+    return 'fastest';
+}
+
+function getBuildScheduleTargetDays() {
+    if (getBuildScheduleMode() !== 'component_target') {
+        return null;
+    }
+    const input = document.getElementById('buildScheduleTargetDays');
+    const value = Number.parseFloat(String(input?.value || '').trim());
+    return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function updateBuildScheduleModeControls() {
+    const targetGroup = document.getElementById('buildScheduleTargetDaysGroup');
+    if (!targetGroup) {
+        return;
+    }
+    targetGroup.classList.toggle('d-none', getBuildScheduleMode() !== 'component_target');
+}
+
+function getBuildScheduleModeLabel(mode) {
+    switch (String(mode || '').trim()) {
+        case 'fewest_slots':
+            return __('Fewest slots possible');
+        case 'component_target':
+            return __('Finish components within target');
+        default:
+            return __('The fastest route possible');
+    }
 }
 
 async function calculateBuildSchedule() {
     // Gather jobs data from current state
     const jobs = gatherJobsDataForSchedule();
     const slots = gatherSlotsDataForSchedule();
+    const scheduleMode = getBuildScheduleMode();
+    const componentTargetDays = getBuildScheduleTargetDays();
 
     if (jobs.length === 0) {
         showScheduleError('No items selected for production. Please select items in the Dashboard tab.');
@@ -11267,6 +11329,11 @@ async function calculateBuildSchedule() {
 
     if (slots.length === 0) {
         showScheduleError('No build slots selected. Choose at least one free slot in the Build tab before calculating.');
+        return;
+    }
+
+    if (scheduleMode === 'component_target' && componentTargetDays === null) {
+        showScheduleError(__('Enter a valid component target in days.'));
         return;
     }
 
@@ -11292,6 +11359,9 @@ async function calculateBuildSchedule() {
                 rig_time_bonus: rigBonus,
                 skill_industry: getBuildSkillIndustry(),
                 skill_advanced_industry: getBuildSkillAdvanced(),
+                schedule_mode: scheduleMode,
+                component_target_days: componentTargetDays,
+                final_product_type_id: getProductTypeIdValue(),
             }),
         });
 
@@ -11642,12 +11712,19 @@ function displayBuildSchedule(schedule) {
     document.getElementById('scheduleParallelTime').textContent = schedule.total_parallel_time_formatted;
     document.getElementById('scheduleTimeSaved').textContent = schedule.time_saved_formatted;
     document.getElementById('scheduleEfficiency').textContent = `${schedule.efficiency_percent}% efficiency`;
+    const parallelDetail = document.getElementById('scheduleParallelTimeDetail');
+    if (parallelDetail) {
+        const usedSlotCount = Number(schedule.used_slot_count || schedule.slots?.length || 0) || 0;
+        let detailText = `${getBuildScheduleModeLabel(schedule.schedule_mode)} - ${formatInteger(usedSlotCount)} ${usedSlotCount === 1 ? __('slot') : __('slots')}`;
+        if (schedule.schedule_mode === 'component_target' && schedule.component_completion_time_formatted) {
+            detailText = `${detailText} - ${__('Components ready')}: ${schedule.component_completion_time_formatted}`;
+        }
+        parallelDetail.textContent = detailText;
+    }
 
     // Show sections
     document.getElementById('ganttSection').style.display = 'block';
-    document.getElementById('slotUtilizationSection').style.display = 'block';
     document.getElementById('slotRunSummarySection').style.display = 'block';
-    document.getElementById('jobDetailsSection').style.display = 'block';
 
     if (schedule.recommendations && schedule.recommendations.length > 0) {
         document.getElementById('recommendationsSection').style.display = 'block';
@@ -11658,9 +11735,7 @@ function displayBuildSchedule(schedule) {
 
     // Render visualizations
     renderGanttChart(schedule);
-    renderSlotUtilization(schedule);
     renderSlotRunSummary(schedule);
-    renderJobDetailsTable(schedule);
 }
 
 function renderGanttChart(schedule) {
@@ -11678,26 +11753,53 @@ function renderGanttChart(schedule) {
         return;
     }
 
+    const isDarkTheme = String(document.documentElement?.getAttribute('data-theme') || '').trim().toLowerCase() === 'darkly';
+    const chartColors = isDarkTheme
+        ? {
+            surface: '#1f2937',
+            rowA: '#111827',
+            rowB: '#182132',
+            labelPanel: '#0f172a',
+            axis: '#334155',
+            axisText: '#cbd5e1',
+            labelText: '#f8fafc',
+        }
+        : {
+            surface: '#f8fafc',
+            rowA: '#ffffff',
+            rowB: '#f1f5f9',
+            labelPanel: '#e2e8f0',
+            axis: '#cbd5e1',
+            axisText: '#475569',
+            labelText: '#0f172a',
+        };
+
     // Calculate dimensions
     const baseWidth = 1000;
-    const chartWidth = baseWidth * ganttZoomLevel;
+    const timelineWidth = Math.max(420, baseWidth * ganttZoomLevel);
+    const labelWidth = 150;
+    const leadingGap = 16;
+    const chartWidth = labelWidth + leadingGap + timelineWidth;
     const rowHeight = 40;
-    const headerHeight = 30;
+    const headerHeight = 32;
     const chartHeight = (slots.length * rowHeight) + headerHeight;
+    const safeMaxTime = Math.max(1, Number(maxTime) || 0);
 
     // Create SVG
     let svg = `<svg width="${chartWidth}" height="${chartHeight}" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px;">`;
+    svg += `<rect x="0" y="0" width="${chartWidth}" height="${chartHeight}" fill="${chartColors.surface}" rx="8"/>`;
 
     // Time scale
-    const pixelsPerSecond = chartWidth / maxTime;
+    const pixelsPerSecond = timelineWidth / safeMaxTime;
+    const timelineStartX = labelWidth + leadingGap;
 
     // Draw time axis
     const timeMarkers = calculateTimeMarkers(maxTime);
     svg += `<g class="time-axis">`;
     timeMarkers.forEach(marker => {
-        const x = marker.seconds * pixelsPerSecond;
-        svg += `<line x1="${x}" y1="0" x2="${x}" y2="${chartHeight}" stroke="#e0e0e0" stroke-width="1"/>`;
-        svg += `<text x="${x + 5}" y="15" fill="#666" font-size="11px">${marker.label}</text>`;
+        const x = timelineStartX + (marker.seconds * pixelsPerSecond);
+        svg += `<line x1="${x}" y1="0" x2="${x}" y2="${chartHeight}" stroke="${chartColors.axis}" stroke-width="1"/>`;
+        svg += `<text x="${x + 4}" y="18" fill="${chartColors.axisText}" font-size="11px">${marker.label}</text>`;
     });
     svg += `</g>`;
 
@@ -11706,18 +11808,19 @@ function renderGanttChart(schedule) {
         const y = headerHeight + (slotIndex * rowHeight);
 
         // Row background
-        const fillColor = slotIndex % 2 === 0 ? '#f9f9f9' : '#ffffff';
+        const fillColor = slotIndex % 2 === 0 ? chartColors.rowA : chartColors.rowB;
         svg += `<rect x="0" y="${y}" width="${chartWidth}" height="${rowHeight}" fill="${fillColor}"/>`;
+        svg += `<rect x="0" y="${y}" width="${labelWidth}" height="${rowHeight}" fill="${chartColors.labelPanel}"/>`;
 
         // Slot label
-        svg += `<text x="10" y="${y + rowHeight / 2 + 5}" fill="#333" font-weight="600">${escapeHtml(slot.slot_name || slot.character_name)}</text>`;
+        svg += `<text x="12" y="${y + rowHeight / 2 + 5}" fill="${chartColors.labelText}" font-weight="600">${escapeHtml(slot.slot_name || slot.character_name)}</text>`;
 
         // Draw jobs for this slot
         const slotJobs = jobs.filter(job => job.assigned_slot === slot.slot_id);
 
         slotJobs.forEach(job => {
-            const startX = job.start_time_seconds * pixelsPerSecond;
-            const width = job.total_time_seconds * pixelsPerSecond;
+            const startX = timelineStartX + (job.start_time_seconds * pixelsPerSecond);
+            const width = Math.max(4, job.total_time_seconds * pixelsPerSecond);
             const barY = y + 8;
             const barHeight = rowHeight - 16;
 
@@ -11863,32 +11966,83 @@ function renderSlotRunSummary(schedule) {
     const slots = Array.isArray(schedule.slots) ? schedule.slots : [];
     tbody.innerHTML = '';
 
-    const rows = slots.map((slot) => {
-        const slotJobs = jobs.filter((job) => Number(job.assigned_slot) === Number(slot.slot_id));
-        const totalRuns = slotJobs.reduce((total, job) => total + (Number(job.runs_required) || 0), 0);
-        const itemLines = slotJobs.map((job) => {
-            const runs = Number(job.runs_required) || 0;
-            return `${job.job_label || job.item_name} x${formatInteger(runs)}`;
-        });
-        return {
-            slot,
-            totalRuns,
-            jobsCount: slotJobs.length,
-            itemsText: itemLines.length > 0 ? itemLines.join(', ') : '-',
+    const slotsById = new Map(slots.map((slot) => [Number(slot.slot_id), slot]));
+    const groupedRows = new Map();
+
+    jobs.forEach((job) => {
+        const slot = slotsById.get(Number(job.assigned_slot));
+        if (!slot) {
+            return;
+        }
+        const key = `${job.item_type_id}:${slot.character_id}`;
+        const existing = groupedRows.get(key) || {
+            itemTypeId: Number(job.item_type_id) || 0,
+            jobName: String(job.item_name || job.job_label || '-').trim() || '-',
+            characterName: String(slot.character_name || '-').trim() || '-',
+            slotIds: new Set(),
+            distribution: [],
+            totalRuns: 0,
+            startTimeSeconds: null,
+            endTimeSeconds: null,
         };
+
+        existing.slotIds.add(Number(slot.slot_id));
+        existing.distribution.push(Number(job.runs_required) || 0);
+        existing.totalRuns += Number(job.runs_required) || 0;
+        existing.startTimeSeconds = existing.startTimeSeconds == null
+            ? Number(job.start_time_seconds) || 0
+            : Math.min(existing.startTimeSeconds, Number(job.start_time_seconds) || 0);
+        existing.endTimeSeconds = existing.endTimeSeconds == null
+            ? Number(job.end_time_seconds) || 0
+            : Math.max(existing.endTimeSeconds, Number(job.end_time_seconds) || 0);
+        groupedRows.set(key, existing);
     });
 
-    rows.forEach(({ slot, totalRuns, jobsCount, itemsText }) => {
+    const rows = Array.from(groupedRows.values()).sort((left, right) => {
+        const jobCompare = String(left.jobName || '').localeCompare(String(right.jobName || ''), undefined, {
+            sensitivity: 'base',
+        });
+        if (jobCompare !== 0) {
+            return jobCompare;
+        }
+        return String(left.characterName || '').localeCompare(String(right.characterName || ''), undefined, {
+            sensitivity: 'base',
+        });
+    });
+
+    rows.forEach((entry) => {
+        const distributionSummary = summarizeGroupedRunDistribution(entry.distribution);
+        const windowText = `${formatTimeDuration(entry.startTimeSeconds || 0)} - ${formatTimeDuration(entry.endTimeSeconds || 0)}`;
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td>${escapeHtml(slot.character_name || '-')}</td>
-            <td>${escapeHtml(slot.slot_name || slot.character_name || '-')}</td>
-            <td class="text-end fw-semibold">${formatInteger(totalRuns)}</td>
-            <td class="text-end">${formatInteger(jobsCount)}</td>
-            <td><small class="text-muted">${escapeHtml(itemsText)}</small></td>
+            <td class="fw-semibold">${escapeHtml(entry.jobName)}</td>
+            <td>${escapeHtml(entry.characterName)}</td>
+            <td class="text-end">${formatInteger(entry.slotIds.size)}</td>
+            <td class="text-end fw-semibold">${formatInteger(entry.totalRuns)}</td>
+            <td><small class="text-muted">${escapeHtml(distributionSummary)}</small></td>
+            <td><small class="text-muted">${escapeHtml(windowText)}</small></td>
         `;
         tbody.appendChild(row);
     });
+}
+
+function summarizeGroupedRunDistribution(distribution) {
+    const values = Array.isArray(distribution)
+        ? distribution.map((value) => Math.max(0, Math.floor(Number(value) || 0))).filter((value) => value > 0)
+        : [];
+    if (values.length === 0) {
+        return '-';
+    }
+
+    const counts = new Map();
+    values.forEach((runs) => {
+        counts.set(runs, (counts.get(runs) || 0) + 1);
+    });
+
+    return Array.from(counts.entries())
+        .sort((left, right) => right[0] - left[0])
+        .map(([runs, slotCount]) => `${formatInteger(slotCount)} ${slotCount === 1 ? __('slot') : __('slots')} x ${formatInteger(runs)} ${runs === 1 ? __('run') : __('runs')}`)
+        .join(', ');
 }
 
 function renderJobDetailsTable(schedule) {

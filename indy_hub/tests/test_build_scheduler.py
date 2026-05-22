@@ -5,6 +5,7 @@ from django.test import SimpleTestCase
 from indy_hub.services.build_scheduler import (
     IndustrySlot,
     ManufacturingJob,
+    calculate_schedule_for_mode,
     schedule_jobs_critical_path,
     split_jobs_evenly_across_slots,
     split_runs_evenly,
@@ -168,3 +169,143 @@ class BuildSchedulerTests(SimpleTestCase):
             "No selected characters meet the skill requirements for Advanced Hull: Advanced Industry 5.",
         ):
             schedule_jobs_critical_path(jobs, slots)
+
+    def test_schedule_prioritizes_jobs_on_the_final_product_path(self):
+        jobs = [
+            _make_job(
+                item_type_id=601,
+                item_name="Component Chain",
+                runs_required=1,
+                adjusted_time_seconds=100,
+                quantity_needed=1,
+            ),
+            _make_job(
+                item_type_id=602,
+                item_name="Long Side Job A",
+                runs_required=1,
+                adjusted_time_seconds=1000,
+                quantity_needed=1,
+            ),
+            _make_job(
+                item_type_id=603,
+                item_name="Long Side Job B",
+                runs_required=1,
+                adjusted_time_seconds=1000,
+                quantity_needed=1,
+            ),
+            _make_job(
+                item_type_id=701,
+                item_name="Final Product",
+                runs_required=1,
+                adjusted_time_seconds=50,
+                quantity_needed=1,
+                dependencies=[601],
+            ),
+        ]
+        slots = [
+            IndustrySlot(slot_id=0, character_id=1, character_name="Builder", slot_name="Builder #1"),
+            IndustrySlot(slot_id=1, character_id=1, character_name="Builder", slot_name="Builder #2"),
+        ]
+
+        schedule = schedule_jobs_critical_path(
+            jobs,
+            slots,
+            preferred_item_type_id=701,
+        )
+
+        jobs_by_item = {job.item_type_id: job for job in schedule.jobs}
+
+        self.assertEqual(jobs_by_item[601].start_time_seconds, 0)
+        self.assertEqual(jobs_by_item[701].start_time_seconds, 100)
+        self.assertEqual(jobs_by_item[701].end_time_seconds, 150)
+        self.assertEqual(jobs_by_item[603].start_time_seconds, 150)
+
+    def test_fewest_slots_mode_uses_minimum_valid_slot_count(self):
+        jobs = [
+            _make_job(
+                item_type_id=801,
+                item_name="Capital Core",
+                runs_required=1,
+                adjusted_time_seconds=90,
+                quantity_needed=1,
+                required_skills=[
+                    {
+                        "skill_type_id": 3380,
+                        "level": 4,
+                        "skill_name": "Capital Construction",
+                    }
+                ],
+            ),
+            _make_job(
+                item_type_id=802,
+                item_name="Advanced Hull",
+                runs_required=1,
+                adjusted_time_seconds=90,
+                quantity_needed=1,
+                required_skills=[
+                    {
+                        "skill_type_id": 11433,
+                        "level": 5,
+                        "skill_name": "Advanced Industry",
+                    }
+                ],
+            ),
+        ]
+        slots = [
+            IndustrySlot(
+                slot_id=0,
+                character_id=10,
+                character_name="Builder A",
+                slot_name="Builder A #1",
+                skill_levels={3380: 5},
+            ),
+            IndustrySlot(
+                slot_id=1,
+                character_id=11,
+                character_name="Builder B",
+                slot_name="Builder B #1",
+                skill_levels={11433: 5},
+            ),
+        ]
+
+        schedule = calculate_schedule_for_mode(
+            jobs,
+            slots,
+            schedule_mode="fewest_slots",
+        )
+
+        self.assertEqual(schedule.used_slot_count, 2)
+        self.assertEqual(len(schedule.slots), 2)
+
+    def test_component_target_mode_picks_minimum_slots_that_meet_deadline(self):
+        component = _make_job(
+            item_type_id=901,
+            item_name="Component Pack",
+            runs_required=6,
+            adjusted_time_seconds=100,
+            quantity_needed=6,
+        )
+        final_product = _make_job(
+            item_type_id=902,
+            item_name="Final Product",
+            runs_required=1,
+            adjusted_time_seconds=50,
+            quantity_needed=1,
+            dependencies=[901],
+        )
+        slots = [
+            IndustrySlot(slot_id=0, character_id=1, character_name="Builder", slot_name="Builder #1"),
+            IndustrySlot(slot_id=1, character_id=1, character_name="Builder", slot_name="Builder #2"),
+            IndustrySlot(slot_id=2, character_id=1, character_name="Builder", slot_name="Builder #3"),
+        ]
+
+        schedule = calculate_schedule_for_mode(
+            [component, final_product],
+            slots,
+            schedule_mode="component_target",
+            final_product_item_type_id=902,
+            component_target_time_seconds=400,
+        )
+
+        self.assertEqual(schedule.used_slot_count, 2)
+        self.assertEqual(schedule.component_completion_time_seconds, 300)

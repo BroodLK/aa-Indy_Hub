@@ -125,6 +125,12 @@ class BuildSchedule:
     total_parallel_time_seconds: int
     critical_path: List[int] = field(default_factory=list)
     recommendations: List[str] = field(default_factory=list)
+    schedule_mode: str = "fastest"
+    requested_slot_count: int = 0
+    used_slot_count: int = 0
+    final_product_item_type_id: Optional[int] = None
+    component_completion_time_seconds: Optional[int] = None
+    component_target_time_seconds: Optional[int] = None
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -211,6 +217,30 @@ class BuildSchedule:
             "critical_path": critical_path_item_ids,
             "critical_path_job_ids": critical_path_job_ids,
             "recommendations": self.recommendations,
+            "schedule_mode": self.schedule_mode,
+            "requested_slot_count": self.requested_slot_count,
+            "used_slot_count": self.used_slot_count or len(self.slots),
+            "final_product_item_type_id": self.final_product_item_type_id,
+            "component_completion_time_seconds": self.component_completion_time_seconds,
+            "component_completion_time_formatted": (
+                format_time_duration(self.component_completion_time_seconds)
+                if self.component_completion_time_seconds is not None
+                else None
+            ),
+            "component_target_time_seconds": self.component_target_time_seconds,
+            "component_target_time_formatted": (
+                format_time_duration(self.component_target_time_seconds)
+                if self.component_target_time_seconds is not None
+                else None
+            ),
+            "component_target_met": (
+                self.component_target_time_seconds is None
+                or (
+                    self.component_completion_time_seconds is not None
+                    and self.component_completion_time_seconds
+                    <= self.component_target_time_seconds
+                )
+            ),
         }
 
 
@@ -523,9 +553,200 @@ def split_jobs_evenly_across_slots(
     return expanded_jobs
 
 
+def clone_slot(slot: IndustrySlot) -> IndustrySlot:
+    """Create a fresh slot instance for a scheduling attempt."""
+    return IndustrySlot(
+        slot_id=slot.slot_id,
+        character_id=slot.character_id,
+        character_name=slot.character_name,
+        slot_name=slot.slot_name,
+        max_concurrent_jobs=slot.max_concurrent_jobs,
+        skill_levels=dict(slot.skill_levels or {}),
+    )
+
+
+def component_completion_time_seconds(
+    jobs: List[ManufacturingJob],
+    final_product_item_type_id: Optional[int] = None,
+) -> int:
+    """Return when all non-final-product jobs have completed."""
+    if not jobs:
+        return 0
+
+    if not final_product_item_type_id:
+        return max((job.end_time_seconds for job in jobs), default=0)
+
+    component_jobs = [
+        job for job in jobs if job.item_type_id != final_product_item_type_id
+    ]
+    if not component_jobs:
+        return 0
+
+    return max((job.end_time_seconds for job in component_jobs), default=0)
+
+
+def _slot_capability_score(slot: IndustrySlot, jobs: List[ManufacturingJob]) -> Tuple[int, int]:
+    """Score how broadly a slot can satisfy the selected job set."""
+    eligible_jobs = [
+        job for job in jobs if slot.meets_skill_requirements(job.required_skills)
+    ]
+    eligible_count = len(eligible_jobs)
+    distinct_skills = len(
+        {
+            int(requirement.get("skill_type_id") or 0)
+            for job in eligible_jobs
+            for requirement in (job.required_skills or [])
+            if int(requirement.get("skill_type_id") or 0) > 0
+        }
+    )
+    return (eligible_count, distinct_skills)
+
+
+def select_slot_subset(
+    slots: List[IndustrySlot],
+    jobs: List[ManufacturingJob],
+    slot_limit: int,
+) -> List[IndustrySlot]:
+    """Pick the most capable subset of slots while preserving display order."""
+    normalized_limit = max(0, min(int(slot_limit), len(slots)))
+    if normalized_limit <= 0:
+        return []
+
+    slot_scores = {
+        slot.slot_id: _slot_capability_score(slot, jobs) for slot in slots
+    }
+    ranked_slots = sorted(
+        slots,
+        key=lambda slot: (
+            -slot_scores.get(slot.slot_id, (0, 0))[0],
+            -slot_scores.get(slot.slot_id, (0, 0))[1],
+            slot.slot_id,
+        ),
+    )
+    selected_ids = {
+        slot.slot_id for slot in ranked_slots[:normalized_limit]
+    }
+    return [clone_slot(slot) for slot in slots if slot.slot_id in selected_ids]
+
+
+def _build_schedule_with_slot_limit(
+    original_jobs: List[ManufacturingJob],
+    available_slots: List[IndustrySlot],
+    slot_limit: int,
+    *,
+    schedule_mode: str,
+    final_product_item_type_id: Optional[int] = None,
+    component_target_time_seconds: Optional[int] = None,
+) -> BuildSchedule:
+    """Build a schedule variant for a specific number of active slots."""
+    selected_slots = select_slot_subset(available_slots, original_jobs, slot_limit)
+    split_jobs = split_jobs_evenly_across_slots(original_jobs, len(selected_slots))
+    schedule = schedule_jobs_critical_path(
+        split_jobs,
+        selected_slots,
+        preferred_item_type_id=final_product_item_type_id,
+    )
+    schedule.schedule_mode = schedule_mode
+    schedule.requested_slot_count = len(available_slots)
+    schedule.used_slot_count = len(selected_slots)
+    schedule.final_product_item_type_id = final_product_item_type_id
+    schedule.component_completion_time_seconds = component_completion_time_seconds(
+        schedule.jobs,
+        final_product_item_type_id=final_product_item_type_id,
+    )
+    schedule.component_target_time_seconds = component_target_time_seconds
+    return schedule
+
+
+def calculate_schedule_for_mode(
+    original_jobs: List[ManufacturingJob],
+    available_slots: List[IndustrySlot],
+    *,
+    schedule_mode: str = "fastest",
+    final_product_item_type_id: Optional[int] = None,
+    component_target_time_seconds: Optional[int] = None,
+) -> BuildSchedule:
+    """Calculate a schedule using the requested optimization mode."""
+    normalized_mode = str(schedule_mode or "fastest").strip().lower() or "fastest"
+    slot_count = len(available_slots)
+
+    if normalized_mode == "fewest_slots":
+        last_error: Optional[ValueError] = None
+        for candidate_slot_count in range(1, slot_count + 1):
+            try:
+                return _build_schedule_with_slot_limit(
+                    original_jobs,
+                    available_slots,
+                    candidate_slot_count,
+                    schedule_mode=normalized_mode,
+                    final_product_item_type_id=final_product_item_type_id,
+                )
+            except ValueError as exc:
+                last_error = exc
+        if last_error:
+            raise last_error
+
+    if normalized_mode == "component_target":
+        if component_target_time_seconds is None or component_target_time_seconds <= 0:
+            raise ValueError("Enter a valid component completion target in days.")
+
+        best_fallback: Optional[BuildSchedule] = None
+        last_error: Optional[ValueError] = None
+
+        for candidate_slot_count in range(1, slot_count + 1):
+            try:
+                schedule = _build_schedule_with_slot_limit(
+                    original_jobs,
+                    available_slots,
+                    candidate_slot_count,
+                    schedule_mode=normalized_mode,
+                    final_product_item_type_id=final_product_item_type_id,
+                    component_target_time_seconds=component_target_time_seconds,
+                )
+            except ValueError as exc:
+                last_error = exc
+                continue
+
+            best_fallback = schedule
+            if (
+                schedule.component_completion_time_seconds is not None
+                and schedule.component_completion_time_seconds
+                <= component_target_time_seconds
+            ):
+                schedule.recommendations.insert(
+                    0,
+                    "Components can be ready in "
+                    + format_time_duration(schedule.component_completion_time_seconds),
+                )
+                return schedule
+
+        if best_fallback is not None:
+            best_fallback.recommendations.insert(
+                0,
+                (
+                    "Component target not met. Fastest component completion with the "
+                    f"selected slots is {format_time_duration(best_fallback.component_completion_time_seconds or 0)}."
+                ),
+            )
+            return best_fallback
+
+        if last_error:
+            raise last_error
+
+    return _build_schedule_with_slot_limit(
+        original_jobs,
+        available_slots,
+        slot_count,
+        schedule_mode="fastest",
+        final_product_item_type_id=final_product_item_type_id,
+    )
+
+
 def schedule_jobs_critical_path(
     jobs: List[ManufacturingJob],
     slots: List[IndustrySlot],
+    *,
+    preferred_item_type_id: Optional[int] = None,
 ) -> BuildSchedule:
     """
     Schedule jobs using a dependency-aware critical-path approach.
@@ -542,61 +763,157 @@ def schedule_jobs_critical_path(
         job.job_id: set(job.dependencies) for job in jobs
     }
     job_map: Dict[int, ManufacturingJob] = {job.job_id: job for job in jobs}
-    earliest_start: Dict[int, int] = {}
+    reverse_dep_map: Dict[int, Set[int]] = {job.job_id: set() for job in jobs}
+    for job in jobs:
+        for dep_id in dep_map.get(job.job_id, set()):
+            if dep_id in reverse_dep_map:
+                reverse_dep_map[dep_id].add(job.job_id)
 
-    def calc_earliest_start(job_id: int) -> int:
-        if job_id in earliest_start:
-            return earliest_start[job_id]
+    preferred_job_ids = {
+        job.job_id for job in jobs if job.item_type_id == preferred_item_type_id
+    }
+    generic_tail_cache: Dict[int, int] = {}
+    preferred_tail_cache: Dict[int, int] = {}
+    reaches_preferred_cache: Dict[int, bool] = {}
 
-        deps = dep_map.get(job_id, set())
-        if not deps:
-            earliest_start[job_id] = 0
+    def calc_generic_tail(job_id: int) -> int:
+        if job_id in generic_tail_cache:
+            return generic_tail_cache[job_id]
+
+        child_ids = reverse_dep_map.get(job_id, set())
+        tail_seconds = job_map[job_id].total_time_seconds
+        if child_ids:
+            tail_seconds += max(calc_generic_tail(child_id) for child_id in child_ids)
+        generic_tail_cache[job_id] = tail_seconds
+        return tail_seconds
+
+    def reaches_preferred(job_id: int) -> bool:
+        if job_id in reaches_preferred_cache:
+            return reaches_preferred_cache[job_id]
+
+        if job_id in preferred_job_ids:
+            reaches_preferred_cache[job_id] = True
+            return True
+
+        reaches = any(
+            reaches_preferred(child_id) for child_id in reverse_dep_map.get(job_id, set())
+        )
+        reaches_preferred_cache[job_id] = reaches
+        return reaches
+
+    def calc_preferred_tail(job_id: int) -> int:
+        if job_id in preferred_tail_cache:
+            return preferred_tail_cache[job_id]
+
+        if not reaches_preferred(job_id):
+            preferred_tail_cache[job_id] = 0
             return 0
 
-        max_dep_end = max(
-            calc_earliest_start(dep_id) + job_map[dep_id].total_time_seconds
-            for dep_id in deps
-            if dep_id in job_map
-        )
-        earliest_start[job_id] = max_dep_end
-        return max_dep_end
+        child_tails = [
+            calc_preferred_tail(child_id)
+            for child_id in reverse_dep_map.get(job_id, set())
+            if reaches_preferred(child_id)
+        ]
+        tail_seconds = job_map[job_id].total_time_seconds
+        if child_tails:
+            tail_seconds += max(child_tails)
+        preferred_tail_cache[job_id] = tail_seconds
+        return tail_seconds
 
-    for job in jobs:
-        calc_earliest_start(job.job_id)
+    preferred_priority = {
+        job.job_id: calc_preferred_tail(job.job_id) for job in jobs
+    }
+    generic_priority = {
+        job.job_id: calc_generic_tail(job.job_id) for job in jobs
+    }
 
-    sorted_jobs = sorted(
-        jobs,
-        key=lambda job: (
-            earliest_start.get(job.job_id, 0),
-            -job.total_time_seconds,
-            job.job_id,
-        ),
-    )
+    scheduled_jobs: List[ManufacturingJob] = []
+    completed_job_times: Dict[int, int] = {}
 
     for slot in slots:
         slot.jobs = []
         slot.available_at_seconds = 0
 
-    for job in sorted_jobs:
-        earliest = earliest_start.get(job.job_id, 0)
-        eligible_slots = [
-            slot for slot in slots if slot.meets_skill_requirements(job.required_skills)
-        ]
-        if not eligible_slots:
-            requirements_text = format_skill_requirements(job.required_skills)
-            if requirements_text:
-                raise ValueError(
-                    f"No selected characters meet the skill requirements for "
-                    f"{job.item_name}: {requirements_text}."
-                )
-            raise ValueError(
-                f"No eligible industry slots are available for {job.item_name}."
+    unscheduled_job_ids: Set[int] = {job.job_id for job in jobs}
+
+    while unscheduled_job_ids:
+        best_choice_key: Optional[Tuple[int, int, int, int, int, int, int]] = None
+        best_choice_slot: Optional[IndustrySlot] = None
+        best_choice_job: Optional[ManufacturingJob] = None
+        blocked_job_ids: Set[int] = set()
+
+        for job_id in list(unscheduled_job_ids):
+            deps = dep_map.get(job_id, set())
+            unresolved_deps = {
+                dep_id for dep_id in deps if dep_id in job_map and dep_id not in completed_job_times
+            }
+            if unresolved_deps:
+                blocked_job_ids.add(job_id)
+                continue
+
+            job = job_map[job_id]
+            release_time = max(
+                (completed_job_times.get(dep_id, 0) for dep_id in deps if dep_id in job_map),
+                default=0,
             )
-        best_slot = min(
-            eligible_slots, key=lambda slot: max(slot.available_at_seconds, earliest)
-        )
-        start_time = max(best_slot.available_at_seconds, earliest)
-        best_slot.add_job(job, start_time)
+            eligible_slots = [
+                slot for slot in slots if slot.meets_skill_requirements(job.required_skills)
+            ]
+            if not eligible_slots:
+                requirements_text = format_skill_requirements(job.required_skills)
+                if requirements_text:
+                    raise ValueError(
+                        f"No selected characters meet the skill requirements for "
+                        f"{job.item_name}: {requirements_text}."
+                    )
+                raise ValueError(
+                    f"No eligible industry slots are available for {job.item_name}."
+                )
+
+            best_slot = min(
+                eligible_slots,
+                key=lambda slot: (
+                    max(slot.available_at_seconds, release_time),
+                    slot.available_at_seconds,
+                    slot.slot_id,
+                ),
+            )
+            candidate_start = max(best_slot.available_at_seconds, release_time)
+            candidate_sort = (
+                candidate_start,
+                0 if preferred_priority.get(job_id, 0) > 0 else 1,
+                -preferred_priority.get(job_id, 0),
+                -generic_priority.get(job_id, 0),
+                -job.total_time_seconds,
+                best_slot.slot_id,
+                job_id,
+            )
+
+            if best_choice_key is None or candidate_sort < best_choice_key:
+                best_choice_key = candidate_sort
+                best_choice_slot = best_slot
+                best_choice_job = job
+
+        if best_choice_key is None or best_choice_slot is None or best_choice_job is None:
+            blocked_job_names = ", ".join(
+                sorted(
+                    job_map[job_id].item_name
+                    for job_id in blocked_job_ids
+                    if job_id in job_map
+                )
+            )
+            raise ValueError(
+                "Unable to resolve build dependencies while scheduling"
+                + (f": {blocked_job_names}" if blocked_job_names else ".")
+            )
+
+        selected_slot = best_choice_slot
+        selected_job = best_choice_job
+        selected_start_time = best_choice_key[0]
+        selected_slot.add_job(selected_job, selected_start_time)
+        completed_job_times[selected_job.job_id] = selected_job.end_time_seconds
+        scheduled_jobs.append(selected_job)
+        unscheduled_job_ids.discard(selected_job.job_id)
 
     total_sequential = sum(job.total_time_seconds for job in jobs)
     total_parallel = max(slot.available_at_seconds for slot in slots) if slots else 0
@@ -610,7 +927,7 @@ def schedule_jobs_critical_path(
     )
 
     return BuildSchedule(
-        jobs=sorted_jobs,
+        jobs=scheduled_jobs,
         slots=slots,
         total_sequential_time_seconds=total_sequential,
         total_parallel_time_seconds=total_parallel,
