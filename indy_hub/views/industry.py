@@ -60,6 +60,7 @@ from ..notifications import (
     send_discord_webhook_with_message_id,
 )
 from ..services.esi_client import ESITokenError, ESIUnmodifiedError, shared_client
+from ..services.freight_fees import get_available_routes
 from ..services.industry_environment import resolve_craft_system_context
 from ..services.simulations import summarize_simulations
 from ..tasks.industry import (
@@ -3821,6 +3822,7 @@ def craft_bp(request, type_id):
                 group_ids_used.add(None)
 
         market_group_map = {}
+        type_volume_map: dict[int, float] = {}
         if ItemType is not None:
             for item_type in eve_types:
                 group_id = (
@@ -3834,6 +3836,10 @@ def craft_bp(request, type_id):
                         "group_id": group_id,
                         "group_name": group_name,
                     }
+                packaged_volume = getattr(item_type, "packaged_volume", None)
+                regular_volume = getattr(item_type, "volume", None)
+                resolved_volume = packaged_volume if packaged_volume is not None else regular_volume
+                type_volume_map[item_type.id] = float(resolved_volume or 0)
 
         materials_by_group = {}
         for mat in materials_list:
@@ -3865,6 +3871,7 @@ def craft_bp(request, type_id):
             "characters": slot_overview_rows,
             "summary": _build_slot_overview_summary(slot_overview_rows),
         }
+        freight_routes = get_available_routes()
 
         blueprint_payload = {
             "type_id": type_id,
@@ -3886,6 +3893,8 @@ def craft_bp(request, type_id):
                 else []
             ),
             "market_group_map": _to_serializable(market_group_map),
+            "type_volumes": _to_serializable(type_volume_map),
+            "freight_routes": _to_serializable(freight_routes),
             "materials_by_group": _to_serializable(materials_by_group),
             "slot_overview": _to_serializable(slot_overview),
             "build_environment": _to_serializable(build_environment),
@@ -4034,6 +4043,7 @@ def craft_bp(request, type_id):
             "build_environment": build_environment,
             "industry_fee_config": industry_fee_config,
             "build_rig_catalog": build_rig_catalog,
+            "freight_routes": freight_routes,
             "blueprint_payload": blueprint_payload,
             "back_url": back_url,
             "craft_header_controls": mark_safe(craft_controls_html),

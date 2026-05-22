@@ -1347,7 +1347,9 @@ function applyBuildScheduleStateSnapshot(snapshot) {
 function collectImportFeesStateSnapshot() {
     return {
         cache: cloneCraftUiJsonValue(importFeesCache, null),
-        manualOverride: importFeesManualOverride === null ? null : Number(importFeesManualOverride) || 0,
+        selectedRoutePricingId: getSelectedImportFeesRoutePricingId(),
+        actualCost: getImportFeesActualCost(),
+        actualCostDirty: importFeesActualCostDirty === true,
     };
 }
 
@@ -1356,12 +1358,21 @@ function applyImportFeesStateSnapshot(snapshot) {
         return;
     }
     importFeesCache = cloneCraftUiJsonValue(snapshot.cache, null);
-    importFeesManualOverride = snapshot.manualOverride === null || snapshot.manualOverride === undefined
-        ? null
-        : (Number(snapshot.manualOverride) || 0);
-    const overrideInput = document.getElementById('importFeesOverride');
-    if (overrideInput) {
-        overrideInput.value = importFeesManualOverride === null ? '' : String(importFeesManualOverride);
+    importFeesActualCostDirty = snapshot.actualCostDirty === true;
+
+    const routeSelect = document.getElementById('importFeesRouteSelect');
+    if (routeSelect) {
+        const selectedRoutePricingId = snapshot.selectedRoutePricingId === null || snapshot.selectedRoutePricingId === undefined
+            ? ''
+            : String(snapshot.selectedRoutePricingId);
+        routeSelect.value = selectedRoutePricingId;
+    }
+
+    const actualCost = snapshot.actualCost !== undefined
+        ? snapshot.actualCost
+        : snapshot.manualOverride;
+    if (actualCost !== undefined) {
+        setImportFeesActualCost(actualCost, { markDirty: importFeesActualCostDirty });
     }
     if (typeof updateImportFeesDisplay === 'function') {
         updateImportFeesDisplay();
@@ -9506,6 +9517,8 @@ function updateFinancialTabFromState() {
     syncManualFinancialStateFromDom();
 
     const finalRow = document.getElementById('finalProductRow');
+    const shippingRow = document.getElementById('shippingCostRow');
+    const insertAnchor = shippingRow || finalRow || null;
     const productTypeId = getProductTypeIdValue();
     const pricesMap = getSimulationPricesMap();
 
@@ -9673,12 +9686,12 @@ function updateFinancialTabFromState() {
         let row = existingRows.get(rowKey);
         if (row) {
             updateFinancialRow(row, item);
-            tableBody.insertBefore(row, finalRow || null);
+            tableBody.insertBefore(row, insertAnchor);
             existingRows.delete(rowKey);
         } else {
             const buildResult = buildFinancialRow(item, pricesMap);
             row = buildResult.row;
-            tableBody.insertBefore(row, finalRow || null);
+            tableBody.insertBefore(row, insertAnchor);
             newRows.push(buildResult);
         }
     });
@@ -10587,6 +10600,9 @@ function computeNeededPurchases() {
 
         if (totalEl) {
             totalEl.textContent = formatPrice(totalCost);
+        }
+        if (typeof scheduleImportFeesRecalculation === 'function') {
+            scheduleImportFeesRecalculation({ syncActual: true });
         }
         if (typeof updateMaterialsTabFromState === 'function') {
             updateMaterialsTabFromState();
@@ -11684,96 +11700,174 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============================================================================
 
 let importFeesCache = null;
-let importFeesManualOverride = null;
+let importFeesActualCostDirty = false;
+
+function getImportFeesRouteOptions() {
+    const routes = window.BLUEPRINT_DATA?.freight_routes;
+    return Array.isArray(routes) ? routes : [];
+}
+
+function getSelectedImportFeesRoutePricingId() {
+    const routeSelect = document.getElementById('importFeesRouteSelect');
+    if (!routeSelect) {
+        return '';
+    }
+    return String(routeSelect.value || '').trim();
+}
+
+function getSelectedImportFeesRoute() {
+    const pricingId = getSelectedImportFeesRoutePricingId();
+    if (!pricingId) {
+        return null;
+    }
+    return getImportFeesRouteOptions().find((route) => String(route?.pricing_id || '') === pricingId) || null;
+}
+
+function getImportFeesActualInput() {
+    return document.getElementById('shippingActualPrice');
+}
+
+function getImportFeesActualCost() {
+    const input = getImportFeesActualInput();
+    if (!input) {
+        return null;
+    }
+    const rawValue = String(input.value || '').trim();
+    if (!rawValue) {
+        return null;
+    }
+    const value = Number.parseFloat(rawValue);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function setImportFeesActualCost(value, { markDirty = false } = {}) {
+    const input = getImportFeesActualInput();
+    if (!input) {
+        return;
+    }
+
+    const numericValue = Number(value);
+    const normalizedValue = Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
+    input.value = normalizedValue.toFixed(2);
+    importFeesActualCostDirty = markDirty === true;
+    updatePriceInputManualState(input, importFeesActualCostDirty && normalizedValue > 0);
+
+    if (typeof recalcFinancials === 'function') {
+        recalcFinancials();
+    }
+}
+
+function setImportFeesAutoQuoteValue(value) {
+    const input = document.getElementById('shippingAutoPrice');
+    if (!input) {
+        return;
+    }
+    const numericValue = Number(value);
+    input.value = Number.isFinite(numericValue) && numericValue > 0
+        ? numericValue.toFixed(2)
+        : '';
+}
+
+function getImportFeesTypeVolume(typeId) {
+    const volumeMap = window.BLUEPRINT_DATA?.type_volumes || {};
+    const numericTypeId = Number(typeId) || 0;
+    const rawValue = volumeMap[numericTypeId] ?? volumeMap[String(numericTypeId)];
+    const numericValue = Number(rawValue);
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+        return numericValue;
+    }
+    return 0.01;
+}
 
 function initImportFees() {
-    const overrideInput = document.getElementById('importFeesOverride');
-    const clearBtn = document.getElementById('clearImportFeesOverride');
+    const routeSelect = document.getElementById('importFeesRouteSelect');
+    const actualInput = getImportFeesActualInput();
 
-    if (overrideInput) {
-        overrideInput.addEventListener('input', () => {
-            const value = parseFloat(overrideInput.value);
-            if (!isNaN(value) && value >= 0) {
-                importFeesManualOverride = value;
-                updateImportFeesDisplay();
-            }
-        });
-    }
-
-    if (clearBtn) {
-        clearBtn.addEventListener('click', () => {
-            importFeesManualOverride = null;
-            if (overrideInput) {
-                overrideInput.value = '';
-            }
+    if (routeSelect) {
+        routeSelect.addEventListener('change', () => {
+            importFeesActualCostDirty = false;
+            scheduleImportFeesRecalculation({ syncActual: true });
             updateImportFeesDisplay();
+            scheduleCraftUiStateSave();
         });
     }
 
-    // Watch for changes to real price inputs to trigger recalculation
+    if (actualInput) {
+        actualInput.addEventListener('input', () => {
+            importFeesActualCostDirty = true;
+            updateImportFeesDisplay();
+            scheduleCraftUiStateSave();
+        });
+    }
+
     const tbody = document.getElementById('financialItemsBody');
     if (tbody) {
-        // Use event delegation for input changes
         tbody.addEventListener('input', (e) => {
-            if (e.target && e.target.classList.contains('real-price')) {
-                // Debounce the recalculation
-                clearTimeout(window.importFeesRecalcTimeout);
-                window.importFeesRecalcTimeout = setTimeout(() => {
-                    recalculateImportFeesIfNeeded();
-                }, 500);
+            const target = e.target;
+            if (!(target instanceof Element) || target.closest('#shippingCostRow')) {
+                return;
+            }
+            if (
+                target.classList.contains('real-price')
+                || target.classList.contains('fuzzwork-price')
+                || target.classList.contains('sale-price-unit')
+            ) {
+                scheduleImportFeesRecalculation({ syncActual: false });
             }
         });
 
-        // Also watch for row additions/removals (when items change)
         const observer = new MutationObserver(() => {
-            clearTimeout(window.importFeesRecalcTimeout);
-            window.importFeesRecalcTimeout = setTimeout(() => {
-                recalculateImportFeesIfNeeded();
-            }, 500);
+            scheduleImportFeesRecalculation({ syncActual: false });
         });
 
         observer.observe(tbody, { childList: true, subtree: false });
     }
+
+    updateImportFeesDisplay();
 }
 
 async function calculateImportFees() {
-    // Get destination location from production config
-    const destinationLocationId = window.productionConfig?.location_id;
-
-    if (!destinationLocationId) {
-        console.debug('No destination location configured, skipping import fee calculation');
+    const selectedRoute = getSelectedImportFeesRoute();
+    const pricingId = Number(selectedRoute?.pricing_id || 0);
+    if (!pricingId) {
         return null;
     }
 
-    // Calculate total volume and collateral from purchase planner
     const tbody = document.getElementById('financialItemsBody');
-    if (!tbody) return null;
+    if (!tbody) {
+        return null;
+    }
 
     let totalVolume = 0;
     let totalCollateral = 0;
 
     const rows = tbody.querySelectorAll('tr[data-type-id]');
     rows.forEach(row => {
+        if (row.id === 'finalProductRow') {
+            return;
+        }
         const qtyCell = row.querySelector('[data-qty]');
+        const fuzzworkPriceInput = row.querySelector('.fuzzwork-price');
         const realPriceInput = row.querySelector('.real-price');
-        const typeId = parseInt(row.dataset.typeId);
+        const typeId = Number(row.dataset.typeId || 0);
 
-        if (qtyCell && realPriceInput) {
-            const quantity = parseInt(qtyCell.dataset.qty || qtyCell.textContent.replace(/[^0-9]/g, '')) || 0;
-            const realPrice = parseFloat(realPriceInput.value) || 0;
-
-            // Estimate volume - use 0.01 m3 as minimum per item
-            // In reality we'd need to fetch actual volume from EVE SDE
-            // For now, use a conservative estimate based on typical items
-            const volume = 0.01; // m3 per item (conservative minimum)
+        if (qtyCell && typeId > 0) {
+            const quantity = Number.parseInt(
+                qtyCell.getAttribute('data-qty')
+                || qtyCell.dataset?.qty
+                || qtyCell.textContent.replace(/[^0-9]/g, ''),
+                10
+            ) || 0;
+            const unitPrice = (Number.parseFloat(realPriceInput?.value || '0') || 0)
+                || (Number.parseFloat(fuzzworkPriceInput?.value || '0') || 0);
+            const volume = getImportFeesTypeVolume(typeId);
 
             totalVolume += quantity * volume;
-            totalCollateral += quantity * realPrice;
+            totalCollateral += quantity * unitPrice;
         }
     });
 
     if (totalVolume <= 0) {
-        console.debug('No volume to transport, skipping import fee calculation');
         return null;
     }
 
@@ -11785,7 +11879,7 @@ async function calculateImportFees() {
                 'X-CSRFToken': getCookie('csrftoken'),
             },
             body: JSON.stringify({
-                destination_location_id: destinationLocationId,
+                pricing_id: pricingId,
                 total_volume_m3: totalVolume,
                 total_collateral_isk: totalCollateral,
             }),
@@ -11799,11 +11893,11 @@ async function calculateImportFees() {
                 route_name: data.route_name,
                 pricing_id: data.pricing_id,
                 issues: data.issues,
+                total_volume_m3: totalVolume,
+                total_collateral_isk: totalCollateral,
             };
-        } else {
-            console.debug('No freight route exists from Jita 4-4 to destination');
-            return null;
         }
+        return null;
     } catch (error) {
         console.error('Error calculating import fees:', error);
         return null;
@@ -11811,63 +11905,79 @@ async function calculateImportFees() {
 }
 
 function updateImportFeesDisplay() {
-    const kpi = document.getElementById('importFeesKpi');
-    const valueSpan = document.getElementById('financialSummaryImportFees');
-    const routeSpan = document.getElementById('importFeesRoute');
-    const overrideGroup = document.getElementById('importFeesOverrideGroup');
+    const statusCell = document.getElementById('shippingCostStatus');
+    if (!statusCell) {
+        return;
+    }
 
-    if (!kpi || !valueSpan || !routeSpan) return;
+    const selectedRoute = getSelectedImportFeesRoute();
+    const routeLabel = String(importFeesCache?.route_name || selectedRoute?.route_name || '').trim();
+    const actualCost = getImportFeesActualCost();
 
-    const fees = getEffectiveImportFees();
+    setImportFeesAutoQuoteValue(importFeesCache?.freight_cost || 0);
 
-    if (fees !== null && fees > 0) {
-        kpi.style.display = '';
-        if (overrideGroup) {
-            overrideGroup.style.display = '';
-        }
+    const statusLines = [];
 
-        valueSpan.textContent = formatPrice(fees);
-
-        if (importFeesManualOverride !== null) {
-            routeSpan.textContent = '(Manual Override)';
-            routeSpan.style.color = 'var(--bs-warning)';
-        } else if (importFeesCache) {
-            routeSpan.textContent = importFeesCache.route_name;
-            routeSpan.style.color = '';
-
-            if (importFeesCache.issues && importFeesCache.issues.length > 0) {
-                routeSpan.textContent += ' ⚠️';
-                routeSpan.title = 'Issues: ' + importFeesCache.issues.join(', ');
-            }
-        }
+    if (routeLabel) {
+        statusLines.push(`<div class="fw-semibold">${escapeHtml(routeLabel)}</div>`);
+    }
+    if (importFeesCache && Number(importFeesCache.freight_cost) > 0) {
+        statusLines.push(
+            `<div class="text-muted">${escapeHtml(__('Auto quote'))}: ${escapeHtml(formatPrice(Number(importFeesCache.freight_cost) || 0))}</div>`
+        );
+    } else if (selectedRoute) {
+        statusLines.push(`<div class="text-muted">${escapeHtml(__('Click Compute to refresh shipping'))}</div>`);
     } else {
-        kpi.style.display = 'none';
-        if (overrideGroup) {
-            overrideGroup.style.display = 'none';
-        }
+        statusLines.push(`<div class="text-muted">${escapeHtml(__('Manual only'))}</div>`);
+    }
+
+    if (importFeesActualCostDirty && actualCost !== null && actualCost > 0) {
+        statusLines.push(`<div class="text-warning">${escapeHtml(__('Actual cost edited'))}</div>`);
+    }
+
+    if (importFeesCache && Array.isArray(importFeesCache.issues) && importFeesCache.issues.length > 0) {
+        statusLines.push(`<div class="text-warning">${escapeHtml(importFeesCache.issues.join(', '))}</div>`);
+    }
+
+    statusCell.innerHTML = statusLines.join('');
+    if (importFeesCache) {
+        statusCell.title = `${__('Volume')}: ${formatNumber(Number(importFeesCache.total_volume_m3) || 0)} m3 | ${__('Collateral')}: ${formatPrice(Number(importFeesCache.total_collateral_isk) || 0)}`;
+    } else {
+        statusCell.removeAttribute('title');
     }
 }
 
-function getEffectiveImportFees() {
-    if (importFeesManualOverride !== null) {
-        return importFeesManualOverride;
+function scheduleImportFeesRecalculation({ syncActual = false } = {}) {
+    if (syncActual) {
+        window.importFeesRecalcSyncActual = true;
     }
-    if (importFeesCache && importFeesCache.freight_cost) {
-        return importFeesCache.freight_cost;
-    }
-    return null;
+    clearTimeout(window.importFeesRecalcTimeout);
+    window.importFeesRecalcTimeout = setTimeout(() => {
+        const shouldSyncActual = window.importFeesRecalcSyncActual === true;
+        window.importFeesRecalcSyncActual = false;
+        recalculateImportFeesIfNeeded({ syncActual: shouldSyncActual });
+    }, 250);
 }
 
-async function recalculateImportFeesIfNeeded() {
-    // Only recalculate if we don't have a manual override
-    if (importFeesManualOverride === null) {
-        const fees = await calculateImportFees();
-        importFeesCache = fees;
+async function recalculateImportFeesIfNeeded({ syncActual = false } = {}) {
+    const selectedRoute = getSelectedImportFeesRoute();
+    if (!selectedRoute) {
+        importFeesCache = null;
         updateImportFeesDisplay();
         scheduleCraftUiStateSave();
+        return;
     }
-}
 
+    const fees = await calculateImportFees();
+    importFeesCache = fees;
+
+    if (fees && (syncActual || !importFeesActualCostDirty)) {
+        setImportFeesActualCost(fees.freight_cost, { markDirty: false });
+    }
+
+    updateImportFeesDisplay();
+    scheduleCraftUiStateSave();
+}
 // Initialize on load
 document.addEventListener('DOMContentLoaded', () => {
     initImportFees();

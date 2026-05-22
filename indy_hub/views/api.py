@@ -1438,6 +1438,7 @@ def calculate_import_fees(request):
 
     POST body:
     {
+        "pricing_id": 1,
         "destination_location_id": 60003760,
         "total_volume_m3": 100000.0,
         "total_collateral_isk": 5000000000.0
@@ -1455,16 +1456,21 @@ def calculate_import_fees(request):
     try:
         data = json.loads(request.body)
 
+        pricing_id = data.get("pricing_id")
         destination_location_id = data.get("destination_location_id")
         total_volume_m3 = data.get("total_volume_m3", 0)
         total_collateral_isk = data.get("total_collateral_isk", 0)
 
-        if not destination_location_id:
-            return JsonResponse({"error": "destination_location_id is required"}, status=400)
+        if not pricing_id and not destination_location_id:
+            return JsonResponse(
+                {"error": "pricing_id or destination_location_id is required"},
+                status=400,
+            )
 
         from indy_hub.services.freight_fees import calculate_import_fees
 
         result = calculate_import_fees(
+            pricing_id=pricing_id,
             destination_location_id=destination_location_id,
             total_volume_m3=total_volume_m3,
             total_collateral_isk=total_collateral_isk,
