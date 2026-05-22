@@ -1389,6 +1389,7 @@ function collectMineralConversionStateSnapshot() {
     return {
         refineRate: refineRateInput ? String(refineRateInput.value || '') : '',
         result: cloneCraftUiJsonValue(conversionResultData, null),
+        appliedState: cloneCraftUiJsonValue(appliedMineralConversionState, null),
     };
 }
 
@@ -1401,8 +1402,12 @@ function applyMineralConversionStateSnapshot(snapshot) {
         refineRateInput.value = String(snapshot.refineRate || '');
     }
     conversionResultData = cloneCraftUiJsonValue(snapshot.result, null);
+    appliedMineralConversionState = cloneCraftUiJsonValue(snapshot.appliedState, null);
     if (conversionResultData && typeof displayConversionResults === 'function') {
         displayConversionResults(conversionResultData);
+    }
+    if (typeof updateMineralConversionActionButtons === 'function') {
+        updateMineralConversionActionButtons();
     }
 }
 
@@ -10677,21 +10682,23 @@ const MINERAL_TYPE_IDS = [
 ];
 
 let conversionResultData = null;
+let appliedMineralConversionState = null;
 
 function initMineralConversion() {
     const convertBtn = document.getElementById('convertMineralsToOreBtn');
+    const resetBtn = document.getElementById('resetCompressedOresBtn');
     const calculateBtn = document.getElementById('calculateOresBtn');
     const copyBtn = document.getElementById('copyOresBtn');
     const applyBtn = document.getElementById('applyOresBtn');
 
-    if (!convertBtn || !calculateBtn || !copyBtn || !applyBtn) return;
+    if (!convertBtn || !resetBtn || !calculateBtn || !copyBtn || !applyBtn) return;
 
     // Check for minerals on initial load
-    checkForMineralsAndShowButton();
+    updateMineralConversionActionButtons();
 
     // Re-check when financial table is updated (when materials change)
     const observer = new MutationObserver(() => {
-        checkForMineralsAndShowButton();
+        updateMineralConversionActionButtons();
     });
 
     const financialBody = document.getElementById('financialItemsBody');
@@ -10701,21 +10708,28 @@ function initMineralConversion() {
 
     // Button click handlers
     convertBtn.addEventListener('click', openMineralConversionModal);
+    resetBtn.addEventListener('click', resetCompressedOresToMinerals);
     calculateBtn.addEventListener('click', calculateCompressedOres);
     copyBtn.addEventListener('click', copyCompressedOresToClipboard);
     applyBtn.addEventListener('click', applyCompressedOres);
 }
 
-function checkForMineralsAndShowButton() {
+function hasAppliedMineralConversion() {
+    return Boolean(
+        appliedMineralConversionState
+        && Array.isArray(appliedMineralConversionState.mineralTypeIds)
+        && appliedMineralConversionState.mineralTypeIds.length > 0
+    );
+}
+
+function updateMineralConversionActionButtons() {
     const convertBtn = document.getElementById('convertMineralsToOreBtn');
-    if (!convertBtn) return;
+    const resetBtn = document.getElementById('resetCompressedOresBtn');
+    if (!convertBtn || !resetBtn) return;
 
     const minerals = getMineralsFromFinancialTable();
-    if (minerals.length > 0) {
-        convertBtn.style.display = '';
-    } else {
-        convertBtn.style.display = 'none';
-    }
+    convertBtn.style.display = minerals.length > 0 ? '' : 'none';
+    resetBtn.style.display = hasAppliedMineralConversion() ? '' : 'none';
 }
 
 function getMineralsFromFinancialTable() {
@@ -10940,6 +10954,29 @@ function applyCompressedOres() {
     const mineralTypeIds = mineralsToRemove
         .map((mineral) => Number(mineral.type_id) || 0)
         .filter((typeId) => typeId > 0);
+    const existingOreSnapshots = [];
+    const oreRowKeys = [];
+
+    conversionResultData.compressed_ores.forEach((ore) => {
+        const oreTypeId = Number(ore.type_id) || 0;
+        if (oreTypeId <= 0) {
+            return;
+        }
+        const rowKey = `manual-material:${oreTypeId}`;
+        oreRowKeys.push(rowKey);
+        existingOreSnapshots.push({
+            rowKey,
+            item: cloneCraftUiJsonValue(CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.get(rowKey) || null, null),
+        });
+    });
+
+    appliedMineralConversionState = {
+        mineralTypeIds: Array.from(new Set(mineralTypeIds)),
+        previouslyExcludedMineralTypeIds: mineralTypeIds.filter((typeId) => CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.has(typeId)),
+        oreSnapshots: existingOreSnapshots,
+        oreRowKeys: Array.from(new Set(oreRowKeys)),
+    };
+
     excludeBaseFinancialTypeIds(mineralTypeIds);
     removeManualFinancialStateItemsByTypeIds(mineralTypeIds);
 
@@ -10968,11 +11005,57 @@ function applyCompressedOres() {
     } else if (typeof recalcFinancials === 'function') {
         recalcFinancials();
     }
+    updateMineralConversionActionButtons();
     scheduleCraftUiStateSave();
 
     // Close modal
     const modalEl = document.getElementById('convertMineralsModal');
     bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+}
+
+function includeBaseFinancialTypeIds(typeIds) {
+    (Array.isArray(typeIds) ? typeIds : []).forEach((typeId) => {
+        const numericTypeId = Number(typeId) || 0;
+        if (numericTypeId > 0) {
+            CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.delete(numericTypeId);
+        }
+    });
+}
+
+function removeManualFinancialStateItemsByRowKeys(rowKeys) {
+    (Array.isArray(rowKeys) ? rowKeys : []).forEach((rowKey) => {
+        const normalizedKey = String(rowKey || '').trim();
+        if (normalizedKey) {
+            CRAFT_MANUAL_FINANCIAL_STATE.itemsByRowKey.delete(normalizedKey);
+        }
+    });
+}
+
+function resetCompressedOresToMinerals() {
+    if (!hasAppliedMineralConversion()) {
+        return;
+    }
+
+    const snapshot = appliedMineralConversionState;
+    includeBaseFinancialTypeIds(snapshot.mineralTypeIds);
+    removeManualFinancialStateItemsByRowKeys(snapshot.oreRowKeys);
+
+    (Array.isArray(snapshot.oreSnapshots) ? snapshot.oreSnapshots : []).forEach((entry) => {
+        if (entry && entry.item) {
+            upsertManualFinancialStateItem(entry.item);
+        }
+    });
+
+    excludeBaseFinancialTypeIds(snapshot.previouslyExcludedMineralTypeIds);
+    appliedMineralConversionState = null;
+
+    if (typeof updateFinancialTabFromState === 'function') {
+        updateFinancialTabFromState();
+    } else if (typeof recalcFinancials === 'function') {
+        recalcFinancials();
+    }
+    updateMineralConversionActionButtons();
+    scheduleCraftUiStateSave();
 }
 
 async function copyCompressedOresToClipboard() {
