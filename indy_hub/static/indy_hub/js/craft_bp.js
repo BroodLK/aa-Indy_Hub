@@ -1358,6 +1358,7 @@ function applyImportFeesStateSnapshot(snapshot) {
         return;
     }
     importFeesCache = cloneCraftUiJsonValue(snapshot.cache, null);
+    importFeesLoading = false;
     importFeesActualCostDirty = snapshot.actualCostDirty === true;
 
     const routeSelect = document.getElementById('importFeesRouteSelect');
@@ -1371,7 +1372,11 @@ function applyImportFeesStateSnapshot(snapshot) {
     const actualCost = snapshot.actualCost !== undefined
         ? snapshot.actualCost
         : snapshot.manualOverride;
-    if (actualCost !== undefined) {
+    if (!getSelectedImportFeesRoute()) {
+        importFeesCache = null;
+        setImportFeesAutoQuoteValue(0);
+        setImportFeesActualCost(0, { markDirty: false });
+    } else if (actualCost !== undefined) {
         setImportFeesActualCost(actualCost, { markDirty: importFeesActualCostDirty });
     }
     if (typeof updateImportFeesDisplay === 'function') {
@@ -6599,6 +6604,7 @@ function syncManualFinancialStateFromDom() {
 function recalcFinancials() {
     let costTotal = 0;
     let revTotal = 0;
+    let shippingFeeTotal = 0;
     const ownedInputEl = document.getElementById('ownedMaterialsInput');
     const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
     const ownedLookup = buildOwnedTypeLookupFromPayload(
@@ -6714,16 +6720,21 @@ function recalcFinancials() {
                 }
             }
 
-            let unitCost = parseFloat(costInput.value) || 0;
+            let unitCost = 0;
+            if (tr.id === 'shippingCostRow') {
+                unitCost = getEffectiveImportFeesCost();
+            } else {
+                unitCost = parseFloat(costInput.value) || 0;
 
-            // If real price is 0, fall back to fuzzwork.
-            if (unitCost <= 0) {
-                if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function' && typeId) {
-                    const info = window.SimulationAPI.getPrice(typeId, 'buy');
-                    unitCost = info && typeof info.value === 'number' ? info.value : 0;
-                } else {
-                    const fuzzInp = tr.querySelector('.fuzzwork-price');
-                    unitCost = parseFloat(fuzzInp ? fuzzInp.value : 0) || 0;
+                // If real price is 0, fall back to fuzzwork.
+                if (unitCost <= 0) {
+                    if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function' && typeId) {
+                        const info = window.SimulationAPI.getPrice(typeId, 'buy');
+                        unitCost = info && typeof info.value === 'number' ? info.value : 0;
+                    } else {
+                        const fuzzInp = tr.querySelector('.fuzzwork-price');
+                        unitCost = parseFloat(fuzzInp ? fuzzInp.value : 0) || 0;
+                    }
                 }
             }
 
@@ -6731,6 +6742,9 @@ function recalcFinancials() {
             const totalCostEl = tr.querySelector('.total-cost');
             if (totalCostEl) {
                 totalCostEl.textContent = formatPrice(cost);
+            }
+            if (tr.id === 'shippingCostRow') {
+                shippingFeeTotal = cost;
             }
             costTotal += cost;
         }
@@ -6882,6 +6896,12 @@ function recalcFinancials() {
         } else {
             summaryIndustryFeesEl.removeAttribute('title');
         }
+    }
+
+    const summaryShippingFeeEl = document.getElementById('financialSummaryShippingFee');
+    if (summaryShippingFeeEl) {
+        const hasSelectedRoute = Boolean(getSelectedImportFeesRoute());
+        summaryShippingFeeEl.textContent = formatPrice(hasSelectedRoute ? shippingFeeTotal : 0);
     }
 
     const summaryMarginEl = document.getElementById('financialSummaryMargin');
@@ -11701,6 +11721,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 let importFeesCache = null;
 let importFeesActualCostDirty = false;
+let importFeesLoading = false;
 
 function getImportFeesRouteOptions() {
     const routes = window.BLUEPRINT_DATA?.freight_routes;
@@ -11763,9 +11784,116 @@ function setImportFeesAutoQuoteValue(value) {
         return;
     }
     const numericValue = Number(value);
-    input.value = Number.isFinite(numericValue) && numericValue > 0
+    input.value = Number.isFinite(numericValue) && numericValue >= 0
         ? numericValue.toFixed(2)
-        : '';
+        : '0.00';
+}
+
+function resetImportFeesState({ save = false } = {}) {
+    importFeesCache = null;
+    importFeesLoading = false;
+    setImportFeesAutoQuoteValue(0);
+    setImportFeesActualCost(0, { markDirty: false });
+    updateImportFeesDisplay();
+    if (save) {
+        scheduleCraftUiStateSave();
+    }
+}
+
+function getEffectiveImportFeesCost() {
+    const actualCost = getImportFeesActualCost();
+    if (actualCost !== null) {
+        return Math.max(0, Number(actualCost) || 0);
+    }
+
+    const selectedRoute = getSelectedImportFeesRoute();
+    if (
+        selectedRoute
+        && importFeesCache
+        && String(importFeesCache?.pricing_id || '') === String(selectedRoute?.pricing_id || '')
+    ) {
+        return Math.max(0, Number(importFeesCache?.freight_cost) || 0);
+    }
+
+    const autoQuoteInput = document.getElementById('shippingAutoPrice');
+    return Math.max(0, Number.parseFloat(autoQuoteInput?.value || '0') || 0);
+}
+
+function renderShippingFeeBreakdown() {
+    const sectionEl = document.getElementById('shippingFeeBreakdownSection');
+    const statusEl = document.getElementById('shippingFeeBreakdownStatus');
+    const bodyEl = document.getElementById('shippingFeeBreakdownBody');
+    if (!sectionEl || !statusEl || !bodyEl) {
+        return;
+    }
+
+    const totalVolumeEl = document.getElementById('shippingFeeBreakdownTotalVolume');
+    const totalCollateralEl = document.getElementById('shippingFeeBreakdownTotalCollateral');
+    const totalQuotedEl = document.getElementById('shippingFeeBreakdownTotalQuoted');
+    const totalActualEl = document.getElementById('shippingFeeBreakdownTotalActual');
+
+    const resetTotals = () => {
+        if (totalVolumeEl) totalVolumeEl.textContent = '0 m3';
+        if (totalCollateralEl) totalCollateralEl.textContent = formatPrice(0);
+        if (totalQuotedEl) totalQuotedEl.textContent = formatPrice(0);
+        if (totalActualEl) totalActualEl.textContent = formatPrice(0);
+    };
+
+    bodyEl.innerHTML = '';
+    resetTotals();
+
+    const selectedRoute = getSelectedImportFeesRoute();
+    if (!selectedRoute) {
+        sectionEl.classList.add('d-none');
+        statusEl.textContent = '';
+        return;
+    }
+
+    sectionEl.classList.remove('d-none');
+
+    const selectedPricingId = String(selectedRoute?.pricing_id || '');
+    const cacheMatchesSelection = Boolean(
+        importFeesCache && String(importFeesCache?.pricing_id || '') === selectedPricingId
+    );
+    const routeLabel = String(selectedRoute?.route_label || '').trim();
+    const routeName = String(selectedRoute?.route_name || '').trim();
+    const routeText = routeLabel && routeName
+        ? `${routeLabel} - ${routeName}`
+        : (routeLabel || routeName || __('Selected route'));
+    const quotedFee = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.freight_cost) || 0) : 0;
+    const volume = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.total_volume_m3) || 0) : 0;
+    const collateral = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.total_collateral_isk) || 0) : 0;
+    const actualCost = getEffectiveImportFeesCost();
+    const issues = cacheMatchesSelection && Array.isArray(importFeesCache?.issues)
+        ? importFeesCache.issues.filter(Boolean)
+        : [];
+
+    if (importFeesLoading) {
+        statusEl.textContent = __('Calculating shipping...');
+    } else if (issues.length > 0) {
+        statusEl.textContent = issues.join(', ');
+    } else if (cacheMatchesSelection) {
+        statusEl.textContent = __('Shipping quote for the selected route.');
+    } else {
+        statusEl.textContent = __('Select prices to refresh the shipping quote.');
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+        <td>
+            <div class="fw-semibold">${escapeHtml(routeText)}</div>
+        </td>
+        <td class="text-end">${escapeHtml(`${formatNumber(volume)} m3`)}</td>
+        <td class="text-end">${escapeHtml(formatPrice(collateral))}</td>
+        <td class="text-end">${escapeHtml(formatPrice(quotedFee))}</td>
+        <td class="text-end fw-semibold">${escapeHtml(formatPrice(actualCost))}</td>
+    `;
+    bodyEl.appendChild(tr);
+
+    if (totalVolumeEl) totalVolumeEl.textContent = `${formatNumber(volume)} m3`;
+    if (totalCollateralEl) totalCollateralEl.textContent = formatPrice(collateral);
+    if (totalQuotedEl) totalQuotedEl.textContent = formatPrice(quotedFee);
+    if (totalActualEl) totalActualEl.textContent = formatPrice(actualCost);
 }
 
 function getImportFeesTypeVolume(typeId) {
@@ -11786,8 +11914,14 @@ function initImportFees() {
     if (routeSelect) {
         routeSelect.addEventListener('change', () => {
             importFeesActualCostDirty = false;
-            scheduleImportFeesRecalculation({ syncActual: true });
+            if (!getSelectedImportFeesRoute()) {
+                resetImportFeesState({ save: true });
+                return;
+            }
+            resetImportFeesState();
+            importFeesLoading = true;
             updateImportFeesDisplay();
+            scheduleImportFeesRecalculation({ syncActual: true });
             scheduleCraftUiStateSave();
         });
     }
@@ -11925,10 +12059,12 @@ function updateImportFeesDisplay() {
         statusLines.push(
             `<div class="text-muted">${escapeHtml(__('Auto quote'))}: ${escapeHtml(formatPrice(Number(importFeesCache.freight_cost) || 0))}</div>`
         );
+    } else if (importFeesLoading && selectedRoute) {
+        statusLines.push(`<div class="text-muted">${escapeHtml(__('Calculating shipping...'))}</div>`);
     } else if (selectedRoute) {
-        statusLines.push(`<div class="text-muted">${escapeHtml(__('Click Compute to refresh shipping'))}</div>`);
+        statusLines.push(`<div class="text-muted">${escapeHtml(__('Shipping quote updates automatically.'))}</div>`);
     } else {
-        statusLines.push(`<div class="text-muted">${escapeHtml(__('Manual only'))}</div>`);
+        statusLines.push(`<div class="text-muted">${escapeHtml(__('No shipping rate selected'))}</div>`);
     }
 
     if (importFeesActualCostDirty && actualCost !== null && actualCost > 0) {
@@ -11945,6 +12081,8 @@ function updateImportFeesDisplay() {
     } else {
         statusCell.removeAttribute('title');
     }
+
+    renderShippingFeeBreakdown();
 }
 
 function scheduleImportFeesRecalculation({ syncActual = false } = {}) {
@@ -11962,13 +12100,14 @@ function scheduleImportFeesRecalculation({ syncActual = false } = {}) {
 async function recalculateImportFeesIfNeeded({ syncActual = false } = {}) {
     const selectedRoute = getSelectedImportFeesRoute();
     if (!selectedRoute) {
-        importFeesCache = null;
-        updateImportFeesDisplay();
-        scheduleCraftUiStateSave();
+        resetImportFeesState({ save: true });
         return;
     }
 
+    importFeesLoading = true;
+    updateImportFeesDisplay();
     const fees = await calculateImportFees();
+    importFeesLoading = false;
     importFeesCache = fees;
 
     if (fees && (syncActual || !importFeesActualCostDirty)) {

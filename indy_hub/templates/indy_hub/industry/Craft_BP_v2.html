@@ -286,6 +286,10 @@
                             <span class="craft-kpi-label">{% trans "Industry Fees" %}</span>
                             <span class="craft-kpi-value text-warning" id="financialSummaryIndustryFees">0 ISK</span>
                         </div>
+                        <div class="craft-kpi craft-kpi-lg">
+                            <span class="craft-kpi-label">{% trans "Shipping Fee" %}</span>
+                            <span class="craft-kpi-value text-info" id="financialSummaryShippingFee">0 ISK</span>
+                        </div>
                     </div>
                 </div>
 
@@ -300,7 +304,7 @@
                                     <i class="fas fa-route"></i>
                                 </span>
                                 <select class="form-select" id="importFeesRouteSelect">
-                                    <option value="">{% trans "Shipping route" %}</option>
+                                    <option value="">{% trans "Shipping rate" %}</option>
                                     {% for route in freight_routes %}
                                     <option value="{{ route.pricing_id }}">
                                         {{ route.route_label }} - {{ route.route_name }}
@@ -454,6 +458,38 @@
                                         <th class="text-end" id="industryFeeBreakdownTotalRuns">0</th>
                                         <th class="text-end" id="industryFeeBreakdownTotalManufacturing">0 ISK</th>
                                         <th class="text-end fw-semibold text-warning" id="industryFeeBreakdownTotalFees">0 ISK</th>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="shippingFeeBreakdownSection" class="mt-3 d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h5 class="mb-0 text-sm fw-semibold">
+                                <i class="fas fa-truck me-2 text-info"></i>{% trans "Shipping Fee Breakdown" %}
+                            </h5>
+                            <span class="text-muted text-xs" id="shippingFeeBreakdownStatus"></span>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>{% trans "Route" %}</th>
+                                        <th class="text-end">{% trans "Volume" %}</th>
+                                        <th class="text-end">{% trans "Collateral" %}</th>
+                                        <th class="text-end">{% trans "Quoted Fee" %}</th>
+                                        <th class="text-end">{% trans "Shipping Fee" %}</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="shippingFeeBreakdownBody"></tbody>
+                                <tfoot class="table-light">
+                                    <tr>
+                                        <th>{% trans "Selected Route" %}</th>
+                                        <th class="text-end" id="shippingFeeBreakdownTotalVolume">0 m3</th>
+                                        <th class="text-end" id="shippingFeeBreakdownTotalCollateral">0 ISK</th>
+                                        <th class="text-end" id="shippingFeeBreakdownTotalQuoted">0 ISK</th>
+                                        <th class="text-end fw-semibold text-info" id="shippingFeeBreakdownTotalActual">0 ISK</th>
                                     </tr>
                                 </tfoot>
                             </table>
