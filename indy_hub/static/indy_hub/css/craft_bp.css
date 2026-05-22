@@ -1463,6 +1463,10 @@ div[id="bpTabs"] {
 }
 
 /* Purchase Planner column sizing: keep numeric columns readable, let Item take the remaining space */
+.craft-financial-table .col-item {
+    width: 32%;
+}
+
 .craft-financial-table .col-qty {
     width: clamp(70px, 7vw, 95px);
 }

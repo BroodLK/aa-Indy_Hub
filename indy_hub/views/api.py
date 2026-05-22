@@ -1460,6 +1460,7 @@ def calculate_import_fees(request):
         destination_location_id = data.get("destination_location_id")
         total_volume_m3 = data.get("total_volume_m3", 0)
         total_collateral_isk = data.get("total_collateral_isk", 0)
+        line_items = data.get("line_items", [])
 
         if not pricing_id and not destination_location_id:
             return JsonResponse(
@@ -1474,6 +1475,7 @@ def calculate_import_fees(request):
             destination_location_id=destination_location_id,
             total_volume_m3=total_volume_m3,
             total_collateral_isk=total_collateral_isk,
+            line_items=line_items,
         )
 
         if result is None:
@@ -1485,6 +1487,12 @@ def calculate_import_fees(request):
             "route_name": result["route_name"],
             "pricing_id": result["pricing_id"],
             "issues": result["issues"],
+            "contract_count": result["contract_count"],
+            "contracts": result["contracts"],
+            "max_volume_m3": result["max_volume_m3"],
+            "max_collateral_isk": result["max_collateral_isk"],
+            "total_volume_m3": result["total_volume_m3"],
+            "total_collateral_isk": result["total_collateral_isk"],
         })
 
     except Exception as e:

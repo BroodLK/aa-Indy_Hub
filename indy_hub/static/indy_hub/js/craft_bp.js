@@ -11914,8 +11914,10 @@ function renderShippingFeeBreakdown() {
     const totalCollateralEl = document.getElementById('shippingFeeBreakdownTotalCollateral');
     const totalQuotedEl = document.getElementById('shippingFeeBreakdownTotalQuoted');
     const totalActualEl = document.getElementById('shippingFeeBreakdownTotalActual');
+    const totalContractsEl = document.getElementById('shippingFeeBreakdownTotalContracts');
 
     const resetTotals = () => {
+        if (totalContractsEl) totalContractsEl.textContent = __('0 Contracts');
         if (totalVolumeEl) totalVolumeEl.textContent = '0 m3';
         if (totalCollateralEl) totalCollateralEl.textContent = formatPrice(0);
         if (totalQuotedEl) totalQuotedEl.textContent = formatPrice(0);
@@ -11947,6 +11949,14 @@ function renderShippingFeeBreakdown() {
     const volume = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.total_volume_m3) || 0) : 0;
     const collateral = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.total_collateral_isk) || 0) : 0;
     const actualCost = getEffectiveImportFeesCost();
+    const contracts = cacheMatchesSelection && Array.isArray(importFeesCache?.contracts)
+        ? importFeesCache.contracts
+        : [];
+    const contractCount = cacheMatchesSelection
+        ? Math.max(0, Number(importFeesCache?.contract_count) || contracts.length)
+        : 0;
+    const maxVolume = cacheMatchesSelection ? Number(importFeesCache?.max_volume_m3) || 0 : 0;
+    const maxCollateral = cacheMatchesSelection ? Number(importFeesCache?.max_collateral_isk) || 0 : 0;
     const issues = cacheMatchesSelection && Array.isArray(importFeesCache?.issues)
         ? importFeesCache.issues.filter(Boolean)
         : [];
@@ -11956,23 +11966,75 @@ function renderShippingFeeBreakdown() {
     } else if (issues.length > 0) {
         statusEl.textContent = issues.join(', ');
     } else if (cacheMatchesSelection) {
-        statusEl.textContent = __('Shipping quote for the selected route.');
+        const limitParts = [];
+        if (maxVolume > 0) {
+            limitParts.push(`${formatNumber(maxVolume)} m3 ${__('max volume')}`);
+        }
+        if (maxCollateral > 0) {
+            limitParts.push(`${formatPrice(maxCollateral)} ${__('max collateral')}`);
+        }
+        const contractLabel = contractCount === 1 ? __('1 one-way contract') : __('{count} one-way contracts').replace('{count}', formatInteger(contractCount));
+        statusEl.textContent = limitParts.length > 0
+            ? `${contractLabel} - ${limitParts.join(' / ')}`
+            : contractLabel;
     } else {
         statusEl.textContent = __('Select prices to refresh the shipping quote.');
     }
 
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-        <td>
-            <div class="fw-semibold">${escapeHtml(routeText)}</div>
-        </td>
-        <td class="text-end">${escapeHtml(`${formatNumber(volume)} m3`)}</td>
-        <td class="text-end">${escapeHtml(formatPrice(collateral))}</td>
-        <td class="text-end">${escapeHtml(formatPrice(quotedFee))}</td>
-        <td class="text-end fw-semibold">${escapeHtml(formatPrice(actualCost))}</td>
-    `;
-    bodyEl.appendChild(tr);
+    if (contracts.length > 0) {
+        contracts.forEach((contract) => {
+            const contractNumber = Math.max(0, Number(contract?.contract_number) || 0);
+            const contractItems = Array.isArray(contract?.items) ? contract.items : [];
+            const contractIssues = Array.isArray(contract?.issues) ? contract.issues.filter(Boolean) : [];
+            const contractItemsHtml = contractItems.length > 0
+                ? contractItems.map((item) => {
+                    const quantity = Math.max(0, Number(item?.quantity) || 0);
+                    const itemVolume = Math.max(0, Number(item?.total_volume_m3) || 0);
+                    const itemCollateral = Math.max(0, Number(item?.total_collateral_isk) || 0);
+                    return `
+                        <div class="mb-1">
+                            <div class="fw-semibold">${escapeHtml(String(item?.type_name || __('Unknown item')))}</div>
+                            <div class="text-muted text-xs">
+                                ${escapeHtml(formatInteger(quantity))} - ${escapeHtml(`${formatNumber(itemVolume)} m3`)} - ${escapeHtml(formatPrice(itemCollateral))}
+                            </div>
+                        </div>
+                    `;
+                }).join('')
+                : `<div class="text-muted text-xs">${escapeHtml(__('No item breakdown available.'))}</div>`;
 
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>
+                    <div class="fw-semibold">${escapeHtml(`${__('Contract')} ${contractNumber || (bodyEl.children.length + 1)}`)}</div>
+                    <div class="text-muted text-xs">${escapeHtml(routeText)}</div>
+                    ${contractIssues.length > 0 ? `<div class="text-warning text-xs mt-1">${escapeHtml(contractIssues.join(', '))}</div>` : ''}
+                </td>
+                <td>${contractItemsHtml}</td>
+                <td class="text-end">${escapeHtml(`${formatNumber(Math.max(0, Number(contract?.volume_m3) || 0))} m3`)}</td>
+                <td class="text-end">${escapeHtml(formatPrice(Math.max(0, Number(contract?.collateral_isk) || 0)))}</td>
+                <td class="text-end fw-semibold">${escapeHtml(formatPrice(Math.max(0, Number(contract?.freight_cost) || 0)))}</td>
+            `;
+            bodyEl.appendChild(tr);
+        });
+    } else {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>
+                <div class="fw-semibold">${escapeHtml(routeText)}</div>
+            </td>
+            <td><div class="text-muted text-xs">${escapeHtml(__('Awaiting contract split data.'))}</div></td>
+            <td class="text-end">${escapeHtml(`${formatNumber(volume)} m3`)}</td>
+            <td class="text-end">${escapeHtml(formatPrice(collateral))}</td>
+            <td class="text-end">${escapeHtml(formatPrice(quotedFee))}</td>
+        `;
+        bodyEl.appendChild(tr);
+    }
+
+    if (totalContractsEl) {
+        totalContractsEl.textContent = contractCount === 1
+            ? __('1 Contract')
+            : __('{count} Contracts').replace('{count}', formatInteger(contractCount));
+    }
     if (totalVolumeEl) totalVolumeEl.textContent = `${formatNumber(volume)} m3`;
     if (totalCollateralEl) totalCollateralEl.textContent = formatPrice(collateral);
     if (totalQuotedEl) totalQuotedEl.textContent = formatPrice(quotedFee);
@@ -12057,6 +12119,7 @@ async function calculateImportFees() {
 
     let totalVolume = 0;
     let totalCollateral = 0;
+    const lineItems = [];
 
     const rows = tbody.querySelectorAll('tr[data-type-id]');
     rows.forEach(row => {
@@ -12078,9 +12141,21 @@ async function calculateImportFees() {
             const unitPrice = (Number.parseFloat(realPriceInput?.value || '0') || 0)
                 || (Number.parseFloat(fuzzworkPriceInput?.value || '0') || 0);
             const volume = getImportFeesTypeVolume(typeId);
+            const typeName = String(
+                row.querySelector('.craft-planner-item-name')?.textContent
+                || row.querySelector('td')?.textContent
+                || `Type ${typeId}`
+            ).trim();
 
             totalVolume += quantity * volume;
             totalCollateral += quantity * unitPrice;
+            lineItems.push({
+                type_id: typeId,
+                type_name: typeName,
+                quantity,
+                unit_volume_m3: volume,
+                unit_collateral_isk: unitPrice,
+            });
         }
     });
 
@@ -12099,6 +12174,7 @@ async function calculateImportFees() {
                 pricing_id: pricingId,
                 total_volume_m3: totalVolume,
                 total_collateral_isk: totalCollateral,
+                line_items: lineItems,
             }),
         });
 
@@ -12110,8 +12186,12 @@ async function calculateImportFees() {
                 route_name: data.route_name,
                 pricing_id: data.pricing_id,
                 issues: data.issues,
-                total_volume_m3: totalVolume,
-                total_collateral_isk: totalCollateral,
+                contract_count: data.contract_count,
+                contracts: Array.isArray(data.contracts) ? data.contracts : [],
+                max_volume_m3: data.max_volume_m3,
+                max_collateral_isk: data.max_collateral_isk,
+                total_volume_m3: Number(data.total_volume_m3) || totalVolume,
+                total_collateral_isk: Number(data.total_collateral_isk) || totalCollateral,
             };
         }
         return null;

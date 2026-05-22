@@ -77,6 +77,15 @@ table th,
     color: var(--bs-body-color) !important;
 }
 
+html[data-theme="darkly"] .table-light,
+html[data-theme="darkly"] .table-light th,
+html[data-theme="darkly"] .table-light td,
+html[data-theme="darkly"] thead.table-light th,
+html[data-theme="darkly"] tr.table-light th,
+html[data-theme="darkly"] tr.table-light td {
+    color: #ffffff !important;
+}
+
 /* Muted text - keep slightly dimmed but readable */
 .text-muted {
     color: var(--bs-secondary-color, var(--bs-body-color)) !important;
