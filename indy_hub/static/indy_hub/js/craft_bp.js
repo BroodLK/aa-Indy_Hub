@@ -145,6 +145,98 @@ function formatInteger(value) {
     return num.toLocaleString();
 }
 
+function parseCraftPriceInputValue(value) {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    let cleaned = String(value ?? '').trim();
+    if (!cleaned) {
+        return 0;
+    }
+
+    cleaned = cleaned
+        .replace(/,/g, '')
+        .replace(/[^\d.\-]/g, '');
+
+    if (!cleaned || cleaned === '-' || cleaned === '.' || cleaned === '-.') {
+        return 0;
+    }
+
+    const firstDotIndex = cleaned.indexOf('.');
+    if (firstDotIndex !== -1) {
+        cleaned = `${cleaned.slice(0, firstDotIndex + 1)}${cleaned.slice(firstDotIndex + 1).replace(/\./g, '')}`;
+    }
+
+    const number = Number.parseFloat(cleaned);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function formatCraftPriceInputValue(value) {
+    const numericValue = Number(value);
+    const safeValue = Number.isFinite(numericValue) ? numericValue : 0;
+    return safeValue.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+}
+
+function getCraftPriceInputValue(input) {
+    if (!input) {
+        return 0;
+    }
+    return parseCraftPriceInputValue(input.value);
+}
+
+function setCraftPriceInputValue(input, value, { preserveEditing = false } = {}) {
+    if (!input) {
+        return;
+    }
+
+    const numericValue = parseCraftPriceInputValue(value);
+    input.dataset.numericValue = String(numericValue);
+
+    if (preserveEditing && document.activeElement === input && !input.readOnly) {
+        input.value = numericValue.toFixed(2);
+        return;
+    }
+
+    input.value = formatCraftPriceInputValue(numericValue);
+}
+
+function bindCraftPriceInputFormatting(input) {
+    if (!input || input.dataset.priceFormattingBound === 'true') {
+        return;
+    }
+
+    input.type = 'text';
+    input.setAttribute('inputmode', 'decimal');
+    input.setAttribute('autocomplete', 'off');
+
+    input.addEventListener('focus', () => {
+        if (input.readOnly) {
+            return;
+        }
+        const numericValue = getCraftPriceInputValue(input);
+        input.value = numericValue.toFixed(2);
+    });
+
+    input.addEventListener('blur', () => {
+        setCraftPriceInputValue(input, getCraftPriceInputValue(input));
+    });
+
+    input.dataset.priceFormattingBound = 'true';
+    setCraftPriceInputValue(input, getCraftPriceInputValue(input));
+}
+
+if (typeof window !== 'undefined') {
+    window.parseCraftPriceInputValue = parseCraftPriceInputValue;
+    window.formatCraftPriceInputValue = formatCraftPriceInputValue;
+    window.getCraftPriceInputValue = getCraftPriceInputValue;
+    window.setCraftPriceInputValue = setCraftPriceInputValue;
+    window.bindCraftPriceInputFormatting = bindCraftPriceInputFormatting;
+}
+
 function formatDateTimeShort(value) {
     const numeric = Number(value);
     const parsed = (Number.isFinite(numeric) && numeric > 0)
@@ -878,14 +970,17 @@ function attachPriceInputListener(input) {
         return;
     }
 
+    bindCraftPriceInputFormatting(input);
+
     input.addEventListener('input', () => {
         updatePriceInputManualState(input, true);
+        input.dataset.numericValue = String(getCraftPriceInputValue(input));
 
         if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
             const typeId = input.getAttribute('data-type-id');
             if (typeId) {
                 const priceType = input.classList.contains('sale-price-unit') ? 'sale' : 'real';
-                window.SimulationAPI.setPrice(typeId, priceType, parseFloat(input.value) || 0);
+                window.SimulationAPI.setPrice(typeId, priceType, getCraftPriceInputValue(input));
             }
         }
 
@@ -1286,7 +1381,7 @@ function collectCustomPriceStateSnapshot() {
         if (!typeId) {
             return;
         }
-        const value = Number(input.value);
+        const value = getCraftPriceInputValue(input);
         const isSalePrice = input.classList.contains('sale-price-unit');
         const userModified = input.dataset.userModified === 'true';
         if (!isSalePrice && !userModified) {
@@ -1317,7 +1412,7 @@ function applyCustomPriceStateSnapshot(prices) {
             return;
         }
         const value = Number(price?.unit_price) || 0;
-        input.value = value > 0 ? String(value) : '0';
+        setCraftPriceInputValue(input, value > 0 ? value : 0);
         if (isSalePrice || value > 0) {
             updatePriceInputManualState(input, true);
         }
@@ -4472,6 +4567,9 @@ function initializeFinancialCalculations() {
             updatePriceInputManualState(inp, true);
         }
     });
+    document.querySelectorAll('.fuzzwork-price').forEach((input) => {
+        bindCraftPriceInputFormatting(input);
+    });
 
     const recalcNowBtn = document.getElementById('recalcNowBtn');
     if (recalcNowBtn) {
@@ -4581,15 +4679,15 @@ function initializeFinancialCalculations() {
                 const tid = input.getAttribute('data-type-id');
                 if (input.classList.contains('sale-price-unit')) {
                     const fuzzInp = document.querySelector(`.fuzzwork-price[data-type-id="${tid}"]`);
-                    input.value = (fuzzInp ? (fuzzInp.value || '0') : '0');
+                    setCraftPriceInputValue(input, getCraftPriceInputValue(fuzzInp));
                     updatePriceInputManualState(input, false);
 
                     if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function' && tid) {
-                        window.SimulationAPI.setPrice(tid, 'sale', parseFloat(input.value) || 0);
+                        window.SimulationAPI.setPrice(tid, 'sale', getCraftPriceInputValue(input));
                     }
                 } else {
                     // Real price resets to 0; calculations fall back to fuzzwork.
-                    input.value = '0';
+                    setCraftPriceInputValue(input, 0);
                     updatePriceInputManualState(input, false);
 
                     if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function' && tid) {
@@ -6506,8 +6604,8 @@ function normalizeManualFinancialStateItem(item) {
         return null;
     }
 
-    const parsedRealPrice = Number.parseFloat(String(item?.realPrice ?? '0'));
-    const parsedFuzzworkPrice = Number.parseFloat(String(item?.fuzzworkPrice ?? item?.fuzzPrice ?? '0'));
+    const parsedRealPrice = parseCraftPriceInputValue(item?.realPrice ?? '0');
+    const parsedFuzzworkPrice = parseCraftPriceInputValue(item?.fuzzworkPrice ?? item?.fuzzPrice ?? '0');
 
     return {
         typeId,
@@ -6733,7 +6831,7 @@ function recalcFinancials() {
             if (tr.id === 'shippingCostRow') {
                 unitCost = getEffectiveImportFeesCost();
             } else {
-                unitCost = parseFloat(costInput.value) || 0;
+                unitCost = getCraftPriceInputValue(costInput);
 
                 // If real price is 0, fall back to fuzzwork.
                 if (unitCost <= 0) {
@@ -6742,7 +6840,7 @@ function recalcFinancials() {
                         unitCost = info && typeof info.value === 'number' ? info.value : 0;
                     } else {
                         const fuzzInp = tr.querySelector('.fuzzwork-price');
-                        unitCost = parseFloat(fuzzInp ? fuzzInp.value : 0) || 0;
+                        unitCost = getCraftPriceInputValue(fuzzInp);
                     }
                 }
             }
@@ -6759,7 +6857,7 @@ function recalcFinancials() {
         }
 
         if (revInput) {
-            const rev = (parseFloat(revInput.value) || 0) * qty;
+            const rev = getCraftPriceInputValue(revInput) * qty;
             const totalRevenueEl = tr.querySelector('.total-revenue');
             if (totalRevenueEl) {
                 totalRevenueEl.textContent = formatPrice(rev);
@@ -6840,6 +6938,7 @@ function recalcFinancials() {
     const grandTotalRevEl = document.querySelector('.grand-total-rev');
     const profitEl = document.querySelector('.profit');
     const profitPctEl = document.querySelector('.profit-pct');
+    const netProfitRowEl = document.getElementById('netProfitRow');
 
     if (grandTotalIndustryFeeEl) {
         grandTotalIndustryFeeEl.textContent = formatPrice(industryFeeTotal);
@@ -6855,9 +6954,16 @@ function recalcFinancials() {
 
     if (profitEl && profitEl.childNodes.length > 0) {
         profitEl.childNodes[0].textContent = formatPrice(profit) + ' ';
+        profitEl.classList.remove('text-success', 'text-danger');
+        profitEl.classList.add(profit >= 0 ? 'text-success' : 'text-danger');
         if (profitPctEl) {
             profitPctEl.textContent = `(${marginText}%)`;
         }
+    }
+
+    if (netProfitRowEl) {
+        netProfitRowEl.classList.remove('table-success', 'table-danger', 'table-primary');
+        netProfitRowEl.classList.add(profit >= 0 ? 'table-success' : 'table-danger');
     }
 
     const summaryCostEl = document.getElementById('financialSummaryCost');
@@ -7132,7 +7238,7 @@ function populatePrices(allInputs, prices) {
         const tid = inp.getAttribute('data-type-id');
         const rowKind = String(inp.closest('tr')?.getAttribute('data-row-kind') || '').trim().toLowerCase();
         if (rowKind === 'bpc') {
-            inp.value = '0.00';
+            setCraftPriceInputValue(inp, 0);
             inp.classList.remove('bg-warning', 'border-warning');
             inp.removeAttribute('title');
             if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function' && tid) {
@@ -7145,7 +7251,7 @@ function populatePrices(allInputs, prices) {
         let price = raw != null ? parseFloat(raw) : NaN;
         if (isNaN(price)) price = 0;
 
-        inp.value = price.toFixed(2);
+        setCraftPriceInputValue(inp, price);
 
         if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
             window.SimulationAPI.setPrice(tid, 'fuzzwork', price);
@@ -7171,7 +7277,7 @@ function populatePrices(allInputs, prices) {
         const saleInput = document.querySelector(saleSelector);
         if (saleInput) {
             if (saleInput.dataset.userModified !== 'true') {
-                saleInput.value = finalPrice.toFixed(2);
+                setCraftPriceInputValue(saleInput, finalPrice);
                 updatePriceInputManualState(saleInput, false);
             }
             if (finalPrice <= 0) {
@@ -7234,23 +7340,25 @@ function buildFinancialRow(item, pricesMap) {
             </div>
         </td>
         <td class="text-end">
-            <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light" data-type-id="${item.typeId}" value="0" readonly>
+            <input type="text" inputmode="decimal" class="form-control form-control-sm fuzzwork-price text-end bg-light" data-type-id="${item.typeId}" value="0.00" readonly>
         </td>
         <td class="text-end">
-            <input type="number" min="0" step="0.01" class="form-control form-control-sm real-price text-end" data-type-id="${item.typeId}" value="0">
+            <input type="text" inputmode="decimal" class="form-control form-control-sm real-price text-end" data-type-id="${item.typeId}" value="0.00">
         </td>
         <td class="text-end total-cost">0</td>
     `;
 
     const fuzzInput = row.querySelector('.fuzzwork-price');
     const realInput = row.querySelector('.real-price');
+    bindCraftPriceInputFormatting(fuzzInput);
+    bindCraftPriceInputFormatting(realInput);
 
     const priceEntry = isBpc ? {} : (pricesMap.get(item.typeId) || {});
     const fuzzPrice = isBpc ? 0 : Number(priceEntry.fuzzwork || 0);
     const realPrice = isBpc ? 0 : Number(priceEntry.real || 0);
 
     if (isBpc) {
-        fuzzInput.value = '0.00';
+        setCraftPriceInputValue(fuzzInput, 0);
         fuzzInput.classList.remove('bg-warning', 'border-warning');
         fuzzInput.removeAttribute('title');
         if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
@@ -7258,7 +7366,7 @@ function buildFinancialRow(item, pricesMap) {
         }
     } else {
         const effectiveFuzzPrice = hasSeededFuzzPrice ? seededFuzzPrice : fuzzPrice;
-        fuzzInput.value = effectiveFuzzPrice.toFixed(2);
+        setCraftPriceInputValue(fuzzInput, effectiveFuzzPrice);
         if (effectiveFuzzPrice <= 0) {
             fuzzInput.classList.add('bg-warning', 'border-warning');
             fuzzInput.setAttribute('title', __('Price not available (Fuzzwork)'));
@@ -7269,18 +7377,18 @@ function buildFinancialRow(item, pricesMap) {
     }
 
     if (realPrice > 0) {
-        realInput.value = realPrice.toFixed(2);
+        setCraftPriceInputValue(realInput, realPrice);
         updatePriceInputManualState(realInput, true);
     } else if (hasSeededRealPrice) {
-        realInput.value = seededRealPrice.toFixed(2);
+        setCraftPriceInputValue(realInput, seededRealPrice);
         updatePriceInputManualState(realInput, true);
     } else {
-        realInput.value = '0.00';
+        setCraftPriceInputValue(realInput, 0);
         updatePriceInputManualState(realInput, false);
     }
 
     if (hasFixedUnitPrice) {
-        realInput.value = fixedUnitPrice.toFixed(2);
+        setCraftPriceInputValue(realInput, fixedUnitPrice);
         realInput.readOnly = true;
         realInput.classList.add('readonly');
         realInput.dataset.fixedPrice = 'true';
@@ -7372,7 +7480,7 @@ function updateFinancialRow(row, item) {
     const realInput = row.querySelector('.real-price');
     const fuzzInput = row.querySelector('.fuzzwork-price');
     if (fuzzInput && isBpc) {
-        fuzzInput.value = '0.00';
+        setCraftPriceInputValue(fuzzInput, 0);
         fuzzInput.classList.remove('bg-warning', 'border-warning');
         fuzzInput.removeAttribute('title');
         if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
@@ -7382,7 +7490,7 @@ function updateFinancialRow(row, item) {
 
     if (realInput) {
         if (hasFixedUnitPrice) {
-            realInput.value = fixedUnitPrice.toFixed(2);
+            setCraftPriceInputValue(realInput, fixedUnitPrice);
             realInput.readOnly = true;
             realInput.classList.add('readonly');
             realInput.dataset.fixedPrice = 'true';
@@ -9828,7 +9936,7 @@ function updateFinancialTabFromState() {
         fetchAllPrices(typeIds).then(prices => {
             pricedRows.forEach(({ typeId, fuzzInput, realInput }) => {
                 const priceValue = parseFloat(prices[typeId] ?? prices[String(typeId)]) || 0;
-                fuzzInput.value = priceValue.toFixed(2);
+                setCraftPriceInputValue(fuzzInput, priceValue);
                 if (priceValue <= 0) {
                     fuzzInput.classList.add('bg-warning', 'border-warning');
                     fuzzInput.setAttribute('title', __('Price not available (Fuzzwork)'));
@@ -10478,7 +10586,7 @@ function getPurchasePlannerItemsFromDom() {
 
         const realInput = row.querySelector('.real-price');
         const fuzzInput = row.querySelector('.fuzzwork-price');
-        const parsedUnitPrice = Number.parseFloat(realInput?.value || fuzzInput?.value || '0');
+        const parsedUnitPrice = getCraftPriceInputValue(realInput) || getCraftPriceInputValue(fuzzInput);
         const unitPrice = Number.isFinite(parsedUnitPrice) && parsedUnitPrice > 0 ? parsedUnitPrice : 0;
 
         items.push({
@@ -10489,8 +10597,8 @@ function getPurchasePlannerItemsFromDom() {
             quantity,
             requiredQuantity,
             ownedQuantity,
-            realPrice: Number.parseFloat(realInput?.value || '0') || 0,
-            fuzzworkPrice: Number.parseFloat(fuzzInput?.value || '0') || 0,
+            realPrice: getCraftPriceInputValue(realInput),
+            fuzzworkPrice: getCraftPriceInputValue(fuzzInput),
             order: index,
             rowKey: String(row.getAttribute('data-row-key') || ''),
             isManualFinancial: row.getAttribute('data-manual-financial') === 'true',
@@ -10891,7 +10999,7 @@ function getMineralsBuyCostFromFinancialTable(minerals = null) {
             const row = document.querySelector(`#financialItemsBody tr[data-type-id="${typeId}"]`);
             const realInput = row ? row.querySelector('.real-price') : null;
             const fuzzInput = row ? row.querySelector('.fuzzwork-price') : null;
-            unitPrice = parseFloat(realInput?.value || fuzzInput?.value || 0) || 0;
+            unitPrice = getCraftPriceInputValue(realInput) || getCraftPriceInputValue(fuzzInput);
         }
 
         return total + (Math.max(0, unitPrice) * quantity);
@@ -12191,7 +12299,7 @@ function getImportFeesActualCost() {
     if (!rawValue) {
         return null;
     }
-    const value = Number.parseFloat(rawValue);
+    const value = getCraftPriceInputValue(input);
     return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
@@ -12203,7 +12311,7 @@ function setImportFeesActualCost(value, { markDirty = false } = {}) {
 
     const numericValue = Number(value);
     const normalizedValue = Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0;
-    input.value = normalizedValue.toFixed(2);
+    setCraftPriceInputValue(input, normalizedValue);
     importFeesActualCostDirty = markDirty === true;
     updatePriceInputManualState(input, importFeesActualCostDirty && normalizedValue > 0);
 
@@ -12218,9 +12326,7 @@ function setImportFeesAutoQuoteValue(value) {
         return;
     }
     const numericValue = Number(value);
-    input.value = Number.isFinite(numericValue) && numericValue >= 0
-        ? numericValue.toFixed(2)
-        : '0.00';
+    setCraftPriceInputValue(input, Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : 0);
 }
 
 function resetImportFeesState({ save = false } = {}) {
@@ -12250,7 +12356,7 @@ function getEffectiveImportFeesCost() {
     }
 
     const autoQuoteInput = document.getElementById('shippingAutoPrice');
-    return Math.max(0, Number.parseFloat(autoQuoteInput?.value || '0') || 0);
+    return Math.max(0, getCraftPriceInputValue(autoQuoteInput));
 }
 
 function renderShippingFeeBreakdown() {
@@ -12293,9 +12399,7 @@ function renderShippingFeeBreakdown() {
     );
     const routeLabel = String(selectedRoute?.route_label || '').trim();
     const routeName = String(selectedRoute?.route_name || '').trim();
-    const routeText = routeLabel && routeName
-        ? `${routeLabel} - ${routeName}`
-        : (routeLabel || routeName || __('Selected route'));
+    const routeText = routeLabel || routeName || __('Selected route');
     const quotedFee = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.freight_cost) || 0) : 0;
     const volume = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.total_volume_m3) || 0) : 0;
     const collateral = cacheMatchesSelection ? Math.max(0, Number(importFeesCache?.total_collateral_isk) || 0) : 0;
@@ -12406,6 +12510,14 @@ function getImportFeesTypeVolume(typeId) {
 function initImportFees() {
     const routeSelect = document.getElementById('importFeesRouteSelect');
     const actualInput = getImportFeesActualInput();
+    const autoQuoteInput = document.getElementById('shippingAutoPrice');
+
+    if (autoQuoteInput) {
+        bindCraftPriceInputFormatting(autoQuoteInput);
+    }
+    if (actualInput) {
+        bindCraftPriceInputFormatting(actualInput);
+    }
 
     if (routeSelect) {
         routeSelect.addEventListener('change', () => {
@@ -12489,8 +12601,8 @@ async function calculateImportFees() {
                 || qtyCell.textContent.replace(/[^0-9]/g, ''),
                 10
             ) || 0;
-            const unitPrice = (Number.parseFloat(realPriceInput?.value || '0') || 0)
-                || (Number.parseFloat(fuzzworkPriceInput?.value || '0') || 0);
+            const unitPrice = getCraftPriceInputValue(realPriceInput)
+                || getCraftPriceInputValue(fuzzworkPriceInput);
             const volume = getImportFeesTypeVolume(typeId);
             const typeName = String(
                 row.querySelector('.craft-planner-item-name')?.textContent

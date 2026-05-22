@@ -34,6 +34,13 @@
         return Number.isFinite(number) ? number : 0;
     }
 
+    function parsePriceInput(value) {
+        if (window.parseCraftPriceInputValue && typeof window.parseCraftPriceInputValue === 'function') {
+            return window.parseCraftPriceInputValue(value);
+        }
+        return parseISK(value);
+    }
+
     function getSimulationIdFromUrl() {
         try {
             const url = new URL(window.location.href);
@@ -184,7 +191,7 @@
             if (!Number.isFinite(typeId)) {
                 return;
             }
-            const value = Number(input.value);
+            const value = parsePriceInput(input.value);
             const userModified = input.dataset.userModified === 'true';
             if (!userModified && !isSale) {
                 return;
@@ -430,7 +437,11 @@
             if (!input) {
                 return;
             }
-            input.value = Number(price.unit_price) || 0;
+            if (window.setCraftPriceInputValue && typeof window.setCraftPriceInputValue === 'function') {
+                window.setCraftPriceInputValue(input, Number(price.unit_price) || 0);
+            } else {
+                input.value = Number(price.unit_price) || 0;
+            }
             if (window.CraftBP && typeof window.CraftBP.markPriceOverride === 'function') {
                 window.CraftBP.markPriceOverride(input, true);
             } else {

@@ -420,7 +420,9 @@
                 priceType = 'real';
             }
 
-            const value = parseFloat(input.value);
+            const value = (window.parseCraftPriceInputValue && typeof window.parseCraftPriceInputValue === 'function')
+                ? window.parseCraftPriceInputValue(input.value)
+                : parseFloat(input.value);
             setPrice(typeId, priceType, Number.isFinite(value) ? value : 0);
         });
     }

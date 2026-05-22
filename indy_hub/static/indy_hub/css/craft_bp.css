@@ -1419,7 +1419,9 @@ div[id="bpTabs"] {
 .craft-financial-table-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 0.75rem;
     margin-bottom: 0.75rem;
 }
 
@@ -1430,6 +1432,8 @@ div[id="bpTabs"] {
 .craft-financial-actions {
     display: flex;
     gap: 0.25rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .craft-financial-table {
@@ -1518,7 +1522,7 @@ div[id="bpTabs"] {
     text-align: left;
 }
 
-.craft-financial-table input[type="number"] {
+.craft-financial-table input {
     font-size: 0.75rem;
     padding: 0.25rem 0.375rem;
     height: 1.875rem;
@@ -1543,12 +1547,16 @@ div[id="bpTabs"] {
     font-size: 0.9rem; /* 0.75 * 1.2 */
 }
 
-.craft-financial-table.craft-table-text-120 input[type="number"] {
+.craft-financial-table.craft-table-text-120 input {
     font-size: 0.9rem; /* 0.75 * 1.2 */
 }
 
 .craft-financial-table input {
     max-width: 100%;
+}
+
+.craft-shipping-status-cell {
+    text-align: center;
 }
 
 /* Needed Table */

@@ -307,7 +307,7 @@
                                     <option value="">{% trans "Shipping rate" %}</option>
                                     {% for route in freight_routes %}
                                     <option value="{{ route.pricing_id }}">
-                                        {{ route.route_label }} - {{ route.route_name }}
+                                        {{ route.route_label }}
                                     </option>
                                     {% endfor %}
                                 </select>
@@ -315,8 +315,8 @@
                             <button id="convertMineralsToOreBtn" type="button" class="btn btn-outline-primary btn-sm" title="{% trans 'Convert minerals to compressed ore' %}" style="display: none;">
                                 <i class="fas fa-cubes me-1"></i>{% trans "Convert to Compressed Ore" %}
                             </button>
-                            <button id="resetCompressedOresBtn" type="button" class="btn btn-outline-secondary btn-sm" title="{% trans 'Restore hidden minerals and remove converted compressed ores' %}" style="display: none;">
-                                <i class="fas fa-undo-alt me-1"></i>{% trans "Reset to Minerals" %}
+                            <button id="resetCompressedOresBtn" type="button" class="btn btn-outline-secondary btn-sm" title="{% trans 'Reset compressed ore to minerals' %}" style="display: none;">
+                                <i class="fas fa-undo-alt me-1"></i>{% trans "Reset Ore to Minerals" %}
                             </button>
                             <button id="calculateIndustryFeesBtn" type="button" class="btn btn-outline-warning btn-sm" title="{% trans 'Calculate industry fees from current planner state' %}">
                                 <i class="fas fa-receipt me-1"></i>{% trans "Calculate Fees" %}
@@ -360,10 +360,10 @@
                                         <span class="badge bg-primary text-white">{{ mat.quantity|intcomma }}</span>
                                     </td>
                                     <td class="text-end">
-                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs" data-type-id="{{ mat.type_id }}" value="0" readonly>
+                                        <input type="text" inputmode="decimal" class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs" data-type-id="{{ mat.type_id }}" value="0.00" readonly>
                                     </td>
                                     <td class="text-end">
-                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm real-price text-end text-xs" data-type-id="{{ mat.type_id }}" value="0">
+                                        <input type="text" inputmode="decimal" class="form-control form-control-sm real-price text-end text-xs" data-type-id="{{ mat.type_id }}" value="0.00">
                                     </td>
                                     <td class="text-end text-xs total-cost fw-semibold">0</td>
                                     <td class="text-end text-xs item-margin">-</td>
@@ -384,13 +384,13 @@
                                         <span class="badge bg-info text-white" data-qty="1">1</span>
                                     </td>
                                     <td class="text-end">
-                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm text-end bg-light text-xs" id="shippingAutoPrice" value="0" readonly>
+                                        <input type="text" inputmode="decimal" class="form-control form-control-sm text-end bg-light text-xs" id="shippingAutoPrice" value="0.00" readonly>
                                     </td>
                                     <td class="text-end">
-                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm real-price text-end text-xs" id="shippingActualPrice" value="0" placeholder="{% trans 'Actual shipping cost' %}">
+                                        <input type="text" inputmode="decimal" class="form-control form-control-sm real-price text-end text-xs" id="shippingActualPrice" value="0.00" placeholder="{% trans 'Actual shipping cost' %}">
                                     </td>
                                     <td class="text-end text-xs total-cost fw-semibold" id="shippingTotalCost">0</td>
-                                    <td class="text-end text-xs" id="shippingCostStatus">
+                                    <td class="text-center text-xs align-middle craft-shipping-status-cell" id="shippingCostStatus">
                                         <span class="text-muted">{% trans "Manual only" %}</span>
                                     </td>
                                 </tr>
@@ -408,10 +408,10 @@
                                         <span class="badge bg-success text-white">{{ final_product_qty|default:num_runs|intcomma }}</span>
                                     </td>
                                     <td class="text-end">
-                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs" data-type-id="{{ product_type_id|default:0 }}" value="0" readonly>
+                                        <input type="text" inputmode="decimal" class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs" data-type-id="{{ product_type_id|default:0 }}" value="0.00" readonly>
                                     </td>
                                     <td class="text-end">
-                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm sale-price-unit text-end text-xs" data-type-id="{{ product_type_id|default:0 }}" value="0">
+                                        <input type="text" inputmode="decimal" class="form-control form-control-sm sale-price-unit text-end text-xs" data-type-id="{{ product_type_id|default:0 }}" value="0.00">
                                     </td>
                                     <td class="text-end text-xs total-revenue fw-semibold">0</td>
                                     <td class="text-end text-xs">-</td>
@@ -430,7 +430,7 @@
                                     <th colspan="4" class="text-end text-xs">{% trans "Total Revenue" %}</th>
                                     <th class="text-end text-xs grand-total-rev fw-semibold text-success" colspan="2">0</th>
                                 </tr>
-                                <tr class="table-primary">
+                                <tr id="netProfitRow" class="table-success">
                                     <th colspan="4" class="text-end text-xs">{% trans "Net Profit" %}</th>
                                     <th class="text-end text-xs profit fw-bold" colspan="2">0 <span class="profit-pct">(0%)</span></th>
                                 </tr>
