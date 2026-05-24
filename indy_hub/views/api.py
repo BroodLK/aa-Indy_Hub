@@ -44,6 +44,7 @@ from ..services.everef import (
     fetch_industry_cost,
     summarize_job_fees,
 )
+from ..services.craft_materials import calculate_job_material_quantity
 from ..services.industry_environment import resolve_craft_system_context
 from ..tasks.industry import MANUAL_REFRESH_KIND_BLUEPRINTS, request_manual_refresh
 
@@ -281,7 +282,6 @@ def craft_bp_payload(request, type_id: int):
         effective_material_bonus = 1.0 - ((1.0 - structure_bonus) * (1.0 - rig_bonus))
     else:
         effective_material_bonus = max(0.0, min(1.0, float(effective_bonus_raw)))
-    environment_material_multiplier = max(0.0, 1.0 - effective_material_bonus)
 
     # Parse per-blueprint ME/TE overrides: me_<bpTypeId>, te_<bpTypeId>
     me_te_configs: dict[int, dict[str, int]] = {}
@@ -390,9 +390,13 @@ def craft_bp_payload(request, type_id: int):
             for row in cursor.fetchall():
                 base_per_run_qty = int(row[2] or 0)
                 base_total_qty = int(base_per_run_qty) * int(runs)
-                me_multiplier = max(0.0, (100 - blueprint_me) / 100.0)
-                total_multiplier = me_multiplier * environment_material_multiplier
-                qty = ceil(base_total_qty * total_multiplier)
+                qty = calculate_job_material_quantity(
+                    base_per_run_qty,
+                    runs,
+                    material_efficiency=blueprint_me,
+                    structure_bonus=structure_bonus,
+                    rig_bonus=rig_bonus,
+                )
                 mat = {
                     "type_id": row[0],
                     "type_name": get_type_name(row[0]),
@@ -459,11 +463,12 @@ def craft_bp_payload(request, type_id: int):
                                     mat_type_id,
                                     base_qty_per_cycle,
                                 ) in recipe_cursor.fetchall():
-                                    qty_per_cycle = ceil(
-                                        (base_qty_per_cycle or 0)
-                                        * (100 - sub_bp_me)
-                                        / 100
-                                        * environment_material_multiplier
+                                    qty_per_cycle = calculate_job_material_quantity(
+                                        base_qty_per_cycle or 0,
+                                        1,
+                                        material_efficiency=sub_bp_me,
+                                        structure_bonus=structure_bonus,
+                                        rig_bonus=rig_bonus,
                                     )
                                     if qty_per_cycle <= 0:
                                         continue

@@ -61,6 +61,7 @@ from ..notifications import (
 )
 from ..services.esi_client import ESITokenError, ESIUnmodifiedError, shared_client
 from ..services.freight_fees import get_available_routes
+from ..services.craft_materials import calculate_job_material_quantity
 from ..services.industry_environment import resolve_craft_system_context
 from ..services.simulations import summarize_simulations
 from ..tasks.industry import (
@@ -3017,16 +3018,12 @@ def craft_bp(request, type_id):
                     for row in cursor.fetchall():
                         base_per_run_qty = int(row[2] or 0)
                         base_total_qty = base_per_run_qty * int(runs)
-                        me_multiplier = max(0.0, (100 - blueprint_me) / 100.0)
-                        structure_multiplier = max(
-                            0.0, 1.0 - float(build_structure_material_bonus)
-                        )
-                        rig_multiplier = max(0.0, 1.0 - float(rig_bonus_for_blueprint))
-                        qty = ceil(
-                            base_total_qty
-                            * me_multiplier
-                            * structure_multiplier
-                            * rig_multiplier
+                        qty = calculate_job_material_quantity(
+                            base_per_run_qty,
+                            runs,
+                            material_efficiency=blueprint_me,
+                            structure_bonus=build_structure_material_bonus,
+                            rig_bonus=rig_bonus_for_blueprint,
                         )
                         qty_default = base_total_qty
                         mat = {
@@ -3721,17 +3718,12 @@ def craft_bp(request, type_id):
             root_rig_bonus = _get_blueprint_rig_bonus(type_id)
             for row in cursor.fetchall():
                 base_per_run_qty = int(row[2] or 0)
-                base_total_qty = base_per_run_qty * int(num_runs)
-                me_multiplier = max(0.0, (100 - me) / 100.0)
-                structure_multiplier = max(
-                    0.0, 1.0 - float(build_structure_material_bonus)
-                )
-                rig_multiplier = max(0.0, 1.0 - float(root_rig_bonus))
-                qty = ceil(
-                    base_total_qty
-                    * me_multiplier
-                    * structure_multiplier
-                    * rig_multiplier
+                qty = calculate_job_material_quantity(
+                    base_per_run_qty,
+                    num_runs,
+                    material_efficiency=me,
+                    structure_bonus=build_structure_material_bonus,
+                    rig_bonus=root_rig_bonus,
                 )
                 direct_materials_list.append(
                     {
