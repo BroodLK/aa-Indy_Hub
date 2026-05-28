@@ -39,6 +39,7 @@ from .industry import _is_user_active
 logger = get_extension_logger(__name__)
 
 CORP_ROLES_SCOPE = "esi-characters.read_corporation_roles.v1"
+ROLE_SNAPSHOT_QUEUE_BATCH_SIZE = 25
 
 User = get_user_model()
 
@@ -154,41 +155,62 @@ def update_character_roles_for_character(
 
 
 @shared_task
-def update_user_roles_snapshots(user_id: int) -> dict[str, int]:
-    """Refresh role snapshots for all characters of a user."""
+def update_user_roles_snapshots(
+    user_id: int,
+    *,
+    last_character_id: int | None = None,
+    batch_size: int = ROLE_SNAPSHOT_QUEUE_BATCH_SIZE,
+) -> dict[str, int | bool]:
+    """Queue per-character role snapshot refreshes in bounded batches."""
     user = User.objects.filter(id=user_id).first()
     if not user or not _is_user_active(user):
-        return {"updated": 0, "skipped": 1, "failures": 0}
+        return {"queued": 0, "updated": 0, "skipped": 1, "failures": 0, "done": True}
+
+    if batch_size <= 0:
+        batch_size = ROLE_SNAPSHOT_QUEUE_BATCH_SIZE
 
     ownerships = (
         CharacterOwnership.objects.filter(user_id=user_id)
+        .exclude(character__character_id__isnull=True)
         .select_related("character")
+        .order_by("character__character_id")
         .values_list("character__character_id", flat=True)
         .distinct()
     )
-    updated = 0
-    skipped = 0
-    failures = 0
-    for character_id in ownerships:
-        if not character_id:
-            skipped += 1
-            continue
-        result = update_character_roles_for_character(int(user_id), int(character_id))
-        status = result.get("status") if isinstance(result, dict) else None
-        if status == "updated":
-            updated += 1
-        elif status == "failed":
-            failures += 1
-        else:
-            skipped += 1
+    if last_character_id:
+        ownerships = ownerships.filter(character__character_id__gt=int(last_character_id))
+
+    character_ids = [int(character_id) for character_id in ownerships[:batch_size]]
+    if not character_ids:
+        return {"queued": 0, "updated": 0, "skipped": 0, "failures": 0, "done": True}
+
+    for character_id in character_ids:
+        update_character_roles_for_character.apply_async(args=[int(user_id), int(character_id)])
+
+    if len(character_ids) == batch_size:
+        update_user_roles_snapshots.apply_async(
+            kwargs={
+                "user_id": int(user_id),
+                "last_character_id": int(character_ids[-1]),
+                "batch_size": int(batch_size),
+            },
+            countdown=1,
+        )
 
     emit_analytics_event(
         task="user.update_user_roles_snapshots",
-        label="completed",
-        result="success" if failures == 0 else "warning",
-        value=max(updated, 1),
+        label="queued",
+        result="success",
+        value=max(len(character_ids), 1),
     )
-    return {"updated": updated, "skipped": skipped, "failures": failures}
+    return {
+        "queued": len(character_ids),
+        "updated": 0,
+        "skipped": 0,
+        "failures": 0,
+        "last_character_id": int(character_ids[-1]),
+        "done": len(character_ids) < batch_size,
+    }
 
 
 @shared_task

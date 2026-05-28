@@ -24,6 +24,7 @@ from indy_hub.utils.analytics import emit_analytics_event
 from indy_hub.utils.eve import PLACEHOLDER_PREFIX, resolve_location_name
 
 logger = get_extension_logger(__name__)
+STRUCTURE_NAME_QUEUE_BATCH_SIZE = 50
 
 _TASK_DEFAULT_KWARGS: dict[str, object] = {
     "time_limit": 300,
@@ -150,9 +151,12 @@ def cache_structure_name(
     soft_time_limit=280,
 )
 def cache_structure_names_bulk(
-    structure_ids, character_id: int | None = None, owner_user_id: int | None = None
+    structure_ids,
+    character_id: int | None = None,
+    owner_user_id: int | None = None,
+    batch_size: int = STRUCTURE_NAME_QUEUE_BATCH_SIZE,
 ):
-    """Queue many CachedStructureName resolutions without waiting for results.
+    """Queue structure-name resolutions in bounded batches.
 
     Uses QueueOnce de-duplication in `cache_structure_name` and staggers countdowns
     to avoid bursts.
@@ -167,8 +171,14 @@ def cache_structure_names_bulk(
     if not normalized:
         return {"total": 0, "queued": 0}
 
+    if batch_size <= 0:
+        batch_size = STRUCTURE_NAME_QUEUE_BATCH_SIZE
+
+    current_batch = normalized[:batch_size]
+    remaining = normalized[batch_size:]
+
     sigs = []
-    for idx, sid in enumerate(normalized):
+    for idx, sid in enumerate(current_batch):
         # Stagger scheduling to reduce burstiness across workers.
         countdown = int(idx // 3)
         sigs.append(
@@ -179,11 +189,29 @@ def cache_structure_names_bulk(
             ).set(countdown=countdown, priority=DEFAULT_TASK_PRIORITY)
         )
 
-    group(sigs).apply_async()
+    if sigs:
+        group(sigs).apply_async()
+
+    if remaining:
+        cache_structure_names_bulk.apply_async(
+            kwargs={
+                "structure_ids": remaining,
+                "character_id": int(character_id) if character_id else None,
+                "owner_user_id": int(owner_user_id) if owner_user_id else None,
+                "batch_size": int(batch_size),
+            },
+            countdown=max(5, int(len(current_batch) // 3)),
+            priority=DEFAULT_TASK_PRIORITY,
+        )
+
     emit_analytics_event(
         task="location.cache_structure_names_bulk",
         label="queued",
         result="success",
-        value=max(len(sigs), 1),
+        value=max(len(current_batch), 1),
     )
-    return {"total": len(normalized), "queued": len(sigs)}
+    return {
+        "total": len(normalized),
+        "queued": len(current_batch),
+        "remaining": len(remaining),
+    }

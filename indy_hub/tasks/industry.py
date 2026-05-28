@@ -337,6 +337,7 @@ _DEFAULT_BULK_WINDOWS = {
     MANUAL_REFRESH_KIND_BLUEPRINTS: BLUEPRINTS_BULK_WINDOW_MINUTES,
     MANUAL_REFRESH_KIND_JOBS: INDUSTRY_JOBS_BULK_WINDOW_MINUTES,
 }
+SKILL_SNAPSHOT_QUEUE_BATCH_SIZE = 25
 
 ACTIVE_USER_DAYS = 30
 BLUEPRINT_REFRESH_MIN_AGE = timedelta(hours=1)
@@ -2409,62 +2410,80 @@ def update_character_skill_snapshot_for_character(
 
 
 @shared_task
-def update_user_skill_snapshots(user_id: int) -> dict[str, int]:
-    """Refresh skill snapshots for all characters of a user with skills scope."""
+def update_user_skill_snapshots(
+    user_id: int,
+    *,
+    last_character_id: int | None = None,
+    batch_size: int = SKILL_SNAPSHOT_QUEUE_BATCH_SIZE,
+) -> dict[str, int | bool]:
+    """Queue per-character skill snapshot refreshes in bounded batches."""
     if _SKILLS_OPERATION_UNAVAILABLE:
-        return {"updated": 0, "skipped": 0, "failures": 0}
+        return {"queued": 0, "updated": 0, "skipped": 0, "failures": 0, "done": True}
 
     user = User.objects.filter(id=user_id).first()
     if not user:
         logger.info(
             "Skipping skill snapshot refresh for user %s: user_missing", user_id
         )
-        return {"updated": 0, "skipped": 1, "failures": 0}
+        return {"queued": 0, "updated": 0, "skipped": 1, "failures": 0, "done": True}
     if not _is_user_active(user):
         logger.info("Skill snapshot refresh continuing for inactive user %s", user_id)
+
+    if batch_size <= 0:
+        batch_size = SKILL_SNAPSHOT_QUEUE_BATCH_SIZE
 
     tokens = (
         Token.objects.filter(user=user)
         .require_scopes([SKILLS_SCOPE])
         .require_valid()
+        .exclude(character_id__isnull=True)
+        .order_by("character_id")
         .values_list("character_id", flat=True)
         .distinct()
     )
+    if last_character_id:
+        tokens = tokens.filter(character_id__gt=int(last_character_id))
     if not tokens:
         logger.info(
             "Skipping skill snapshot refresh for user %s: token_missing", user_id
         )
-        return {"updated": 0, "skipped": 1, "failures": 0}
-    updated = 0
-    skipped = 0
-    failures = 0
-    for character_id in tokens:
-        if not character_id:
-            skipped += 1
-            continue
-        result = update_character_skill_snapshot_for_character(
-            int(user_id),
-            int(character_id),
+        return {"queued": 0, "updated": 0, "skipped": 1, "failures": 0, "done": True}
+
+    character_ids = [int(character_id) for character_id in tokens[:batch_size]]
+    if not character_ids:
+        return {"queued": 0, "updated": 0, "skipped": 0, "failures": 0, "done": True}
+
+    for character_id in character_ids:
+        update_character_skill_snapshot_for_character.apply_async(
+            args=(int(user_id), int(character_id))
         )
-        status = result.get("status") if isinstance(result, dict) else None
-        if status == "updated":
-            updated += 1
-        elif status == "failed":
-            failures += 1
-        else:
-            skipped += 1
+
+    if len(character_ids) == batch_size:
+        update_user_skill_snapshots.apply_async(
+            kwargs={
+                "user_id": int(user_id),
+                "last_character_id": int(character_ids[-1]),
+                "batch_size": int(batch_size),
+            },
+            countdown=1,
+        )
 
     logger.info(
-        "Skill snapshot refresh done for user %s: updated=%s skipped=%s failures=%s",
+        "Queued skill snapshot refresh for user %s: queued=%s",
         user_id,
-        updated,
-        skipped,
-        failures,
+        len(character_ids),
     )
     emit_analytics_event(
         task="industry.update_user_skill_snapshots",
-        label="completed",
-        result="success" if failures == 0 else "warning",
-        value=max(updated, 1),
+        label="queued",
+        result="success",
+        value=max(len(character_ids), 1),
     )
-    return {"updated": updated, "skipped": skipped, "failures": failures}
+    return {
+        "queued": len(character_ids),
+        "updated": 0,
+        "skipped": 0,
+        "failures": 0,
+        "last_character_id": int(character_ids[-1]),
+        "done": len(character_ids) < batch_size,
+    }
