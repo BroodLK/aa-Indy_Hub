@@ -1261,6 +1261,63 @@ class ContractValidationTaskTest(TestCase):
         self.assertIn("accepted at Beta Hub", notify_message)
         mock_notify_multi.assert_called()
 
+    @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
+    @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
+    def test_items_mismatch_anomaly_includes_price_mismatch_details(
+        self,
+        mock_notify_multi,
+        mock_notify_user,
+        mock_user_chars,
+    ):
+        """Sell mismatch alerts should include a price mismatch alongside the item mismatch."""
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        seller_char_id = 111111111
+        mock_user_chars.return_value = [seller_char_id]
+
+        mismatch_contract = ESIContract.objects.create(
+            contract_id=4211,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=seller_char_id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            start_location_id=self.config.structure_id,
+            end_location_id=self.config.structure_id,
+            status="outstanding",
+            price=self.sell_order.total_price + 500,
+            title=self.sell_order.order_reference,
+            date_issued="2024-01-01T00:00:00Z",
+            date_expired="2024-12-31T23:59:59Z",
+        )
+        ESIContractItem.objects.create(
+            contract=mismatch_contract,
+            record_id=42111,
+            type_id=self.sell_item.type_id,
+            quantity=self.sell_item.quantity + 1,
+            is_included=True,
+        )
+
+        validate_material_exchange_sell_orders()
+
+        self.sell_order.refresh_from_db()
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
+        self.assertIn("item list/quantities do not match", self.sell_order.notes)
+        self.assertIn("Expected price: 5,500 ISK", self.sell_order.notes)
+        self.assertIn("Contract price: 6,000 ISK", self.sell_order.notes)
+
+        self.assertTrue(mock_notify_user.called)
+        notify_message = str(mock_notify_user.call_args[0][2])
+        self.assertIn("Expected price: 5,500 ISK", notify_message)
+        self.assertIn("Contract price: 6,000 ISK", notify_message)
+
+        mock_notify_multi.assert_called()
+        admin_message = str(mock_notify_multi.call_args[0][2])
+        self.assertIn("Expected price: 5,500 ISK", admin_message)
+        self.assertIn("Contract price: 6,000 ISK", admin_message)
+
 
 class BuyOrderValidationTaskTest(TestCase):
     """Tests for buy order validation task behavior."""

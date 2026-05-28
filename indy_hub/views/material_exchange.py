@@ -6142,26 +6142,31 @@ def material_exchange_reject_buy(request, order_id):
         ],
     )
 
-    _reject_buy_order(order)
+    notify_buyer = request.POST.get("notify_buyer", "1") != "0"
+    _reject_buy_order(order, notify_buyer=notify_buyer)
 
-    messages.warning(request, _(f"Buy order #{order.id} rejected and buyer notified."))
+    if notify_buyer:
+        messages.warning(request, _(f"Buy order #{order.id} rejected and buyer notified."))
+    else:
+        messages.warning(request, _(f"Buy order #{order.id} rejected without notifying the buyer."))
     return _redirect_material_exchange(request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel")
 
 
-def _reject_buy_order(order: MaterialExchangeBuyOrder) -> None:
-    from ..notifications import notify_user
+def _reject_buy_order(order: MaterialExchangeBuyOrder, *, notify_buyer: bool = True) -> None:
+    if notify_buyer:
+        from ..notifications import notify_user
 
-    notify_user(
-        order.buyer,
-        _("❌ Buy Order Rejected"),
-        _(
-            f"Your buy order #{order.id} has been rejected.\n\n"
-            f"Reason: Admin decision.\n\n"
-            f"Contact the admins in Auth if you need details or want to retry."
-        ),
-        level="error",
-        link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
-    )
+        notify_user(
+            order.buyer,
+            _("Buy Order Rejected"),
+            _(
+                f"Your buy order #{order.id} has been rejected.\n\n"
+                f"Reason: Admin decision.\n\n"
+                f"Contact the admins in Auth if you need details or want to retry."
+            ),
+            level="error",
+            link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
+        )
 
     order.status_before_rejection = str(order.status or "").strip()
     order.status = MaterialExchangeBuyOrder.Status.REJECTED

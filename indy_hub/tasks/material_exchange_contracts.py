@@ -2413,8 +2413,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         return
 
     matching_contract = None
-    last_price_issue: str | None = None
-    last_reason: str | None = None
     contract_with_correct_ref_wrong_structure: dict | None = None
     contract_with_correct_ref_wrong_price: dict | None = None
     contract_with_correct_ref_items_mismatch: dict | None = None
@@ -2449,11 +2447,19 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 }
             continue
 
-        # Items check
-        if not _contract_items_match_order_db(contract, order):
-            last_reason = "items mismatch"
-            mismatch_details = _build_items_mismatch_details(contract, order)
-            _missing_by_type, surplus_by_type, mismatch_type_names = _get_items_mismatch_breakdown(contract, order)
+        items_match = _contract_items_match_order_db(contract, order)
+        mismatch_details = _build_items_mismatch_details(contract, order) if not items_match else ""
+        _missing_by_type, surplus_by_type, mismatch_type_names = (
+            _get_items_mismatch_breakdown(contract, order) if not items_match else ({}, {}, {})
+        )
+        price_ok, price_msg = _contract_price_matches_db(contract, order)
+        try:
+            contract_price, expected_price = _get_contract_price_comparison(contract, order)
+        except ValueError:
+            contract_price = contract.price
+            expected_price = order.total_price
+
+        if not items_match:
             if has_correct_ref and not contract_with_correct_ref_items_mismatch:
                 contract_with_correct_ref_items_mismatch = {
                     "contract_id": contract.contract_id,
@@ -2469,20 +2475,29 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         for type_id, name in (mismatch_type_names or {}).items()
                         if str(name).strip()
                     },
+                    "price_issue": "" if price_ok else price_msg,
+                    "contract_price": contract_price,
+                    "expected_price": expected_price,
+                }
+            if not price_ok and has_correct_ref and not contract_with_correct_ref_wrong_price:
+                contract_with_correct_ref_wrong_price = {
+                    "contract_id": contract.contract_id,
+                    "price_msg": price_msg,
+                    "contract_price": contract_price,
+                    "expected_price": expected_price,
+                    "status": contract.status,
+                    "start_location_id": contract.start_location_id,
+                    "end_location_id": contract.end_location_id,
                 }
             continue
 
-        # Price check
-        price_ok, price_msg = _contract_price_matches_db(contract, order)
         if not price_ok:
-            last_price_issue = price_msg
-            last_reason = price_msg
             if has_correct_ref and not contract_with_correct_ref_wrong_price:
                 contract_with_correct_ref_wrong_price = {
                     "contract_id": contract.contract_id,
                     "price_msg": price_msg,
-                    "contract_price": contract.price,
-                    "expected_price": order.total_price,
+                    "contract_price": contract_price,
+                    "expected_price": expected_price,
                     "status": contract.status,
                     "start_location_id": contract.start_location_id,
                     "end_location_id": contract.end_location_id,
@@ -2595,95 +2610,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             order.id,
             contract_with_correct_ref_wrong_structure["contract_id"],
         )
-    elif contract_with_correct_ref_wrong_price:
-        contract_status = str(contract_with_correct_ref_wrong_price.get("status") or "").lower()
-        completed_before_validation_note = _build_completed_before_validation_note(contract_status)
-        expected_value = contract_with_correct_ref_wrong_price.get("expected_price")
-        contract_value = contract_with_correct_ref_wrong_price.get("contract_price")
-        try:
-            expected_price = f"{Decimal(str(expected_value)).quantize(Decimal('1')):,.0f} ISK"
-        except (InvalidOperation, TypeError):
-            expected_price = str(expected_value)
-
-        try:
-            contract_price = f"{Decimal(str(contract_value)).quantize(Decimal('1')):,.0f} ISK"
-        except (InvalidOperation, TypeError):
-            contract_price = str(contract_value)
-
-        if contract_status in rejected_statuses:
-            _set_sell_order_anomaly_rejected(
-                contract_id=contract_with_correct_ref_wrong_price["contract_id"],
-                contract_status=contract_status,
-            )
-            return
-
-        anomaly_notes = (
-            f"Anomaly: contract {contract_with_correct_ref_wrong_price['contract_id']} has the correct title ({order_ref}) "
-            f"but wrong price ({contract_with_correct_ref_wrong_price['price_msg']})."
-            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
-        )
-        anomaly_updated = order.status != MaterialExchangeSellOrder.Status.ANOMALY or order.notes != anomaly_notes
-        order.status = MaterialExchangeSellOrder.Status.ANOMALY
-        order.notes = anomaly_notes
-        order.save(update_fields=["status", "notes", "updated_at"])
-
-        admin_link = (
-            f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
-            f"?next=/indy_hub/material-exchange/%23admin-panel"
-        )
-
-        if anomaly_updated:
-            notify_user(
-                order.seller,
-                _("Sell Order Anomaly: Price Mismatch"),
-                (
-                    _(
-                        f"Your sell order {order_ref} is in anomaly status.\n\n"
-                        f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the price does not match the agreed total.\n\n"
-                        f"Expected price: {expected_price}\n"
-                        f"Contract price: {contract_price}\n"
-                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
-                        + f"You can either create a new contract with the correct price at {expected_sell_locations_label}, or wait for admin review (admins have been notified)."
-                    )
-                    if notify_admins_on_sell_anomaly
-                    else _(
-                        f"Your sell order {order_ref} is in anomaly status.\n\n"
-                        f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the price does not match the agreed total.\n\n"
-                        f"Expected price: {expected_price}\n"
-                        f"Contract price: {contract_price}\n"
-                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
-                        + f"Please create a new compliant contract with the correct price at {expected_sell_locations_label}."
-                    )
-                ),
-                level="warning",
-                link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
-            )
-
-        if notify_admins_on_sell_anomaly and anomaly_updated:
-            _notify_material_exchange_admins(
-                config,
-                _("Hub Order Requires Intervention"),
-                _(
-                    f"Order {order_ref} requires your intervention.\n"
-                    "Reason: contract price mismatch.\n"
-                    + (
-                        f"In-game status: {completed_before_validation_note}\n"
-                        if completed_before_validation_note
-                        else ""
-                    )
-                    + f"User: {order.seller.username}"
-                ),
-                level="warning",
-                link=admin_link,
-            )
-
-        logger.warning(
-            "Sell order %s anomaly: contract %s has correct title but wrong price (%s)",
-            order.id,
-            contract_with_correct_ref_wrong_price["contract_id"],
-            contract_with_correct_ref_wrong_price["price_msg"],
-        )
-    elif contract_with_correct_ref_items_mismatch:
+    elif contract_with_correct_ref_items_mismatch and (
+        contract_with_correct_ref_items_mismatch.get("price_issue") or not contract_with_correct_ref_wrong_price
+    ):
         contract_status = str(contract_with_correct_ref_items_mismatch.get("status") or "").lower()
         completed_before_validation_note = _build_completed_before_validation_note(contract_status)
         if contract_status in rejected_statuses:
@@ -2727,17 +2656,22 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             surplus_type_ids=surplus_type_ids,
             type_names=mismatch_type_names,
         )
+        price_issue = str(contract_with_correct_ref_items_mismatch.get("price_issue") or "").strip()
+        price_details_block = ""
+        if price_issue:
+            price_details_block = (
+                "Price mismatch:\n"
+                f"Expected price: {Decimal(str(contract_with_correct_ref_items_mismatch.get('expected_price') or 0)).quantize(Decimal('1')):,.0f} ISK\n"
+                f"Contract price: {Decimal(str(contract_with_correct_ref_items_mismatch.get('contract_price') or 0)).quantize(Decimal('1')):,.0f} ISK"
+            )
 
-        # Build core anomaly notes without completion status (for comparison)
-        core_anomaly_notes = f"Anomaly: contract {contract_with_correct_ref_items_mismatch['contract_id']} has the correct title ({order_ref}) " f"but item list/quantities do not match this order." + (
-            f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}"
-            if contract_with_correct_ref_items_mismatch.get("details")
-            else ""
-        ) + (
-            f"\n\n{location_guidance_block}" if location_guidance_block else ""
+        core_anomaly_notes = (
+            f"Anomaly: contract {contract_with_correct_ref_items_mismatch['contract_id']} has the correct title ({order_ref}) "
+            "but item list/quantities do not match this order."
+            + (f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}" if contract_with_correct_ref_items_mismatch.get("details") else "")
+            + (f"\n\n{price_details_block}" if price_details_block else "")
+            + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
         )
-
-        # Full notes include completion status
         anomaly_notes = core_anomaly_notes + (
             f"\n\n{completed_before_validation_note}" if completed_before_validation_note else ""
         )
@@ -2748,8 +2682,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             else ""
         )
         guidance_details_block = f"{location_guidance_block}\n\n" if location_guidance_block else ""
+        price_details_message_block = f"{price_details_block}\n\n" if price_details_block else ""
 
-        # Extract previous core notes (without completion status) for comparison
         previous_notes = str(order.notes or "")
         previous_core_notes = (
             previous_notes.split("\n\nContract had already been accepted")[0]
@@ -2757,8 +2691,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             else previous_notes
         )
 
-        # Only treat as updated if status changed OR core mismatch details changed
-        # Don't re-notify just because contract completion status was appended
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY or previous_core_notes != core_anomaly_notes
         )
@@ -2777,6 +2709,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Your sell order {order_ref} is in anomaly status.\n\n"
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
+                    f"{price_details_message_block}"
                     + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "")
                     + f"{guidance_details_block}"
                     + "Please create a corrected contract, or contact a Hub admin (they have been notified)."
@@ -2786,6 +2719,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Your sell order {order_ref} is in anomaly status.\n\n"
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
+                    f"{price_details_message_block}"
                     + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "")
                     + f"{guidance_details_block}"
                     + "Please create a corrected and compliant contract."
@@ -2817,6 +2751,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         if contract_with_correct_ref_items_mismatch.get("details")
                         else ""
                     )
+                    + (f"\n\n{price_details_block}" if price_details_block else "")
                     + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
                 ),
                 level="warning",
@@ -2832,6 +2767,85 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             task="material_exchange.sell_order_items_mismatch",
             label="correct_ref",
             result="warning",
+        )
+    elif contract_with_correct_ref_wrong_price:
+        contract_status = str(contract_with_correct_ref_wrong_price.get("status") or "").lower()
+        completed_before_validation_note = _build_completed_before_validation_note(contract_status)
+        expected_price = f"{Decimal(str(contract_with_correct_ref_wrong_price.get('expected_price') or 0)).quantize(Decimal('1')):,.0f} ISK"
+        contract_price = f"{Decimal(str(contract_with_correct_ref_wrong_price.get('contract_price') or 0)).quantize(Decimal('1')):,.0f} ISK"
+
+        if contract_status in rejected_statuses:
+            _set_sell_order_anomaly_rejected(
+                contract_id=contract_with_correct_ref_wrong_price["contract_id"],
+                contract_status=contract_status,
+            )
+            return
+
+        anomaly_notes = (
+            f"Anomaly: contract {contract_with_correct_ref_wrong_price['contract_id']} has the correct title ({order_ref}) "
+            f"but wrong price ({contract_with_correct_ref_wrong_price['price_msg']})."
+            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
+        )
+        anomaly_updated = order.status != MaterialExchangeSellOrder.Status.ANOMALY or order.notes != anomaly_notes
+        order.status = MaterialExchangeSellOrder.Status.ANOMALY
+        order.notes = anomaly_notes
+        order.save(update_fields=["status", "notes", "updated_at"])
+
+        admin_link = (
+            f"/indy_hub/material-exchange/my-orders/sell/{order.id}/"
+            f"?next=/indy_hub/material-exchange/%23admin-panel"
+        )
+
+        if anomaly_updated:
+            notify_user(
+                order.seller,
+                _("Sell Order Anomaly: Price Mismatch"),
+                (
+                    _(
+                        f"Your sell order {order_ref} is in anomaly status.\n\n"
+                        f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the contract price does not match the agreed total.\n\n"
+                        f"Expected price: {expected_price}\n"
+                        f"Contract price: {contract_price}\n"
+                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                        + f"You can either create a new contract with the correct price at {expected_sell_locations_label}, or wait for admin review (admins have been notified)."
+                    )
+                    if notify_admins_on_sell_anomaly
+                    else _(
+                        f"Your sell order {order_ref} is in anomaly status.\n\n"
+                        f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the contract price does not match the agreed total.\n\n"
+                        f"Expected price: {expected_price}\n"
+                        f"Contract price: {contract_price}\n"
+                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                        + f"Please create a new compliant contract with the correct price at {expected_sell_locations_label}."
+                    )
+                ),
+                level="warning",
+                link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
+            )
+
+        if notify_admins_on_sell_anomaly and anomaly_updated:
+            _notify_material_exchange_admins(
+                config,
+                _("Hub Order Requires Intervention"),
+                _(
+                    f"Order {order_ref} requires your intervention.\n"
+                    "Reason: contract price mismatch.\n"
+                    + (
+                        f"In-game status: {completed_before_validation_note}\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
+                    + f"User: {order.seller.username}"
+                ),
+                level="warning",
+                link=admin_link,
+            )
+
+        logger.warning(
+            "Sell order %s anomaly: contract %s has correct title but wrong price (%s)",
+            order.id,
+            contract_with_correct_ref_wrong_price["contract_id"],
+            contract_with_correct_ref_wrong_price["price_msg"],
         )
     elif contract_with_wrong_ref_only:
         contract_id = contract_with_wrong_ref_only["contract_id"]
@@ -2981,13 +2995,8 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
     matching_contract = None
     active_contract_ref_mismatch = None
-    finished_contract_ref_mismatch = None
-    finished_contract_items_mismatch = None
-    finished_contract_price_mismatch = None
-    finished_contract_criteria_mismatch = None
-    last_price_issue: str | None = None
-    last_reason: str | None = None
     last_items_mismatch_details: str | None = None
+    detected_issues: list[str] = []
     previous_issue_contract_lines = _extract_contract_issue_lines(order.notes)
     issue_contract_lines: list[str] = []
 
@@ -3196,11 +3205,12 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                     contract_status = str(contract.status or "").lower()
                     if contract_status in active_validation_statuses and active_contract_ref_mismatch is None:
                         active_contract_ref_mismatch = contract
-                        last_reason = "wrong contract reference"
+                        if "wrong contract reference" not in detected_issues:
+                            detected_issues.append("wrong contract reference")
                         _remember_issue_contract(contract)
-                    if contract_status in finished_statuses and finished_contract_ref_mismatch is None:
-                        finished_contract_ref_mismatch = contract
-                        last_reason = "wrong contract reference"
+                    if contract_status in finished_statuses:
+                        if "wrong contract reference" not in detected_issues:
+                            detected_issues.append("wrong contract reference")
                         _remember_issue_contract(contract)
 
         # Require title reference before further checks.
@@ -3217,32 +3227,23 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             expected_location_names=expected_buy_location_names,
         )
         if not criteria_match:
-            contract_status = str(contract.status or "").lower()
-            last_reason = "contract criteria mismatch"
+            if "contract criteria mismatch" not in detected_issues:
+                detected_issues.append("contract criteria mismatch")
             _remember_issue_contract(contract)
-            if contract_status in finished_statuses and finished_contract_criteria_mismatch is None:
-                finished_contract_criteria_mismatch = contract
-            continue
-
-        if not _contract_items_match_order_db(contract, order):
-            last_reason = "items mismatch"
-            _remember_issue_contract(contract)
-            mismatch_details = _build_items_mismatch_details(contract, order)
-            if mismatch_details and last_items_mismatch_details is None:
-                last_items_mismatch_details = mismatch_details
-            contract_status = str(contract.status or "").lower()
-            if contract_status in finished_statuses and finished_contract_items_mismatch is None:
-                finished_contract_items_mismatch = contract
             continue
 
         price_ok, price_msg = _contract_price_matches_db(contract, order)
-        if not price_ok:
-            last_price_issue = price_msg
-            last_reason = price_msg
+        items_match = _contract_items_match_order_db(contract, order)
+        if not items_match or not price_ok:
             _remember_issue_contract(contract)
-            contract_status = str(contract.status or "").lower()
-            if contract_status in finished_statuses and finished_contract_price_mismatch is None:
-                finished_contract_price_mismatch = contract
+            if not items_match and "items mismatch" not in detected_issues:
+                detected_issues.append("items mismatch")
+            if not items_match:
+                mismatch_details = _build_items_mismatch_details(contract, order)
+                if mismatch_details and last_items_mismatch_details is None:
+                    last_items_mismatch_details = mismatch_details
+            if not price_ok and price_msg not in detected_issues:
+                detected_issues.append(price_msg)
             continue
 
         matching_contract = contract
@@ -3257,10 +3258,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         return
 
     # No matching contract found yet
-    issues: list[str] = []
-    for issue in [last_price_issue, last_reason]:
-        if issue and issue not in issues:
-            issues.append(issue)
+    issues = list(detected_issues)
 
     issue_line = f"Issue(s): {'; '.join(issues)}" if issues else ""
     mismatch_block = f"\n\n{last_items_mismatch_details}" if last_items_mismatch_details else ""
@@ -4259,16 +4257,26 @@ def _build_items_mismatch_details(contract, order) -> str:
     return "\n\n".join(sections)
 
 
+def _get_contract_price_comparison(contract, order) -> tuple[Decimal, Decimal]:
+    """Return actual and expected contract price for item-exchange matching."""
+    try:
+        contract_price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
+        expected_price = Decimal(str(order.total_price)).quantize(Decimal("0.01"))
+    except (InvalidOperation, TypeError):
+        raise ValueError("invalid contract price")
+
+    return contract_price, expected_price
+
+
 def _contract_price_matches_db(contract, order) -> tuple[bool, str]:
     """Validate database contract price against order total."""
     try:
-        contract_price = Decimal(str(contract.price)).quantize(Decimal("0.01"))
-        expected_price = Decimal(str(order.total_price)).quantize(Decimal("0.01"))
-    except (InvalidOperation, TypeError):
+        contract_price, expected_price = _get_contract_price_comparison(contract, order)
+    except ValueError:
         return False, "invalid contract price"
 
     if contract_price != expected_price:
-        return False, (f"price {contract_price:,.0f} ISK vs expected {expected_price:,.0f} ISK")
+        return False, f"price {contract_price:,.0f} ISK vs expected {expected_price:,.0f} ISK"
 
     return True, f"price {contract_price:,.0f} ISK OK"
 

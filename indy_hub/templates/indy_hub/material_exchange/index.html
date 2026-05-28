@@ -404,9 +404,19 @@
                                                             <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
                                                             <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}"
                                                                     type="submit"
+                                                                    name="notify_buyer"
+                                                                    value="1"
                                                                     class="btn btn-sm btn-outline-danger me-admin-order-action-btn"
                                                                     onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject buy order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
                                                                 <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                                                            </button>
+                                                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}"
+                                                                    type="submit"
+                                                                    name="notify_buyer"
+                                                                    value="0"
+                                                                    class="btn btn-sm btn-outline-secondary me-admin-order-action-btn"
+                                                                    onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject buy order {{ reference }} without notifying the buyer? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
+                                                                <i class="fas fa-user-slash me-1"></i>{% trans "Reject Quietly" %}
                                                             </button>
                                                         </form>
                                                     {% endif %}

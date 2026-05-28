@@ -150,6 +150,26 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
         self.assertEqual(order.status, MaterialExchangeBuyOrder.Status.VALIDATED)
         self.assertEqual(order.status_before_rejection, "")
 
+    @patch("indy_hub.notifications.notify_user")
+    def test_reject_buy_order_quietly_skips_buyer_notification(self, mock_notify_user) -> None:
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config,
+            buyer=self.member,
+            status=MaterialExchangeBuyOrder.Status.DRAFT,
+        )
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            reverse("indy_hub:material_exchange_reject_buy", args=[order.id]),
+            {"next": reverse("indy_hub:material_exchange_history"), "notify_buyer": "0"},
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_notify_user.assert_not_called()
+
+        order.refresh_from_db()
+        self.assertEqual(order.status, MaterialExchangeBuyOrder.Status.REJECTED)
+        self.assertEqual(order.status_before_rejection, MaterialExchangeBuyOrder.Status.DRAFT)
+
     def test_history_page_shows_reopen_actions_for_rejected_orders(self) -> None:
         sell_order = MaterialExchangeSellOrder.objects.create(
             config=self.config,
