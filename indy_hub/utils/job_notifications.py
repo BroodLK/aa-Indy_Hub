@@ -142,9 +142,7 @@ def _resolve_blueprint(job) -> Blueprint | None:
         query = query.filter(owner_kind=owner_kind)
 
     if blueprint_id:
-        candidate = (
-            query.filter(blueprint_id=blueprint_id).order_by("-last_updated").first()
-        )
+        candidate = query.filter(blueprint_id=blueprint_id).order_by("-last_updated").first()
         if candidate:
             return candidate
 
@@ -226,9 +224,7 @@ def _resolve_result(job, blueprint) -> str | None:
     return None
 
 
-def _describe_efficiency_result(
-    *, current: int | None, increment: int | None, label: str
-) -> str | None:
+def _describe_efficiency_result(*, current: int | None, increment: int | None, label: str) -> str | None:
     if increment in (None, 0):
         if current is not None:
             return f"{label} {current}"
@@ -432,9 +428,7 @@ def _resolve_user_corporation_id(user: User | None) -> int | None:
     main_character = getattr(profile, "main_character", None) if profile else None
     if not main_character:
         try:
-            profile = UserProfile.objects.select_related("main_character").get(
-                user=user
-            )
+            profile = UserProfile.objects.select_related("main_character").get(user=user)
         except Exception:
             profile = None
         else:
@@ -446,9 +440,7 @@ def _resolve_user_corporation_id(user: User | None) -> int | None:
         except (TypeError, ValueError):
             return None
 
-    ownership_qs = CharacterOwnership.objects.filter(user=user).select_related(
-        "character"
-    )
+    ownership_qs = CharacterOwnership.objects.filter(user=user).select_related("character")
     try:
         CharacterOwnership._meta.get_field("is_main")
     except Exception:
@@ -663,9 +655,7 @@ def process_job_completion_notification(job: IndustryJob) -> bool:
             _mark_job_notified(job)
             return True
 
-        eligible_settings = list(
-            _eligible_corporation_notification_settings(int(corporation_id))
-        )
+        eligible_settings = list(_eligible_corporation_notification_settings(int(corporation_id)))
         if not eligible_settings:
             _mark_job_notified(job)
             return True
@@ -675,10 +665,7 @@ def process_job_completion_notification(job: IndustryJob) -> bool:
 
         for corp_setting in eligible_settings:
             user = corp_setting.user
-            frequency = (
-                corp_setting.corp_jobs_notify_frequency
-                or CharacterSettings.NOTIFY_DISABLED
-            )
+            frequency = corp_setting.corp_jobs_notify_frequency or CharacterSettings.NOTIFY_DISABLED
             if frequency == CharacterSettings.NOTIFY_DISABLED:
                 continue
 
@@ -722,9 +709,7 @@ def process_job_completion_notification(job: IndustryJob) -> bool:
         return True
 
     frequency = settings.jobs_notify_frequency or (
-        CharacterSettings.NOTIFY_IMMEDIATE
-        if settings.jobs_notify_completed
-        else CharacterSettings.NOTIFY_DISABLED
+        CharacterSettings.NOTIFY_IMMEDIATE if settings.jobs_notify_completed else CharacterSettings.NOTIFY_DISABLED
     )
 
     if frequency == CharacterSettings.NOTIFY_DISABLED:

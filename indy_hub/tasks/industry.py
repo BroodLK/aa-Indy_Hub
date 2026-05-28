@@ -93,7 +93,6 @@ from ..services.location_population import populate_location_names
 from ..utils.analytics import emit_analytics_event
 from ..utils.eve import (
     PLACEHOLDER_PREFIX,
-    batch_cache_type_names,
     get_character_name,
     get_corporation_name,
     get_type_name,
@@ -161,9 +160,7 @@ def _is_user_active(user: User, *, now: datetime | None = None) -> bool:
     now = now or timezone.now()
     refresh_cutoff = now - timedelta(hours=ONLINE_STATUS_STALE_HOURS)
     cutoff = now - timedelta(days=ACTIVE_USER_DAYS)
-    ownerships = CharacterOwnership.objects.filter(user=user).select_related(
-        "character"
-    )
+    ownerships = CharacterOwnership.objects.filter(user=user).select_related("character")
     character_ids = [
         ownership.character.character_id
         for ownership in ownerships
@@ -176,11 +173,7 @@ def _is_user_active(user: User, *, now: datetime | None = None) -> bool:
         character_id__in=character_ids,
     )
     known_ids = set(statuses.values_list("character_id", flat=True))
-    stale_ids = set(
-        statuses.filter(last_updated__lt=refresh_cutoff).values_list(
-            "character_id", flat=True
-        )
-    )
+    stale_ids = set(statuses.filter(last_updated__lt=refresh_cutoff).values_list("character_id", flat=True))
     missing_ids = set(character_ids) - known_ids
     if missing_ids or stale_ids:
         logger.info(
@@ -225,9 +218,7 @@ def _coerce_online_datetime(value):
 
 def _refresh_online_status_for_user(user: User, *, now: datetime | None = None) -> None:
     now = now or timezone.now()
-    ownerships = CharacterOwnership.objects.filter(user=user).select_related(
-        "character"
-    )
+    ownerships = CharacterOwnership.objects.filter(user=user).select_related("character")
     for ownership in ownerships:
         char_id = ownership.character.character_id
         if not char_id:
@@ -292,16 +283,12 @@ def _refresh_online_status_for_user(user: User, *, now: datetime | None = None) 
 
 def _user_recent_blueprint_sync(user: User, *, now: datetime | None = None) -> bool:
     now = now or timezone.now()
-    return Blueprint.objects.filter(
-        owner_user=user, last_updated__gte=now - BLUEPRINT_REFRESH_MIN_AGE
-    ).exists()
+    return Blueprint.objects.filter(owner_user=user, last_updated__gte=now - BLUEPRINT_REFRESH_MIN_AGE).exists()
 
 
 def _user_recent_job_sync(user: User, *, now: datetime | None = None) -> bool:
     now = now or timezone.now()
-    return IndustryJob.objects.filter(
-        owner_user=user, last_updated__gte=now - JOB_REFRESH_MIN_AGE
-    ).exists()
+    return IndustryJob.objects.filter(owner_user=user, last_updated__gte=now - JOB_REFRESH_MIN_AGE).exists()
 
 
 def _update_or_create_with_deadlock_retry(
@@ -518,10 +505,7 @@ def get_character_corporation_roles(character_id: int) -> set[str]:
     table_empty = not CharacterRoles.objects.exists()
     snapshot = CharacterRoles.objects.filter(character_id=character_id).first()
     now = timezone.now()
-    snapshot_stale = bool(
-        snapshot
-        and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS)
-    )
+    snapshot_stale = bool(snapshot and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS))
     if snapshot and not snapshot_stale:
         roles = _roles_from_snapshot(snapshot)
         _CORPORATION_ROLE_CACHE[character_id] = roles
@@ -600,27 +584,20 @@ def get_character_corporation_roles(character_id: int) -> set[str]:
     return collected
 
 
-def _collect_corporation_contexts(
-    user: User, required_scopes: list[str]
-) -> dict[int, dict[str, int | str]]:
+def _collect_corporation_contexts(user: User, required_scopes: list[str]) -> dict[int, dict[str, int | str]]:
     """Return mapping of corporation id to token context for the user."""
 
     contexts: dict[int, dict[str, int | str]] = {}
 
-    ownerships = CharacterOwnership.objects.filter(user=user).select_related(
-        "character"
-    )
+    ownerships = CharacterOwnership.objects.filter(user=user).select_related("character")
 
     # Optimize: Bulk load corp settings instead of querying in get_or_create loop
     corp_settings = {
-        setting.corporation_id: setting
-        for setting in CorporationSharingSetting.objects.filter(user=user)
+        setting.corporation_id: setting for setting in CorporationSharingSetting.objects.filter(user=user)
     }
 
     # Collect corporation IDs from ownerships to bulk fetch missing settings
-    corp_ids_in_ownerships = {
-        getattr(ownership.character, "corporation_id", None) for ownership in ownerships
-    }
+    corp_ids_in_ownerships = {getattr(ownership.character, "corporation_id", None) for ownership in ownerships}
     corp_ids_in_ownerships.discard(None)
     missing_corp_ids = corp_ids_in_ownerships - set(corp_settings.keys())
 
@@ -636,9 +613,7 @@ def _collect_corporation_contexts(
             )
             for corp_id in missing_corp_ids
         ]
-        created_settings = CorporationSharingSetting.objects.bulk_create(
-            new_settings, ignore_conflicts=True
-        )
+        created_settings = CorporationSharingSetting.objects.bulk_create(new_settings, ignore_conflicts=True)
         # Reload to get the created settings (in case of conflicts)
         for created_setting in created_settings:
             corp_settings[created_setting.corporation_id] = created_setting
@@ -646,9 +621,7 @@ def _collect_corporation_contexts(
         for corp_id in missing_corp_ids:
             if corp_id not in corp_settings:
                 try:
-                    corp_settings[corp_id] = CorporationSharingSetting.objects.get(
-                        user=user, corporation_id=corp_id
-                    )
+                    corp_settings[corp_id] = CorporationSharingSetting.objects.get(user=user, corporation_id=corp_id)
                 except CorporationSharingSetting.DoesNotExist:
                     pass
 
@@ -667,11 +640,7 @@ def _collect_corporation_contexts(
         setting = corp_settings.get(corp_id)
 
         char_id = ownership.character.character_id
-        base_qs = (
-            Token.objects.filter(character_id=char_id, user=user)
-            .require_valid()
-            .order_by("-created")
-        )
+        base_qs = Token.objects.filter(character_id=char_id, user=user).require_valid().order_by("-created")
 
         scope_groups: list[list[str]]
         if required_scopes:
@@ -679,9 +648,7 @@ def _collect_corporation_contexts(
             scope_groups = [base_scopes]
             for optional_scope in _OPTIONAL_CORPORATION_SCOPES:
                 if optional_scope in base_scopes:
-                    reduced = [
-                        scope for scope in base_scopes if scope != optional_scope
-                    ]
+                    reduced = [scope for scope in base_scopes if scope != optional_scope]
                     if reduced not in scope_groups:
                         scope_groups.append(reduced)
         else:
@@ -701,11 +668,7 @@ def _collect_corporation_contexts(
         if token_qs is None:
             continue
 
-        if (
-            setting
-            and setting.restricts_characters
-            and not setting.is_character_authorized(char_id)
-        ):
+        if setting and setting.restricts_characters and not setting.is_character_authorized(char_id):
             logger.debug(
                 "Character %s skipped for corporation %s: not whitelisted in Indy Hub",
                 char_id,
@@ -813,9 +776,7 @@ def _manual_refresh_cache_key(kind: str, user_id: int, scope: str | None = None)
     return f"{_MANUAL_REFRESH_CACHE_PREFIX}:{kind}:{user_id}:{scope_key}"
 
 
-def _queue_staggered_user_tasks(
-    task, user_ids: list[int], *, window_minutes: int, priority: int | None = None
-) -> int:
+def _queue_staggered_user_tasks(task, user_ids: list[int], *, window_minutes: int, priority: int | None = None) -> int:
     if not user_ids:
         return 0
 
@@ -848,9 +809,7 @@ def _record_manual_refresh(kind: str, user_id: int, scope: str | None = None) ->
     )
 
 
-def _remaining_manual_cooldown(
-    kind: str, user_id: int, scope: str | None = None
-) -> timedelta | None:
+def _remaining_manual_cooldown(kind: str, user_id: int, scope: str | None = None) -> timedelta | None:
     cached = cache.get(_manual_refresh_cache_key(kind, user_id, scope))
     if cached is None:
         return None
@@ -868,18 +827,14 @@ def _remaining_manual_cooldown(
     return remaining
 
 
-def manual_refresh_allowed(
-    kind: str, user_id: int, scope: str | None = None
-) -> tuple[bool, timedelta | None]:
+def manual_refresh_allowed(kind: str, user_id: int, scope: str | None = None) -> tuple[bool, timedelta | None]:
     remaining = _remaining_manual_cooldown(kind, user_id, scope)
     if remaining is None:
         return True, None
     return False, remaining
 
 
-def reset_manual_refresh_cooldown(
-    kind: str, user_id: int, scope: str | None = None
-) -> None:
+def reset_manual_refresh_cooldown(kind: str, user_id: int, scope: str | None = None) -> None:
     cache.delete(_manual_refresh_cache_key(kind, user_id, scope))
 
 
@@ -893,9 +848,7 @@ def queue_blueprint_update_for_user(
     kwargs = {}
     if scope:
         kwargs["scope"] = scope
-    update_blueprints_for_user.apply_async(
-        args=(user_id,), kwargs=kwargs, countdown=countdown, priority=priority
-    )
+    update_blueprints_for_user.apply_async(args=(user_id,), kwargs=kwargs, countdown=countdown, priority=priority)
 
 
 def queue_industry_job_update_for_user(
@@ -908,9 +861,7 @@ def queue_industry_job_update_for_user(
     kwargs = {}
     if scope:
         kwargs["scope"] = scope
-    update_industry_jobs_for_user.apply_async(
-        args=(user_id,), kwargs=kwargs, countdown=countdown, priority=priority
-    )
+    update_industry_jobs_for_user.apply_async(args=(user_id,), kwargs=kwargs, countdown=countdown, priority=priority)
 
 
 def request_manual_refresh(
@@ -996,11 +947,7 @@ def update_blueprints_for_user(
         logger.info("Skipping blueprint sync for inactive user %s", user.username)
         return {"success": True, "skipped": "inactive_user"}
 
-    if (
-        not force_refresh
-        and character_id is None
-        and _user_recent_blueprint_sync(user, now=now)
-    ):
+    if not force_refresh and character_id is None and _user_recent_blueprint_sync(user, now=now):
         logger.info(
             "Skipping blueprint sync for %s: updated within last %s minutes",
             user.username,
@@ -1040,16 +987,11 @@ def update_blueprints_for_user(
                 scope_label,
             )
     elif normalized_scope == "corporation":
-        message = (
-            "Skipped corporate blueprint synchronization for %s: missing permission"
-            % user.username
-        )
+        message = "Skipped corporate blueprint synchronization for %s: missing permission" % user.username
         logger.info(message)
         error_messages.append(message)
 
-    ownerships = (
-        CharacterOwnership.objects.filter(user=user) if process_characters else []
-    )
+    ownerships = CharacterOwnership.objects.filter(user=user) if process_characters else []
     if character_id and process_characters:
         ownerships = ownerships.filter(character__character_id=int(character_id))
     for ownership in ownerships:
@@ -1081,10 +1023,7 @@ def update_blueprints_for_user(
                     break
 
             if chosen_scopes is None:
-                message = (
-                    f"{character_name} ({char_id}) has no token for scopes "
-                    f"{', '.join(base_scopes)}"
-                )
+                message = f"{character_name} ({char_id}) has no token for scopes " f"{', '.join(base_scopes)}"
                 logger.debug(message)
                 continue
 
@@ -1246,7 +1185,9 @@ def update_blueprints_for_user(
                 error_messages.append(message)
                 continue
             except Exception as exc:  # pragma: no cover - unexpected
-                message = f"Unexpected error for corporation {corp_name} ({corp_id}) via {acting_character_name}: {exc}"
+                message = (
+                    f"Unexpected error for corporation {corp_name} ({corp_id}) via {acting_character_name}: {exc}"
+                )
                 logger.exception(message)
                 error_messages.append(message)
                 continue
@@ -1363,16 +1304,10 @@ def update_industry_jobs_for_user(
         now = timezone.now()
         _refresh_online_status_for_user(user, now=now)
         if not _is_user_active(user, now=now):
-            logger.info(
-                "Skipping industry jobs sync for inactive user %s", user.username
-            )
+            logger.info("Skipping industry jobs sync for inactive user %s", user.username)
             return {"success": True, "skipped": "inactive_user"}
 
-        if (
-            not force_refresh
-            and character_id is None
-            and _user_recent_job_sync(user, now=now)
-        ):
+        if not force_refresh and character_id is None and _user_recent_job_sync(user, now=now):
             logger.info(
                 "Skipping industry jobs sync for %s: updated within last %s minutes",
                 user.username,
@@ -1412,9 +1347,7 @@ def update_industry_jobs_for_user(
         elif character_id:
             ownerships = ownerships.filter(character__character_id=int(character_id))
 
-        if process_corporations and user.has_perm(
-            "indy_hub.can_manage_corp_bp_requests"
-        ):
+        if process_corporations and user.has_perm("indy_hub.can_manage_corp_bp_requests"):
             corp_contexts = _collect_corporation_contexts(user, CORP_JOBS_SCOPE_SET)
             logger.info(
                 "Detected corporation context (jobs) for %s: %s",
@@ -1428,10 +1361,7 @@ def update_industry_jobs_for_user(
                     scope_label,
                 )
         elif normalized_scope == "corporation":
-            message = (
-                "Corporate industry job sync skipped for %s due to missing permission"
-                % user.username
-            )
+            message = "Corporate industry job sync skipped for %s due to missing permission" % user.username
             logger.info(message)
             error_messages.append(message)
 
@@ -1439,11 +1369,7 @@ def update_industry_jobs_for_user(
             char_id = ownership.character.character_id
             character_name = get_character_name(char_id)
             try:
-                token_qs = (
-                    Token.objects.filter(character_id=char_id, user=user)
-                    .require_valid()
-                    .order_by("-created")
-                )
+                token_qs = Token.objects.filter(character_id=char_id, user=user).require_valid().order_by("-created")
 
                 chosen_scopes: list[str] | None = None
                 for scope_set in scope_preferences:
@@ -1568,9 +1494,7 @@ def update_industry_jobs_for_user(
 
                                     lookup_budget -= 1
                                     location_name = (
-                                        resolved_name
-                                        if resolved_name
-                                        else f"{PLACEHOLDER_PREFIX}{location_key}"
+                                        resolved_name if resolved_name else f"{PLACEHOLDER_PREFIX}{location_key}"
                                     )
                                     location_cache[location_key] = location_name
                                 else:
@@ -1632,16 +1556,10 @@ def update_industry_jobs_for_user(
                                 "end_date": end_date,
                                 "pause_date": pause_date,
                                 "completed_date": completed_date,
-                                "completed_character_id": job.get(
-                                    "completed_character_id"
-                                ),
+                                "completed_character_id": job.get("completed_character_id"),
                                 "successful_runs": job.get("successful_runs"),
-                                "blueprint_type_name": get_type_name(
-                                    job.get("blueprint_type_id")
-                                ),
-                                "product_type_name": get_type_name(
-                                    job.get("product_type_id")
-                                ),
+                                "blueprint_type_name": get_type_name(job.get("blueprint_type_id")),
+                                "product_type_name": get_type_name(job.get("product_type_id")),
                                 "character_name": character_name,
                             },
                         )
@@ -1721,7 +1639,9 @@ def update_industry_jobs_for_user(
                     )
                     continue
                 except ESITokenError as exc:
-                    message = f"Invalid token for corporation {corp_name} ({corp_id}) via {acting_character_name}: {exc}"
+                    message = (
+                        f"Invalid token for corporation {corp_name} ({corp_id}) via {acting_character_name}: {exc}"
+                    )
                     logger.warning(message)
                     error_messages.append(message)
                     continue
@@ -1739,7 +1659,9 @@ def update_industry_jobs_for_user(
                     error_messages.append(message)
                     continue
                 except Exception as exc:  # pragma: no cover - unexpected
-                    message = f"Unexpected error for corporation {corp_name} ({corp_id}) via {acting_character_name}: {exc}"
+                    message = (
+                        f"Unexpected error for corporation {corp_name} ({corp_id}) via {acting_character_name}: {exc}"
+                    )
                     logger.exception(message)
                     error_messages.append(message)
                     continue
@@ -1796,9 +1718,7 @@ def update_industry_jobs_for_user(
 
                                         lookup_budget -= 1
                                         location_name = (
-                                            resolved_name
-                                            if resolved_name
-                                            else f"{PLACEHOLDER_PREFIX}{location_key}"
+                                            resolved_name if resolved_name else f"{PLACEHOLDER_PREFIX}{location_key}"
                                         )
                                         location_cache[location_key] = location_name
                                     else:
@@ -1816,9 +1736,7 @@ def update_industry_jobs_for_user(
                             start_date = _coerce_job_datetime(job.get("start_date"))
                             end_date = _coerce_job_datetime(job.get("end_date"))
                             pause_date = _coerce_job_datetime(job.get("pause_date"))
-                            completed_date = _coerce_job_datetime(
-                                job.get("completed_date")
-                            )
+                            completed_date = _coerce_job_datetime(job.get("completed_date"))
 
                             if start_date is None:
                                 logger.warning(
@@ -1864,16 +1782,10 @@ def update_industry_jobs_for_user(
                                     "end_date": end_date,
                                     "pause_date": pause_date,
                                     "completed_date": completed_date,
-                                    "completed_character_id": job.get(
-                                        "completed_character_id"
-                                    ),
+                                    "completed_character_id": job.get("completed_character_id"),
                                     "successful_runs": job.get("successful_runs"),
-                                    "blueprint_type_name": get_type_name(
-                                        job.get("blueprint_type_id")
-                                    ),
-                                    "product_type_name": get_type_name(
-                                        job.get("product_type_id")
-                                    ),
+                                    "blueprint_type_name": get_type_name(job.get("blueprint_type_id")),
+                                    "product_type_name": get_type_name(job.get("product_type_id")),
                                 },
                             )
 
@@ -1959,21 +1871,14 @@ def cleanup_old_jobs():
     jobs_no_user.delete()
 
     # Jobs without character ownership (applies only to character-related jobs)
-    char_ids = set(
-        CharacterOwnership.objects.values_list("character__character_id", flat=True)
-    )
-    jobs_no_char = IndustryJob.objects.filter(character_id__isnull=False).exclude(
-        character_id__in=char_ids
-    )
+    char_ids = set(CharacterOwnership.objects.values_list("character__character_id", flat=True))
+    jobs_no_char = IndustryJob.objects.filter(character_id__isnull=False).exclude(character_id__in=char_ids)
     count_no_char = jobs_no_char.count()
     jobs_no_char.delete()
 
     # Jobs without a valid token (applies only to character-related jobs)
     token_pairs = {
-        (user_id, character_id)
-        for user_id, character_id in Token.objects.values_list(
-            "user_id", "character_id"
-        )
+        (user_id, character_id) for user_id, character_id in Token.objects.values_list("user_id", "character_id")
     }
 
     orphan_job_ids: list[int] = []
@@ -1986,9 +1891,7 @@ def cleanup_old_jobs():
 
     deleted_tokenless = 0
     if orphan_job_ids:
-        deleted_tokenless = IndustryJob.objects.filter(id__in=orphan_job_ids).delete()[
-            0
-        ]
+        deleted_tokenless = IndustryJob.objects.filter(id__in=orphan_job_ids).delete()[0]
 
     total_deleted = count_no_user + count_no_char + deleted_tokenless
     logger.info(
@@ -2010,6 +1913,7 @@ def cleanup_old_jobs():
 
 @shared_task
 def update_type_names():
+    # Django
     from django.apps import apps
 
     try:
@@ -2030,9 +1934,7 @@ def update_type_names():
 
     updated_blueprints = 0
     buffer = []
-    for bp in Blueprint.objects.only("id", "type_id", "type_name").iterator(
-        chunk_size=2000
-    ):
+    for bp in Blueprint.objects.only("id", "type_id", "type_name").iterator(chunk_size=2000):
         desired = type_map.get(int(bp.type_id))
         if desired and bp.type_name != desired:
             bp.type_name = desired
@@ -2088,9 +1990,7 @@ def update_type_names():
 
 @shared_task(bind=True, max_retries=0)
 @rate_limit_retry_task
-def populate_location_names_async(
-    self, location_ids=None, force_refresh=False, dry_run=False
-):
+def populate_location_names_async(self, location_ids=None, force_refresh=False, dry_run=False):
     """Populate location names for blueprints and industry jobs asynchronously."""
 
     logger.info(
@@ -2271,9 +2171,7 @@ def update_character_skill_snapshot_for_character(
         return {"status": "skipped", "reason": "operation_unavailable"}
 
     ownership = (
-        CharacterOwnership.objects.filter(
-            user_id=user_id, character__character_id=character_id
-        )
+        CharacterOwnership.objects.filter(user_id=user_id, character__character_id=character_id)
         .select_related("character", "user")
         .first()
     )
@@ -2300,15 +2198,10 @@ def update_character_skill_snapshot_for_character(
         )
         return {"status": "skipped", "reason": "token_missing"}
 
-    snapshot = IndustrySkillSnapshot.objects.filter(
-        character_id=int(character_id)
-    ).first()
+    snapshot = IndustrySkillSnapshot.objects.filter(character_id=int(character_id)).first()
     table_empty = not IndustrySkillSnapshot.objects.exists()
     now = timezone.now()
-    snapshot_stale = bool(
-        snapshot
-        and (now - snapshot.last_updated) >= timedelta(hours=SKILL_SNAPSHOT_STALE_HOURS)
-    )
+    snapshot_stale = bool(snapshot and (now - snapshot.last_updated) >= timedelta(hours=SKILL_SNAPSHOT_STALE_HOURS))
     if snapshot and not snapshot_stale:
         return {"status": "skipped", "reason": "fresh"}
 
@@ -2367,17 +2260,11 @@ def update_character_skill_snapshot_for_character(
         return active_level, trained_level
 
     mass_active, mass_trained = _extract_levels(SKILL_TYPE_IDS["mass_production"])
-    adv_mass_active, adv_mass_trained = _extract_levels(
-        SKILL_TYPE_IDS["advanced_mass_production"]
-    )
+    adv_mass_active, adv_mass_trained = _extract_levels(SKILL_TYPE_IDS["advanced_mass_production"])
     lab_active, lab_trained = _extract_levels(SKILL_TYPE_IDS["laboratory_operation"])
-    adv_lab_active, adv_lab_trained = _extract_levels(
-        SKILL_TYPE_IDS["advanced_laboratory_operation"]
-    )
+    adv_lab_active, adv_lab_trained = _extract_levels(SKILL_TYPE_IDS["advanced_laboratory_operation"])
     react_active, react_trained = _extract_levels(SKILL_TYPE_IDS["mass_reactions"])
-    adv_react_active, adv_react_trained = _extract_levels(
-        SKILL_TYPE_IDS["advanced_mass_reactions"]
-    )
+    adv_react_active, adv_react_trained = _extract_levels(SKILL_TYPE_IDS["advanced_mass_reactions"])
 
     defaults = {
         "mass_production_level": mass_active,
@@ -2422,9 +2309,7 @@ def update_user_skill_snapshots(
 
     user = User.objects.filter(id=user_id).first()
     if not user:
-        logger.info(
-            "Skipping skill snapshot refresh for user %s: user_missing", user_id
-        )
+        logger.info("Skipping skill snapshot refresh for user %s: user_missing", user_id)
         return {"queued": 0, "updated": 0, "skipped": 1, "failures": 0, "done": True}
     if not _is_user_active(user):
         logger.info("Skill snapshot refresh continuing for inactive user %s", user_id)
@@ -2444,9 +2329,7 @@ def update_user_skill_snapshots(
     if last_character_id:
         tokens = tokens.filter(character_id__gt=int(last_character_id))
     if not tokens:
-        logger.info(
-            "Skipping skill snapshot refresh for user %s: token_missing", user_id
-        )
+        logger.info("Skipping skill snapshot refresh for user %s: token_missing", user_id)
         return {"queued": 0, "updated": 0, "skipped": 1, "failures": 0, "done": True}
 
     character_ids = [int(character_id) for character_id in tokens[:batch_size]]
@@ -2454,9 +2337,7 @@ def update_user_skill_snapshots(
         return {"queued": 0, "updated": 0, "skipped": 0, "failures": 0, "done": True}
 
     for character_id in character_ids:
-        update_character_skill_snapshot_for_character.apply_async(
-            args=(int(user_id), int(character_id))
-        )
+        update_character_skill_snapshot_for_character.apply_async(args=(int(user_id), int(character_id)))
 
     if len(character_ids) == batch_size:
         update_user_skill_snapshots.apply_async(

@@ -36,9 +36,7 @@ class Migration(migrations.Migration):
                 ("is_blueprint", models.BooleanField(default=False)),
                 (
                     "synced_at",
-                    models.DateTimeField(
-                        db_index=True, default=django.utils.timezone.now
-                    ),
+                    models.DateTimeField(db_index=True, default=django.utils.timezone.now),
                 ),
                 (
                     "user",
@@ -56,9 +54,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="cachedcharacterasset",
-            index=models.Index(
-                fields=["user", "character_id"], name="cca_user_char_idx"
-            ),
+            index=models.Index(fields=["user", "character_id"], name="cca_user_char_idx"),
         ),
         migrations.AddIndex(
             model_name="cachedcharacterasset",

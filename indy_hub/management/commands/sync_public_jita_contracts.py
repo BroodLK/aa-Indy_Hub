@@ -5,6 +5,7 @@ import os
 from django.core.management.base import BaseCommand
 from django.db import connection
 
+# AA Example App
 # Local
 from indy_hub.models import PublicJitaContract, PublicJitaContractItem
 from indy_hub.services.public_contracts_store import (
@@ -83,9 +84,7 @@ class Command(BaseCommand):
         force = bool(options.get("force"))
         max_pages = max(1, int(options.get("max_pages") or 2000))
 
-        self.stdout.write(
-            f"Syncing Public Jita contracts (force={force}, max_pages={max_pages})..."
-        )
+        self.stdout.write(f"Syncing Public Jita contracts (force={force}, max_pages={max_pages})...")
 
         result = sync_public_jita_contract_cache(force=force, max_pages=max_pages)
         meta = get_public_jita_contract_cache_meta()

@@ -32,21 +32,26 @@ from ..models import (
     ProductionConfig,
     ProductionSimulation,
 )
-from ..utils.analytics import emit_view_analytics_event
-from ..utils.eve import get_type_name
-from ..utils.menu_badge import compute_menu_badge_count
-from ..services.public_contracts_store import (
-    get_public_jita_bpc_offers,
-    get_public_jita_contract_cache_meta,
-)
+from ..services.craft_materials import calculate_job_material_quantity
 from ..services.everef import (
     EVERefError,
     fetch_industry_cost,
     summarize_job_fees,
 )
-from ..services.craft_materials import calculate_job_material_quantity
 from ..services.industry_environment import resolve_craft_system_context
+from ..services.industry_skill_snapshots import (
+    build_slot_overview_rows,
+    fetch_character_skill_levels,
+    update_skill_snapshot,
+)
+from ..services.public_contracts_store import (
+    get_public_jita_bpc_offers,
+    get_public_jita_contract_cache_meta,
+)
 from ..tasks.industry import MANUAL_REFRESH_KIND_BLUEPRINTS, request_manual_refresh
+from ..utils.analytics import emit_view_analytics_event
+from ..utils.eve import get_type_name
+from ..utils.menu_badge import compute_menu_badge_count
 
 logger = get_extension_logger(__name__)
 
@@ -119,30 +124,18 @@ def _get_schedule_character_skill_levels(user, character_ids: list[int]) -> dict
         )
     }
     results: dict[int, dict[int, int]] = {
-        character_id: _normalize_snapshot_skill_levels(
-            getattr(snapshots.get(character_id), "skill_levels", {})
-        )
+        character_id: _normalize_snapshot_skill_levels(getattr(snapshots.get(character_id), "skill_levels", {}))
         for character_id in normalized_ids
     }
 
-    missing_character_ids = [
-        character_id
-        for character_id in normalized_ids
-        if not results.get(character_id)
-    ]
+    missing_character_ids = [character_id for character_id in normalized_ids if not results.get(character_id)]
     if not missing_character_ids:
-        return results
-
-    try:
-        from ..views.industry import _fetch_character_skill_levels, _update_skill_snapshot
-    except Exception as exc:
-        logger.warning("Unable to import industry skill refresh helpers: %s", exc)
         return results
 
     for character_id in missing_character_ids:
         try:
-            levels = _fetch_character_skill_levels(character_id)
-            snapshot = _update_skill_snapshot(user, character_id, levels)
+            levels = fetch_character_skill_levels(character_id)
+            snapshot = update_skill_snapshot(user, character_id, levels)
             results[character_id] = _normalize_snapshot_skill_levels(snapshot.skill_levels)
         except Exception as exc:
             logger.warning(
@@ -253,7 +246,9 @@ def craft_bp_payload(request, type_id: int):
         "1",
         "true",
         "yes",
-    } or str(request.GET.get("debug", "")).strip() in {"1", "true", "yes"}
+    } or str(
+        request.GET.get("debug", "")
+    ).strip() in {"1", "true", "yes"}
 
     try:
         num_runs = max(1, int(request.GET.get("runs", 1)))
@@ -269,13 +264,9 @@ def craft_bp_payload(request, type_id: int):
     except (TypeError, ValueError):
         te = 0
 
-    structure_bonus_raw = _parse_optional_float(
-        request.GET.get("build_structure_material_bonus")
-    )
+    structure_bonus_raw = _parse_optional_float(request.GET.get("build_structure_material_bonus"))
     rig_bonus_raw = _parse_optional_float(request.GET.get("build_rig_material_bonus"))
-    effective_bonus_raw = _parse_optional_float(
-        request.GET.get("build_effective_material_bonus")
-    )
+    effective_bonus_raw = _parse_optional_float(request.GET.get("build_effective_material_bonus"))
     structure_bonus = max(0.0, min(1.0, float(structure_bonus_raw or 0.0)))
     rig_bonus = max(0.0, min(1.0, float(rig_bonus_raw or 0.0)))
     if effective_bonus_raw is None:
@@ -645,11 +636,7 @@ def craft_build_environment(request):
         )
 
     if selected_structure_id is not None:
-        matching = [
-            row
-            for row in structures
-            if int(row.get("structure_id") or 0) == int(selected_structure_id)
-        ]
+        matching = [row for row in structures if int(row.get("structure_id") or 0) == int(selected_structure_id)]
         if not matching:
             selected_structure_id = None
 
@@ -747,11 +734,7 @@ def craft_sync_owned_bpcs(request):
     emit_view_analytics_event(view_name="api.craft_sync_owned_bpcs", request=request)
 
     try:
-        blueprint_tokens = (
-            Token.objects.filter(user=request.user)
-            .require_scopes(BLUEPRINT_SCOPE_SET)
-            .require_valid()
-        )
+        blueprint_tokens = Token.objects.filter(user=request.user).require_scopes(BLUEPRINT_SCOPE_SET).require_valid()
     except Exception:
         blueprint_tokens = Token.objects.none()
 
@@ -772,9 +755,7 @@ def craft_sync_owned_bpcs(request):
             priority=5,
         )
     except Exception as exc:
-        logger.exception(
-            "Failed to queue owned BPC refresh for user %s: %s", request.user.id, exc
-        )
+        logger.exception("Failed to queue owned BPC refresh for user %s: %s", request.user.id, exc)
         return JsonResponse(
             {
                 "scheduled": False,
@@ -827,9 +808,7 @@ def craft_industry_fees(request):
 
     raw_jobs = str(request.GET.get("jobs", "")).strip()
     if not raw_jobs:
-        return JsonResponse(
-            {"jobs": [], "total_job_cost": 0, "total_api_cost": 0, "errors": []}, status=200
-        )
+        return JsonResponse({"jobs": [], "total_job_cost": 0, "total_api_cost": 0, "errors": []}, status=200)
 
     jobs: list[tuple[int, int]] = []
     for raw in raw_jobs.split(","):
@@ -847,9 +826,7 @@ def craft_industry_fees(request):
         jobs.append((product_id, runs))
 
     if not jobs:
-        return JsonResponse(
-            {"jobs": [], "total_job_cost": 0, "total_api_cost": 0, "errors": []}, status=200
-        )
+        return JsonResponse({"jobs": [], "total_job_cost": 0, "total_api_cost": 0, "errors": []}, status=200)
 
     # Keep this bounded to avoid bursty fan-out.
     jobs = jobs[:40]
@@ -950,16 +927,19 @@ def craft_industry_fees(request):
         # Detect if this is a reaction or manufacturing blueprint
         # by checking which blueprint produces this product
         try:
+            # AA Example App
             from indy_hub.models import SdeIndustryActivityProduct
 
             # Try to find the blueprint for this product
-            blueprint_activity = SdeIndustryActivityProduct.objects.filter(
-                product_eve_type_id=product_id
-            ).values_list('eve_type_id', 'activity_id').first()
+            blueprint_activity = (
+                SdeIndustryActivityProduct.objects.filter(product_eve_type_id=product_id)
+                .values_list("eve_type_id", "activity_id")
+                .first()
+            )
 
             if blueprint_activity:
                 blueprint_id, activity_id = blueprint_activity
-                is_reaction = (activity_id == 11)  # 11 is reactions
+                is_reaction = activity_id == 11  # 11 is reactions
             else:
                 is_reaction = False
         except Exception:
@@ -1080,10 +1060,14 @@ def save_production_config(request):
             if not isinstance(ui_state, dict):
                 ui_state = {}
             if simulation_id:
-                simulation = ProductionSimulation.objects.select_for_update().filter(
-                    id=simulation_id,
-                    user=request.user,
-                ).first()
+                simulation = (
+                    ProductionSimulation.objects.select_for_update()
+                    .filter(
+                        id=simulation_id,
+                        user=request.user,
+                    )
+                    .first()
+                )
                 if simulation is None:
                     return JsonResponse({"error": "simulation not found"}, status=404)
                 if int(simulation.blueprint_type_id) != int(blueprint_type_id):
@@ -1095,9 +1079,7 @@ def save_production_config(request):
                 simulation = ProductionSimulation(
                     user=request.user,
                     blueprint_type_id=blueprint_type_id,
-                    blueprint_name=data.get(
-                        "blueprint_name", f"Blueprint {blueprint_type_id}"
-                    ),
+                    blueprint_name=data.get("blueprint_name", f"Blueprint {blueprint_type_id}"),
                     runs=runs,
                     simulation_name=data.get("simulation_name", ""),
                     active_tab=data.get("active_tab", "materials"),
@@ -1110,24 +1092,14 @@ def save_production_config(request):
 
             if not created:
                 # Update the existing simulation
-                simulation.blueprint_name = data.get(
-                    "blueprint_name", simulation.blueprint_name
-                )
+                simulation.blueprint_name = data.get("blueprint_name", simulation.blueprint_name)
                 simulation.runs = runs
-                simulation.simulation_name = data.get(
-                    "simulation_name", simulation.simulation_name
-                )
+                simulation.simulation_name = data.get("simulation_name", simulation.simulation_name)
                 simulation.active_tab = data.get("active_tab", simulation.active_tab)
                 simulation.ui_state = ui_state
-                simulation.estimated_cost = data.get(
-                    "estimated_cost", simulation.estimated_cost
-                )
-                simulation.estimated_revenue = data.get(
-                    "estimated_revenue", simulation.estimated_revenue
-                )
-                simulation.estimated_profit = data.get(
-                    "estimated_profit", simulation.estimated_profit
-                )
+                simulation.estimated_cost = data.get("estimated_cost", simulation.estimated_cost)
+                simulation.estimated_revenue = data.get("estimated_revenue", simulation.estimated_revenue)
+                simulation.estimated_profit = data.get("estimated_profit", simulation.estimated_profit)
             else:
                 simulation.save()
 
@@ -1276,9 +1248,7 @@ def load_production_config(request):
         )
 
     if simulation_id is None and not blueprint_type_id:
-        return JsonResponse(
-            {"error": "blueprint_type_id parameter required"}, status=400
-        )
+        return JsonResponse({"error": "blueprint_type_id parameter required"}, status=400)
 
     try:
         simulation = None  # Load the simulation if it exists
@@ -1422,8 +1392,7 @@ def convert_minerals_to_compressed_ore(request):
 
         # Perform calculation
         result = calculate_compressed_ore_for_minerals(
-            mineral_requirements=mineral_requirements,
-            refine_rate_percent=Decimal(str(refine_rate))
+            mineral_requirements=mineral_requirements, refine_rate_percent=Decimal(str(refine_rate))
         )
 
         # Convert Decimal values to float for JSON serialization
@@ -1473,9 +1442,7 @@ def get_character_slots(request):
     """
     try:
         characters = []
-        from ..views.industry import _build_slot_overview_rows
-
-        slot_rows = _build_slot_overview_rows(request.user, refresh_skills=False)
+        slot_rows = build_slot_overview_rows(request.user, refresh_skills=False)
         if slot_rows:
             for row in slot_rows:
                 manufacturing = row.get("manufacturing", {}) if isinstance(row, dict) else {}
@@ -1489,48 +1456,47 @@ def get_character_slots(request):
                     else available_manufacturing + used_manufacturing
                 )
 
-                characters.append({
-                    "character_id": int(row.get("character_id") or 0),
-                    "character_name": row.get("name") or f"Character {row.get('character_id')}",
-                    "skills_missing": bool(row.get("skills_missing")),
-                    "manufacturing_slots": available_manufacturing,
-                    "available_manufacturing_slots": available_manufacturing,
-                    "used_manufacturing_slots": used_manufacturing,
-                    "total_manufacturing_slots": total_manufacturing,
-                    "reaction_slots": int(reactions.get("available") or 0),
-                    "research_slots": int(research.get("available") or 0),
-                })
+                characters.append(
+                    {
+                        "character_id": int(row.get("character_id") or 0),
+                        "character_name": row.get("name") or f"Character {row.get('character_id')}",
+                        "skills_missing": bool(row.get("skills_missing")),
+                        "manufacturing_slots": available_manufacturing,
+                        "available_manufacturing_slots": available_manufacturing,
+                        "used_manufacturing_slots": used_manufacturing,
+                        "total_manufacturing_slots": total_manufacturing,
+                        "reaction_slots": int(reactions.get("available") or 0),
+                        "research_slots": int(research.get("available") or 0),
+                    }
+                )
         else:
             # Fallback to raw snapshots when no cached overview is available
-            snapshots = IndustrySkillSnapshot.objects.filter(
-                owner_user=request.user
-            ).select_related()
+            snapshots = IndustrySkillSnapshot.objects.filter(owner_user=request.user).select_related()
 
             for snapshot in snapshots:
                 character_name = f"Character {snapshot.character_id}"
                 try:
-                    token = Token.objects.filter(
-                        user=request.user,
-                        character_id=snapshot.character_id
-                    ).first()
+                    token = Token.objects.filter(user=request.user, character_id=snapshot.character_id).first()
                     if token:
                         character_name = token.character_name
                 except Exception:
                     pass
 
-                characters.append({
-                    "character_id": snapshot.character_id,
-                    "character_name": character_name,
-                    "skills_missing": False,
-                    "manufacturing_slots": snapshot.manufacturing_slots,
-                    "available_manufacturing_slots": snapshot.manufacturing_slots,
-                    "used_manufacturing_slots": 0,
-                    "total_manufacturing_slots": snapshot.manufacturing_slots,
-                    "reaction_slots": snapshot.reaction_slots,
-                    "research_slots": snapshot.research_slots,
-                })
+                characters.append(
+                    {
+                        "character_id": snapshot.character_id,
+                        "character_name": character_name,
+                        "skills_missing": False,
+                        "manufacturing_slots": snapshot.manufacturing_slots,
+                        "available_manufacturing_slots": snapshot.manufacturing_slots,
+                        "used_manufacturing_slots": 0,
+                        "total_manufacturing_slots": snapshot.manufacturing_slots,
+                        "reaction_slots": snapshot.reaction_slots,
+                        "research_slots": snapshot.research_slots,
+                    }
+                )
 
-        return JsonResponse({'characters': characters})
+        return JsonResponse({"characters": characters})
 
     except Exception as e:
         logger.error(f"Error fetching character slots: {e}")
@@ -1575,6 +1541,7 @@ def calculate_import_fees(request):
                 status=400,
             )
 
+        # AA Example App
         from indy_hub.services.freight_fees import calculate_import_fees
 
         result = calculate_import_fees(
@@ -1588,19 +1555,21 @@ def calculate_import_fees(request):
         if result is None:
             return JsonResponse({"route_exists": False})
 
-        return JsonResponse({
-            "route_exists": True,
-            "freight_cost": result["freight_cost"],
-            "route_name": result["route_name"],
-            "pricing_id": result["pricing_id"],
-            "issues": result["issues"],
-            "contract_count": result["contract_count"],
-            "contracts": result["contracts"],
-            "max_volume_m3": result["max_volume_m3"],
-            "max_collateral_isk": result["max_collateral_isk"],
-            "total_volume_m3": result["total_volume_m3"],
-            "total_collateral_isk": result["total_collateral_isk"],
-        })
+        return JsonResponse(
+            {
+                "route_exists": True,
+                "freight_cost": result["freight_cost"],
+                "route_name": result["route_name"],
+                "pricing_id": result["pricing_id"],
+                "issues": result["issues"],
+                "contract_count": result["contract_count"],
+                "contracts": result["contracts"],
+                "max_volume_m3": result["max_volume_m3"],
+                "max_collateral_isk": result["max_collateral_isk"],
+                "total_volume_m3": result["total_volume_m3"],
+                "total_collateral_isk": result["total_collateral_isk"],
+            }
+        )
 
     except Exception as e:
         logger.error(f"Error calculating import fees: {e}")
@@ -1661,13 +1630,13 @@ def calculate_build_schedule(request):
     """
     try:
         from ..services.build_scheduler import (
-            ManufacturingJob,
             IndustrySlot,
-            calculate_schedule_for_mode,
+            ManufacturingJob,
+            build_dependency_tree,
             calculate_manufacturing_time,
+            calculate_schedule_for_mode,
             get_base_manufacturing_time,
             get_blueprint_skill_requirements,
-            build_dependency_tree,
         )
 
         # Parse request body
@@ -1694,9 +1663,7 @@ def calculate_build_schedule(request):
         final_product_type_id = int(data.get("final_product_type_id", 0) or 0) or None
         component_target_days = float(data.get("component_target_days", 0) or 0)
         component_target_time_seconds = (
-            max(0, ceil(component_target_days * 86400))
-            if component_target_days > 0
-            else None
+            max(0, ceil(component_target_days * 86400)) if component_target_days > 0 else None
         )
 
         selected_character_ids = []
@@ -1810,11 +1777,7 @@ def calculate_build_schedule(request):
                     continue
 
                 for lane_index in range(slot_capacity):
-                    slot_name = (
-                        f"{character_name} #{lane_index + 1}"
-                        if slot_capacity > 1
-                        else character_name
-                    )
+                    slot_name = f"{character_name} #{lane_index + 1}" if slot_capacity > 1 else character_name
                     slots.append(
                         IndustrySlot(
                             slot_id=next_slot_id,

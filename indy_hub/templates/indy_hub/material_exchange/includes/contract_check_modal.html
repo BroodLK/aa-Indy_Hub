@@ -309,7 +309,11 @@ html[data-theme="darkly"] .contract-check-modal {
 }
 </style>
 
-<div class="modal fade contract-check-modal" id="contractCheckModal" tabindex="-1" aria-labelledby="contractCheckModalLabel" aria-hidden="true">
+<div class="modal fade contract-check-modal"
+     id="contractCheckModal"
+     tabindex="-1"
+     aria-labelledby="contractCheckModalLabel"
+     aria-hidden="true">
     <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header border-0 pb-0">
@@ -339,8 +343,15 @@ html[data-theme="darkly"] .contract-check-modal {
 
                     <div class="mb-3">
                         <div class="small text-muted mb-2" id="contractCheckOrderMeta"></div>
-                        <label class="form-label small fw-semibold" for="contractCheckTextarea">{% trans "Paste the full in-game contract export" %}</label>
-                        <textarea class="form-control" id="contractCheckTextarea" name="contract_text" rows="7" placeholder="{% trans 'Paste the copied contract data here...' %}" required></textarea>
+                        <label class="form-label small fw-semibold" for="contractCheckTextarea">
+                            {% trans "Paste the full in-game contract export" %}
+                        </label>
+                        <textarea class="form-control"
+                                  id="contractCheckTextarea"
+                                  name="contract_text"
+                                  rows="7"
+                                  placeholder="{% trans 'Paste the copied contract data here...' %}"
+                                  required></textarea>
                     </div>
 
                     <div id="contractCheckResult" class="d-none"></div>
@@ -369,8 +380,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function escapeHtml(value) {
         return String(value || '')
             .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
+            .replace(/</g , '&lt;') .replace( />/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
@@ -571,4 +581,3 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 </script>
-

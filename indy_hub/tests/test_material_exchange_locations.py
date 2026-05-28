@@ -101,12 +101,7 @@ class TestMaterialExchangeLocations(TestCase):
             },
         ]
 
-        assert (
-            get_office_folder_item_id_from_assets(
-                corp_assets, structure_id=1045667241057
-            )
-            == 1045722708748
-        )
+        assert get_office_folder_item_id_from_assets(corp_assets, structure_id=1045667241057) == 1045722708748
 
     def test_managed_hangar_location_id(self):
         assert make_managed_hangar_location_id(1045722708748, 7) == -10457227087487

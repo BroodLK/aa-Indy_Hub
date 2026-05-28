@@ -55,11 +55,7 @@ def clean_setting(
     ):
         return dirty_value
 
-    if (
-        isinstance(dirty_value, required_type_2)
-        and min_value is not None
-        and dirty_value < min_value
-    ):
+    if isinstance(dirty_value, required_type_2) and min_value is not None and dirty_value < min_value:
         logger.warning(
             "Setting %s is invalid. Using minimum value for now: %s",
             name,
@@ -67,11 +63,7 @@ def clean_setting(
         )
         return min_value
 
-    if (
-        isinstance(dirty_value, required_type_2)
-        and max_value is not None
-        and dirty_value > max_value
-    ):
+    if isinstance(dirty_value, required_type_2) and max_value is not None and dirty_value > max_value:
         logger.warning(
             "Setting %s is invalid. Using maximum value for now: %s",
             name,

@@ -69,29 +69,32 @@ class MaterialExchangeBuyMultibuyParseTests(TestCase):
         return resolved
 
     def test_parse_sell_estimate_input_supports_leading_quantity_format(self):
+        # Standard Library
         from unittest.mock import patch
 
         with patch(
             "indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts",
             side_effect=self._resolve_type_ids,
         ):
-            rows, invalid_lines = _parse_sell_estimate_input(
-                "10 Tritanium\nPyerite 5\n3 Tritanium\nBad Line"
-            )
+            rows, invalid_lines = _parse_sell_estimate_input("10 Tritanium\nPyerite 5\n3 Tritanium\nBad Line")
 
         rows_by_type = {int(row["type_id"]): int(row["quantity"]) for row in rows}
         self.assertEqual(rows_by_type, {34: 13, 35: 5})
         self.assertEqual(invalid_lines, ["Bad Line"])
 
     def test_buy_multibuy_parse_endpoint_returns_type_ids_and_invalid_lines(self):
+        # Standard Library
         from unittest.mock import patch
 
-        with patch(
-            "indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts",
-            side_effect=self._resolve_type_ids,
-        ), patch(
-            "indy_hub.views.material_exchange._get_type_name_map",
-            return_value={34: "Tritanium", 35: "Pyerite"},
+        with (
+            patch(
+                "indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts",
+                side_effect=self._resolve_type_ids,
+            ),
+            patch(
+                "indy_hub.views.material_exchange._get_type_name_map",
+                return_value={34: "Tritanium", 35: "Pyerite"},
+            ),
         ):
             response = self.client.post(
                 reverse("indy_hub:material_exchange_buy_multibuy_parse"),
@@ -111,14 +114,18 @@ class MaterialExchangeBuyMultibuyParseTests(TestCase):
         )
 
     def test_sell_multibuy_parse_endpoint_returns_type_ids_and_invalid_lines(self):
+        # Standard Library
         from unittest.mock import patch
 
-        with patch(
-            "indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts",
-            side_effect=self._resolve_type_ids,
-        ), patch(
-            "indy_hub.views.material_exchange._get_type_name_map",
-            return_value={34: "Tritanium", 35: "Pyerite"},
+        with (
+            patch(
+                "indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts",
+                side_effect=self._resolve_type_ids,
+            ),
+            patch(
+                "indy_hub.views.material_exchange._get_type_name_map",
+                return_value={34: "Tritanium", 35: "Pyerite"},
+            ),
         ):
             response = self.client.post(
                 reverse("indy_hub:material_exchange_sell_multibuy_parse"),

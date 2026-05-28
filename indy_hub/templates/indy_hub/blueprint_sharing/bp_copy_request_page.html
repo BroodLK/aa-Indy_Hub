@@ -1,228 +1,267 @@
 {% extends "indy_hub/base.html" %}
 {% load i18n %}
 {% load static %}
-{% block page_title %}{% trans "Request Blueprint Copy" %}{% endblock %}
+{% block page_title %}
+    {% trans "Request Blueprint Copy" %}
+{% endblock %}
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/bp_copy_list.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/bp_copy_list.css' %}">
 {% endblock %}
 {% block content %}
-<div class="container-fluid py-4">
-    {# Page Header #}
-    <div class="page-header mb-4">
-        <i class="fas fa-copy header-bg"></i>
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-copy me-2"></i>
-                    {% trans "Request Blueprint Copy" %}
-                </h2>
-                <p class="description mb-0">{% trans "Browse shared originals and request the copies you need." %}</p>
-            </div>
-            <div class="d-flex gap-2">
-                <a href="{% url 'indy_hub:bp_copy_my_requests' %}" class="btn btn-outline-light d-flex align-items-center justify-content-center">
-                    <i class="fas fa-list me-1"></i>{% trans "My Requests" %}
-                </a>
-                <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light d-flex align-items-center justify-content-center">
-                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
-                </a>
-            </div>
-        </div>
-    </div>
-
-    {# Results Counter & Filters #}
-    <section class="mb-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-            <div class="bp-request-counter">
-                <span class="text-muted small">
-                    <i class="fas fa-filter me-1"></i>
-                    <strong>{{ page_obj.paginator.count }}</strong> {% trans "blueprint(s)" %}
-                </span>
-            </div>
-            <div class="bp-request-sort">
-                <span class="bp-request-sort__label me-2">
-                    <i class="fas fa-sort me-1"></i>{% trans "Order by:" %}
-                </span>
-                <div class="btn-group btn-group-sm" role="group">
-                    <button type="button" id="sort-name" class="btn btn-outline-secondary active" onclick="sortBlueprints('name')">
-                        <i class="fas fa-sort-alpha-down me-1"></i>{% trans "Name" %}
-                    </button>
-                    <button type="button" id="sort-me" class="btn btn-outline-secondary" onclick="sortBlueprints('me')">
-                        <i class="fas fa-industry me-1"></i>{% trans "ME" %}
-                    </button>
-                    <button type="button" id="sort-te" class="btn btn-outline-secondary" onclick="sortBlueprints('te')">
-                        <i class="fas fa-stopwatch me-1"></i>{% trans "TE" %}
-                    </button>
+    <div class="container-fluid py-4">
+        {# Page Header #}
+        <div class="page-header mb-4">
+            <i class="fas fa-copy header-bg"></i>
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-copy me-2"></i>
+                        {% trans "Request Blueprint Copy" %}
+                    </h2>
+                    <p class="description mb-0">{% trans "Browse shared originals and request the copies you need." %}</p>
                 </div>
-            </div>
-        </div>
-
-        <div class="bp-request-filters">
-            <form method="get" class="bp-request-filters__form">
-                <div class="bp-request-filters__inputs">
-                    <div class="bp-request-filters__field">
-                        <label for="bp-request-search" class="bp-request-filters__label">
-                            <i class="fas fa-search me-1"></i>{% trans "Search" %}
-                        </label>
-                        <input type="text" id="bp-request-search" name="search" value="{{ search }}" class="form-control" placeholder="{% trans 'Blueprint name...' %}">
-                    </div>
-                    <div class="bp-request-filters__field">
-                        <label for="bp-request-min-me" class="bp-request-filters__label">
-                            <i class="fas fa-industry me-1"></i>{% trans "Min ME" %}
-                        </label>
-                        <select id="bp-request-min-me" name="min_me" class="form-select">
-                            <option value="">{% trans 'All' %}</option>
-                            {% for me in me_options %}
-                            <option value="{{ me }}" {% if min_me|stringformat:'s' == me|stringformat:'s' %}selected{% endif %}>{{ me }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="bp-request-filters__field">
-                        <label for="bp-request-min-te" class="bp-request-filters__label">
-                            <i class="fas fa-stopwatch me-1"></i>{% trans "Min TE" %}
-                        </label>
-                        <select id="bp-request-min-te" name="min_te" class="form-select">
-                            <option value="">{% trans 'All' %}</option>
-                            {% for te in te_options %}
-                            <option value="{{ te }}" {% if min_te|stringformat:'s' == te|stringformat:'s' %}selected{% endif %}>{{ te }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                </div>
-                <div class="bp-request-filters__actions">
-                    <button type="button" class="btn btn-warning" onclick="setMaxedOnly()">
-                        <i class="fas fa-star me-1"></i>{% trans "Maxed Only" %}
-                    </button>
-                    <a href="{% url 'indy_hub:bp_copy_request_page' %}" class="btn btn-outline-secondary">
-                        <i class="fas fa-undo me-1"></i>{% trans "Reset" %}
+                <div class="d-flex gap-2">
+                    <a href="{% url 'indy_hub:bp_copy_my_requests' %}"
+                       class="btn btn-outline-light d-flex align-items-center justify-content-center">
+                        <i class="fas fa-list me-1"></i>{% trans "My Requests" %}
+                    </a>
+                    <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light d-flex align-items-center justify-content-center">
+                        <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
                     </a>
                 </div>
-            </form>
+            </div>
         </div>
-    </section>
 
-    {# Blueprint Grid #}
-    <section class="bp-request-grid">
-        {% if page_obj.object_list %}
-        <div class="bp-request-grid__container">
-            {% for bp in page_obj.object_list %}
-            <div class="bp-request-card">
-                <form method="post" class="d-flex flex-column h-100 gap-2">
-                    {% csrf_token %}
-                    <input type="hidden" name="type_id" value="{{ bp.type_id }}">
-                    <input type="hidden" name="material_efficiency" value="{{ bp.material_efficiency }}">
-                    <input type="hidden" name="time_efficiency" value="{{ bp.time_efficiency }}">
+        {# Results Counter & Filters #}
+        <section class="mb-4">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+                <div class="bp-request-counter">
+                    <span class="text-muted small">
+                        <i class="fas fa-filter me-1"></i>
+                        <strong>{{ page_obj.paginator.count }}</strong> {% trans "blueprint(s)" %}
+                    </span>
+                </div>
+                <div class="bp-request-sort">
+                    <span class="bp-request-sort__label me-2">
+                        <i class="fas fa-sort me-1"></i>{% trans "Order by:" %}
+                    </span>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" id="sort-name" class="btn btn-outline-secondary active" onclick="sortBlueprints('name')">
+                            <i class="fas fa-sort-alpha-down me-1"></i>{% trans "Name" %}
+                        </button>
+                        <button type="button" id="sort-me" class="btn btn-outline-secondary" onclick="sortBlueprints('me')">
+                            <i class="fas fa-industry me-1"></i>{% trans "ME" %}
+                        </button>
+                        <button type="button" id="sort-te" class="btn btn-outline-secondary" onclick="sortBlueprints('te')">
+                            <i class="fas fa-stopwatch me-1"></i>{% trans "TE" %}
+                        </button>
+                    </div>
+                </div>
+            </div>
 
-                    {# Blueprint Info #}
-                    <div class="bp-request-card__header">
-                        <img
-                            src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
-                            alt="{{ bp.display_name }}"
-                            loading="lazy"
-                            class="bp-request-card__icon"
-                            onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ bp.type_id }}/icon?size=64'"
-                        >
-                        <div class="bp-request-card__info flex-grow-1 min-w-0">
-                            <h3 class="bp-request-card__title text-truncate" title="{{ bp.display_name }}">{{ bp.display_name }}</h3>
-                            <div class="bp-request-card__specs d-flex gap-1 flex-wrap">
-                                <span class="spec-badge spec-badge--green spec-badge--compact">
-                                    <i class="fas fa-industry"></i> {{ bp.material_efficiency }}
-                                </span>
-                                <span class="spec-badge spec-badge--green spec-badge--compact">
-                                    <i class="fas fa-stopwatch"></i> {{ bp.time_efficiency }}
-                                </span>
-                            </div>
+            <div class="bp-request-filters">
+                <form method="get" class="bp-request-filters__form">
+                    <div class="bp-request-filters__inputs">
+                        <div class="bp-request-filters__field">
+                            <label for="bp-request-search" class="bp-request-filters__label">
+                                <i class="fas fa-search me-1"></i>{% trans "Search" %}
+                            </label>
+                            <input type="text"
+                                   id="bp-request-search"
+                                   name="search"
+                                   value="{{ search }}"
+                                   class="form-control"
+                                   placeholder="{% trans 'Blueprint name...' %}">
+                        </div>
+                        <div class="bp-request-filters__field">
+                            <label for="bp-request-min-me" class="bp-request-filters__label">
+                                <i class="fas fa-industry me-1"></i>{% trans "Min ME" %}
+                            </label>
+                            <select id="bp-request-min-me" name="min_me" class="form-select">
+                                <option value="">{% trans 'All' %}</option>
+                                {% for me in me_options %}
+                                    <option value="{{ me }}" {% if min_me|stringformat:'s' == me|stringformat:'s' %}selected{% endif %}>{{ me }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="bp-request-filters__field">
+                            <label for="bp-request-min-te" class="bp-request-filters__label">
+                                <i class="fas fa-stopwatch me-1"></i>{% trans "Min TE" %}
+                            </label>
+                            <select id="bp-request-min-te" name="min_te" class="form-select">
+                                <option value="">{% trans 'All' %}</option>
+                                {% for te in te_options %}
+                                    <option value="{{ te }}" {% if min_te|stringformat:'s' == te|stringformat:'s' %}selected{% endif %}>{{ te }}</option>
+                                {% endfor %}
+                            </select>
                         </div>
                     </div>
-
-                    {# Input Fields #}
-                    <div class="bp-request-card__inputs flex-grow-1 d-flex flex-column gap-2">
-                        <div class="bp-request-card__inputs-row">
-                            <div class="bp-request-card__input-group">
-                                <label class="bp-request-card__input-label">{% trans "Copies" %}</label>
-                                <input type="number" name="copies_requested" min="1" value="1" class="form-control form-control-sm text-center" placeholder="1">
-                            </div>
-                            <div class="bp-request-card__input-group">
-                                <label class="bp-request-card__input-label">{% trans "Runs" %}</label>
-                                <input type="number" name="runs_requested" min="1" value="1" class="form-control form-control-sm text-center" placeholder="1">
-                            </div>
-                        </div>
+                    <div class="bp-request-filters__actions">
+                        <button type="button" class="btn btn-warning" onclick="setMaxedOnly()">
+                            <i class="fas fa-star me-1"></i>{% trans "Maxed Only" %}
+                        </button>
+                        <a href="{% url 'indy_hub:bp_copy_request_page' %}" class="btn btn-outline-secondary">
+                            <i class="fas fa-undo me-1"></i>{% trans "Reset" %}
+                        </a>
                     </div>
-
-                    {# Action Button #}
-                    <button type="submit" class="btn btn-sm bp-action bp-action--request w-100">
-                        <i class="fas fa-paper-plane me-1"></i>{% trans "Request" %}
-                    </button>
                 </form>
             </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="bp-request-empty">
-            <i class="fas fa-search"></i>
-            <h3>{% trans "No blueprints found" %}</h3>
-            <p>{% trans "Try adjusting your filters." %}</p>
-        </div>
-        {% endif %}
-    </section>
+        </section>
 
-    {# Pagination #}
-    {% if page_obj.has_other_pages %}
-    <nav aria-label="{% trans 'Blueprint pagination' %}" class="mt-4">
-        <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
-            <div class="d-flex align-items-center gap-2">
-                <label for="bp-request-per-page" class="form-label mb-0 small text-muted">
-                    <i class="fas fa-list-ol me-1"></i>{% trans "Per page" %}
-                </label>
-                <select id="bp-request-per-page" name="per_page" class="form-select form-select-sm" style="width: auto;" onchange="window.location.href='?page=1&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page=' + this.value">
-                    {% for pp in per_page_options %}
-                    <option value="{{ pp }}" {% if per_page|stringformat:'s' == pp|stringformat:'s' %}selected{% endif %}>{{ pp }}</option>
+        {# Blueprint Grid #}
+        <section class="bp-request-grid">
+            {% if page_obj.object_list %}
+                <div class="bp-request-grid__container">
+                    {% for bp in page_obj.object_list %}
+                        <div class="bp-request-card">
+                            <form method="post" class="d-flex flex-column h-100 gap-2">
+                                {% csrf_token %}
+                                <input type="hidden" name="type_id" value="{{ bp.type_id }}">
+                                <input type="hidden" name="material_efficiency" value="{{ bp.material_efficiency }}">
+                                <input type="hidden" name="time_efficiency" value="{{ bp.time_efficiency }}">
+
+                                {# Blueprint Info #}
+                                <div class="bp-request-card__header">
+                                    <img src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
+                                         alt="{{ bp.display_name }}"
+                                         loading="lazy"
+                                         class="bp-request-card__icon"
+                                         onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ bp.type_id }}/icon?size=64'">
+                                    <div class="bp-request-card__info flex-grow-1 min-w-0">
+                                        <h3 class="bp-request-card__title text-truncate" title="{{ bp.display_name }}">{{ bp.display_name }}</h3>
+                                        <div class="bp-request-card__specs d-flex gap-1 flex-wrap">
+                                            <span class="spec-badge spec-badge--green spec-badge--compact">
+                                                <i class="fas fa-industry"></i> {{ bp.material_efficiency }}
+                                            </span>
+                                            <span class="spec-badge spec-badge--green spec-badge--compact">
+                                                <i class="fas fa-stopwatch"></i> {{ bp.time_efficiency }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {# Input Fields #}
+                                <div class="bp-request-card__inputs flex-grow-1 d-flex flex-column gap-2">
+                                    <div class="bp-request-card__inputs-row">
+                                        <div class="bp-request-card__input-group">
+                                            <label class="bp-request-card__input-label">{% trans "Copies" %}</label>
+                                            <input type="number"
+                                                   name="copies_requested"
+                                                   min="1"
+                                                   value="1"
+                                                   class="form-control form-control-sm text-center"
+                                                   placeholder="1">
+                                        </div>
+                                        <div class="bp-request-card__input-group">
+                                            <label class="bp-request-card__input-label">{% trans "Runs" %}</label>
+                                            <input type="number" name="runs_requested" min="1" value="1" class="form-control form-control-sm text-center" placeholder="1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {# Action Button #}
+                                <button type="submit" class="btn btn-sm bp-action bp-action--request w-100">
+                                    <i class="fas fa-paper-plane me-1"></i>{% trans "Request" %}
+                                </button>
+                            </form>
+                        </div>
                     {% endfor %}
-                </select>
-            </div>
-        </div>
-        <div class="d-flex justify-content-center">
-        <ul class="pagination mb-0">
-            {% if page_obj.number == 1 %}
-            <li class="page-item disabled"><span class="page-link">{% trans "First" %}</span></li>
+                </div>
             {% else %}
-            <li class="page-item"><a class="page-link" href="?page=1&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "First" %}</a></li>
+                <div class="bp-request-empty">
+                    <i class="fas fa-search"></i>
+                    <h3>{% trans "No blueprints found" %}</h3>
+                    <p>{% trans "Try adjusting your filters." %}</p>
+                </div>
             {% endif %}
+        </section>
 
-            {% if page_obj.has_previous %}
-            <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "Previous" %}</a></li>
-            {% else %}
-            <li class="page-item disabled"><span class="page-link">{% trans "Previous" %}</span></li>
-            {% endif %}
+        {# Pagination #}
+        {% if page_obj.has_other_pages %}
+            <nav aria-label="{% trans 'Blueprint pagination' %}" class="mt-4">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <label for="bp-request-per-page" class="form-label mb-0 small text-muted">
+                            <i class="fas fa-list-ol me-1"></i>{% trans "Per page" %}
+                        </label>
+                        <select id="bp-request-per-page"
+                                name="per_page"
+                                class="form-select form-select-sm"
+                                style="width: auto"
+                                onchange="window.location.href='?page=1&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page=' + this.value">
+                            {% for pp in per_page_options %}
+                                <option value="{{ pp }}" {% if per_page|stringformat:'s' == pp|stringformat:'s' %}selected{% endif %}>
+                                    {{ pp }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-center">
+                    <ul class="pagination mb-0">
+                        {% if page_obj.number == 1 %}
+                            <li class="page-item disabled">
+                                <span class="page-link">{% trans "First" %}</span>
+                            </li>
+                        {% else %}
+                            <li class="page-item">
+                                <a class="page-link" href="?page=1&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "First" %}</a>
+                            </li>
+                        {% endif %}
 
-            {% for item in page_range %}
-                {% if item == "…" %}
-                <li class="page-item disabled"><span class="page-link">…</span></li>
-                {% else %}
-                <li class="page-item {% if page_obj.number == item %}active{% endif %}">
-                    <a class="page-link" href="?page={{ item }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{{ item }}</a>
-                </li>
-                {% endif %}
-            {% endfor %}
+                        {% if page_obj.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link"
+                                   href="?page={{ page_obj.previous_page_number }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "Previous" %}</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link">{% trans "Previous" %}</span>
+                            </li>
+                        {% endif %}
 
-            {% if page_obj.has_next %}
-            <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "Next" %}</a></li>
-            {% else %}
-            <li class="page-item disabled"><span class="page-link">{% trans "Next" %}</span></li>
-            {% endif %}
+                        {% for item in page_range %}
+                            {% if item == "…" %}
+                                <li class="page-item disabled">
+                                    <span class="page-link">…</span>
+                                </li>
+                            {% else %}
+                                <li class="page-item {% if page_obj.number == item %}active{% endif %}">
+                                    <a class="page-link"
+                                       href="?page={{ item }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{{ item }}</a>
+                                </li>
+                            {% endif %}
+                        {% endfor %}
 
-            {% if page_obj.number == page_obj.paginator.num_pages %}
-            <li class="page-item disabled"><span class="page-link">{% trans "Last" %}</span></li>
-            {% else %}
-            <li class="page-item"><a class="page-link" href="?page={{ page_obj.paginator.num_pages }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "Last" %}</a></li>
-            {% endif %}
-        </ul>
-        </div>
-    </nav>
-    {% endif %}
-</div>
+                        {% if page_obj.has_next %}
+                            <li class="page-item">
+                                <a class="page-link"
+                                   href="?page={{ page_obj.next_page_number }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "Next" %}</a>
+                            </li>
+                        {% else %}
+                            <li class="page-item disabled">
+                                <span class="page-link">{% trans "Next" %}</span>
+                            </li>
+                        {% endif %}
 
-<script>
+                        {% if page_obj.number == page_obj.paginator.num_pages %}
+                            <li class="page-item disabled">
+                                <span class="page-link">{% trans "Last" %}</span>
+                            </li>
+                        {% else %}
+                            <li class="page-item">
+                                <a class="page-link"
+                                   href="?page={{ page_obj.paginator.num_pages }}&search={{ search }}&min_me={{ min_me }}&min_te={{ min_te }}&per_page={{ per_page }}">{% trans "Last" %}</a>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </nav>
+        {% endif %}
+    </div>
+
+    <script>
 function sortBlueprints(sortBy) {
     const container = document.querySelector('.bp-request-grid__container');
     if (!container) return;
@@ -285,5 +324,5 @@ function setMaxedOnly() {
     document.getElementById('bp-request-min-te').value = '20';
     document.querySelector('.bp-request-filters__form').submit();
 }
-</script>
+    </script>
 {% endblock %}

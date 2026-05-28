@@ -57,27 +57,19 @@ class Command(BaseCommand):
                 self.stdout.write(f"Processing user: {options['user']}")
                 logger.info("Processing cache pre-load for user %s.", options["user"])
             except User.DoesNotExist:
-                self.stdout.write(
-                    self.style.ERROR(f"User '{options['user']}' not found")
-                )
+                self.stdout.write(self.style.ERROR(f"User '{options['user']}' not found"))
                 logger.warning("User %s not found for cache pre-load.", options["user"])
                 return
         elif options["all"]:
             # Get all users who have blueprints or jobs
             user_ids = set()
-            user_ids.update(
-                Blueprint.objects.values_list("owner_user_id", flat=True).distinct()
-            )
-            user_ids.update(
-                IndustryJob.objects.values_list("owner_user_id", flat=True).distinct()
-            )
+            user_ids.update(Blueprint.objects.values_list("owner_user_id", flat=True).distinct())
+            user_ids.update(IndustryJob.objects.values_list("owner_user_id", flat=True).distinct())
             users = User.objects.filter(id__in=user_ids)
             self.stdout.write(f"Processing {users.count()} users with data")
             logger.info("Processing cache pre-load for %s users.", users.count())
         else:
-            self.stdout.write(
-                self.style.ERROR("Please specify --user <username> or --all")
-            )
+            self.stdout.write(self.style.ERROR("Please specify --user <username> or --all"))
             logger.warning("Cache pre-load aborted: no target user(s) specified.")
             return
 
@@ -96,18 +88,14 @@ class Command(BaseCommand):
                 )
                 blueprint_type_ids = [bp.type_id for bp in blueprints if bp.type_id]
                 total_type_ids.update(blueprint_type_ids)
-                self.stdout.write(
-                    f"  Found {len(blueprint_type_ids)} blueprint type IDs"
-                )
+                self.stdout.write(f"  Found {len(blueprint_type_ids)} blueprint type IDs")
 
             if not options["types_only"]:
                 blueprints = Blueprint.objects.filter(
                     owner_user=user,
                     owner_kind=Blueprint.OwnerKind.CHARACTER,
                 )
-                blueprint_character_ids = [
-                    bp.character_id for bp in blueprints if bp.character_id
-                ]
+                blueprint_character_ids = [bp.character_id for bp in blueprints if bp.character_id]
                 total_character_ids.update(blueprint_character_ids)
 
             # Get industry job data
@@ -117,34 +105,20 @@ class Command(BaseCommand):
             )
 
             if not options["characters_only"]:
-                job_blueprint_type_ids = [
-                    job.blueprint_type_id for job in jobs if job.blueprint_type_id
-                ]
-                job_product_type_ids = [
-                    job.product_type_id for job in jobs if job.product_type_id
-                ]
+                job_blueprint_type_ids = [job.blueprint_type_id for job in jobs if job.blueprint_type_id]
+                job_product_type_ids = [job.product_type_id for job in jobs if job.product_type_id]
                 total_type_ids.update(job_blueprint_type_ids)
                 total_type_ids.update(job_product_type_ids)
-                self.stdout.write(
-                    f"  Found {len(job_blueprint_type_ids)} job blueprint type IDs"
-                )
-                self.stdout.write(
-                    f"  Found {len(job_product_type_ids)} job product type IDs"
-                )
+                self.stdout.write(f"  Found {len(job_blueprint_type_ids)} job blueprint type IDs")
+                self.stdout.write(f"  Found {len(job_product_type_ids)} job product type IDs")
 
             if not options["types_only"]:
-                job_character_ids = [
-                    job.character_id for job in jobs if job.character_id
-                ]
+                job_character_ids = [job.character_id for job in jobs if job.character_id]
                 total_character_ids.update(job_character_ids)
 
         # Cache the data
         if total_type_ids and not options["characters_only"]:
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"Caching {len(total_type_ids)} unique type names..."
-                )
-            )
+            self.stdout.write(self.style.SUCCESS(f"Caching {len(total_type_ids)} unique type names..."))
             logger.info("Caching %s unique type names.", len(total_type_ids))
             try:
                 batch_cache_type_names(list(total_type_ids))
@@ -153,11 +127,7 @@ class Command(BaseCommand):
                 raise
 
         if total_character_ids and not options["types_only"]:
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"Caching {len(total_character_ids)} unique character names..."
-                )
-            )
+            self.stdout.write(self.style.SUCCESS(f"Caching {len(total_character_ids)} unique character names..."))
             logger.info("Caching %s unique character names.", len(total_character_ids))
             try:
                 batch_cache_character_names(list(total_character_ids))
@@ -165,9 +135,7 @@ class Command(BaseCommand):
                 logger.exception("Failed to cache character names: %s", exc)
                 raise
 
-        self.stdout.write(
-            self.style.SUCCESS("ESI cache pre-loading completed successfully!")
-        )
+        self.stdout.write(self.style.SUCCESS("ESI cache pre-loading completed successfully!"))
         self.stdout.write(
             self.style.SUCCESS(
                 f"Cached {len(total_type_ids)} type names and {len(total_character_ids)} character names"

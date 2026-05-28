@@ -1,9 +1,11 @@
+# Standard Library
 from decimal import Decimal
 
+# Django
+import django.db.models.deletion
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import migrations, models
-import django.db.models.deletion
 
 
 class Migration(migrations.Migration):
@@ -165,12 +167,18 @@ class Migration(migrations.Migration):
                 ("structure_name", models.CharField(blank=True, max_length=255)),
                 ("structure_type_name", models.CharField(blank=True, max_length=255)),
                 ("structure_location_name", models.CharField(blank=True, max_length=255)),
-                ("margin_percent_snapshot", models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=6)),
+                (
+                    "margin_percent_snapshot",
+                    models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=6),
+                ),
                 (
                     "estimated_yield_percent_snapshot",
                     models.DecimalField(decimal_places=3, default=Decimal("0.000"), max_digits=6),
                 ),
-                ("estimated_output_value", models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=20)),
+                (
+                    "estimated_output_value",
+                    models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=20),
+                ),
                 ("reward_isk", models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=20)),
                 (
                     "tolerance_percent",
@@ -284,7 +292,9 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="reprocessingserviceprofile",
-            index=models.Index(fields=["estimated_yield_percent", "margin_percent"], name="indy_hub_re_estima_7c7564_idx"),
+            index=models.Index(
+                fields=["estimated_yield_percent", "margin_percent"], name="indy_hub_re_estima_7c7564_idx"
+            ),
         ),
         migrations.AddIndex(
             model_name="reprocessingservicerequest",

@@ -10,6 +10,8 @@ Test settings
 
 from .base import *
 
+from allianceauth.utils import cache as allianceauth_cache
+
 PACKAGE = "indy_hub"
 
 # Static files (CSS, JavaScript, Images)
@@ -62,6 +64,26 @@ LOGGING = {
 }
 NOTIFICATIONS_REFRESH_TIME = 30
 NOTIFICATIONS_MAX_PER_USER = 50
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "indy-hub-test-cache",
+    }
+}
+
+
+class _TestRedisClient:
+    def ping(self):
+        return False
+
+    def info(self):
+        return {"redis_version": "7.0.0"}
+
+
+allianceauth_cache.get_redis_client = lambda: _TestRedisClient()
+
+BROKER_URL = "memory://"
 
 
 # if os.environ.get("USE_MYSQL", True) is True:

@@ -105,10 +105,7 @@ async def resolve_weekly_mining_poll(bot, run_id: int) -> None:
             )
             return
 
-        display_to_base = {
-            display: base
-            for base, display in zip(run.option_labels, run.display_option_labels)
-        }
+        display_to_base = {display: base for base, display in zip(run.option_labels, run.display_option_labels)}
         vote_counts = {option: 0 for option in run.option_labels}
         for answer in poll.answers:
             option_label = display_to_base.get(answer.text, answer.text)

@@ -3,220 +3,214 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "My Orders" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "My Orders" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_my_orders.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_my_orders.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="page-header mb-4">
-        <i class="fas fa-list-alt header-bg"></i>
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-list-alt me-2"></i>
-                    {% trans "My Orders" %}
-                </h2>
-                <p class="description mb-0">
-                    {% trans "Track every buy and sell order in one streamlined view." %}
-                </p>
-            </div>
-            <div class="d-flex flex-wrap gap-2 justify-content-end">
-                <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success">
-                    <i class="fas fa-hand-holding-usd me-1"></i>{% trans "Sell Materials" %}
-                </a>
-                <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info">
-                    <i class="fas fa-shopping-cart me-1"></i>{% trans "Buy Materials" %}
-                </a>
-                <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light">
-                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Hub" %}
-                </a>
-            </div>
-        </div>
-    </div>
-
-    <!-- Summary tiles -->
-    <div class="row g-3 mb-4">
-        <div class="col-md-6">
-            <div class="metric-tile bg-gradient-success">
+    <div class="container-fluid py-4">
+        <div class="page-header mb-4">
+            <i class="fas fa-list-alt header-bg"></i>
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
                 <div>
-                    <p class="label text-success mb-1">
-                        <i class="fas fa-hand-holding-usd me-2"></i>{% trans "Sell Orders" %}
-                    </p>
-                    <div class="metric-value text-success">{{ total_sell }}</div>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-list-alt me-2"></i>
+                        {% trans "My Orders" %}
+                    </h2>
+                    <p class="description mb-0">{% trans "Track every buy and sell order in one streamlined view." %}</p>
                 </div>
-                <div class="metric-icon text-success">
-                    <i class="fas fa-arrow-trend-up"></i>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="metric-tile bg-gradient-info">
-                <div>
-                    <p class="label text-info mb-1">
-                        <i class="fas fa-shopping-cart me-2"></i>{% trans "Buy Orders" %}
-                    </p>
-                    <div class="metric-value text-info">{{ total_buy }}</div>
-                </div>
-                <div class="metric-icon text-info">
-                    <i class="fas fa-bag-shopping"></i>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    {% if page_obj.object_list %}
-        <div class="orders-panel">
-            <div class="orders-head d-none d-lg-grid">
-                <span>{% trans "Type" %}</span>
-                <span>{% trans "Items" %}</span>
-                <span>{% trans "Value" %}</span>
-                <span>{% trans "Progress" %}</span>
-                <span class="text-end">{% trans "Action" %}</span>
-            </div>
-
-            {% for item in page_obj %}
-                <div class="order-row">
-                    <div class="order-type">
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="pill pill-{{ item.type|lower }}">
-                                {% if item.type == 'sell' %}
-                                    <i class="fas fa-arrow-up"></i> {% trans "Sell" %}
-                                {% else %}
-                                    <i class="fas fa-arrow-down"></i> {% trans "Buy" %}
-                                {% endif %}
-                            </span>
-                            <span class="status-chip {{ item.status_class }}">{{ item.status }}</span>
-                        </div>
-                        <small class="text-muted d-block mt-1">
-                            <i class="far fa-clock me-1"></i>{{ item.created_at|date:"Y-m-d H:i" }}
-                        </small>
-                    </div>
-
-                    <div class="order-items">
-                        <div class="value">{{ item.items_count }}</div>
-                    </div>
-
-                    <div class="order-total">
-                        <div class="value text-warning">{{ item.total_price|floatformat:2|intcomma }} ISK</div>
-                    </div>
-
-                    <div class="order-progress-modern" style="--progress-width: {{ item.progress_width }};">
-                        <div class="progress-track"></div>
-                        <div class="progress-fill"></div>
-                        <div class="steps">
-                            {% for step in item.timeline_breadcrumb %}
-                                <span class="step {% if step.completed %}done{% endif %}" title="{{ step.status }}">
-                                    <i class="fas {{ step.icon }}"></i>
-                                </span>
-                            {% endfor %}
-                        </div>
-                    </div>
-
-                    <div class="order-action text-end">
-                        {% if item.type == 'sell' %}
-                            <div class="d-inline-flex flex-wrap gap-2 justify-content-end">
-                            <a href="{% url 'indy_hub:sell_order_detail' item.id %}" class="btn btn-sm btn-outline-success">
-                                <i class="fas fa-eye me-1"></i>{% trans "View" %}
-                            </a>
-                            {% if item.contract_check_enabled %}
-                                <button
-                                    type="button"
-                                    class="btn btn-sm btn-outline-secondary"
-                                    data-contract-check-trigger="true"
-                                    data-check-url="{% url 'indy_hub:sell_order_check_contract' item.id %}"
-                                    data-order-ref="{{ item.reference }}"
-                                    data-recipient="{{ item.contract_check_recipient }}"
-                                    data-location="{{ item.contract_check_location }}"
-                                    data-amount="{{ item.contract_check_amount|floatformat:0|intcomma }}"
-                                    data-amount-raw="{{ item.contract_check_amount|floatformat:0 }}"
-                                    data-amount-label="{{ item.contract_check_amount_label }}"
-                                >
-                                    <i class="fas fa-magnifying-glass me-1"></i>{% trans "Check Contract" %}
-                                </button>
-                            {% endif %}
-                            </div>
-                        {% else %}
-                            <div class="d-inline-flex flex-wrap gap-2 justify-content-end">
-                            <a href="{% url 'indy_hub:buy_order_detail' item.id %}" class="btn btn-sm btn-outline-info">
-                                <i class="fas fa-eye me-1"></i>{% trans "View" %}
-                            </a>
-                            {% if item.contract_check_enabled %}
-                                <button
-                                    type="button"
-                                    class="btn btn-sm btn-outline-secondary"
-                                    data-contract-check-trigger="true"
-                                    data-check-url="{% url 'indy_hub:buy_order_check_contract' item.id %}"
-                                    data-order-ref="{{ item.reference }}"
-                                    data-recipient="{{ item.contract_check_recipient }}"
-                                    data-location="{{ item.contract_check_location }}"
-                                    data-amount="{{ item.contract_check_amount|floatformat:0|intcomma }}"
-                                    data-amount-raw="{{ item.contract_check_amount|floatformat:0 }}"
-                                    data-amount-label="{{ item.contract_check_amount_label }}"
-                                >
-                                    <i class="fas fa-magnifying-glass me-1"></i>{% trans "Check Contract" %}
-                                </button>
-                            {% endif %}
-                            </div>
-                        {% endif %}
-                    </div>
-                </div>
-            {% endfor %}
-        </div>
-
-        {% if page_obj.has_other_pages %}
-            <div class="d-flex justify-content-center mt-4">
-                <nav>
-                    <ul class="pagination">
-                        {% if page_obj.has_previous %}
-                            <li class="page-item">
-                                <a class="page-link" href="?page=1">{% trans "First" %}</a>
-                            </li>
-                            <li class="page-item">
-                                <a class="page-link" href="?page={{ page_obj.previous_page_number }}">{% trans "Previous" %}</a>
-                            </li>
-                        {% endif %}
-
-                        <li class="page-item active">
-                            <span class="page-link">
-                                {% trans "Page" %} {{ page_obj.number }} {% trans "of" %} {{ page_obj.paginator.num_pages }}
-                            </span>
-                        </li>
-
-                        {% if page_obj.has_next %}
-                            <li class="page-item">
-                                <a class="page-link" href="?page={{ page_obj.next_page_number }}">{% trans "Next" %}</a>
-                            </li>
-                            <li class="page-item">
-                                <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}">{% trans "Last" %}</a>
-                            </li>
-                        {% endif %}
-                    </ul>
-                </nav>
-            </div>
-        {% endif %}
-    {% else %}
-        <div class="card">
-            <div class="card-body text-center py-5">
-                <i class="fas fa-inbox fa-4x text-muted mb-3"></i>
-                <h4 class="text-muted">{% trans "No orders yet" %}</h4>
-                <p class="text-muted mb-4">
-                    {% trans "Start by creating a sell or buy order" %}
-                </p>
-                <div class="d-flex gap-2 justify-content-center">
+                <div class="d-flex flex-wrap gap-2 justify-content-end">
                     <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success">
                         <i class="fas fa-hand-holding-usd me-1"></i>{% trans "Sell Materials" %}
                     </a>
                     <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info">
                         <i class="fas fa-shopping-cart me-1"></i>{% trans "Buy Materials" %}
                     </a>
+                    <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light">
+                        <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Hub" %}
+                    </a>
                 </div>
             </div>
         </div>
-    {% endif %}
-</div>
-{% include "indy_hub/material_exchange/includes/contract_check_modal.html" %}
+
+        <!-- Summary tiles -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <div class="metric-tile bg-gradient-success">
+                    <div>
+                        <p class="label text-success mb-1">
+                            <i class="fas fa-hand-holding-usd me-2"></i>{% trans "Sell Orders" %}
+                        </p>
+                        <div class="metric-value text-success">{{ total_sell }}</div>
+                    </div>
+                    <div class="metric-icon text-success">
+                        <i class="fas fa-arrow-trend-up"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="metric-tile bg-gradient-info">
+                    <div>
+                        <p class="label text-info mb-1">
+                            <i class="fas fa-shopping-cart me-2"></i>{% trans "Buy Orders" %}
+                        </p>
+                        <div class="metric-value text-info">{{ total_buy }}</div>
+                    </div>
+                    <div class="metric-icon text-info">
+                        <i class="fas fa-bag-shopping"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if page_obj.object_list %}
+            <div class="orders-panel">
+                <div class="orders-head d-none d-lg-grid">
+                    <span>{% trans "Type" %}</span>
+                    <span>{% trans "Items" %}</span>
+                    <span>{% trans "Value" %}</span>
+                    <span>{% trans "Progress" %}</span>
+                    <span class="text-end">{% trans "Action" %}</span>
+                </div>
+
+                {% for item in page_obj %}
+                    <div class="order-row">
+                        <div class="order-type">
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="pill pill-{{ item.type|lower }}">
+                                    {% if item.type == 'sell' %}
+                                        <i class="fas fa-arrow-up"></i> {% trans "Sell" %}
+                                    {% else %}
+                                        <i class="fas fa-arrow-down"></i> {% trans "Buy" %}
+                                    {% endif %}
+                                </span>
+                                <span class="status-chip {{ item.status_class }}">{{ item.status }}</span>
+                            </div>
+                            <small class="text-muted d-block mt-1">
+                                <i class="far fa-clock me-1"></i>{{ item.created_at|date:"Y-m-d H:i" }}
+                            </small>
+                        </div>
+
+                        <div class="order-items">
+                            <div class="value">{{ item.items_count }}</div>
+                        </div>
+
+                        <div class="order-total">
+                            <div class="value text-warning">{{ item.total_price|floatformat:2|intcomma }} ISK</div>
+                        </div>
+
+                        <div class="order-progress-modern" style="--progress-width: {{ item.progress_width }};">
+                            <div class="progress-track"></div>
+                            <div class="progress-fill"></div>
+                            <div class="steps">
+                                {% for step in item.timeline_breadcrumb %}
+                                    <span class="step {% if step.completed %}done{% endif %}" title="{{ step.status }}">
+                                        <i class="fas {{ step.icon }}"></i>
+                                    </span>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <div class="order-action text-end">
+                            {% if item.type == 'sell' %}
+                                <div class="d-inline-flex flex-wrap gap-2 justify-content-end">
+                                    <a href="{% url 'indy_hub:sell_order_detail' item.id %}" class="btn btn-sm btn-outline-success">
+                                        <i class="fas fa-eye me-1"></i>{% trans "View" %}
+                                    </a>
+                                    {% if item.contract_check_enabled %}
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary"
+                                                data-contract-check-trigger="true"
+                                                data-check-url="{% url 'indy_hub:sell_order_check_contract' item.id %}"
+                                                data-order-ref="{{ item.reference }}"
+                                                data-recipient="{{ item.contract_check_recipient }}"
+                                                data-location="{{ item.contract_check_location }}"
+                                                data-amount="{{ item.contract_check_amount|floatformat:0|intcomma }}"
+                                                data-amount-raw="{{ item.contract_check_amount|floatformat:0 }}"
+                                                data-amount-label="{{ item.contract_check_amount_label }}">
+                                            <i class="fas fa-magnifying-glass me-1"></i>{% trans "Check Contract" %}
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <div class="d-inline-flex flex-wrap gap-2 justify-content-end">
+                                    <a href="{% url 'indy_hub:buy_order_detail' item.id %}" class="btn btn-sm btn-outline-info">
+                                        <i class="fas fa-eye me-1"></i>{% trans "View" %}
+                                    </a>
+                                    {% if item.contract_check_enabled %}
+                                        <button type="button"
+                                                class="btn btn-sm btn-outline-secondary"
+                                                data-contract-check-trigger="true"
+                                                data-check-url="{% url 'indy_hub:buy_order_check_contract' item.id %}"
+                                                data-order-ref="{{ item.reference }}"
+                                                data-recipient="{{ item.contract_check_recipient }}"
+                                                data-location="{{ item.contract_check_location }}"
+                                                data-amount="{{ item.contract_check_amount|floatformat:0|intcomma }}"
+                                                data-amount-raw="{{ item.contract_check_amount|floatformat:0 }}"
+                                                data-amount-label="{{ item.contract_check_amount_label }}">
+                                            <i class="fas fa-magnifying-glass me-1"></i>{% trans "Check Contract" %}
+                                        </button>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+
+            {% if page_obj.has_other_pages %}
+                <div class="d-flex justify-content-center mt-4">
+                    <nav>
+                        <ul class="pagination">
+                            {% if page_obj.has_previous %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?page=1">{% trans "First" %}</a>
+                                </li>
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ page_obj.previous_page_number }}">{% trans "Previous" %}</a>
+                                </li>
+                            {% endif %}
+
+                            <li class="page-item active">
+                                <span class="page-link">
+                                    {% trans "Page" %} {{ page_obj.number }} {% trans "of" %} {{ page_obj.paginator.num_pages }}
+                                </span>
+                            </li>
+
+                            {% if page_obj.has_next %}
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ page_obj.next_page_number }}">{% trans "Next" %}</a>
+                                </li>
+                                <li class="page-item">
+                                    <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}">{% trans "Last" %}</a>
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                </div>
+            {% endif %}
+        {% else %}
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <i class="fas fa-inbox fa-4x text-muted mb-3"></i>
+                    <h4 class="text-muted">{% trans "No orders yet" %}</h4>
+                    <p class="text-muted mb-4">{% trans "Start by creating a sell or buy order" %}</p>
+                    <div class="d-flex gap-2 justify-content-center">
+                        <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success">
+                            <i class="fas fa-hand-holding-usd me-1"></i>{% trans "Sell Materials" %}
+                        </a>
+                        <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info">
+                            <i class="fas fa-shopping-cart me-1"></i>{% trans "Buy Materials" %}
+                        </a>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+    {% include "indy_hub/material_exchange/includes/contract_check_modal.html" %}
 {% endblock content %}

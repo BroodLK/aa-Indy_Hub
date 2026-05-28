@@ -64,9 +64,7 @@ class Migration(migrations.Migration):
                         name="indy_hub_pr_user_id_e25480_idx",
                     ),
                 ],
-                "unique_together": {
-                    ("user", "blueprint_type_id", "item_type_id", "runs")
-                },
+                "unique_together": {("user", "blueprint_type_id", "item_type_id", "runs")},
             },
         ),
     ]

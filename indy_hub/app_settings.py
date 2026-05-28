@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 # AA Example App
-from indy_hub.utils.settings import clean_setting
-
 from indy_hub import __esi_compatibility_date__
+from indy_hub.utils.settings import clean_setting
 
 DISCORD_DM_ENABLED = clean_setting(
     "INDY_HUB_DISCORD_DM_ENABLED",

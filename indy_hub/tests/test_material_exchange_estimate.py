@@ -69,9 +69,7 @@ class MaterialExchangeSellEstimateTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Get an Estimate")
         self.assertContains(response, 'id="sellEstimateModal"')
-        self.assertContains(
-            response, reverse("indy_hub:material_exchange_sell_estimate")
-        )
+        self.assertContains(response, reverse("indy_hub:material_exchange_sell_estimate"))
 
     @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
     @patch("indy_hub.views.material_exchange._compute_effective_sell_unit_price")
@@ -118,9 +116,7 @@ class MaterialExchangeSellEstimateTests(TestCase):
             return Decimal("0"), Decimal("0"), False
 
         mock_resolve_type_ids.side_effect = resolve_type_side_effect
-        mock_get_type_name.side_effect = lambda type_id: type_name_map.get(
-            int(type_id), f"Type {type_id}"
-        )
+        mock_get_type_name.side_effect = lambda type_id: type_name_map.get(int(type_id), f"Type {type_id}")
         mock_fetch_prices.return_value = {
             34: {"buy": Decimal("4.00"), "sell": Decimal("4.20")},
             35: {"buy": Decimal("8.00"), "sell": Decimal("8.40")},
@@ -142,9 +138,7 @@ class MaterialExchangeSellEstimateTests(TestCase):
         self.assertEqual(payload["rounded_estimated_total"], "80")
         self.assertEqual(payload["invalid_lines"], ["Unknown Item 3"])
 
-        rows_by_type = {
-            int(row["type_id"]): row for row in payload.get("items", [])
-        }
+        rows_by_type = {int(row["type_id"]): row for row in payload.get("items", [])}
         self.assertEqual(
             rows_by_type[34]["accepted_locations"],
             ["Alpha Citadel", "Beta Citadel"],
@@ -170,16 +164,17 @@ class MaterialExchangeSellEstimateTests(TestCase):
             35: "Pyerite",
         }.get(int(type_id), f"Type {type_id}")
         mock_resolve_type_ids.side_effect = lambda values: {
-            str(value).strip().lower(): {
+            str(value)
+            .strip()
+            .lower(): {
                 "tritanium": 34,
                 "pyerite": 35,
-            }.get(str(value).strip().lower())
+            }
+            .get(str(value).strip().lower())
             for value in values
         }
 
-        rows, invalid_lines = _parse_sell_estimate_input(
-            "Tritanium\t10\nTritanium 15\nPyerite 3\nInvalidLine"
-        )
+        rows, invalid_lines = _parse_sell_estimate_input("Tritanium\t10\nTritanium 15\nPyerite 3\nInvalidLine")
 
         rows_by_type = {int(row["type_id"]): int(row["quantity"]) for row in rows}
         self.assertEqual(rows_by_type, {34: 25, 35: 3})
@@ -197,18 +192,19 @@ class MaterialExchangeSellEstimateTests(TestCase):
         mock_allowed_ids,
     ):
         mock_resolve_type_ids.side_effect = lambda values: {
-            str(value).strip().lower(): {
+            str(value)
+            .strip()
+            .lower(): {
                 "tritanium": 34,
-            }.get(str(value).strip().lower())
+            }
+            .get(str(value).strip().lower())
             for value in values
         }
         mock_get_type_name.side_effect = lambda type_id: {
             34: "Tritanium",
         }.get(int(type_id), f"Type {type_id}")
         mock_allowed_ids.return_value = {34}
-        mock_fetch_prices.side_effect = AssertionError(
-            "estimate endpoint should not call live Fuzzwork"
-        )
+        mock_fetch_prices.side_effect = AssertionError("estimate endpoint should not call live Fuzzwork")
 
         MaterialExchangeStock.objects.create(
             config=self.config,
@@ -230,9 +226,7 @@ class MaterialExchangeSellEstimateTests(TestCase):
         self.assertEqual(payload["estimated_total"], "40.00")
         self.assertEqual(payload["rounded_estimated_total"], "40")
 
-        rows_by_type = {
-            int(row["type_id"]): row for row in payload.get("items", [])
-        }
+        rows_by_type = {int(row["type_id"]): row for row in payload.get("items", [])}
         self.assertEqual(rows_by_type[34]["unit_price"], "4.00")
         self.assertEqual(rows_by_type[34]["total_price"], "40.00")
         self.assertEqual(rows_by_type[34]["status"], "ok")
@@ -250,18 +244,19 @@ class MaterialExchangeSellEstimateTests(TestCase):
         mock_allowed_ids,
     ):
         mock_resolve_type_ids.side_effect = lambda values: {
-            str(value).strip().lower(): {
+            str(value)
+            .strip()
+            .lower(): {
                 "tritanium": 34,
-            }.get(str(value).strip().lower())
+            }
+            .get(str(value).strip().lower())
             for value in values
         }
         mock_get_type_name.side_effect = lambda type_id: {
             34: "Tritanium",
         }.get(int(type_id), f"Type {type_id}")
         mock_allowed_ids.return_value = {34}
-        mock_fetch_prices.return_value = {
-            34: {"buy": Decimal("5.00"), "sell": Decimal("6.00")}
-        }
+        mock_fetch_prices.return_value = {34: {"buy": Decimal("5.00"), "sell": Decimal("6.00")}}
 
         response = self.client.post(
             reverse("indy_hub:material_exchange_sell_estimate"),

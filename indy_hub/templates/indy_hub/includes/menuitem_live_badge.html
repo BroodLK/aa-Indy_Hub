@@ -2,12 +2,13 @@
 {% load navactive %}
 
 <li>
-    <a class="{% navactive request item.navactive|join:' ' %}" href="{% url item.url_name %}" data-indy-hub-menu="1" data-indy-hub-badge-url="{% url 'indy_hub:menu_badge_count' %}">
+    <a class="{% navactive request item.navactive|join:' ' %}"
+       href="{% url item.url_name %}"
+       data-indy-hub-menu="1"
+       data-indy-hub-badge-url="{% url 'indy_hub:menu_badge_count' %}">
         <i class="{{ item.classes }}"></i> {% translate item.text %}
 
-        {% if item.count != None %}
-            <span class="badge" data-indy-hub-badge="1">{{ item.count }}</span>
-        {% endif %}
+        {% if item.count != None %}<span class="badge" data-indy-hub-badge="1">{{ item.count }}</span>{% endif %}
     </a>
 </li>
 <script>

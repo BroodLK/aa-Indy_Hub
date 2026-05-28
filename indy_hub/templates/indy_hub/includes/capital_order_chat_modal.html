@@ -36,14 +36,13 @@
                 <form class="bp-chat-form" data-chat-form>
                     {% csrf_token %}
                     <label for="bpChatInput" class="visually-hidden">{% trans "Message" %}</label>
-                    <input
-                        id="bpChatInput"
-                        class="form-control bp-chat-input"
-                        maxlength="2000"
-                        autocomplete="off"
-                        placeholder="{% trans 'Type your message...' %}"
-                        data-chat-input
-                        required>
+                    <input id="bpChatInput"
+                           class="form-control bp-chat-input"
+                           maxlength="2000"
+                           autocomplete="off"
+                           placeholder="{% trans 'Type your message...' %}"
+                           data-chat-input
+                           required>
                     <button type="submit" class="btn btn-primary bp-chat-send">
                         <i class="fas fa-paper-plane me-1"></i>{% trans "Send" %}
                     </button>

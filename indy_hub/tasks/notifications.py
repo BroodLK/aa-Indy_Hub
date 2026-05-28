@@ -105,9 +105,7 @@ def dispatch_job_notification_digests() -> dict[str, int]:
             title, body, thumbnail_url = build_digest_notification_body(visible_rows)
         except ValueError:
             title = _("Industry jobs summary")
-            body = _(
-                "Jobs were completed, but no details were captured for this digest."
-            )
+            body = _("Jobs were completed, but no details were captured for this digest.")
             thumbnail_url = None
 
         remaining_count = len(payload_rows) - len(visible_rows)
@@ -140,9 +138,7 @@ def dispatch_job_notification_digests() -> dict[str, int]:
 
         settings.jobs_last_digest_at = sent_at
         settings.schedule_next_digest(reference=sent_at)
-        settings.save(
-            update_fields=["jobs_last_digest_at", "jobs_next_digest_at", "updated_at"]
-        )
+        settings.save(update_fields=["jobs_last_digest_at", "jobs_next_digest_at", "updated_at"])
         processed += 1
 
     for corp_setting in corp_eligible_settings:
@@ -191,9 +187,7 @@ def dispatch_job_notification_digests() -> dict[str, int]:
             title, body, thumbnail_url = build_digest_notification_body(visible_rows)
         except ValueError:
             title = _("Corporation jobs summary")
-            body = _(
-                "Jobs were completed, but no details were captured for this digest."
-            )
+            body = _("Jobs were completed, but no details were captured for this digest.")
             thumbnail_url = None
 
         remaining_count = len(payload_rows) - len(visible_rows)

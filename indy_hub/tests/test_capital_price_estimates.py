@@ -13,6 +13,7 @@ from django.urls import reverse
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
+# AA Example App
 # Local
 from indy_hub.models import MaterialExchangeConfig
 from indy_hub.services.capital_price_estimates import (
@@ -226,9 +227,7 @@ class CapitalPriceEstimateCostingTests(TestCase):
         self.assertEqual(stats["types_priced"], 1)
 
     @patch("indy_hub.services.capital_price_estimates.get_public_jita_bpc_offers")
-    @patch(
-        "indy_hub.services.capital_price_estimates._requires_blueprint_copy_cost_for_capital_hull"
-    )
+    @patch("indy_hub.services.capital_price_estimates._requires_blueprint_copy_cost_for_capital_hull")
     @patch("indy_hub.services.capital_price_estimates.fetch_fuzzwork_prices")
     @patch("indy_hub.services.capital_price_estimates._get_blueprint_output_qty")
     @patch("indy_hub.services.capital_price_estimates._get_blueprint_material_rows")
@@ -262,9 +261,7 @@ class CapitalPriceEstimateCostingTests(TestCase):
         self.assertEqual(stats["types_priced_with_bpc"], 1)
 
     @patch("indy_hub.services.capital_price_estimates.get_public_jita_bpc_offers")
-    @patch(
-        "indy_hub.services.capital_price_estimates._requires_blueprint_copy_cost_for_capital_hull"
-    )
+    @patch("indy_hub.services.capital_price_estimates._requires_blueprint_copy_cost_for_capital_hull")
     @patch("indy_hub.services.capital_price_estimates.fetch_fuzzwork_prices")
     @patch("indy_hub.services.capital_price_estimates._get_blueprint_output_qty")
     @patch("indy_hub.services.capital_price_estimates._get_blueprint_material_rows")
@@ -302,9 +299,7 @@ class CapitalPriceEstimateFallbackTests(TestCase):
             corporation_id=1234,
             structure_id=60003760,
             is_active=True,
-            capital_ship_estimated_price_overrides=[
-                {"type_id": 19720, "price_isk": "3600000000.00"}
-            ],
+            capital_ship_estimated_price_overrides=[{"type_id": 19720, "price_isk": "3600000000.00"}],
             capital_ship_auto_estimated_prices=[
                 {
                     "type_id": 19720,
@@ -405,9 +400,7 @@ class CapitalOrderConfigViewTests(TestCase):
             corporation_id=1234,
             structure_id=60003760,
             is_active=True,
-            capital_ship_estimated_price_overrides=[
-                {"type_id": 19720, "price_isk": "3600000000.00"}
-            ],
+            capital_ship_estimated_price_overrides=[{"type_id": 19720, "price_isk": "3600000000.00"}],
             capital_ship_auto_estimated_prices=[
                 {
                     "type_id": 19720,

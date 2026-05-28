@@ -8,9 +8,9 @@ from django.test import TestCase
 # AA Example App
 from indy_hub.views.material_exchange_config import (
     MARKET_GROUP_CHOICE_DEPTH,
+    _get_industry_market_group_choice_ids,
     _get_market_group_search_index_for_ids,
     _get_market_group_tree,
-    _get_industry_market_group_choice_ids,
     _normalize_market_group_ids_for_choice_depth,
 )
 
@@ -123,23 +123,15 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         }
 
         tree = _get_market_group_tree()
-        manufacture_node = next(
-            node for node in tree if node.get("label") == "Manufacture & Research"
-        )
+        manufacture_node = next(node for node in tree if node.get("label") == "Manufacture & Research")
         components_node = next(
-            child
-            for child in (manufacture_node.get("children") or [])
-            if child.get("label") == "Components"
+            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Components"
         )
         materials_node = next(
-            child
-            for child in (manufacture_node.get("children") or [])
-            if child.get("label") == "Materials"
+            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Materials"
         )
         research_node = next(
-            child
-            for child in (manufacture_node.get("children") or [])
-            if child.get("label") == "Research Equipment"
+            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Research Equipment"
         )
 
         self.assertTrue(components_node["expandable"])
@@ -159,30 +151,18 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         }
 
         tree = _get_market_group_tree()
-        manufacture_node = next(
-            node for node in tree if node.get("label") == "Manufacture & Research"
-        )
+        manufacture_node = next(node for node in tree if node.get("label") == "Manufacture & Research")
         materials_node = next(
-            child
-            for child in (manufacture_node.get("children") or [])
-            if child.get("label") == "Materials"
+            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Materials"
         )
         planetary_materials_node = next(
-            child
-            for child in (materials_node.get("children") or [])
-            if child.get("label") == "Planetary Materials"
+            child for child in (materials_node.get("children") or []) if child.get("label") == "Planetary Materials"
         )
 
         self.assertTrue(planetary_materials_node["expandable"])
         self.assertTrue(
-            any(
-                child["label"] == "Raw Planetary Materials"
-                for child in planetary_materials_node["children"]
-            )
+            any(child["label"] == "Raw Planetary Materials" for child in planetary_materials_node["children"])
         )
         self.assertTrue(
-            any(
-                child["label"] == "Refined Planetary Materials"
-                for child in planetary_materials_node["children"]
-            )
+            any(child["label"] == "Refined Planetary Materials" for child in planetary_materials_node["children"])
         )

@@ -3,16 +3,18 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "Transaction History" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Transaction History" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
+    <div class="container-fluid py-4">
         <div class="page-header mb-4">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
                 <div>
@@ -25,9 +27,9 @@
                 <div class="d-flex gap-2">
                     {% url 'indy_hub:material_exchange_stats_history' as stats_history_url %}
                     {% if stats_history_url %}
-                    <a href="{{ stats_history_url }}" class="btn btn-primary">
-                        <i class="fas fa-chart-line me-1"></i>{% trans "Stats History" %}
-                    </a>
+                        <a href="{{ stats_history_url }}" class="btn btn-primary">
+                            <i class="fas fa-chart-line me-1"></i>{% trans "Stats History" %}
+                        </a>
                     {% endif %}
                     <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light">
                         <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Hub" %}
@@ -96,14 +98,12 @@
                         </div>
                         <div class="col-lg-5 col-md-6">
                             <label for="txUser" class="form-label mb-1">{% trans "User" %}</label>
-                            <input
-                                id="txUser"
-                                name="user"
-                                type="text"
-                                class="form-control"
-                                value="{{ user_filter }}"
-                                placeholder="{% trans 'Search by username' %}"
-                            >
+                            <input id="txUser"
+                                   name="user"
+                                   type="text"
+                                   class="form-control"
+                                   value="{{ user_filter }}"
+                                   placeholder="{% trans 'Search by username' %}">
                         </div>
                         <div class="col-lg-3 col-md-12 d-flex gap-2">
                             <button type="submit" class="btn btn-primary flex-fill">
@@ -118,121 +118,131 @@
             </form>
 
             {% if transactions %}
-            <div class="table-responsive">
-                <table class="table table-hover align-middle me-transactions-table">
-                    <thead>
-                        <tr>
-                            <th>{% trans "Order" %}</th>
-                            <th>{% trans "Date" %}</th>
-                            <th>{% trans "Type" %}</th>
-                            <th>{% trans "Who" %}</th>
-                            <th>{% trans "From" %}</th>
-                            <th>{% trans "To" %}</th>
-                            <th>{% trans "Created -> Accepted" %}</th>
-                            <th>{% trans "Total Amount" %}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for tx in transactions %}
-                        <tr class="me-order-row">
-                            <td>
-                                <div class="d-flex align-items-center gap-2 flex-wrap">
-                                    <span class="fw-semibold">{{ tx.order_reference }}</span>
-                                </div>
-                                {% if tx.tx_count > 1 %}
-                                <small class="text-muted">{{ tx.tx_count|intcomma }} {% trans "contract lines merged" %}</small>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <div class="fw-semibold">{{ tx.completed_at|date:"Y-m-d" }}</div>
-                                <small class="text-muted">{{ tx.completed_at|date:"H:i" }}</small>
-                            </td>
-                            <td>
-                                {% if tx.transaction_type == "sell" %}
-                                <span class="badge text-bg-info">{% trans "Sell Order" %}</span>
-                                {% else %}
-                                <span class="badge text-bg-success">{% trans "Buy Order" %}</span>
-                                {% endif %}
-                            </td>
-                            <td><span class="fw-semibold">{{ tx.who }}</span></td>
-                            <td>{{ tx.party_from }}</td>
-                            <td>{{ tx.party_to }}</td>
-                            <td>{{ tx.acceptance_duration_display }}</td>
-                            <td class="text-end fw-semibold">{{ tx.total_price|floatformat:0|intcomma }} ISK</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle me-transactions-table">
+                        <thead>
+                            <tr>
+                                <th>{% trans "Order" %}</th>
+                                <th>{% trans "Date" %}</th>
+                                <th>{% trans "Type" %}</th>
+                                <th>{% trans "Who" %}</th>
+                                <th>{% trans "From" %}</th>
+                                <th>{% trans "To" %}</th>
+                                <th>{% trans "Created -> Accepted" %}</th>
+                                <th>{% trans "Total Amount" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for tx in transactions %}
+                                <tr class="me-order-row">
+                                    <td>
+                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                            <span class="fw-semibold">{{ tx.order_reference }}</span>
+                                        </div>
+                                        {% if tx.tx_count > 1 %}
+                                            <small class="text-muted">{{ tx.tx_count|intcomma }} {% trans "contract lines merged" %}</small>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <div class="fw-semibold">{{ tx.completed_at|date:"Y-m-d" }}</div>
+                                        <small class="text-muted">{{ tx.completed_at|date:"H:i" }}</small>
+                                    </td>
+                                    <td>
+                                        {% if tx.transaction_type == "sell" %}
+                                            <span class="badge text-bg-info">{% trans "Sell Order" %}</span>
+                                        {% else %}
+                                            <span class="badge text-bg-success">{% trans "Buy Order" %}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <span class="fw-semibold">{{ tx.who }}</span>
+                                    </td>
+                                    <td>{{ tx.party_from }}</td>
+                                    <td>{{ tx.party_to }}</td>
+                                    <td>{{ tx.acceptance_duration_display }}</td>
+                                    <td class="text-end fw-semibold">{{ tx.total_price|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
 
-            <div class="card border-0 shadow-sm me-chart-card mt-4">
-                <div class="card-body">
-                    <h5 class="mb-3">{% trans "Top Users" %}</h5>
-                    <div class="table-responsive">
-                        <table class="table table-hover align-middle me-transactions-table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>{% trans "User" %}</th>
-                                    <th class="text-end">{% trans "Orders" %}</th>
-                                    <th class="text-end">{% trans "Bought" %}</th>
-                                    <th class="text-end">{% trans "Sold" %}</th>
-                                    <th class="text-end">{% trans "Net" %}</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for row in top_users %}
-                                <tr>
-                                    <td class="fw-semibold">{{ row.who }}</td>
-                                    <td class="text-end">{{ row.orders|intcomma }}</td>
-                                    <td class="text-end">{{ row.buy_total|floatformat:0|intcomma }} ISK</td>
-                                    <td class="text-end">{{ row.sell_total|floatformat:0|intcomma }} ISK</td>
-                                    <td class="text-end {% if row.net_flow >= 0 %}text-success{% else %}text-danger{% endif %}">{{ row.net_flow|floatformat:0|intcomma }} ISK</td>
-                                </tr>
-                                {% empty %}
-                                <tr><td colspan="5" class="text-muted">{% trans "No user totals for this filter." %}</td></tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+                <div class="card border-0 shadow-sm me-chart-card mt-4">
+                    <div class="card-body">
+                        <h5 class="mb-3">{% trans "Top Users" %}</h5>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle me-transactions-table mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>{% trans "User" %}</th>
+                                        <th class="text-end">{% trans "Orders" %}</th>
+                                        <th class="text-end">{% trans "Bought" %}</th>
+                                        <th class="text-end">{% trans "Sold" %}</th>
+                                        <th class="text-end">{% trans "Net" %}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in top_users %}
+                                        <tr>
+                                            <td class="fw-semibold">{{ row.who }}</td>
+                                            <td class="text-end">{{ row.orders|intcomma }}</td>
+                                            <td class="text-end">{{ row.buy_total|floatformat:0|intcomma }} ISK</td>
+                                            <td class="text-end">{{ row.sell_total|floatformat:0|intcomma }} ISK</td>
+                                            <td class="text-end {% if row.net_flow >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                                {{ row.net_flow|floatformat:0|intcomma }} ISK
+                                            </td>
+                                        </tr>
+                                    {% empty %}
+                                        <tr>
+                                            <td colspan="5" class="text-muted">{% trans "No user totals for this filter." %}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
-            </div>
 
-            <!-- Pagination -->
-            {% if is_paginated %}
-            <nav class="mt-4">
-                <ul class="pagination justify-content-center">
-                    {% if page_obj.has_previous %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page=1{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "First" %}</a>
-                    </li>
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "Previous" %}</a>
-                    </li>
-                    {% endif %}
+                <!-- Pagination -->
+                {% if is_paginated %}
+                    <nav class="mt-4">
+                        <ul class="pagination justify-content-center">
+                            {% if page_obj.has_previous %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                       href="?page=1{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "First" %}</a>
+                                </li>
+                                <li class="page-item">
+                                    <a class="page-link"
+                                       href="?page={{ page_obj.previous_page_number }}{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "Previous" %}</a>
+                                </li>
+                            {% endif %}
 
-                    <li class="page-item active">
-                        <span class="page-link">
-                            {% trans "Page" %} {{ page_obj.number }} {% trans "of" %} {{ page_obj.paginator.num_pages }}
-                        </span>
-                    </li>
+                            <li class="page-item active">
+                                <span class="page-link">
+                                    {% trans "Page" %} {{ page_obj.number }} {% trans "of" %} {{ page_obj.paginator.num_pages }}
+                                </span>
+                            </li>
 
-                    {% if page_obj.has_next %}
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "Next" %}</a>
-                    </li>
-                    <li class="page-item">
-                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "Last" %}</a>
-                    </li>
-                    {% endif %}
-                </ul>
-            </nav>
-            {% endif %}
+                            {% if page_obj.has_next %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                       href="?page={{ page_obj.next_page_number }}{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "Next" %}</a>
+                                </li>
+                                <li class="page-item">
+                                    <a class="page-link"
+                                       href="?page={{ page_obj.paginator.num_pages }}{% if transaction_type %}&type={{ transaction_type }}{% endif %}{% if user_filter %}&user={{ user_filter|urlencode }}{% endif %}">{% trans "Last" %}</a>
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </nav>
+                {% endif %}
             {% else %}
-            <div class="alert alert-info">
-                <i class="fas fa-info-circle me-2"></i>
-                {% trans "No transactions yet." %}
-            </div>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    {% trans "No transactions yet." %}
+                </div>
             {% endif %}
         </div>
-</div>
+    </div>
 {% endblock content %}

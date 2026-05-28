@@ -182,9 +182,7 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             ],
             False,
         )
-        mock_resolve_structure_names.return_value = {
-            second_structure_id: "Created Structure"
-        }
+        mock_resolve_structure_names.return_value = {second_structure_id: "Created Structure"}
 
         post_data = self._base_post_data()
         post_data["sell_structure_ids"] = [str(second_structure_id)]
@@ -236,9 +234,7 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         ]
         post_data["buy_structure_ids"] = [str(self.config.structure_id)]
         post_data["allowed_market_groups_sell"] = ["200", "300"]
-        post_data["allowed_market_groups_sell_by_structure_json"] = (
-            f'{{"{int(self.config.structure_id)}":[200]}}'
-        )
+        post_data["allowed_market_groups_sell_by_structure_json"] = f'{{"{int(self.config.structure_id)}":[200]}}'
 
         request = self._build_request(post_data)
         with patch(
@@ -302,9 +298,7 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             ],
             False,
         )
-        mock_resolve_structure_names.return_value = {
-            int(self.config.structure_id): "Test Structure"
-        }
+        mock_resolve_structure_names.return_value = {int(self.config.structure_id): "Test Structure"}
 
         post_data = self._base_post_data()
         request = self._build_request(post_data)
@@ -335,9 +329,7 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             ],
             False,
         )
-        mock_resolve_structure_names.return_value = {
-            int(self.config.structure_id): "Test Structure"
-        }
+        mock_resolve_structure_names.return_value = {int(self.config.structure_id): "Test Structure"}
 
         post_data = self._base_post_data()
         post_data["hangar_division"] = "7"
@@ -364,16 +356,10 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         response = _handle_config_save(request, self.config)
 
         self.assertEqual(response.status_code, 302)
-        overrides = list(
-            MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by(
-                "type_id"
-            )
-        )
+        overrides = list(MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by("type_id"))
         self.assertEqual(len(overrides), 2)
         self.assertEqual(overrides[0].type_id, 34)
-        self.assertEqual(
-            overrides[0].sell_markup_percent_override, Decimal("-5.00")
-        )
+        self.assertEqual(overrides[0].sell_markup_percent_override, Decimal("-5.00"))
         self.assertEqual(overrides[0].sell_markup_base_override, "sell")
         self.assertEqual(overrides[0].buy_markup_percent_override, Decimal("3.25"))
         self.assertEqual(overrides[0].buy_markup_base_override, "buy")
@@ -394,11 +380,7 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         response = _handle_config_save(request, self.config)
 
         self.assertEqual(response.status_code, 302)
-        overrides = list(
-            MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by(
-                "type_id"
-            )
-        )
+        overrides = list(MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by("type_id"))
         self.assertEqual(len(overrides), 1)
         self.assertEqual(overrides[0].type_id, 34)
         self.assertEqual(overrides[0].sell_markup_percent_override, Decimal("7.10"))

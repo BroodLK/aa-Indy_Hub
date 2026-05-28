@@ -4,7 +4,7 @@ from __future__ import annotations
 
 # Standard Library
 from collections import defaultdict
-from decimal import Decimal, ROUND_CEILING
+from decimal import ROUND_CEILING, Decimal
 from math import ceil
 from typing import Any
 
@@ -15,8 +15,10 @@ from django.utils import timezone
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
+# AA Example App
 # Local
 from indy_hub.models import MaterialExchangeConfig
+from indy_hub.services.capital_ship_options import load_capital_ship_options
 from indy_hub.services.fuzzwork import fetch_fuzzwork_prices
 from indy_hub.services.public_contracts_store import get_public_jita_bpc_offers
 
@@ -44,10 +46,9 @@ def _ceil_price_to_step(value: Decimal, *, step: Decimal) -> Decimal:
     normalized_step = _to_decimal(step)
     if normalized_step <= 0 or normalized_value <= 0:
         return normalized_value.quantize(Decimal("0.01"))
-    return (
-        (normalized_value / normalized_step).to_integral_value(rounding=ROUND_CEILING)
-        * normalized_step
-    ).quantize(Decimal("0.01"))
+    return ((normalized_value / normalized_step).to_integral_value(rounding=ROUND_CEILING) * normalized_step).quantize(
+        Decimal("0.01")
+    )
 
 
 def _requires_blueprint_copy_cost_for_capital_hull(
@@ -144,9 +145,7 @@ def _get_blueprint_copy_cost_per_unit(
 
 
 def _load_capital_ship_options(config: MaterialExchangeConfig) -> list[dict[str, object]]:
-    from indy_hub.views.capital_ship_orders import _load_capital_ship_options as _loader
-
-    return list(_loader(config=config))
+    return list(load_capital_ship_options(config=config))
 
 
 def _prime_blueprint_cache_for_products(
@@ -378,9 +377,7 @@ def _collect_leaf_buy_requirements(
                 )
                 continue
 
-        material_totals[int(material_type_id)] = material_totals.get(int(material_type_id), 0) + int(
-            required_qty
-        )
+        material_totals[int(material_type_id)] = material_totals.get(int(material_type_id), 0) + int(required_qty)
 
 
 def _build_capital_buy_cost_map(
@@ -524,9 +521,7 @@ def sync_capital_ship_auto_estimates(
     for config in configs:
         ship_options = _load_capital_ship_options(config=config)
         allowed_type_ids = {
-            int(option.get("type_id") or 0)
-            for option in ship_options
-            if int(option.get("type_id") or 0) > 0
+            int(option.get("type_id") or 0) for option in ship_options if int(option.get("type_id") or 0) > 0
         }
         config_type_ids[int(config.id)] = allowed_type_ids
         all_allowed_type_ids.update(allowed_type_ids)

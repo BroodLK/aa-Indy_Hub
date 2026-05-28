@@ -677,9 +677,7 @@ def ensure_custom_permissions(apps, schema_editor):
 
 def _index_exists(schema_editor, table_name: str, index_name: str) -> bool:
     with schema_editor.connection.cursor() as cursor:
-        constraints = schema_editor.connection.introspection.get_constraints(
-            cursor, table_name
-        )
+        constraints = schema_editor.connection.introspection.get_constraints(cursor, table_name)
     return index_name in constraints
 
 
@@ -718,10 +716,7 @@ def _remove_industry_corp_scope_index(apps, schema_editor):
 def _get_column_names(schema_editor, table_name: str) -> set[str]:
     with schema_editor.connection.cursor() as cursor:
         return {
-            column.name
-            for column in schema_editor.connection.introspection.get_table_description(
-                cursor, table_name
-            )
+            column.name for column in schema_editor.connection.introspection.get_table_description(cursor, table_name)
         }
 
 
@@ -752,9 +747,7 @@ def cleanup_corporation_assets_on_rollback(apps, schema_editor):
 
 def _column_exists(schema_editor, table_name: str, column_name: str) -> bool:
     with schema_editor.connection.cursor() as cursor:
-        columns = schema_editor.connection.introspection.get_table_description(
-            cursor, table_name
-        )
+        columns = schema_editor.connection.introspection.get_table_description(cursor, table_name)
     return any(column.name == column_name for column in columns)
 
 

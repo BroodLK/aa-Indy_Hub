@@ -47,17 +47,11 @@ def compute_menu_badge_count(user_id: int) -> int:
     ).filter(
         (
             Q(buyer_id=user_id, last_message_role="seller")
-            & (
-                Q(buyer_last_seen_at__isnull=True)
-                | Q(buyer_last_seen_at__lt=F("last_message_at"))
-            )
+            & (Q(buyer_last_seen_at__isnull=True) | Q(buyer_last_seen_at__lt=F("last_message_at")))
         )
         | (
             Q(seller_id=user_id, last_message_role="buyer")
-            & (
-                Q(seller_last_seen_at__isnull=True)
-                | Q(seller_last_seen_at__lt=F("last_message_at"))
-            )
+            & (Q(seller_last_seen_at__isnull=True) | Q(seller_last_seen_at__lt=F("last_message_at")))
         )
     )
 

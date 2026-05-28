@@ -13,9 +13,7 @@ def setup_periodic_tasks(apps, schema_editor):
         # Standard Library
         import logging
 
-        logging.getLogger(__name__).exception(
-            "Failed to setup IndyHub periodic tasks during migration."
-        )
+        logging.getLogger(__name__).exception("Failed to setup IndyHub periodic tasks during migration.")
 
 
 def noop(apps, schema_editor):

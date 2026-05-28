@@ -103,9 +103,7 @@ def _get_cached_corp_asset_name_map(corporation_id: int) -> dict[int, str]:
     return normalized
 
 
-def _backfill_cached_corp_asset_name_map(
-    *, corporation_id: int, assets: list[dict]
-) -> dict[int, str]:
+def _backfill_cached_corp_asset_name_map(*, corporation_id: int, assets: list[dict]) -> dict[int, str]:
     """Best-effort fetch of corp asset names for cached assets."""
     if not assets:
         return {}
@@ -182,10 +180,7 @@ def _get_or_fetch_character_roles(
 ) -> list[str]:
     snapshot = CharacterRoles.objects.filter(character_id=character_id).first()
     now = timezone.now()
-    snapshot_stale = bool(
-        snapshot
-        and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS)
-    )
+    snapshot_stale = bool(snapshot and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS))
     if snapshot and not snapshot_stale:
         return [str(role).upper() for role in (snapshot.roles or []) if role]
 
@@ -200,9 +195,7 @@ def _get_or_fetch_character_roles(
         )
         if ownership:
             owner_user = owner_user or ownership.user
-            corporation_id = corporation_id or getattr(
-                ownership.character, "corporation_id", None
-            )
+            corporation_id = corporation_id or getattr(ownership.character, "corporation_id", None)
 
     try:
         payload = shared_client.fetch_character_corporation_roles(int(character_id))
@@ -352,9 +345,7 @@ def make_managed_hangar_location_id(office_folder_item_id: int, division: int) -
     return -(office_folder_item_id * 10 + division)
 
 
-def get_office_folder_item_id_from_assets(
-    corp_assets: list[dict], *, structure_id: int
-) -> int | None:
+def get_office_folder_item_id_from_assets(corp_assets: list[dict], *, structure_id: int) -> int | None:
     """Extract the office folder item_id for a structure from corp assets.
 
     ESI corp assets represent the OfficeFolder itself as an asset where:
@@ -560,9 +551,7 @@ def consume_cached_corp_assets_for_buy_completion(
                 raw_quantity = int(row.quantity or 0)
             except (TypeError, ValueError):
                 raw_quantity = 0
-            available_quantity = (
-                raw_quantity if raw_quantity > 0 else (1 if bool(row.is_singleton) else 0)
-            )
+            available_quantity = raw_quantity if raw_quantity > 0 else (1 if bool(row.is_singleton) else 0)
             if available_quantity <= 0:
                 continue
 
@@ -572,9 +561,7 @@ def consume_cached_corp_assets_for_buy_completion(
 
             remaining_by_type[type_id] = max(wanted_qty - consume_quantity, 0)
             remaining_total = max(int(remaining_total) - int(consume_quantity), 0)
-            consumed_by_type[type_id] = (
-                int(consumed_by_type.get(type_id, 0)) + int(consume_quantity)
-            )
+            consumed_by_type[type_id] = int(consumed_by_type.get(type_id, 0)) + int(consume_quantity)
 
             if raw_quantity > 0:
                 new_quantity = int(raw_quantity) - int(consume_quantity)
@@ -596,14 +583,10 @@ def consume_cached_corp_assets_for_buy_completion(
             )
 
     summary["consumed_by_type"] = {
-        int(type_id): int(quantity)
-        for type_id, quantity in consumed_by_type.items()
-        if int(quantity) > 0
+        int(type_id): int(quantity) for type_id, quantity in consumed_by_type.items() if int(quantity) > 0
     }
     summary["remaining_by_type"] = {
-        int(type_id): int(quantity)
-        for type_id, quantity in remaining_by_type.items()
-        if int(quantity) > 0
+        int(type_id): int(quantity) for type_id, quantity in remaining_by_type.items() if int(quantity) > 0
     }
     summary["updated_rows"] = int(len(rows_to_update))
     summary["deleted_rows"] = int(len(row_ids_to_delete))
@@ -661,9 +644,7 @@ def add_cached_corp_assets_for_sell_completion(
             continue
         if type_id <= 0 or quantity <= 0:
             continue
-        normalized_added_by_type[type_id] = (
-            normalized_added_by_type.get(type_id, 0) + quantity
-        )
+        normalized_added_by_type[type_id] = normalized_added_by_type.get(type_id, 0) + quantity
     if not normalized_added_by_type:
         return {
             "added_by_type": {},
@@ -726,16 +707,12 @@ def _cache_corp_structure_names(corporation_id: int) -> dict[int, str]:
     """Cache all corp structure names using the corp structures endpoint."""
 
     try:
-        character_id = _get_character_for_scope(
-            int(corporation_id), "esi-corporations.read_structures.v1"
-        )
+        character_id = _get_character_for_scope(int(corporation_id), "esi-corporations.read_structures.v1")
     except ESITokenError:
         return {}
 
     try:
-        structures = shared_client.fetch_corporation_structures(
-            int(corporation_id), character_id=int(character_id)
-        )
+        structures = shared_client.fetch_corporation_structures(int(corporation_id), character_id=int(character_id))
     except ESIUnmodifiedError:
         logger.debug(
             "Corporation structures not modified for %s; using cached names",
@@ -745,9 +722,7 @@ def _cache_corp_structure_names(corporation_id: int) -> dict[int, str]:
     except (ESIForbiddenError, ESITokenError):
         return {}
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "Failed to cache corp structures for %s: %s", corporation_id, exc
-        )
+        logger.warning("Failed to cache corp structures for %s: %s", corporation_id, exc)
         return {}
 
     now = timezone.now()
@@ -770,9 +745,7 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
     """Find a character in the corporation with the required ESI scope."""
     tokens = Token.objects.none()
     character_ids = list(
-        EveCharacter.objects.filter(corporation_id=corporation_id).values_list(
-            "character_id", flat=True
-        )
+        EveCharacter.objects.filter(corporation_id=corporation_id).values_list("character_id", flat=True)
     )
     character_ids_set = {int(cid) for cid in character_ids if cid is not None}
     try:
@@ -806,9 +779,9 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
             pass
         try:
             character_resource = esi.client.Character
-            operation = getattr(
-                character_resource, "get_characters_character_id", None
-            ) or getattr(character_resource, "GetCharactersCharacterId")
+            operation = getattr(character_resource, "get_characters_character_id", None) or getattr(
+                character_resource, "GetCharactersCharacterId"
+            )
             result_obj = operation(character_id=int(token.character_id))
             char_info = result_obj.results()
             if isinstance(char_info, dict):
@@ -840,8 +813,7 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
             continue
 
     raise ESITokenError(
-        f"No character in corporation {corporation_id} has scope '{scope}'. "
-        "Ask a member to grant this scope."
+        f"No character in corporation {corporation_id} has scope '{scope}'. " "Ask a member to grant this scope."
     )
 
     for token in tokens:
@@ -853,8 +825,7 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
             continue
 
     raise ESITokenError(
-        f"No character in corporation {corporation_id} has scope '{scope}'. "
-        "Ask a member to grant this scope."
+        f"No character in corporation {corporation_id} has scope '{scope}'. " "Ask a member to grant this scope."
     )
 
 
@@ -863,9 +834,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
 
     assets_scope_missing = False
     try:
-        character_id = _get_character_for_scope(
-            corporation_id, "esi-assets.read_corporation_assets.v1"
-        )
+        character_id = _get_character_for_scope(corporation_id, "esi-assets.read_corporation_assets.v1")
         assets = shared_client.fetch_corporation_assets(
             corporation_id=int(corporation_id),
             character_id=int(character_id),
@@ -917,11 +886,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
         assets_with_names: list[dict] = []
         for asset in assets:
             try:
-                item_id_int = (
-                    int(asset.get("item_id"))
-                    if asset.get("item_id") is not None
-                    else None
-                )
+                item_id_int = int(asset.get("item_id")) if asset.get("item_id") is not None else None
             except (TypeError, ValueError):
                 item_id_int = None
             set_name = ""
@@ -946,9 +911,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
             assets_with_names.append(asset_entry)
 
         with transaction.atomic():
-            CachedCorporationAsset.objects.filter(
-                corporation_id=corporation_id
-            ).delete()
+            CachedCorporationAsset.objects.filter(corporation_id=corporation_id).delete()
             if rows:
                 CachedCorporationAsset.objects.bulk_create(rows, batch_size=1000)
 
@@ -967,9 +930,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
     except (ESIForbiddenError, ESIRateLimitError, ESIClientError) as exc:
         logger.warning("ESI assets lookup failed for corp %s: %s", corporation_id, exc)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "Unexpected error refreshing corp assets for %s: %s", corporation_id, exc
-        )
+        logger.warning("Unexpected error refreshing corp assets for %s: %s", corporation_id, exc)
 
     return [], assets_scope_missing
 
@@ -1048,9 +1009,7 @@ def get_corp_assets_cached(
         # After refresh, return a lazy queryset if requested; otherwise the refreshed list
         if refreshed_assets:
             if as_queryset:
-                qs = CachedCorporationAsset.objects.filter(
-                    corporation_id=corporation_id
-                )
+                qs = CachedCorporationAsset.objects.filter(corporation_id=corporation_id)
                 if location_flags:
                     qs = qs.filter(location_flag__in=location_flags)
                 return (
@@ -1135,9 +1094,7 @@ def resolve_structure_names(
                 .values_list("item_id", "location_id")
                 .distinct()
             )
-            folder_to_structure = {
-                int(item_id): int(location_id) for item_id, location_id in folder_rows
-            }
+            folder_to_structure = {int(item_id): int(location_id) for item_id, location_id in folder_rows}
             for mid, (folder_item_id, _division) in managed_mapping.items():
                 structure_id = folder_to_structure.get(int(folder_item_id))
                 if structure_id:
@@ -1152,9 +1109,7 @@ def resolve_structure_names(
             "last_resolved",
         )
     )
-    known: dict[int, str] = {
-        int(row["structure_id"]): str(row["name"]) for row in known_rows
-    }
+    known: dict[int, str] = {int(row["structure_id"]): str(row["name"]) for row in known_rows}
     known_last_resolved: dict[int, timezone.datetime | None] = {
         int(row["structure_id"]): row.get("last_resolved") for row in known_rows
     }
@@ -1180,9 +1135,7 @@ def resolve_structure_names(
     missing = [
         sid
         for sid in all_ids_for_cache
-        if sid not in known
-        or _is_stale_placeholder(int(sid))
-        or _is_stale_name(int(sid))
+        if sid not in known or _is_stale_placeholder(int(sid)) or _is_stale_name(int(sid))
     ]
 
     # Try corporation structures endpoint first (returns names) when corp_id is available
@@ -1195,9 +1148,7 @@ def resolve_structure_names(
         missing = [
             sid
             for sid in all_ids_for_cache
-            if sid not in known
-            or _is_stale_placeholder(int(sid))
-            or _is_stale_name(int(sid))
+            if sid not in known or _is_stale_placeholder(int(sid)) or _is_stale_name(int(sid))
         ]
 
     # Try direct structure lookups with the provided character first, then fall back to any corp token with the universe scope
@@ -1244,9 +1195,7 @@ def resolve_structure_names(
         try:
             # 1. Get user's character IDs
             user_char_ids = list(
-                CharacterOwnership.objects.filter(user=user).values_list(
-                    "character__character_id", flat=True
-                )
+                CharacterOwnership.objects.filter(user=user).values_list("character__character_id", flat=True)
             )
 
             if not user_char_ids:
@@ -1276,9 +1225,7 @@ def resolve_structure_names(
                     # Accept only DIRECTOR role
                     if "DIRECTOR" in corp_roles:
                         candidate_characters.append(int(cid))
-                        logger.debug(
-                            "Character %s has Director role, added to candidates", cid
-                        )
+                        logger.debug("Character %s has Director role, added to candidates", cid)
                     else:
                         logger.debug(
                             "Character %s lacks Director role (has: %s)",
@@ -1286,9 +1233,7 @@ def resolve_structure_names(
                             corp_roles,
                         )
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to check roles for character %s: %s", cid, exc
-                    )
+                    logger.warning("Failed to check roles for character %s: %s", cid, exc)
                     continue
 
         except Exception as exc:  # pragma: no cover - defensive
@@ -1414,9 +1359,7 @@ def resolve_structure_names(
                 owner_user_id=int(getattr(user, "id", 0) or 0) if user else None,
             )
         except Exception:  # pragma: no cover - best-effort scheduling
-            logger.debug(
-                "Unable to schedule async structure name caching", exc_info=True
-            )
+            logger.debug("Unable to schedule async structure name caching", exc_info=True)
 
     # For any remaining unresolved structures, try the public /universe/names/ endpoint
     # This can resolve stations, citadels visible to the user, etc.
@@ -1472,9 +1415,7 @@ def resolve_structure_names(
             .values_list("item_id", "location_id")
             .distinct()
         )
-        folder_to_structure = {
-            int(item_id): int(loc_id) for item_id, loc_id in folder_rows
-        }
+        folder_to_structure = {int(item_id): int(loc_id) for item_id, loc_id in folder_rows}
 
         now = timezone.now()
         for mid, (folder_item_id, division) in managed_mapping.items():
@@ -1516,14 +1457,10 @@ def _refresh_corp_divisions(corporation_id: int) -> tuple[dict[int, str], bool]:
             division_num = getattr(info, "division", None)
             division_name = getattr(info, "name", None)
         if division_num:
-            divisions[int(division_num)] = (
-                division_name or f"Hangar Division {division_num}"
-            )
+            divisions[int(division_num)] = division_name or f"Hangar Division {division_num}"
 
     with transaction.atomic():
-        CachedCorporationDivision.objects.filter(
-            corporation_id=corporation_id
-        ).delete()
+        CachedCorporationDivision.objects.filter(corporation_id=corporation_id).delete()
         if divisions:
             CachedCorporationDivision.objects.bulk_create(
                 [
@@ -1564,9 +1501,7 @@ def _coerce_divisions_payload(payload) -> dict:
 def _fetch_corporation_divisions_payload(corporation_id: int) -> tuple[dict, bool]:
     scope_missing = False
     try:
-        character_id = _get_character_for_scope(
-            corporation_id, "esi-corporations.read_divisions.v1"
-        )
+        character_id = _get_character_for_scope(corporation_id, "esi-corporations.read_divisions.v1")
         token_obj = Token.get_token(character_id, "esi-corporations.read_divisions.v1")
         operation = getattr(
             esi.client.Corporation,
@@ -1590,9 +1525,7 @@ def _fetch_corporation_divisions_payload(corporation_id: int) -> tuple[dict, boo
     except ESITokenError:
         scope_missing = True
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning(
-            "Error refreshing corp divisions for %s: %s", corporation_id, exc
-        )
+        logger.warning("Error refreshing corp divisions for %s: %s", corporation_id, exc)
     return {}, scope_missing
 
 
@@ -1609,9 +1542,7 @@ def _refresh_corp_wallet_divisions(corporation_id: int) -> tuple[dict[int, str],
             division_num = getattr(info, "division", None)
             division_name = getattr(info, "name", None)
         if division_num:
-            divisions[int(division_num)] = (
-                str(division_name or "").strip() or f"Wallet Division {division_num}"
-            )
+            divisions[int(division_num)] = str(division_name or "").strip() or f"Wallet Division {division_num}"
 
     cache.set(
         _corp_wallet_divisions_cache_key(corporation_id),
@@ -1673,9 +1604,7 @@ def get_corp_wallet_divisions_cached(
                     continue
                 if division not in range(1, 8):
                     continue
-                cached_divisions[division] = str(raw_name or "").strip() or (
-                    f"Wallet Division {division}"
-                )
+                cached_divisions[division] = str(raw_name or "").strip() or (f"Wallet Division {division}")
 
         raw_synced_at = cached_payload.get("synced_at")
         if isinstance(raw_synced_at, str):
@@ -1686,11 +1615,7 @@ def get_corp_wallet_divisions_cached(
             except Exception:
                 cached_synced_at = None
 
-    if (
-        cached_synced_at
-        and timezone.now() - cached_synced_at <= timedelta(minutes=max_age)
-        and cached_divisions
-    ):
+    if cached_synced_at and timezone.now() - cached_synced_at <= timedelta(minutes=max_age) and cached_divisions:
         return cached_divisions, scope_missing
 
     if allow_refresh:
@@ -1723,9 +1648,7 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
     """Fetch character assets for a user from ESI and refresh the cache."""
 
     asset_scope = "esi-assets.read_assets.v1"
-    tokens = (
-        Token.objects.filter(user=user).require_scopes([asset_scope]).require_valid()
-    )
+    tokens = Token.objects.filter(user=user).require_scopes([asset_scope]).require_valid()
     if not tokens.exists():
         return [], True
 
@@ -1748,18 +1671,14 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
         if not character_id:
             continue
         try:
-            assets = shared_client.fetch_character_assets(
-                character_id=int(character_id)
-            )
+            assets = shared_client.fetch_character_assets(character_id=int(character_id))
         except (
             ESITokenError,
             ESIRateLimitError,
             ESIForbiddenError,
             ESIClientError,
         ) as exc:
-            logger.warning(
-                "Failed to load assets for character %s: %s", character_id, exc
-            )
+            logger.warning("Failed to load assets for character %s: %s", character_id, exc)
             continue
 
         parent_item_ids: set[int] = set()
@@ -1805,9 +1724,7 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
         index_by_item_id = build_asset_index_by_item_id(assets or [])
 
         for asset in assets:
-            resolved_location_id = resolve_asset_root_location_id(
-                asset, index_by_item_id
-            )
+            resolved_location_id = resolve_asset_root_location_id(asset, index_by_item_id)
             if resolved_location_id is None:
                 resolved_location_id = int(asset.get("location_id", 0) or 0)
 

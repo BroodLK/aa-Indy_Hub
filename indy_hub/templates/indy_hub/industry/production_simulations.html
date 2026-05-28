@@ -3,266 +3,288 @@
 {% load static %}
 {% load humanize %}
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/simulations.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/simulations.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4 simulations-page">
-    <div class="page-header mb-4">
-        <div class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-flask me-2"></i>{% trans "My Production Simulations" %}
-                </h2>
-                <p class="description mb-0">{% trans "Review, reopen and curate the craft scenarios you have saved." %}</p>
+    <div class="container-fluid py-4 simulations-page">
+        <div class="page-header mb-4">
+            <div class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3">
+                <div>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-flask me-2"></i>{% trans "My Production Simulations" %}
+                    </h2>
+                    <p class="description mb-0">{% trans "Review, reopen and curate the craft scenarios you have saved." %}</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                    <a href="{% url 'indy_hub:production_simulations' %}?refresh=1" class="btn btn-outline-light text-primary">
+                        <i class="fas fa-sync-alt me-2"></i>{% trans "Refresh data" %}
+                    </a>
+                    <a href="{% url 'indy_hub:production_simulations_list' %}" class="btn btn-outline-light">
+                        <i class="fas fa-th-large me-2"></i>{% trans "Advanced dashboard" %}
+                    </a>
+                    <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-success">
+                        <i class="fas fa-plus me-2"></i>{% trans "New simulation" %}
+                    </a>
+                </div>
             </div>
-            <div class="d-flex flex-wrap gap-2">
-                <a href="{% url 'indy_hub:production_simulations' %}?refresh=1" class="btn btn-outline-light text-primary">
-                    <i class="fas fa-sync-alt me-2"></i>{% trans "Refresh data" %}
-                </a>
-                <a href="{% url 'indy_hub:production_simulations_list' %}" class="btn btn-outline-light">
-                    <i class="fas fa-th-large me-2"></i>{% trans "Advanced dashboard" %}
-                </a>
-                <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-success">
-                    <i class="fas fa-plus me-2"></i>{% trans "New simulation" %}
-                </a>
-            </div>
+            <i class="fas fa-flask header-bg"></i>
         </div>
-        <i class="fas fa-flask header-bg"></i>
-    </div>
 
-    <section class="glass-panel mb-4 p-4">
-        <div class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3 mb-3">
-            <div>
-                <h3 class="h6 mb-1 d-flex align-items-center gap-2">
-                    <i class="fas fa-route text-primary"></i>{% trans "Turn requests into production" %}
-                </h3>
-                <p class="text-muted small mb-0">{% trans "Use saved scenarios to plan the build effort once copy requests are accepted." %}</p>
+        <section class="glass-panel mb-4 p-4">
+            <div class="d-flex flex-column flex-lg-row align-items-start align-items-lg-center justify-content-between gap-3 mb-3">
+                <div>
+                    <h3 class="h6 mb-1 d-flex align-items-center gap-2">
+                        <i class="fas fa-route text-primary"></i>{% trans "Turn requests into production" %}
+                    </h3>
+                    <p class="text-muted small mb-0">
+                        {% trans "Use saved scenarios to plan the build effort once copy requests are accepted." %}
+                    </p>
+                </div>
             </div>
-        </div>
-        <div class="row g-3">
-            <div class="col-md-4">
-                <div class="card h-100 shadow-sm border-0">
-                    <div class="card-body">
-                        <div class="d-flex align-items-center gap-3 mb-2">
-                            <span class="badge bg-primary text-white rounded-circle px-2 py-1">1</span>
-                            <h4 class="h6 mb-0">{% trans "Validate the demand" %}</h4>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="card h-100 shadow-sm border-0">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center gap-3 mb-2">
+                                <span class="badge bg-primary text-white rounded-circle px-2 py-1">1</span>
+                                <h4 class="h6 mb-0">{% trans "Validate the demand" %}</h4>
+                            </div>
+                            <p class="text-muted small mb-0">
+                                {% trans "Review accepted copy requests and confirm doctrines or market targets before planning materials." %}
+                            </p>
                         </div>
-                        <p class="text-muted small mb-0">{% trans "Review accepted copy requests and confirm doctrines or market targets before planning materials." %}</p>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card h-100 shadow-sm border-0">
-                    <div class="card-body">
-                        <div class="d-flex align-items-center gap-3 mb-2">
-                            <span class="badge bg-primary text-white rounded-circle px-2 py-1">2</span>
-                            <h4 class="h6 mb-0">{% trans "Simulate the build" %}</h4>
+                <div class="col-md-4">
+                    <div class="card h-100 shadow-sm border-0">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center gap-3 mb-2">
+                                <span class="badge bg-primary text-white rounded-circle px-2 py-1">2</span>
+                                <h4 class="h6 mb-0">{% trans "Simulate the build" %}</h4>
+                            </div>
+                            <p class="text-muted small mb-0">
+                                {% trans "Leverage saved scenarios to model costs, required inputs, and expected profit before committing." %}
+                            </p>
                         </div>
-                        <p class="text-muted small mb-0">{% trans "Leverage saved scenarios to model costs, required inputs, and expected profit before committing." %}</p>
                     </div>
                 </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card h-100 shadow-sm border-0">
-                    <div class="card-body">
-                        <div class="d-flex align-items-center gap-3 mb-2">
-                            <span class="badge bg-primary text-white rounded-circle px-2 py-1">3</span>
-                            <h4 class="h6 mb-0">{% trans "Kick off production" %}</h4>
+                <div class="col-md-4">
+                    <div class="card h-100 shadow-sm border-0">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center gap-3 mb-2">
+                                <span class="badge bg-primary text-white rounded-circle px-2 py-1">3</span>
+                                <h4 class="h6 mb-0">{% trans "Kick off production" %}</h4>
+                            </div>
+                            <p class="text-muted small mb-0">
+                                {% trans "Turn approved plans into jobs, then circle back to fulfillment to keep requesters informed." %}
+                            </p>
                         </div>
-                        <p class="text-muted small mb-0">{% trans "Turn approved plans into jobs, then circle back to fulfillment to keep requesters informed." %}</p>
                     </div>
                 </div>
             </div>
-        </div>
-    </section>
+        </section>
 
-    <div class="alert alert-info shadow-sm d-flex align-items-center gap-3 mb-4" role="alert">
-        <i class="fas fa-lightbulb-on fa-lg text-info"></i>
-        <div class="small mb-0">
-            <strong class="d-block text-uppercase">{% trans "Production insights" %}</strong>
-            {% trans "Refresh your craft scenarios to keep inventory and pricing up to date before reviewing results." %}
+        <div class="alert alert-info shadow-sm d-flex align-items-center gap-3 mb-4" role="alert">
+            <i class="fas fa-lightbulb-on fa-lg text-info"></i>
+            <div class="small mb-0">
+                <strong class="d-block text-uppercase">{% trans "Production insights" %}</strong>
+                {% trans "Refresh your craft scenarios to keep inventory and pricing up to date before reviewing results." %}
+            </div>
         </div>
-    </div>
 
-    {% if total_simulations %}
-    <div class="row g-3 mb-4">
-        <div class="col-12 col-sm-6 col-xl-3">
-            <div class="stats-card h-100">
-                <div class="card-body text-center">
-                    <div class="h4 text-primary mb-1">{{ total_simulations|intcomma }}</div>
-                    <small class="text-muted fw-bold">{% trans "Total simulations" %}</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-12 col-sm-6 col-xl-3">
-            <div class="stats-card h-100">
-                <div class="card-body text-center">
-                    <div class="h4 text-success mb-1">{{ stats.total_runs|default:0|intcomma }}</div>
-                    <small class="text-muted fw-bold">{% trans "Total runs" %}</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-12 col-sm-6 col-xl-3">
-            <div class="stats-card h-100">
-                <div class="card-body text-center">
-                    <div class="h4 text-warning mb-1">{{ stats.total_cost|floatformat:0|intcomma }} ISK</div>
-                    <small class="text-muted fw-bold">{% trans "Estimated cost" %}</small>
-                </div>
-            </div>
-        </div>
-        <div class="col-12 col-sm-6 col-xl-3">
-            <div class="stats-card h-100">
-                <div class="card-body text-center">
-                    <div class="h4 text-info mb-1">{{ stats.total_revenue|floatformat:0|intcomma }} ISK</div>
-                    <small class="text-muted fw-bold">{% trans "Estimated revenue" %}</small>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="bp-metrics-row row g-3 mb-4">
-        <div class="col-md-3">
-            <div class="glass-panel">
-                <span class="badge rounded-pill bg-primary-subtle text-primary px-3 py-2 fw-semibold">
-                    <i class="fas fa-shopping-cart me-2"></i>{{ stats.total_buy_items|default:0|intcomma }}
-                </span>
-                <div class="small text-muted">
-                    <strong>{% trans "Items to buy" %}</strong><br>
-                    {% trans "Across all simulations" %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="glass-panel">
-                <span class="badge rounded-pill bg-success-subtle text-success px-3 py-2 fw-semibold">
-                    <i class="fas fa-industry me-2"></i>{{ stats.total_prod_items|default:0|intcomma }}
-                </span>
-                <div class="small text-muted">
-                    <strong>{% trans "Items to produce" %}</strong><br>
-                    {% trans "Craft queue volume" %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="glass-panel">
-                <span class="badge rounded-pill bg-warning-subtle text-warning px-3 py-2 fw-semibold">
-                    <i class="fas fa-chart-line me-2"></i>{{ stats.average_profit|floatformat:0|intcomma }} ISK
-                </span>
-                <div class="small text-muted">
-                    <strong>{% trans "Average profit" %}</strong><br>
-                    {% trans "Per saved simulation" %}
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="glass-panel">
-                <span class="badge rounded-pill bg-info-subtle text-info px-3 py-2 fw-semibold">
-                    <i class="fas fa-clock me-2"></i>
-                    {% if stats.latest_update %}
-                        {{ stats.latest_update|timesince }} {% trans "ago" %}
-                    {% else %}
-                        {% trans "Never" %}
-                    {% endif %}
-                </span>
-                <div class="small text-muted">
-                    <strong>{% trans "Last updated" %}</strong><br>
-                    {% trans "Most recent saved scenario" %}
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="simulation-grid">
-        {% for simulation in simulations %}
-        <article class="simulation-card shadow-sm">
-            <div class="simulation-card-body">
-                <div class="simulation-header">
-                    <div class="simulation-icon">
-                    {% if simulation.product_icon_url %}
-                        <img src="{{ simulation.product_icon_url }}" alt="{{ simulation.blueprint_name }}" onerror="if(!this.dataset.fallback){this.dataset.fallback='bp';this.src='{{ simulation.blueprint_icon_url }}';}else{this.onerror=null;this.src='https://images.evetech.net/types/{{ simulation.blueprint_type_id }}/bp?size=64';}">
-                    {% elif simulation.blueprint_icon_url %}
-                        <img src="{{ simulation.blueprint_icon_url }}" alt="{{ simulation.blueprint_name }}">
-                    {% else %}
-                        <span class="fallback"><i class="fas fa-industry"></i></span>
-                    {% endif %}
+        {% if total_simulations %}
+            <div class="row g-3 mb-4">
+                <div class="col-12 col-sm-6 col-xl-3">
+                    <div class="stats-card h-100">
+                        <div class="card-body text-center">
+                            <div class="h4 text-primary mb-1">{{ total_simulations|intcomma }}</div>
+                            <small class="text-muted fw-bold">{% trans "Total simulations" %}</small>
+                        </div>
                     </div>
-                    <div class="simulation-title">
-                        <h3 class="h6 mb-1">{{ simulation.display_name }}</h3>
-                        <p class="mb-0 text-muted">
-                            {% if simulation.blueprint_name %}
-                                {{ simulation.blueprint_name }}
+                </div>
+                <div class="col-12 col-sm-6 col-xl-3">
+                    <div class="stats-card h-100">
+                        <div class="card-body text-center">
+                            <div class="h4 text-success mb-1">{{ stats.total_runs|default:0|intcomma }}</div>
+                            <small class="text-muted fw-bold">{% trans "Total runs" %}</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12 col-sm-6 col-xl-3">
+                    <div class="stats-card h-100">
+                        <div class="card-body text-center">
+                            <div class="h4 text-warning mb-1">{{ stats.total_cost|floatformat:0|intcomma }} ISK</div>
+                            <small class="text-muted fw-bold">{% trans "Estimated cost" %}</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-12 col-sm-6 col-xl-3">
+                    <div class="stats-card h-100">
+                        <div class="card-body text-center">
+                            <div class="h4 text-info mb-1">{{ stats.total_revenue|floatformat:0|intcomma }} ISK</div>
+                            <small class="text-muted fw-bold">{% trans "Estimated revenue" %}</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bp-metrics-row row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="glass-panel">
+                        <span class="badge rounded-pill bg-primary-subtle text-primary px-3 py-2 fw-semibold">
+                            <i class="fas fa-shopping-cart me-2"></i>{{ stats.total_buy_items|default:0|intcomma }}
+                        </span>
+                        <div class="small text-muted">
+                            <strong>{% trans "Items to buy" %}</strong>
+                            <br>
+                            {% trans "Across all simulations" %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="glass-panel">
+                        <span class="badge rounded-pill bg-success-subtle text-success px-3 py-2 fw-semibold">
+                            <i class="fas fa-industry me-2"></i>{{ stats.total_prod_items|default:0|intcomma }}
+                        </span>
+                        <div class="small text-muted">
+                            <strong>{% trans "Items to produce" %}</strong>
+                            <br>
+                            {% trans "Craft queue volume" %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="glass-panel">
+                        <span class="badge rounded-pill bg-warning-subtle text-warning px-3 py-2 fw-semibold">
+                            <i class="fas fa-chart-line me-2"></i>{{ stats.average_profit|floatformat:0|intcomma }} ISK
+                        </span>
+                        <div class="small text-muted">
+                            <strong>{% trans "Average profit" %}</strong>
+                            <br>
+                            {% trans "Per saved simulation" %}
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="glass-panel">
+                        <span class="badge rounded-pill bg-info-subtle text-info px-3 py-2 fw-semibold">
+                            <i class="fas fa-clock me-2"></i>
+                            {% if stats.latest_update %}
+                                {{ stats.latest_update|timesince }} {% trans "ago" %}
                             {% else %}
-                                {% trans "Blueprint #" %}{{ simulation.blueprint_type_id }}
+                                {% trans "Never" %}
                             {% endif %}
-                        </p>
-                    </div>
-                    <div class="simulation-meta">
-                        <span class="meta-badge runs" title="{% trans 'Runs' %}">
-                            <i class="fas fa-sync-alt"></i> {{ simulation.runs|intcomma }}
                         </span>
-                        <span class="meta-badge items" title="{% trans 'Total Items' %}">
-                            <i class="fas fa-cubes"></i> {{ simulation.total_items|intcomma }}
-                        </span>
+                        <div class="small text-muted">
+                            <strong>{% trans "Last updated" %}</strong>
+                            <br>
+                            {% trans "Most recent saved scenario" %}
+                        </div>
                     </div>
                 </div>
+            </div>
 
-                <div class="metric-grid">
-                    <div class="metric">
-                        <span class="metric-label text-danger">{% trans "Buy List" %}</span>
-                        <span class="metric-value">{{ simulation.total_buy_items|intcomma }}</span>
-                        <small class="metric-subtext">{% trans "Items to acquire" %}</small>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-label text-success">{% trans "Production" %}</span>
-                        <span class="metric-value">{{ simulation.total_prod_items|intcomma }}</span>
-                        <small class="metric-subtext">{% trans "Items to craft" %}</small>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-label text-warning">{% trans "Estimated Cost" %}</span>
-                        <span class="metric-value">{{ simulation.estimated_cost|floatformat:0|intcomma }}</span>
-                        <small class="metric-subtext">ISK</small>
-                    </div>
-                    <div class="metric">
-                        <span class="metric-label text-info">{% trans "Expected Profit" %}</span>
-                        <span class="metric-value">{{ simulation.estimated_profit|floatformat:0|intcomma }}</span>
-                        <small class="metric-subtext">ISK</small>
-                    </div>
-                </div>
+            <div class="simulation-grid">
+                {% for simulation in simulations %}
+                    <article class="simulation-card shadow-sm">
+                        <div class="simulation-card-body">
+                            <div class="simulation-header">
+                                <div class="simulation-icon">
+                                    {% if simulation.product_icon_url %}
+                                        <img src="{{ simulation.product_icon_url }}"
+                                             alt="{{ simulation.blueprint_name }}"
+                                             onerror="if(!this.dataset.fallback){this.dataset.fallback='bp';this.src='{{ simulation.blueprint_icon_url }}';}else{this.onerror=null;this.src='https://images.evetech.net/types/{{ simulation.blueprint_type_id }}/bp?size=64';}">
+                                    {% elif simulation.blueprint_icon_url %}
+                                        <img src="{{ simulation.blueprint_icon_url }}" alt="{{ simulation.blueprint_name }}">
+                                    {% else %}
+                                        <span class="fallback"><i class="fas fa-industry"></i></span>
+                                    {% endif %}
+                                </div>
+                                <div class="simulation-title">
+                                    <h3 class="h6 mb-1">{{ simulation.display_name }}</h3>
+                                    <p class="mb-0 text-muted">
+                                        {% if simulation.blueprint_name %}
+                                            {{ simulation.blueprint_name }}
+                                        {% else %}
+                                            {% trans "Blueprint #" %}{{ simulation.blueprint_type_id }}
+                                        {% endif %}
+                                    </p>
+                                </div>
+                                <div class="simulation-meta">
+                                    <span class="meta-badge runs" title="{% trans 'Runs' %}">
+                                        <i class="fas fa-sync-alt"></i> {{ simulation.runs|intcomma }}
+                                    </span>
+                                    <span class="meta-badge items" title="{% trans 'Total Items' %}">
+                                        <i class="fas fa-cubes"></i> {{ simulation.total_items|intcomma }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="metric-grid">
+                                <div class="metric">
+                                    <span class="metric-label text-danger">{% trans "Buy List" %}</span>
+                                    <span class="metric-value">{{ simulation.total_buy_items|intcomma }}</span>
+                                    <small class="metric-subtext">{% trans "Items to acquire" %}</small>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label text-success">{% trans "Production" %}</span>
+                                    <span class="metric-value">{{ simulation.total_prod_items|intcomma }}</span>
+                                    <small class="metric-subtext">{% trans "Items to craft" %}</small>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label text-warning">{% trans "Estimated Cost" %}</span>
+                                    <span class="metric-value">{{ simulation.estimated_cost|floatformat:0|intcomma }}</span>
+                                    <small class="metric-subtext">ISK</small>
+                                </div>
+                                <div class="metric">
+                                    <span class="metric-label text-info">{% trans "Expected Profit" %}</span>
+                                    <span class="metric-value">{{ simulation.estimated_profit|floatformat:0|intcomma }}</span>
+                                    <small class="metric-subtext">ISK</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="simulation-footer">
+                            <div class="timestamp">
+                                <i class="fas fa-clock me-1"></i>
+                                {% trans "Updated" %} {{ simulation.updated_at|timesince }} {% trans "ago" %}
+                            </div>
+                            <div class="btn-group" role="group">
+                                <a href="{% url 'indy_hub:craft_bp' simulation.blueprint_type_id %}?runs={{ simulation.runs }}"
+                                   class="btn btn-outline-primary btn-sm"
+                                   title="{% trans 'Open Simulation' %}">
+                                    <i class="fas fa-play"></i>
+                                </a>
+                                <a href="{% url 'indy_hub:edit_simulation_name' simulation.id %}"
+                                   class="btn btn-outline-secondary btn-sm"
+                                   title="{% trans 'Edit Name' %}">
+                                    <i class="fas fa-edit"></i>
+                                </a>
+                                <a href="{% url 'indy_hub:delete_production_simulation' simulation.id %}"
+                                   class="btn btn-outline-danger btn-sm"
+                                   title="{% trans 'Delete' %}">
+                                    <i class="fas fa-trash"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </article>
+                {% endfor %}
             </div>
-            <div class="simulation-footer">
-                <div class="timestamp">
-                    <i class="fas fa-clock me-1"></i>
-                    {% trans "Updated" %} {{ simulation.updated_at|timesince }} {% trans "ago" %}
+        {% else %}
+            <div class="empty-state shadow-sm">
+                <div class="empty-icon">
+                    <i class="fas fa-flask"></i>
                 </div>
-                <div class="btn-group" role="group">
-                    <a href="{% url 'indy_hub:craft_bp' simulation.blueprint_type_id %}?runs={{ simulation.runs }}" class="btn btn-outline-primary btn-sm" title="{% trans 'Open Simulation' %}">
-                        <i class="fas fa-play"></i>
-                    </a>
-                    <a href="{% url 'indy_hub:edit_simulation_name' simulation.id %}" class="btn btn-outline-secondary btn-sm" title="{% trans 'Edit Name' %}">
-                        <i class="fas fa-edit"></i>
-                    </a>
-                    <a href="{% url 'indy_hub:delete_production_simulation' simulation.id %}" class="btn btn-outline-danger btn-sm" title="{% trans 'Delete' %}">
-                        <i class="fas fa-trash"></i>
-                    </a>
-                </div>
+                <h5 class="mb-2">{% trans "No Simulations Yet" %}</h5>
+                <p class="mb-4">
+                    {% trans "Explore your blueprints and save a scenario to keep track of your production planning." %}
+                </p>
+                <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-primary btn-lg">
+                    <i class="fas fa-plus me-2"></i>{% trans "Create Your First Simulation" %}
+                </a>
             </div>
-        </article>
-        {% endfor %}
+        {% endif %}
     </div>
-    {% else %}
-    <div class="empty-state shadow-sm">
-        <div class="empty-icon">
-            <i class="fas fa-flask"></i>
-        </div>
-        <h5 class="mb-2">{% trans "No Simulations Yet" %}</h5>
-        <p class="mb-4">{% trans "Explore your blueprints and save a scenario to keep track of your production planning." %}</p>
-        <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-primary btn-lg">
-            <i class="fas fa-plus me-2"></i>{% trans "Create Your First Simulation" %}
-        </a>
-    </div>
-    {% endif %}
-</div>
 {% endblock content %}

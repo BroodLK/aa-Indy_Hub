@@ -90,9 +90,7 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         _mock_sync_prices,
     ):
         office_folder_item_id = 5002
-        managed_location_id = make_managed_hangar_location_id(
-            office_folder_item_id, self.config.hangar_division
-        )
+        managed_location_id = make_managed_hangar_location_id(office_folder_item_id, self.config.hangar_division)
 
         corp_assets = [
             {
@@ -136,9 +134,7 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         self.config.buy_structure_ids = [1001]
         self.config.buy_structure_names = ["Structure Alpha"]
         self.config.hangar_division = 1
-        self.config.save(
-            update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"]
-        )
+        self.config.save(update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"])
 
         corp_assets = [
             # Station-style parent container in hangar (no OfficeFolder row).
@@ -192,9 +188,7 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
             SimpleNamespace(source_structure_ids=[1002]),
         ]
 
-        self.assertTrue(
-            _selected_buy_stock_items_share_source_location(selected_rows)
-        )
+        self.assertTrue(_selected_buy_stock_items_share_source_location(selected_rows))
 
     def test_selected_buy_stock_items_share_source_location_when_disjoint(self):
         selected_rows = [
@@ -202,9 +196,7 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
             SimpleNamespace(source_structure_ids=[1002]),
         ]
 
-        self.assertFalse(
-            _selected_buy_stock_items_share_source_location(selected_rows)
-        )
+        self.assertFalse(_selected_buy_stock_items_share_source_location(selected_rows))
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
     def test_buy_stock_blueprint_variant_map_detects_bpc(self, mock_get_corp_assets_cached):
@@ -235,9 +227,7 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(variants.get(77777), "bpc")
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_buy_stock_blueprint_variant_map_prefers_corp_blueprint_copy_records(
-        self, mock_get_corp_assets_cached
-    ):
+    def test_buy_stock_blueprint_variant_map_prefers_corp_blueprint_copy_records(self, mock_get_corp_assets_cached):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
         self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
@@ -358,9 +348,7 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(details[item_id]["runs"], 10)
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_buy_stock_variant_map_uses_legacy_corp_row_even_if_owner_kind_stale(
-        self, mock_get_corp_assets_cached
-    ):
+    def test_buy_stock_variant_map_uses_legacy_corp_row_even_if_owner_kind_stale(self, mock_get_corp_assets_cached):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
         self.config.save(update_fields=["buy_structure_ids", "hangar_division"])

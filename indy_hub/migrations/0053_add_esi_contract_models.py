@@ -17,9 +17,7 @@ class Migration(migrations.Migration):
             fields=[
                 (
                     "contract_id",
-                    models.BigIntegerField(
-                        primary_key=True, serialize=False, unique=True
-                    ),
+                    models.BigIntegerField(primary_key=True, serialize=False, unique=True),
                 ),
                 ("issuer_id", models.BigIntegerField(db_index=True)),
                 ("issuer_corporation_id", models.BigIntegerField()),
@@ -82,9 +80,7 @@ class Migration(migrations.Migration):
                 ("quantity", models.BigIntegerField()),
                 (
                     "is_included",
-                    models.BooleanField(
-                        default=False, help_text="Item is given by issuer"
-                    ),
+                    models.BooleanField(default=False, help_text="Item is given by issuer"),
                 ),
                 ("is_singleton", models.BooleanField(default=False)),
                 ("last_synced", models.DateTimeField(auto_now=True)),
@@ -111,9 +107,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="esicontract",
-            index=models.Index(
-                fields=["issuer_id", "status"], name="indy_hub_es_issuer__9c8e3e_idx"
-            ),
+            index=models.Index(fields=["issuer_id", "status"], name="indy_hub_es_issuer__9c8e3e_idx"),
         ),
         migrations.AddIndex(
             model_name="esicontract",
@@ -124,21 +118,15 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="esicontract",
-            index=models.Index(
-                fields=["-date_issued"], name="indy_hub_es_date_is_2e1f5b_idx"
-            ),
+            index=models.Index(fields=["-date_issued"], name="indy_hub_es_date_is_2e1f5b_idx"),
         ),
         migrations.AddIndex(
             model_name="esicontractitem",
-            index=models.Index(
-                fields=["contract", "type_id"], name="indy_hub_es_contrac_7a2b3c_idx"
-            ),
+            index=models.Index(fields=["contract", "type_id"], name="indy_hub_es_contrac_7a2b3c_idx"),
         ),
         migrations.AddIndex(
             model_name="esicontractitem",
-            index=models.Index(
-                fields=["type_id", "is_included"], name="indy_hub_es_type_id_4d5e6f_idx"
-            ),
+            index=models.Index(fields=["type_id", "is_included"], name="indy_hub_es_type_id_4d5e6f_idx"),
         ),
         migrations.AlterUniqueTogether(
             name="esicontractitem",

@@ -14,38 +14,30 @@ def populate_order_references(apps, schema_editor):
     with connection.cursor() as cursor:
         if vendor == "mysql":
             # MySQL uses CONCAT
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangesellorder
                 SET order_reference = CONCAT('INDY-', id)
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
 
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangebuyorder
                 SET order_reference = CONCAT('INDY-', id)
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
         elif vendor == "sqlite":
             # SQLite uses || for string concatenation
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangesellorder
                 SET order_reference = 'INDY-' || id
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
 
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangebuyorder
                 SET order_reference = 'INDY-' || id
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
 
 
 def reverse_populate_order_references(apps, schema_editor):

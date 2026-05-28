@@ -14,40 +14,32 @@ def populate_order_references(apps, schema_editor):
     with connection.cursor() as cursor:
         if vendor == "mysql":
             # Populate sell orders with empty references (MySQL)
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangesellorder
                 SET order_reference = CONCAT('INDY-', id)
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
 
             # Populate buy orders with empty references (MySQL)
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangebuyorder
                 SET order_reference = CONCAT('INDY-', id)
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
         else:
             # Populate sell orders with empty references (SQLite/PostgreSQL)
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangesellorder
                 SET order_reference = 'INDY-' || id
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
 
             # Populate buy orders with empty references (SQLite/PostgreSQL)
-            cursor.execute(
-                """
+            cursor.execute("""
                 UPDATE indy_hub_materialexchangebuyorder
                 SET order_reference = 'INDY-' || id
                 WHERE order_reference = '' OR order_reference IS NULL
-            """
-            )
+            """)
 
 
 def reverse_populate_order_references(apps, schema_editor):

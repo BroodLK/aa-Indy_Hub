@@ -23,6 +23,8 @@ from django.views.decorators.http import require_GET, require_POST
 # Alliance Auth
 from allianceauth.authentication.models import State, UserProfile
 from allianceauth.services.hooks import get_extension_logger
+
+# Alliance Auth (External Libs)
 from eve_sde.models import ItemType
 
 # AA Example App
@@ -108,10 +110,7 @@ def _normalize_ship_class_key(raw_value: str) -> str:
     if not normalized:
         return ""
     normalized = normalized.replace("-", "_").replace(" ", "_")
-    normalized = "".join(
-        char if (char.isalnum() or char == "_") else "_"
-        for char in normalized
-    ).strip("_")
+    normalized = "".join(char if (char.isalnum() or char == "_") else "_" for char in normalized).strip("_")
     return normalized
 
 
@@ -201,18 +200,13 @@ def _sort_capital_ship_options(options: list[dict[str, object]]) -> list[dict[st
         options,
         key=lambda row: (
             _SHIP_CLASS_ORDER.get(_normalize_ship_class_key(row.get("ship_class")), 99),
-            str(
-                row.get("ship_class_label")
-                or _default_ship_class_label(str(row.get("ship_class") or ""))
-            ).lower(),
+            str(row.get("ship_class_label") or _default_ship_class_label(str(row.get("ship_class") or ""))).lower(),
             str(row.get("type_name") or "").lower(),
         ),
     )
 
 
-def _load_capital_ship_options(
-    *, config: MaterialExchangeConfig | None = None
-) -> list[dict[str, object]]:
+def _load_capital_ship_options(*, config: MaterialExchangeConfig | None = None) -> list[dict[str, object]]:
     base_options = _load_base_capital_ship_options()
     if not config:
         return _sort_capital_ship_options([dict(row) for row in base_options])
@@ -223,8 +217,7 @@ def _load_capital_ship_options(
             "type_name": str(row["type_name"]),
             "ship_class": _normalize_ship_class_key(row.get("ship_class")),
             "ship_class_label": str(
-                row.get("ship_class_label")
-                or _default_ship_class_label(str(row.get("ship_class") or ""))
+                row.get("ship_class_label") or _default_ship_class_label(str(row.get("ship_class") or ""))
             ),
         }
         for row in base_options
@@ -238,8 +231,7 @@ def _load_capital_ship_options(
         disabled_type_ids = set()
     try:
         disabled_groups = {
-            _normalize_ship_class_key(group_value)
-            for group_value in config.get_capital_disabled_ship_groups()
+            _normalize_ship_class_key(group_value) for group_value in config.get_capital_disabled_ship_groups()
         }
         disabled_groups.discard("")
     except Exception:
@@ -258,17 +250,14 @@ def _load_capital_ship_options(
     return _sort_capital_ship_options(list(options_by_type_id.values()))
 
 
-def _load_capital_ship_options_for_editor(
-    *, config: MaterialExchangeConfig | None = None
-) -> list[dict[str, object]]:
+def _load_capital_ship_options_for_editor(*, config: MaterialExchangeConfig | None = None) -> list[dict[str, object]]:
     options_by_type_id: dict[int, dict[str, object]] = {
         int(row["type_id"]): {
             "type_id": int(row["type_id"]),
             "type_name": str(row["type_name"]),
             "ship_class": _normalize_ship_class_key(row.get("ship_class")),
             "ship_class_label": str(
-                row.get("ship_class_label")
-                or _default_ship_class_label(str(row.get("ship_class") or ""))
+                row.get("ship_class_label") or _default_ship_class_label(str(row.get("ship_class") or ""))
             ),
             "enabled": True,
         }
@@ -372,10 +361,7 @@ def _parse_state_name_list(raw_value: str | list[str] | tuple[str, ...] | set[st
     if isinstance(raw_value, (list, tuple, set)):
         tokens = [str(token or "").strip() for token in raw_value]
     else:
-        tokens = [
-            str(token or "").strip()
-            for token in str(raw_value or "").replace("\n", ",").split(",")
-        ]
+        tokens = [str(token or "").strip() for token in str(raw_value or "").replace("\n", ",").split(",")]
 
     normalized: list[str] = []
     for token in tokens:
@@ -387,15 +373,11 @@ def _parse_state_name_list(raw_value: str | list[str] | tuple[str, ...] | set[st
     return normalized
 
 
-def _load_allianceauth_state_name_choices(
-    *, selected_names: list[str] | None = None
-) -> list[str]:
+def _load_allianceauth_state_name_choices(*, selected_names: list[str] | None = None) -> list[str]:
     selected_names = list(selected_names or [])
     state_names: list[str] = []
     try:
-        state_names = list(
-            State.objects.order_by("-priority", "name").values_list("name", flat=True)
-        )
+        state_names = list(State.objects.order_by("-priority", "name").values_list("name", flat=True))
     except Exception:
         state_names = []
 
@@ -476,11 +458,7 @@ def _estimate_guideline_price(order: CapitalShipOrder) -> tuple[Decimal | None, 
         .order_by("-agreement_locked_at", "-updated_at")
         .values_list("agreed_price_isk", flat=True)[:30]
     )
-    historical_decimals = [
-        _quantize_isk(value)
-        for value in historical_prices
-        if _quantize_isk(value) is not None
-    ]
+    historical_decimals = [_quantize_isk(value) for value in historical_prices if _quantize_isk(value) is not None]
     if historical_decimals:
         return _quantize_isk(_median_decimal(historical_decimals)), "historical_orders"
 
@@ -503,15 +481,9 @@ def _estimate_guideline_eta(order: CapitalShipOrder) -> tuple[int | None, int | 
         .order_by("-end_date")
         .values_list("duration", flat=True)[:120]
     )
-    lead_time_days = (
-        _parse_positive_int(order.lead_time_days, minimum=0)
-        if order.lead_time_days is not None
-        else None
-    )
+    lead_time_days = _parse_positive_int(order.lead_time_days, minimum=0) if order.lead_time_days is not None else None
     if lead_time_days is None:
-        lead_time_days = _parse_positive_int(
-            getattr(order.config, "capital_default_lead_time_days", 0), minimum=0
-        )
+        lead_time_days = _parse_positive_int(getattr(order.config, "capital_default_lead_time_days", 0), minimum=0)
     lead_time_days = int(lead_time_days or 0)
 
     if durations_seconds:
@@ -588,10 +560,7 @@ def _capital_staff_actor_role(user: User | None) -> str | None:
 
 
 def _is_capital_order_requester(order: CapitalShipOrder, user: User | None) -> bool:
-    return bool(
-        user
-        and int(getattr(user, "id", 0) or 0) == int(getattr(order, "requester_id", 0) or 0)
-    )
+    return bool(user and int(getattr(user, "id", 0) or 0) == int(getattr(order, "requester_id", 0) or 0))
 
 
 def _redirect_after_capital_order_action(request, *, default_route: str | None = None):
@@ -617,9 +586,7 @@ def _resolve_locked_capital_manager_id(order: CapitalShipOrder) -> int:
         return int(in_production_by_id)
 
     try:
-        gathering_materials_by_id = int(
-            getattr(order, "gathering_materials_by_id", 0) or 0
-        )
+        gathering_materials_by_id = int(getattr(order, "gathering_materials_by_id", 0) or 0)
     except (TypeError, ValueError):
         gathering_materials_by_id = 0
     if gathering_materials_by_id <= 0:
@@ -638,16 +605,10 @@ def _resolve_locked_capital_manager(order: CapitalShipOrder) -> User | None:
     if manager_id <= 0:
         return None
     in_production_manager = getattr(order, "in_production_by", None)
-    if (
-        in_production_manager is not None
-        and int(getattr(in_production_manager, "id", 0) or 0) == manager_id
-    ):
+    if in_production_manager is not None and int(getattr(in_production_manager, "id", 0) or 0) == manager_id:
         return in_production_manager
     gathering_manager = getattr(order, "gathering_materials_by", None)
-    if (
-        gathering_manager is not None
-        and int(getattr(gathering_manager, "id", 0) or 0) == manager_id
-    ):
+    if gathering_manager is not None and int(getattr(gathering_manager, "id", 0) or 0) == manager_id:
         return gathering_manager
     return User.objects.filter(id=manager_id).first()
 
@@ -663,9 +624,7 @@ def _is_capital_order_claimed_by_user(order: CapitalShipOrder, user: User | None
     if not user:
         return False
     try:
-        return _resolve_locked_capital_manager_id(order) == int(
-            getattr(user, "id", 0) or 0
-        )
+        return _resolve_locked_capital_manager_id(order) == int(getattr(user, "id", 0) or 0)
     except (TypeError, ValueError):
         return False
 
@@ -676,9 +635,7 @@ def _can_act_as_capital_manager_for_order(order: CapitalShipOrder, user: User) -
     if not _is_chat_locked_to_in_producer(order):
         return True
     try:
-        return _resolve_locked_capital_manager_id(order) == int(
-            getattr(user, "id", 0) or 0
-        )
+        return _resolve_locked_capital_manager_id(order) == int(getattr(user, "id", 0) or 0)
     except (TypeError, ValueError):
         return False
 
@@ -697,16 +654,20 @@ def _notify_capital_managers(
             notify_user(manager, title, body, level=level, link=link)
             return
 
-    managers = User.objects.filter(is_active=True).filter(
-        Q(
-            user_permissions__codename="can_manage_capital_orders",
-            user_permissions__content_type__app_label="indy_hub",
+    managers = (
+        User.objects.filter(is_active=True)
+        .filter(
+            Q(
+                user_permissions__codename="can_manage_capital_orders",
+                user_permissions__content_type__app_label="indy_hub",
+            )
+            | Q(
+                groups__permissions__codename="can_manage_capital_orders",
+                groups__permissions__content_type__app_label="indy_hub",
+            )
         )
-        | Q(
-            groups__permissions__codename="can_manage_capital_orders",
-            groups__permissions__content_type__app_label="indy_hub",
-        )
-    ).distinct()
+        .distinct()
+    )
     notify_multi(managers, title, body, level=level, link=link)
 
 
@@ -887,9 +848,8 @@ def _resolve_chat_internal_role(
     mapped_candidate = _VIEWER_TO_ROLE[candidate]
     if mapped_candidate == viewer_role:
         return viewer_role
-    if (
-        int(chat.requester_id) == int(getattr(user, "id", 0) or 0)
-        and _can_act_as_capital_manager_for_order(chat.order, user)
+    if int(chat.requester_id) == int(getattr(user, "id", 0) or 0) and _can_act_as_capital_manager_for_order(
+        chat.order, user
     ):
         return mapped_candidate
     return viewer_role
@@ -953,9 +913,7 @@ def _build_decision_payload(order: CapitalShipOrder, *, viewer_role_public: str)
             "viewer_can_reject": True,
             "accept_label": _("Confirm agreement"),
             "reject_label": _("Decline offer"),
-            "status_label": _(
-                "A new offer is ready. Confirm to lock Agreed upon price and likely delivery window."
-            ),
+            "status_label": _("A new offer is ready. Confirm to lock Agreed upon price and likely delivery window."),
             "status_tone": "info",
             "state": "pending",
             "pending_label": _("Updating decision..."),
@@ -986,9 +944,7 @@ def _build_chat_payload(
 ) -> dict:
     viewer_public = _ROLE_TO_VIEWER.get(viewer_role_internal, "buyer")
     other_public = "seller" if viewer_public == "buyer" else "buyer"
-    decision_payload = _build_decision_payload(
-        order, viewer_role_public=viewer_public
-    )
+    decision_payload = _build_decision_payload(order, viewer_role_public=viewer_public)
     requester_main_character = _resolve_main_character_name(order.requester)
     return {
         "chat": {
@@ -1019,9 +975,7 @@ def _build_chat_payload(
                 "role": _to_public_message_role(msg.sender_role),
                 "content": msg.content,
                 "created_at": timezone.localtime(msg.created_at).isoformat(),
-                "created_display": timezone.localtime(msg.created_at).strftime(
-                    "%Y-%m-%d %H:%M"
-                ),
+                "created_display": timezone.localtime(msg.created_at).strftime("%Y-%m-%d %H:%M"),
             }
             for msg in chat.messages.all()
         ],
@@ -1084,14 +1038,10 @@ def _attach_user_display_fields(order: CapitalShipOrder) -> None:
             clamp_min_zero=False,
         )
         order.display_eta_min_days = (
-            max(0, int(remaining_min_days_raw))
-            if remaining_min_days_raw is not None
-            else None
+            max(0, int(remaining_min_days_raw)) if remaining_min_days_raw is not None else None
         )
         order.display_eta_max_days = (
-            max(0, int(remaining_max_days_raw))
-            if remaining_max_days_raw is not None
-            else None
+            max(0, int(remaining_max_days_raw)) if remaining_max_days_raw is not None else None
         )
         if (
             remaining_min_days_raw is not None
@@ -1135,9 +1085,7 @@ def _iter_recent_capital_cancellation_events(order: CapitalShipOrder):
 
 
 def _get_latest_capital_cancellation_context(order: CapitalShipOrder) -> dict[str, object]:
-    valid_statuses = {
-        str(choice[0]).strip().lower() for choice in CapitalShipOrder.Status.choices
-    }
+    valid_statuses = {str(choice[0]).strip().lower() for choice in CapitalShipOrder.Status.choices}
     fallback_status = CapitalShipOrder.Status.WAITING
 
     for event in _iter_recent_capital_cancellation_events(order):
@@ -1171,9 +1119,9 @@ def _get_latest_capital_cancellation_context(order: CapitalShipOrder) -> dict[st
             or getattr(event, "actor_id", 0)
             or 0
         )
-        cancelled_by_role = str(
-            payload.get("cancelled_by_role") or payload.get("changed_by_role") or ""
-        ).strip().lower()
+        cancelled_by_role = (
+            str(payload.get("cancelled_by_role") or payload.get("changed_by_role") or "").strip().lower()
+        )
         if not cancelled_by_role:
             if cancelled_by_user_id > 0 and cancelled_by_user_id == int(order.requester_id):
                 cancelled_by_role = "requester"
@@ -1203,11 +1151,9 @@ def _can_requester_reopen_cancelled_order(order: CapitalShipOrder, user: User | 
     if str(getattr(order, "status", "") or "").strip().lower() != CapitalShipOrder.Status.CANCELLED:
         return False
     cancel_context = _get_latest_capital_cancellation_context(order)
-    return (
-        str(cancel_context.get("cancelled_by_role") or "").strip().lower() == "requester"
-        and int(cancel_context.get("cancelled_by_user_id") or 0)
-        == int(getattr(user, "id", 0) or 0)
-    )
+    return str(cancel_context.get("cancelled_by_role") or "").strip().lower() == "requester" and int(
+        cancel_context.get("cancelled_by_user_id") or 0
+    ) == int(getattr(user, "id", 0) or 0)
 
 
 def _load_latest_declined_offer_by_order(
@@ -1344,10 +1290,7 @@ def capital_ship_orders(request):
         ship_option_sections.append(
             {
                 "ship_class": ship_class,
-                "label": str(
-                    ship_class_labels.get(ship_class)
-                    or _default_ship_class_label(ship_class)
-                ),
+                "label": str(ship_class_labels.get(ship_class) or _default_ship_class_label(ship_class)),
                 "options": ship_options_by_class.get(ship_class, []),
                 "guideline": {
                     "price": _get_class_default_price(config, ship_class),
@@ -1377,9 +1320,7 @@ def capital_ship_orders(request):
         "reason_choices": CapitalShipOrder.Reason.choices,
         "my_orders": my_orders,
         "can_work_capital_orders": _can_work_capital_orders(request.user),
-        "can_manage_capital_orders": request.user.has_perm(
-            "indy_hub.can_manage_capital_orders"
-        ),
+        "can_manage_capital_orders": request.user.has_perm("indy_hub.can_manage_capital_orders"),
     }
     if auto_open_chat_id:
         context["auto_open_chat_id"] = auto_open_chat_id
@@ -1412,14 +1353,12 @@ def capital_ship_orders_admin(request):
     if not include_completed:
         orders_qs = orders_qs.exclude(status__in=list(_CAPITAL_TERMINAL_STATUSES))
     orders = list(orders_qs.order_by("-created_at"))
-    last_declined_by_order = _load_latest_declined_offer_by_order(
-        [int(order.id) for order in orders]
-    )
+    last_declined_by_order = _load_latest_declined_offer_by_order([int(order.id) for order in orders])
     for order in orders:
         order_status = str(getattr(order, "status", "") or "").strip().lower()
-        can_manage_order = _can_manage_capital_orders(
-            request.user
-        ) and _can_act_as_capital_manager_for_order(order, request.user)
+        can_manage_order = _can_manage_capital_orders(request.user) and _can_act_as_capital_manager_for_order(
+            order, request.user
+        )
         is_claimed_by_user = _is_capital_order_claimed_by_user(order, request.user)
         can_claim_waiting = order_status == CapitalShipOrder.Status.WAITING and (
             can_manage_order or _can_build_capital_orders(request.user)
@@ -1429,16 +1368,10 @@ def capital_ship_orders_admin(request):
         order.requester_main_character = _resolve_main_character_name(order.requester)
         order.chat_trigger = _build_order_chat_trigger(order, viewer_role_public="seller")
         order.can_access_chat_as_admin = _can_access_chat(order, request.user)
-        order.can_refresh_guideline = (not order.is_terminal) and (
-            can_manage_order or is_claimed_by_user
-        )
+        order.can_refresh_guideline = (not order.is_terminal) and (can_manage_order or is_claimed_by_user)
         order.can_set_gathering_materials = can_claim_waiting
-        order.can_set_in_production = (
-            can_claim_waiting
-            or (
-                order_status == CapitalShipOrder.Status.GATHERING_MATERIALS
-                and can_adjust_claimed
-            )
+        order.can_set_in_production = can_claim_waiting or (
+            order_status == CapitalShipOrder.Status.GATHERING_MATERIALS and can_adjust_claimed
         )
         order.can_update_offer = (not order.is_terminal) and can_adjust_claimed
         order.can_transfer_claim = (
@@ -1461,12 +1394,8 @@ def capital_ship_orders_admin(request):
             }
             and can_adjust_claimed
         )
-        order.can_cancel_as_admin = (can_manage_order or is_claimed_by_user) and (
-            not order.is_terminal
-        )
-        order.can_uncancel_as_admin = (
-            order_status == CapitalShipOrder.Status.CANCELLED and can_manage_order
-        )
+        order.can_cancel_as_admin = (can_manage_order or is_claimed_by_user) and (not order.is_terminal)
+        order.can_uncancel_as_admin = order_status == CapitalShipOrder.Status.CANCELLED and can_manage_order
         order.can_update_queue_order = any(
             [
                 order.can_refresh_guideline,
@@ -1494,21 +1423,13 @@ def capital_ship_orders_admin(request):
             declined_eta_min = declined_offer.get("eta_min_days")
             declined_eta_max = declined_offer.get("eta_max_days")
             declined_at = declined_offer.get("declined_at")
-            declined_price_display = (
-                f"{declined_price:,.2f} ISK"
-                if isinstance(declined_price, Decimal)
-                else "-"
-            )
+            declined_price_display = f"{declined_price:,.2f} ISK" if isinstance(declined_price, Decimal) else "-"
             declined_eta_display = (
                 f"{int(declined_eta_min)}-{int(declined_eta_max)} days"
                 if declined_eta_min is not None and declined_eta_max is not None
                 else "-"
             )
-            declined_at_display = (
-                timezone.localtime(declined_at).strftime("%Y-%m-%d %H:%M")
-                if declined_at
-                else ""
-            )
+            declined_at_display = timezone.localtime(declined_at).strftime("%Y-%m-%d %H:%M") if declined_at else ""
             detail_parts = [
                 _("Last declined offer"),
                 f"{declined_price_display}",
@@ -1583,9 +1504,7 @@ def capital_ship_orders_config(request):
                 fallback=0,
             )
 
-            capital_auto_cancel_on_state_change = (
-                request.POST.get("capital_auto_cancel_on_state_change") == "on"
-            )
+            capital_auto_cancel_on_state_change = request.POST.get("capital_auto_cancel_on_state_change") == "on"
             valid_capital_statuses = set(CapitalShipOrder.Status.values)
             capital_auto_cancel_eligible_statuses: list[str] = []
             for raw_status in request.POST.getlist("capital_auto_cancel_eligible_statuses"):
@@ -1600,10 +1519,7 @@ def capital_ship_orders_config(request):
                     continue
                 if status_value not in capital_auto_cancel_eligible_statuses:
                     capital_auto_cancel_eligible_statuses.append(status_value)
-            if (
-                capital_auto_cancel_on_state_change
-                and not capital_auto_cancel_eligible_statuses
-            ):
+            if capital_auto_cancel_on_state_change and not capital_auto_cancel_eligible_statuses:
                 capital_auto_cancel_eligible_statuses = [
                     CapitalShipOrder.Status.WAITING,
                     CapitalShipOrder.Status.GATHERING_MATERIALS,
@@ -1627,14 +1543,16 @@ def capital_ship_orders_config(request):
                 MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
                 MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
             }
-            capital_auto_cancel_delay_unit = str(
-                request.POST.get("capital_auto_cancel_delay_unit")
-                or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
-            ).strip().lower()
-            if capital_auto_cancel_delay_unit not in valid_delay_units:
-                capital_auto_cancel_delay_unit = (
-                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+            capital_auto_cancel_delay_unit = (
+                str(
+                    request.POST.get("capital_auto_cancel_delay_unit")
+                    or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
                 )
+                .strip()
+                .lower()
+            )
+            if capital_auto_cancel_delay_unit not in valid_delay_units:
+                capital_auto_cancel_delay_unit = MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
 
             capital_disabled_ship_groups = _normalize_ship_group_list(
                 request.POST.getlist("capital_disabled_ship_groups")
@@ -1657,9 +1575,7 @@ def capital_ship_orders_config(request):
                 parsed_price = _quantize_isk(form_value)
                 if parsed_price is None:
                     continue
-                estimated_price_overrides_by_type[type_id] = _decimal_to_json_string(
-                    parsed_price
-                )
+                estimated_price_overrides_by_type[type_id] = _decimal_to_json_string(parsed_price)
 
             capital_ship_estimated_price_overrides = [
                 {"type_id": type_id, "price_isk": price_isk}
@@ -1675,23 +1591,15 @@ def capital_ship_orders_config(request):
             return redirect("indy_hub:capital_ship_orders_config")
 
         config.capital_default_lead_time_days = capital_default_lead_time_days
-        config.capital_auto_cancel_on_state_change = (
-            capital_auto_cancel_on_state_change
-        )
-        config.capital_auto_cancel_preapproved_state_names = (
-            capital_auto_cancel_preapproved_state_names
-        )
-        config.capital_auto_cancel_eligible_statuses = (
-            capital_auto_cancel_eligible_statuses
-        )
+        config.capital_auto_cancel_on_state_change = capital_auto_cancel_on_state_change
+        config.capital_auto_cancel_preapproved_state_names = capital_auto_cancel_preapproved_state_names
+        config.capital_auto_cancel_eligible_statuses = capital_auto_cancel_eligible_statuses
         config.capital_auto_cancel_delay_value = capital_auto_cancel_delay_value
         config.capital_auto_cancel_delay_unit = capital_auto_cancel_delay_unit
         config.capital_disabled_ship_groups = capital_disabled_ship_groups
         config.capital_disabled_ship_type_ids = capital_disabled_ship_type_ids
         config.capital_custom_ship_options = []
-        config.capital_ship_estimated_price_overrides = (
-            capital_ship_estimated_price_overrides
-        )
+        config.capital_ship_estimated_price_overrides = capital_ship_estimated_price_overrides
         config.save(
             update_fields=[
                 "capital_default_lead_time_days",
@@ -1726,10 +1634,7 @@ def capital_ship_orders_config(request):
             group_labels[group_key] = _default_ship_class_label(group_key)
 
     group_choices = sorted(
-        [
-            {"key": group_key, "label": group_labels[group_key]}
-            for group_key in group_labels.keys()
-        ],
+        [{"key": group_key, "label": group_labels[group_key]} for group_key in group_labels.keys()],
         key=lambda row: (
             _SHIP_CLASS_ORDER.get(_normalize_ship_class_key(row.get("key")), 99),
             str(row.get("label") or "").lower(),
@@ -1748,20 +1653,13 @@ def capital_ship_orders_config(request):
                 "type_id": type_id,
                 "type_name": str(option.get("type_name") or "").strip(),
                 "ship_class": ship_class,
-                "ship_class_label": str(
-                    option.get("ship_class_label")
-                    or _default_ship_class_label(ship_class)
-                ),
+                "ship_class_label": str(option.get("ship_class_label") or _default_ship_class_label(ship_class)),
                 "is_disabled_type": type_id in disabled_ship_type_ids,
                 "is_disabled_group": ship_class in disabled_groups,
                 "manual_estimated_price": manual_estimated_price_map.get(type_id),
-                "manual_estimated_price_display": _format_isk_for_input(
-                    manual_estimated_price_map.get(type_id)
-                ),
+                "manual_estimated_price_display": _format_isk_for_input(manual_estimated_price_map.get(type_id)),
                 "auto_estimated_price": auto_row.get("price_isk"),
-                "auto_estimated_contract_count": int(
-                    auto_row.get("contract_count") or 0
-                ),
+                "auto_estimated_contract_count": int(auto_row.get("contract_count") or 0),
             }
         )
 
@@ -1782,22 +1680,14 @@ def capital_ship_orders_config(request):
         "group_choices": group_choices,
         "disabled_group_keys": disabled_groups,
         "ship_rows": ship_rows,
-        "capital_default_lead_time_days": int(
-            getattr(config, "capital_default_lead_time_days", 0) or 0
-        ),
-        "capital_auto_cancel_on_state_change": bool(
-            getattr(config, "capital_auto_cancel_on_state_change", False)
-        ),
+        "capital_default_lead_time_days": int(getattr(config, "capital_default_lead_time_days", 0) or 0),
+        "capital_auto_cancel_on_state_change": bool(getattr(config, "capital_auto_cancel_on_state_change", False)),
         "capital_auto_cancel_preapproved_state_names": selected_preapproved_state_names,
         "capital_auto_cancel_state_name_choices": _load_allianceauth_state_name_choices(
             selected_names=selected_preapproved_state_names
         ),
-        "capital_auto_cancel_eligible_statuses": set(
-            config.get_capital_auto_cancel_eligible_statuses()
-        ),
-        "capital_auto_cancel_delay_value": int(
-            getattr(config, "capital_auto_cancel_delay_value", 0) or 0
-        ),
+        "capital_auto_cancel_eligible_statuses": set(config.get_capital_auto_cancel_eligible_statuses()),
+        "capital_auto_cancel_delay_value": int(getattr(config, "capital_auto_cancel_delay_value", 0) or 0),
         "capital_auto_cancel_delay_unit": str(
             getattr(
                 config,
@@ -1829,25 +1719,19 @@ def capital_ship_order_refresh_guideline(request, order_id: int):
         return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
     if not _require_order_update_access_as_worker(request, order):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     _refresh_guideline(order)
     messages.success(
         request,
         f"Estimate refreshed for order {order.order_reference}.",
     )
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 @login_required
@@ -1866,27 +1750,20 @@ def capital_ship_order_set_gathering_materials(request, order_id: int):
         order,
         allow_waiting_for_builders=True,
     ):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if order.status != CapitalShipOrder.Status.WAITING:
         messages.warning(
             request,
             f"Order {order.order_reference} is not in waiting status.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     order.status = CapitalShipOrder.Status.GATHERING_MATERIALS
     order.gathering_materials_by = request.user
     order.gathering_materials_at = timezone.now()
     _append_order_note(
         order,
-        (
-            f"Gathering materials by {request.user.username} at "
-            f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
-        ),
+        (f"Gathering materials by {request.user.username} at " f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"),
     )
     order.save(
         update_fields=[
@@ -1910,9 +1787,7 @@ def capital_ship_order_set_gathering_materials(request, order_id: int):
     notify_user(
         order.requester,
         _("Capital Order Update"),
-        _(
-            "Order %(ref)s (%(hull)s) moved to Gathering Materials."
-        )
+        _("Order %(ref)s (%(hull)s) moved to Gathering Materials.")
         % {"ref": order.order_reference, "hull": order.ship_type_name},
         level="info",
         link="/indy_hub/material-exchange/capital-orders/",
@@ -1921,9 +1796,7 @@ def capital_ship_order_set_gathering_materials(request, order_id: int):
         request,
         f"Order {order.order_reference} moved to Gathering Materials.",
     )
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 @login_required
@@ -1942,9 +1815,7 @@ def capital_ship_order_set_in_production(request, order_id: int):
         order,
         allow_waiting_for_builders=True,
     ):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     if order.status not in {
         CapitalShipOrder.Status.WAITING,
@@ -1954,9 +1825,7 @@ def capital_ship_order_set_in_production(request, order_id: int):
             request,
             f"Order {order.order_reference} is not in waiting or gathering materials status.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     previous_status = order.status
     order.status = CapitalShipOrder.Status.IN_PRODUCTION
@@ -1964,10 +1833,7 @@ def capital_ship_order_set_in_production(request, order_id: int):
     order.in_production_at = timezone.now()
     _append_order_note(
         order,
-        (
-            f"In production by {request.user.username} at "
-            f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
-        ),
+        (f"In production by {request.user.username} at " f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"),
     )
     order.save(
         update_fields=[
@@ -1989,13 +1855,12 @@ def capital_ship_order_set_in_production(request, order_id: int):
     )
 
     try:
+        # AA Example App
         from indy_hub.tasks.material_exchange_contracts import (
             handle_capital_ship_order_marked_in_production,
         )
 
-        handle_capital_ship_order_marked_in_production.apply_async(
-            args=(int(order.id),), countdown=1, expires=300
-        )
+        handle_capital_ship_order_marked_in_production.apply_async(args=(int(order.id),), countdown=1, expires=300)
     except Exception as exc:
         logger.warning(
             "Failed to queue in-production notification for capital order %s: %s",
@@ -2007,9 +1872,7 @@ def capital_ship_order_set_in_production(request, order_id: int):
         request,
         f"Order {order.order_reference} moved to In Production.",
     )
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 @login_required
@@ -2024,17 +1887,13 @@ def capital_ship_order_transfer_manager(request, order_id: int):
         return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
     if not _require_order_update_access_as_worker(request, order):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     current_manager_id = _resolve_locked_capital_manager_id(order)
     if current_manager_id <= 0:
@@ -2042,9 +1901,7 @@ def capital_ship_order_transfer_manager(request, order_id: int):
             request,
             f"Order {order.order_reference} is not currently claimed by a worker.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     target_manager_id = _parse_positive_int(
         request.POST.get("transfer_manager_user_id"),
@@ -2052,29 +1909,20 @@ def capital_ship_order_transfer_manager(request, order_id: int):
     )
     if target_manager_id is None:
         messages.error(request, "Select a capital worker to transfer this order.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
-    manager_by_id = {
-        int(user.id): user
-        for user in _get_capital_worker_users()
-    }
+    manager_by_id = {int(user.id): user for user in _get_capital_worker_users()}
     target_manager = manager_by_id.get(int(target_manager_id))
     if target_manager is None:
         messages.error(request, "Selected user cannot work capital orders.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     if int(target_manager.id) == int(current_manager_id):
         messages.info(
             request,
             f"Order {order.order_reference} is already assigned to {target_manager.username}.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     previous_manager = _resolve_locked_capital_manager(order)
     previous_manager_name = str(getattr(previous_manager, "username", "") or "").strip()
@@ -2104,17 +1952,12 @@ def capital_ship_order_transfer_manager(request, order_id: int):
     to_text = target_manager_name or "unknown"
     _append_order_note(
         order,
-        (
-            f"Order worker transferred from {from_text} to {to_text} by "
-            f"{request.user.username} at {now_text}"
-        ),
+        (f"Order worker transferred from {from_text} to {to_text} by " f"{request.user.username} at {now_text}"),
     )
     order.save(update_fields=list(dict.fromkeys(update_fields)))
     _create_chat_system_message(
         order,
-        _(
-            "Order worker transferred from %(from_manager)s to %(to_manager)s by %(actor)s."
-        )
+        _("Order worker transferred from %(from_manager)s to %(to_manager)s by %(actor)s.")
         % {
             "from_manager": from_text,
             "to_manager": to_text,
@@ -2124,18 +1967,13 @@ def capital_ship_order_transfer_manager(request, order_id: int):
     notify_user(
         order.requester,
         _("Capital Order Update"),
-        _(
-            "Order %(ref)s was transferred to another capital worker."
-        )
-        % {"ref": order.order_reference},
+        _("Order %(ref)s was transferred to another capital worker.") % {"ref": order.order_reference},
         level="info",
         link="/indy_hub/material-exchange/capital-orders/",
     )
     _notify_capital_managers(
         title=_("Capital Order Transferred"),
-        body=_(
-            "%(actor)s transferred capital order %(ref)s from %(from_manager)s to %(to_manager)s."
-        )
+        body=_("%(actor)s transferred capital order %(ref)s from %(from_manager)s to %(to_manager)s.")
         % {
             "actor": request.user.username,
             "ref": order.order_reference,
@@ -2150,9 +1988,7 @@ def capital_ship_order_transfer_manager(request, order_id: int):
         request,
         f"Order {order.order_reference} transferred to {target_manager_name}.",
     )
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 @login_required
@@ -2167,43 +2003,29 @@ def capital_ship_order_update_offer(request, order_id: int):
         return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
     if not _require_order_update_access_as_worker(request, order):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     offer_price = _quantize_isk((request.POST.get("offer_price_isk") or "").strip())
-    offer_eta_min_days = _parse_positive_int(
-        request.POST.get("offer_eta_min_days"), minimum=1
-    )
-    offer_eta_max_days = _parse_positive_int(
-        request.POST.get("offer_eta_max_days"), minimum=1
-    )
+    offer_eta_min_days = _parse_positive_int(request.POST.get("offer_eta_min_days"), minimum=1)
+    offer_eta_max_days = _parse_positive_int(request.POST.get("offer_eta_max_days"), minimum=1)
     lead_time_days = _parse_positive_int(request.POST.get("lead_time_days"), minimum=0)
     offer_notes = (request.POST.get("offer_notes") or "").strip()
 
     if offer_price is None:
         messages.error(request, "Offer price must be a positive ISK value.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if offer_eta_min_days is None or offer_eta_max_days is None:
         messages.error(request, "Offer ETA min and max days are required.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if offer_eta_max_days < offer_eta_min_days:
         messages.error(request, "Offer ETA max days must be greater than or equal to min days.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     now = timezone.now()
     update_fields = [
@@ -2256,9 +2078,7 @@ def capital_ship_order_update_offer(request, order_id: int):
     )
     _create_chat_system_message(
         order,
-        _(
-            "Admin updated offer: %(price)s ISK, likely delivery %(eta_min)s-%(eta_max)s days."
-        )
+        _("Admin updated offer: %(price)s ISK, likely delivery %(eta_min)s-%(eta_max)s days.")
         % {
             "price": f"{order.offer_price_isk:,.2f}",
             "eta_min": int(order.offer_eta_min_days or 0),
@@ -2289,9 +2109,7 @@ def capital_ship_order_update_offer(request, order_id: int):
         request,
         f"Offer updated for order {order.order_reference}.",
     )
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 @login_required
@@ -2306,9 +2124,7 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
         return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
     if not _require_order_update_access_as_worker(request, order):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if order.status not in {
         CapitalShipOrder.Status.GATHERING_MATERIALS,
         CapitalShipOrder.Status.IN_PRODUCTION,
@@ -2318,22 +2134,16 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
             request,
             "Definitive ETA can only be set once work has started.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     eta_min_days = _parse_positive_int(request.POST.get("definitive_eta_min_days"), minimum=1)
     eta_max_days = _parse_positive_int(request.POST.get("definitive_eta_max_days"), minimum=1)
     if eta_min_days is None or eta_max_days is None:
         messages.error(request, "Definitive ETA min and max days are required.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if eta_max_days < eta_min_days:
         messages.error(request, "Definitive ETA max days must be greater than or equal to min days.")
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     order.definitive_eta_min_days = int(eta_min_days)
     order.definitive_eta_max_days = int(eta_max_days)
@@ -2350,17 +2160,13 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
     )
     _create_chat_system_message(
         order,
-        _(
-            "Definitive ETA updated to %(eta_min)s-%(eta_max)s days."
-        )
+        _("Definitive ETA updated to %(eta_min)s-%(eta_max)s days.")
         % {"eta_min": eta_min_days, "eta_max": eta_max_days},
     )
     notify_user(
         order.requester,
         _("Capital ETA Updated"),
-        _(
-            "Order %(ref)s definitive ETA updated to %(eta_min)s-%(eta_max)s days."
-        )
+        _("Order %(ref)s definitive ETA updated to %(eta_min)s-%(eta_max)s days.")
         % {
             "ref": order.order_reference,
             "eta_min": eta_min_days,
@@ -2370,9 +2176,7 @@ def capital_ship_order_set_definitive_eta(request, order_id: int):
         link="/indy_hub/material-exchange/capital-orders/",
     )
     messages.success(request, f"Definitive ETA updated for order {order.order_reference}.")
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 def _close_capital_order(
@@ -2388,9 +2192,7 @@ def _close_capital_order(
     is_requester = _is_capital_order_requester(order, request.user)
     if actor_role in {"manager", "worker"}:
         if not _require_order_update_access_as_worker(request, order):
-            return _redirect_after_capital_order_action(
-                request, default_route="indy_hub:capital_ship_orders_admin"
-            )
+            return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     elif actor_role != "requester" or not is_requester:
         messages.warning(request, "You cannot update this capital order.")
         return _redirect_after_capital_order_action(request)
@@ -2417,8 +2219,7 @@ def _close_capital_order(
         "worker": "worker",
     }.get(actor_role, "user")
     status_note = (
-        f"{action_label} by {actor_label} {actor_name} at "
-        f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
+        f"{action_label} by {actor_label} {actor_name} at " f"{timezone.now().strftime('%Y-%m-%d %H:%M:%S %Z')}"
     )
     order.status = target_status
     order.anomaly_reason = ""
@@ -2468,22 +2269,18 @@ def _close_capital_order(
     else:
         _create_chat_system_message(
             order,
-            _(
-                "Requester cancelled the order. Status changed from %(previous_status)s to Cancelled."
-            )
+            _("Requester cancelled the order. Status changed from %(previous_status)s to Cancelled.")
             % {
-                "previous_status": CapitalShipOrder.Status(current_status).label
-                if current_status in CapitalShipOrder.Status.values
-                else current_status.title(),
+                "previous_status": (
+                    CapitalShipOrder.Status(current_status).label
+                    if current_status in CapitalShipOrder.Status.values
+                    else current_status.title()
+                ),
             },
         )
         _notify_capital_managers(
             title=_("Capital Order Cancelled"),
-            body=_(
-                "%(requester)s cancelled capital order %(ref)s.\n"
-                "Hull: %(hull)s\n"
-                "Previous status: %(status)s"
-            )
+            body=_("%(requester)s cancelled capital order %(ref)s.\n" "Hull: %(hull)s\n" "Previous status: %(status)s")
             % {
                 "requester": order.requester.username,
                 "ref": order.order_reference,
@@ -2510,6 +2307,7 @@ def _queue_capital_order_closed_by_manager_notification(
     manager_user_id: int,
 ) -> None:
     try:
+        # AA Example App
         from indy_hub.tasks.material_exchange_contracts import (
             handle_capital_ship_order_closed_by_manager,
         )
@@ -2530,8 +2328,7 @@ def _queue_capital_order_closed_by_manager_notification(
 
 def _resolve_restore_status_for_cancelled_order(order: CapitalShipOrder) -> str:
     return str(
-        _get_latest_capital_cancellation_context(order).get("previous_status")
-        or CapitalShipOrder.Status.WAITING
+        _get_latest_capital_cancellation_context(order).get("previous_status") or CapitalShipOrder.Status.WAITING
     )
 
 
@@ -2567,9 +2364,7 @@ def capital_ship_order_cancel(request, order_id: int):
     is_requester = _is_capital_order_requester(order, request.user)
     if is_worker and not is_requester:
         if not _require_order_update_access_as_worker(request, order):
-            return _redirect_after_capital_order_action(
-                request, default_route="indy_hub:capital_ship_orders_admin"
-            )
+            return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     elif not is_requester:
         messages.warning(request, "You cannot update this capital order.")
         return _redirect_after_capital_order_action(request)
@@ -2596,9 +2391,7 @@ def capital_ship_order_uncancel(request, order_id: int):
     is_requester = _is_capital_order_requester(order, request.user)
     if is_manager:
         if not _require_order_update_access_as_worker(request, order):
-            return _redirect_after_capital_order_action(
-                request, default_route="indy_hub:capital_ship_orders_admin"
-            )
+            return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     elif not _can_requester_reopen_cancelled_order(order, request.user):
         messages.warning(request, "You cannot reopen this capital order.")
         return _redirect_after_capital_order_action(request)
@@ -2646,13 +2439,9 @@ def capital_ship_order_uncancel(request, order_id: int):
     _create_chat_system_message(
         order,
         (
-            _(
-                "Order reopened by requester. Status restored from Cancelled to %(status)s."
-            )
+            _("Order reopened by requester. Status restored from Cancelled to %(status)s.")
             if actor_role == "requester"
-            else _(
-                "Order reopened by admin. Status restored from Cancelled to %(status)s."
-            )
+            else _("Order reopened by admin. Status restored from Cancelled to %(status)s.")
         )
         % {"status": order.get_status_display()},
     )
@@ -2661,9 +2450,7 @@ def capital_ship_order_uncancel(request, order_id: int):
         notify_user(
             order.requester,
             _("Capital Order Reopened"),
-            _(
-                "Order %(ref)s (%(hull)s) was reopened by %(manager)s and is now %(status)s."
-            )
+            _("Order %(ref)s (%(hull)s) was reopened by %(manager)s and is now %(status)s.")
             % {
                 "ref": order.order_reference,
                 "hull": order.ship_type_name,
@@ -2695,11 +2482,7 @@ def capital_ship_order_uncancel(request, order_id: int):
     else:
         _notify_capital_managers(
             title=_("Capital Order Reopened"),
-            body=_(
-                "%(requester)s reopened capital order %(ref)s.\n"
-                "Hull: %(hull)s\n"
-                "Status: %(status)s"
-            )
+            body=_("%(requester)s reopened capital order %(ref)s.\n" "Hull: %(hull)s\n" "Status: %(status)s")
             % {
                 "requester": order.requester.username,
                 "ref": order.order_reference,
@@ -2730,17 +2513,13 @@ def capital_ship_order_release_claim(request, order_id: int):
         return redirect("indy_hub:index")
     order = get_object_or_404(CapitalShipOrder, id=order_id)
     if not _require_order_update_access_as_worker(request, order):
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
     if order.is_terminal:
         messages.warning(
             request,
             f"Order {order.order_reference} is already closed.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     previous_status = str(getattr(order, "status", "") or "").strip().lower()
     if previous_status not in {
@@ -2753,9 +2532,7 @@ def capital_ship_order_release_claim(request, order_id: int):
             request,
             f"Order {order.order_reference} is not currently claimed by a worker.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     current_manager_id = _resolve_locked_capital_manager_id(order)
     if current_manager_id <= 0:
@@ -2763,9 +2540,7 @@ def capital_ship_order_release_claim(request, order_id: int):
             request,
             f"Order {order.order_reference} is not currently claimed by a worker.",
         )
-        return _redirect_after_capital_order_action(
-            request, default_route="indy_hub:capital_ship_orders_admin"
-        )
+        return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
     actor_role = _capital_staff_actor_role(request.user) or "manager"
     actor_name = str(
@@ -2829,15 +2604,12 @@ def capital_ship_order_release_claim(request, order_id: int):
     )
     _create_chat_system_message(
         order,
-        _("Order claim released by %(actor)s. Status reset to Waiting.")
-        % {"actor": actor_name},
+        _("Order claim released by %(actor)s. Status reset to Waiting.") % {"actor": actor_name},
     )
     notify_user(
         order.requester,
         _("Capital Order Update"),
-        _(
-            "Order %(ref)s (%(hull)s) was released back to the waiting queue by %(actor)s."
-        )
+        _("Order %(ref)s (%(hull)s) was released back to the waiting queue by %(actor)s.")
         % {
             "ref": order.order_reference,
             "hull": order.ship_type_name,
@@ -2849,11 +2621,7 @@ def capital_ship_order_release_claim(request, order_id: int):
     if actor_role == "manager":
         _notify_capital_managers(
             title=_("Capital Order Claim Released"),
-            body=_(
-                "%(manager)s released the claim on capital order %(ref)s.\n"
-                "User: %(user)s\n"
-                "Hull: %(hull)s"
-            )
+            body=_("%(manager)s released the claim on capital order %(ref)s.\n" "User: %(user)s\n" "Hull: %(hull)s")
             % {
                 "manager": actor_name,
                 "ref": order.order_reference,
@@ -2868,9 +2636,7 @@ def capital_ship_order_release_claim(request, order_id: int):
         request,
         f"Order {order.order_reference} released back to Waiting.",
     )
-    return _redirect_after_capital_order_action(
-        request, default_route="indy_hub:capital_ship_orders_admin"
-    )
+    return _redirect_after_capital_order_action(request, default_route="indy_hub:capital_ship_orders_admin")
 
 
 @login_required
@@ -2924,9 +2690,7 @@ def capital_ship_order_chat_send(request, order_id: int):
     }:
         return JsonResponse({"error": _("Unauthorized")}, status=403)
     if not chat.is_open:
-        return JsonResponse(
-            {"error": _("This chat is closed."), "closed": True}, status=409
-        )
+        return JsonResponse({"error": _("This chat is closed."), "closed": True}, status=409)
 
     payload = {}
     if request.content_type == "application/json":
@@ -2969,17 +2733,13 @@ def capital_ship_order_chat_send(request, order_id: int):
             detail = exc.messages[0]
         else:
             detail = str(exc)
-        return JsonResponse(
-            {"error": _("Invalid message."), "details": detail}, status=400
-        )
+        return JsonResponse({"error": _("Invalid message."), "details": detail}, status=400)
     chat.register_message(sender_role=viewer_role_internal)
 
     if viewer_role_internal == CapitalShipOrderChat.SenderRole.REQUESTER:
         _notify_capital_managers(
             title=_("Capital Order Chat Message"),
-            body=_(
-                "%(user)s sent a new message for %(ref)s (%(hull)s)."
-            )
+            body=_("%(user)s sent a new message for %(ref)s (%(hull)s).")
             % {
                 "user": order.requester.username,
                 "ref": order.order_reference,
@@ -2993,10 +2753,7 @@ def capital_ship_order_chat_send(request, order_id: int):
         notify_user(
             order.requester,
             _("Capital Order Chat Message"),
-            _(
-                "An admin sent a new message for order %(ref)s."
-            )
-            % {"ref": order.order_reference},
+            _("An admin sent a new message for order %(ref)s.") % {"ref": order.order_reference},
             level="info",
             link=f"/indy_hub/material-exchange/capital-orders/?open_chat={chat.id}",
         )
@@ -3104,22 +2861,16 @@ def capital_ship_order_chat_decide(request, order_id: int):
         return JsonResponse({"status": "accepted"})
 
     declined_offer_payload = {
-        "offer_price_isk": (
-            str(order.offer_price_isk) if order.offer_price_isk is not None else ""
-        ),
+        "offer_price_isk": (str(order.offer_price_isk) if order.offer_price_isk is not None else ""),
         "offer_eta_min_days": order.offer_eta_min_days,
         "offer_eta_max_days": order.offer_eta_max_days,
         "lead_time_days": order.lead_time_days,
         "offer_notes": str(order.offer_notes or "").strip(),
         "offer_updated_by_id": int(order.offer_updated_by_id or 0) or None,
         "offer_updated_by_username": (
-            str(order.offer_updated_by.username)
-            if getattr(order, "offer_updated_by", None)
-            else ""
+            str(order.offer_updated_by.username) if getattr(order, "offer_updated_by", None) else ""
         ),
-        "offer_updated_at": (
-            order.offer_updated_at.isoformat() if order.offer_updated_at else ""
-        ),
+        "offer_updated_at": (order.offer_updated_at.isoformat() if order.offer_updated_at else ""),
     }
     order.user_offer_confirmed_at = None
     order.user_offer_confirmed_by = None

@@ -6,7 +6,6 @@ import re
 # Django
 from django.db import migrations, models
 
-
 DAY_NAME_TO_NUMBER = {
     "sun": "0",
     "mon": "1",
@@ -30,9 +29,7 @@ def migrate_weekly_poll_crontabs(apps, schema_editor):
     CrontabSchedule = apps.get_model("django_celery_beat", "CrontabSchedule")
 
     for config in WeeklyMiningPollConfig.objects.all().iterator():
-        day_of_week = _normalize_day_of_week(
-            getattr(config, "cron_day_of_week", "*")
-        )
+        day_of_week = _normalize_day_of_week(getattr(config, "cron_day_of_week", "*"))
         crontab, _ = CrontabSchedule.objects.get_or_create(
             minute=getattr(config, "cron_minute", "0") or "0",
             hour=getattr(config, "cron_hour", "0") or "0",

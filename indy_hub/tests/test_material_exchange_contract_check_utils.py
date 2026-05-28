@@ -6,6 +6,7 @@ from types import SimpleNamespace
 # Django
 from django.test import SimpleTestCase
 
+# AA Example App
 # Local
 from indy_hub.utils.material_exchange_contract_check import (
     build_expected_items,
@@ -26,9 +27,7 @@ class ContractCheckParsingTests(SimpleTestCase):
 
         self.assertEqual(
             fields.get("Items For Sale", ""),
-            "Damage Control II x 19\n"
-            "1MN Afterburner I x 1\n"
-            "9th Tier Overseer's Personal Effects x 1",
+            "Damage Control II x 19\n" "1MN Afterburner I x 1\n" "9th Tier Overseer's Personal Effects x 1",
         )
 
     def test_parse_contract_items_keeps_leading_digits_and_ordinals(self) -> None:
@@ -54,9 +53,7 @@ class ContractCheckParsingTests(SimpleTestCase):
 
     def test_parse_contract_items_supports_tab_delimited_rows(self) -> None:
         parsed_items, parsed_labels = parse_contract_items(
-            "1MN Afterburner I\t1\n"
-            "9th Tier Overseer's Personal Effects\t1\n"
-            "Scourge Rage Torpedo\t2,432\n"
+            "1MN Afterburner I\t1\n" "9th Tier Overseer's Personal Effects\t1\n" "Scourge Rage Torpedo\t2,432\n"
         )
         summary = summarize_counter(parsed_items, parsed_labels)
 
@@ -98,10 +95,7 @@ class ContractCheckParsingTests(SimpleTestCase):
         self.assertEqual(set(summary), expected)
 
     def test_parse_contract_items_keeps_10m_bounty_prefix_in_compact_stream(self) -> None:
-        compact_items = (
-            "Intact Shield Emitter x 310M Bounty SCC Encrypted Bond x 3"
-            "Trigger Unit x 7930"
-        )
+        compact_items = "Intact Shield Emitter x 310M Bounty SCC Encrypted Bond x 3" "Trigger Unit x 7930"
         parsed_items, parsed_labels = parse_contract_items(compact_items)
         summary = summarize_counter(parsed_items, parsed_labels)
 
@@ -111,10 +105,7 @@ class ContractCheckParsingTests(SimpleTestCase):
         self.assertNotIn("M Bounty SCC Encrypted Bond x 3", summary)
 
     def test_parse_contract_items_keeps_numeric_items_from_allowlist(self) -> None:
-        compact_items = (
-            "Intact Shield Emitter x 310,000 Skill Points x 1"
-            "Trigger Unit x 7930"
-        )
+        compact_items = "Intact Shield Emitter x 310,000 Skill Points x 1" "Trigger Unit x 7930"
         parsed_items, parsed_labels = parse_contract_items(compact_items)
         summary = summarize_counter(parsed_items, parsed_labels)
 

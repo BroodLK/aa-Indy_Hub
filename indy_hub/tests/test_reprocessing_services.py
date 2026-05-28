@@ -16,6 +16,7 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+# AA Example App
 # Local
 from indy_hub.models import (
     ESIContract,
@@ -25,12 +26,6 @@ from indy_hub.models import (
     ReprocessingServiceRequestItem,
     ReprocessingServiceRequestOutput,
     generate_reprocessing_reference,
-)
-from indy_hub.tasks.material_exchange_contracts import (
-    auto_progress_reprocessing_requests,
-    run_material_exchange_cycle,
-    send_reprocessing_request_waiting_reminders,
-    sync_reprocessing_character_contracts,
 )
 from indy_hub.services.reprocessing import (
     COMPRESSED_ORE_CACHE_LOAD_COMMAND,
@@ -44,6 +39,12 @@ from indy_hub.services.reprocessing import (
     fetch_character_clone_options,
     fetch_character_skill_levels,
     resolve_processing_skill_level_for_item,
+)
+from indy_hub.tasks.material_exchange_contracts import (
+    auto_progress_reprocessing_requests,
+    run_material_exchange_cycle,
+    send_reprocessing_request_waiting_reminders,
+    sync_reprocessing_character_contracts,
 )
 from indy_hub.views.reprocessing_services import (
     _fetch_reprocessing_structures,
@@ -332,15 +333,11 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.post(
-            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
-        )
+        response = self.client.post(reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id]))
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("indy_hub:index"))
-        self.assertFalse(
-            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
-        )
+        self.assertFalse(ReprocessingServiceRequest.objects.filter(id=service_request.id).exists())
 
     def test_disputed_request_detail_shows_cancel_permission_for_requester(self):
         service_request = ReprocessingServiceRequest.objects.create(
@@ -356,9 +353,7 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.get(
-            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
-        )
+        response = self.client.get(reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]))
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["can_cancel"])
@@ -378,23 +373,17 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.admin)
-        detail_response = self.client.get(
-            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
-        )
+        detail_response = self.client.get(reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]))
         self.assertEqual(detail_response.status_code, 200)
         self.assertTrue(detail_response.context["is_admin"])
         self.assertTrue(detail_response.context["can_cancel"])
         self.assertTrue(detail_response.context["can_admin_delete"])
         self.assertContains(detail_response, "Admin Delete Request")
 
-        delete_response = self.client.post(
-            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
-        )
+        delete_response = self.client.post(reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id]))
         self.assertEqual(delete_response.status_code, 302)
         self.assertEqual(delete_response.url, reverse("indy_hub:index"))
-        self.assertFalse(
-            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
-        )
+        self.assertFalse(ReprocessingServiceRequest.objects.filter(id=service_request.id).exists())
 
     @patch("indy_hub.views.reprocessing_services.notify_user")
     def test_requester_cannot_cancel_completed_request(self, _mock_notify):
@@ -411,18 +400,15 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.post(
-            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
-        )
+        response = self.client.post(reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id]))
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response.url,
             reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]),
         )
-        self.assertTrue(
-            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
-        )
+        self.assertTrue(ReprocessingServiceRequest.objects.filter(id=service_request.id).exists())
+
 
 class ReprocessingContractMatcherTests(TestCase):
     def test_exact_match_requires_same_types_and_quantities(self):
@@ -583,16 +569,11 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             for query in args:
                 filtered = [row for row in filtered if self._matches_q(row, query)]
             for lookup, expected in kwargs.items():
-                filtered = [
-                    row for row in filtered if self._matches_lookup(row, lookup, expected)
-                ]
+                filtered = [row for row in filtered if self._matches_lookup(row, lookup, expected)]
             return self.__class__(filtered)
 
         def values_list(self, *fields):
-            return [
-                tuple(self._resolve_attr(row, field) for field in fields)
-                for row in self.rows
-            ]
+            return [tuple(self._resolve_attr(row, field) for field in fields) for row in self.rows]
 
         def _resolve_attr(self, obj, lookup):
             value = obj
@@ -715,23 +696,21 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             any_order=True,
         )
         stored_type_ids = {
-            kwargs["ore_type_id"]
-            for _args, kwargs in mock_cache_model.objects.update_or_create.call_args_list
+            kwargs["ore_type_id"] for _args, kwargs in mock_cache_model.objects.update_or_create.call_args_list
         }
         self.assertEqual(stored_type_ids, {ore_type.id, moon_ore_type.id})
 
     @patch("indy_hub.services.reprocessing.clear_compressed_ore_cache")
     def test_populate_cache_reports_missing_eve_sde_item_data(self, _mock_clear_cache):
-        fake_item_type_model = SimpleNamespace(
-            objects=SimpleNamespace(exists=lambda: False)
-        )
-        fake_item_type_materials_model = SimpleNamespace(
-            objects=SimpleNamespace(exists=lambda: True)
-        )
+        fake_item_type_model = SimpleNamespace(objects=SimpleNamespace(exists=lambda: False))
+        fake_item_type_materials_model = SimpleNamespace(objects=SimpleNamespace(exists=lambda: True))
 
-        with patch("eve_sde.models.ItemType", fake_item_type_model), patch(
-            "eve_sde.models.ItemTypeMaterials",
-            fake_item_type_materials_model,
+        with (
+            patch("eve_sde.models.ItemType", fake_item_type_model),
+            patch(
+                "eve_sde.models.ItemTypeMaterials",
+                fake_item_type_materials_model,
+            ),
         ):
             success, message = _populate_compressed_ore_cache()
 
@@ -1137,9 +1116,7 @@ class _FakeAssetQuerySet:
 class ReprocessingRigDetectionTests(TestCase):
     def test_rig_name_includes_asteroid_variant(self):
         self.assertEqual(
-            _infer_rig_profile_key_from_type_name(
-                "Standup M-Set Asteroid Ore Grading Processor I"
-            ),
+            _infer_rig_profile_key_from_type_name("Standup M-Set Asteroid Ore Grading Processor I"),
             "ore_t1",
         )
 
@@ -1169,9 +1146,9 @@ class ReprocessingRigDetectionTests(TestCase):
             ),
             False,
         )
-        mock_get_type_name.side_effect = lambda type_id: {
-            8888: "Standup M-Set Moon Ore Grading Processor II"
-        }.get(int(type_id), f"Type {type_id}")
+        mock_get_type_name.side_effect = lambda type_id: {8888: "Standup M-Set Moon Ore Grading Processor II"}.get(
+            int(type_id), f"Type {type_id}"
+        )
 
         result = _infer_structure_rigs_from_cached_assets([98000001], [9001])
 
@@ -1236,7 +1213,7 @@ class ReprocessingRequestLineParsingTests(TestCase):
             f"Type {type_id}",
         )
 
-        rows, errors = _parse_request_item_lines("Tritanium\t1,250\nPyerite\t2\u202F000")
+        rows, errors = _parse_request_item_lines("Tritanium\t1,250\nPyerite\t2\u202f000")
 
         self.assertEqual(errors, [])
         self.assertEqual(rows, [{"type_id": 35, "quantity": 2000}, {"type_id": 34, "quantity": 1250}])
@@ -1572,31 +1549,39 @@ class ReprocessingCharacterContractSyncTests(TestCase):
 
 class ReprocessingCycleExecutionTests(TestCase):
     def test_reprocessing_steps_run_when_material_exchange_disabled_or_unconfigured(self):
-        with patch(
-            "indy_hub.tasks.material_exchange_contracts.MaterialExchangeSettings.get_solo",
-            return_value=SimpleNamespace(is_enabled=False),
-        ), patch(
-            "indy_hub.tasks.material_exchange_contracts.MaterialExchangeConfig.objects.exists",
-            return_value=False,
-        ), patch(
-            "indy_hub.tasks.material_exchange_contracts.sync_esi_contracts"
-        ) as mock_sync_esi, patch(
-            "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_sell_orders"
-        ) as mock_validate_sell, patch(
-            "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_buy_orders"
-        ) as mock_validate_buy, patch(
-            "indy_hub.tasks.material_exchange_contracts.process_capital_ship_orders"
-        ) as mock_capital_orders, patch(
-            "indy_hub.tasks.material_exchange_contracts.check_completed_material_exchange_contracts"
-        ) as mock_check_completed, patch(
-            "indy_hub.tasks.material_exchange_contracts.sync_reprocessing_character_contracts"
-        ) as mock_sync_reprocessing, patch(
-            "indy_hub.tasks.material_exchange_contracts.auto_progress_reprocessing_requests"
-        ) as mock_auto_progress, patch(
-            "indy_hub.tasks.material_exchange_contracts.send_reprocessing_request_waiting_reminders"
-        ) as mock_reprocessing_reminders, patch(
-            "indy_hub.tasks.material_exchange_contracts.send_blueprint_copy_request_waiting_reminders"
-        ) as mock_blueprint_reminders:
+        with (
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.MaterialExchangeSettings.get_solo",
+                return_value=SimpleNamespace(is_enabled=False),
+            ),
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.MaterialExchangeConfig.objects.exists",
+                return_value=False,
+            ),
+            patch("indy_hub.tasks.material_exchange_contracts.sync_esi_contracts") as mock_sync_esi,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_sell_orders"
+            ) as mock_validate_sell,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_buy_orders"
+            ) as mock_validate_buy,
+            patch("indy_hub.tasks.material_exchange_contracts.process_capital_ship_orders") as mock_capital_orders,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.check_completed_material_exchange_contracts"
+            ) as mock_check_completed,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.sync_reprocessing_character_contracts"
+            ) as mock_sync_reprocessing,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.auto_progress_reprocessing_requests"
+            ) as mock_auto_progress,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.send_reprocessing_request_waiting_reminders"
+            ) as mock_reprocessing_reminders,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.send_blueprint_copy_request_waiting_reminders"
+            ) as mock_blueprint_reminders,
+        ):
             run_material_exchange_cycle()
 
         mock_sync_esi.assert_not_called()
@@ -1714,9 +1699,7 @@ class ReprocessingScopeWarningsViewTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.get(
-            reverse("indy_hub:reprocessing_request_create", args=[profile.id])
-        )
+        response = self.client.get(reverse("indy_hub:reprocessing_request_create", args=[profile.id]))
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["requester_has_required_scopes"])

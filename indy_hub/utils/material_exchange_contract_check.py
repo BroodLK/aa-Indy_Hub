@@ -25,13 +25,9 @@ CONTRACT_EXPORT_LABELS = [
 MULTILINE_LABELS = {"Items For Sale", "Items Required"}
 ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:;|\|)\s*")
 ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
-NEXT_NUMERIC_ITEM_START_RE = re.compile(
-    r"^[1-9]\d*(?:MN|M|mm|K)\b", re.IGNORECASE
-)
+NEXT_NUMERIC_ITEM_START_RE = re.compile(r"^[1-9]\d*(?:MN|M|mm|K)\b", re.IGNORECASE)
 NUMBER_GROUPING_RE = re.compile(r"(?<=\d)[,.'\s](?=\d)")
-NUMERIC_LEADING_ITEMS_FILE = (
-    Path(__file__).resolve().parent / "data" / "numeric_leading_items.tsv"
-)
+NUMERIC_LEADING_ITEMS_FILE = Path(__file__).resolve().parent / "data" / "numeric_leading_items.tsv"
 
 
 def collapse_whitespace(value: str | None) -> str:
@@ -57,8 +53,8 @@ def parse_positive_quantity(raw_value: str | int | None) -> int | None:
         return None
 
     normalized = (
-        text_value.replace("\u00A0", " ")
-        .replace("\u202F", " ")
+        text_value.replace("\u00a0", " ")
+        .replace("\u202f", " ")
         .replace("\u2009", " ")
         .replace("_", "")
         .replace("'", "")
@@ -214,9 +210,7 @@ def parse_contract_export(raw_text: str) -> dict[str, str]:
             label = parts[0]
             if label in CONTRACT_EXPORT_LABELS:
                 value = " ".join(part for part in parts[1:] if part).strip()
-                fields[label] = (
-                    value if label in MULTILINE_LABELS else collapse_whitespace(value)
-                )
+                fields[label] = value if label in MULTILINE_LABELS else collapse_whitespace(value)
                 current_label = label
                 continue
 
@@ -226,11 +220,7 @@ def parse_contract_export(raw_text: str) -> dict[str, str]:
         )
         if matched_label is not None:
             value = line[len(matched_label) :].strip("\t :")
-            fields[matched_label] = (
-                value
-                if matched_label in MULTILINE_LABELS
-                else collapse_whitespace(value)
-            )
+            fields[matched_label] = value if matched_label in MULTILINE_LABELS else collapse_whitespace(value)
             current_label = matched_label
             continue
 
@@ -281,11 +271,7 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
         tab_parts = [part.strip() for part in line.split("\t") if part.strip()]
         if len(tab_parts) >= 2:
             tab_quantity = next(
-                (
-                    quantity
-                    for part in tab_parts[1:]
-                    if (quantity := parse_positive_quantity(part)) is not None
-                ),
+                (quantity for part in tab_parts[1:] if (quantity := parse_positive_quantity(part)) is not None),
                 None,
             )
             if _record_item(tab_parts[0], tab_quantity):
@@ -322,9 +308,7 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
     return items, labels
 
 
-def summarize_counter(
-    counter: Counter[str], labels: dict[str, str] | None = None
-) -> list[str]:
+def summarize_counter(counter: Counter[str], labels: dict[str, str] | None = None) -> list[str]:
     labels = labels or {}
     summary: list[str] = []
     for key in sorted(counter.keys()):

@@ -211,9 +211,7 @@ class ContractValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_sync_esi_contracts_forces_refresh_when_cache_exists(
-        self, mock_client, mock_get_char
-    ):
+    def test_sync_esi_contracts_forces_refresh_when_cache_exists(self, mock_client, mock_get_char):
         """Corp contract sync should bypass stale local cache on scheduled runs."""
         # AA Example App
         from indy_hub.models import ESIContract
@@ -247,9 +245,7 @@ class ContractValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_sync_esi_contracts_fetches_items_for_finished_contracts(
-        self, mock_client, mock_get_char
-    ):
+    def test_sync_esi_contracts_fetches_items_for_finished_contracts(self, mock_client, mock_get_char):
         """Finished item-exchange contracts should still sync items for validation."""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
@@ -367,9 +363,7 @@ class ContractValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         buy_order.refresh_from_db()
-        self.assertEqual(
-            buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
-        )
+        self.assertEqual(buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED)
         self.assertEqual(buy_order.esi_contract_id, contract_id)
         mock_notify_user.assert_called()
         mock_notify_multi.assert_called()
@@ -377,9 +371,7 @@ class ContractValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_sell_orders_no_pending(
-        self, mock_notify_multi, mock_notify_user, mock_client
-    ):
+    def test_validate_sell_orders_no_pending(self, mock_notify_multi, mock_notify_user, mock_client):
         """Test task when no pending orders exist"""
         self.sell_order.status = MaterialExchangeSellOrder.Status.VALIDATED
         self.sell_order.save()
@@ -394,9 +386,7 @@ class ContractValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_sell_orders_contract_found(
-        self, mock_notify_multi, mock_client, mock_get_char
-    ):
+    def test_validate_sell_orders_contract_found(self, mock_notify_multi, mock_client, mock_get_char):
         """Test successful contract validation"""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
@@ -498,9 +488,7 @@ class ContractValidationTaskTest(TestCase):
         validate_material_exchange_sell_orders()
 
         self.sell_order.refresh_from_db()
-        self.assertEqual(
-            self.sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
-        )
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED)
         self.assertEqual(self.sell_order.esi_contract_id, contract.contract_id)
         self.assertIsNotNone(self.sell_order.contract_validated_at)
         self.assertEqual(self.sell_order.payment_verified_at, completed_at)
@@ -523,9 +511,7 @@ class ContractValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_sell_orders_contract_found_with_split_item_stack(
-        self, mock_notify_multi, mock_user_chars
-    ):
+    def test_validate_sell_orders_contract_found_with_split_item_stack(self, mock_notify_multi, mock_user_chars):
         """Split contract stacks for the same type should still match total quantity."""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
@@ -696,9 +682,7 @@ class ContractValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    def test_validate_sell_orders_no_contract(
-        self, mock_notify_user, mock_client, mock_get_char
-    ):
+    def test_validate_sell_orders_no_contract(self, mock_notify_user, mock_client, mock_get_char):
         """Test when contract is not found"""
         seller_char_id = 111111111
         mock_get_char.return_value = seller_char_id
@@ -844,9 +828,7 @@ class ContractValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    def test_validate_sell_orders_no_match_keeps_order_open(
-        self, mock_notify_user, mock_user_chars
-    ):
+    def test_validate_sell_orders_no_match_keeps_order_open(self, mock_notify_user, mock_user_chars):
         """When no contract matches sell criteria, order must stay open (not anomaly)."""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
@@ -889,9 +871,7 @@ class ContractValidationTaskTest(TestCase):
         mock_notify_user.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
-    def test_validate_sell_orders_finished_wrong_reference_stays_anomaly(
-        self, mock_user_chars
-    ):
+    def test_validate_sell_orders_finished_wrong_reference_stays_anomaly(self, mock_user_chars):
         """Finished near-match with wrong reference should stay an anomaly."""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
@@ -1058,9 +1038,7 @@ class ContractValidationTaskTest(TestCase):
         validate_material_exchange_sell_orders()
 
         self.sell_order.refresh_from_db()
-        self.assertEqual(
-            self.sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY
-        )
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.ANOMALY)
         self.assertIn("Missing:", self.sell_order.notes)
         self.assertIn("- 7 Pyerite", self.sell_order.notes)
         self.assertIn("Surplus:", self.sell_order.notes)
@@ -1075,9 +1053,7 @@ class ContractValidationTaskTest(TestCase):
         mock_notify_multi.assert_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts.get_type_name")
-    def test_build_items_mismatch_details_resolves_unknown_surplus_names(
-        self, mock_get_type_name
-    ):
+    def test_build_items_mismatch_details_resolves_unknown_surplus_names(self, mock_get_type_name):
         """Surplus-only contract items should render with resolved type names."""
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
@@ -1085,9 +1061,7 @@ class ContractValidationTaskTest(TestCase):
             _build_items_mismatch_details,
         )
 
-        mock_get_type_name.side_effect = lambda type_id: (
-            "Hyperion" if int(type_id) == 81348 else ""
-        )
+        mock_get_type_name.side_effect = lambda type_id: ("Hyperion" if int(type_id) == 81348 else "")
 
         mismatch_contract = ESIContract.objects.create(
             contract_id=4202,
@@ -1117,12 +1091,8 @@ class ContractValidationTaskTest(TestCase):
         self.assertIn("- 449 Hyperion", details)
         self.assertNotIn("Type 81348", details)
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts._is_type_accepted_for_sell_location"
-    )
-    def test_build_sell_surplus_item_location_guidance_recommends_other_location(
-        self, mock_is_type_accepted
-    ):
+    @patch("indy_hub.tasks.material_exchange_contracts._is_type_accepted_for_sell_location")
+    def test_build_sell_surplus_item_location_guidance_recommends_other_location(self, mock_is_type_accepted):
         """Surplus guidance should suggest configured sell locations that accept the item."""
         # AA Example App
         from indy_hub.tasks.material_exchange_contracts import (
@@ -1182,9 +1152,7 @@ class ContractValidationTaskTest(TestCase):
         )
         self.assertEqual(resolved, 70000002)
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts._is_type_accepted_for_sell_location"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts._is_type_accepted_for_sell_location")
     def test_build_sell_surplus_item_location_guidance_uses_expected_location_when_ids_differ(
         self, mock_is_type_accepted
     ):
@@ -1230,9 +1198,7 @@ class ContractValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts._build_sell_surplus_item_location_guidance"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts._build_sell_surplus_item_location_guidance")
     def test_items_mismatch_anomaly_includes_sell_location_guidance(
         self,
         mock_build_guidance,
@@ -1245,8 +1211,7 @@ class ContractValidationTaskTest(TestCase):
         from indy_hub.models import ESIContract, ESIContractItem
 
         guidance_text = (
-            "Sell-location guidance:\n"
-            "- Isogen: not accepted at this contract location; accepted at Beta Hub."
+            "Sell-location guidance:\n" "- Isogen: not accepted at this contract location; accepted at Beta Hub."
         )
         mock_build_guidance.return_value = guidance_text
 
@@ -1327,9 +1292,7 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_in_draft_with_matching_contract(
-        self, mock_multi, mock_user
-    ):
+    def test_validate_buy_order_in_draft_with_matching_contract(self, mock_multi, mock_user):
         """Draft buy orders should be auto-validated when a matching cached contract exists."""
         # Standard Library
         from datetime import timedelta
@@ -1372,9 +1335,7 @@ class BuyOrderValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED)
         self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
         self.assertIn("Contract validated", self.buy_order.notes)
 
@@ -1434,9 +1395,7 @@ class BuyOrderValidationTaskTest(TestCase):
         validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.COMPLETED)
         self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
         self.assertIsNotNone(self.buy_order.contract_validated_at)
         self.assertEqual(self.buy_order.delivered_at, completed_at)
@@ -1563,9 +1522,7 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
-    def test_check_completed_contracts_forces_refresh_when_cache_exists(
-        self, mock_client, mock_get_char
-    ):
+    def test_check_completed_contracts_forces_refresh_when_cache_exists(self, mock_client, mock_get_char):
         """Completion checks should refresh corp contracts even when cached rows exist."""
         # AA Example App
         from indy_hub.models import ESIContract
@@ -1673,16 +1630,12 @@ class BuyOrderValidationTaskTest(TestCase):
         sell_order.save(update_fields=["esi_contract_id", "updated_at"])
 
         mock_get_char.return_value = 999999999
-        mock_client.fetch_corporation_contracts.return_value = [
-            {"contract_id": 227079299, "status": "finished"}
-        ]
+        mock_client.fetch_corporation_contracts.return_value = [{"contract_id": 227079299, "status": "finished"}]
 
         check_completed_material_exchange_contracts()
 
         sell_order.refresh_from_db()
-        self.assertEqual(
-            sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
-        )
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED)
         self.assertIsNotNone(sell_order.payment_verified_at)
         mock_notify_user.assert_not_called()
         mock_notify_admins.assert_called()
@@ -1739,16 +1692,12 @@ class BuyOrderValidationTaskTest(TestCase):
         check_completed_material_exchange_contracts()
 
         sell_order.refresh_from_db()
-        self.assertEqual(
-            sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED
-        )
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED)
         self.assertEqual(sell_order.payment_verified_at, completed_at)
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_accepts_lowercase_reference_and_missing_issuer_corp(
-        self, mock_multi, mock_user
-    ):
+    def test_validate_buy_order_accepts_lowercase_reference_and_missing_issuer_corp(self, mock_multi, mock_user):
         """Buy matching should tolerate lowercase refs and missing issuer corp ID."""
         # Standard Library
         from datetime import timedelta
@@ -1791,18 +1740,14 @@ class BuyOrderValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED)
         self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
         mock_user.assert_called()
         mock_multi.assert_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_active_wrong_reference_validates(
-        self, mock_multi, mock_user
-    ):
+    def test_validate_buy_order_active_wrong_reference_validates(self, mock_multi, mock_user):
         """Outstanding near-match with wrong title reference should validate without waiting for finished status."""
         # Standard Library
         from datetime import timedelta
@@ -1845,9 +1790,7 @@ class BuyOrderValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.VALIDATED)
         self.assertEqual(self.buy_order.esi_contract_id, contract.contract_id)
         self.assertIn("Contract validated", self.buy_order.notes)
 
@@ -1856,9 +1799,7 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_finished_contract_items_mismatch_stays_pending_issue(
-        self, mock_multi, mock_user
-    ):
+    def test_validate_buy_order_finished_contract_items_mismatch_stays_pending_issue(self, mock_multi, mock_user):
         """Finished in-game contract with item mismatch should remain an issue, not validate."""
         # Standard Library
         from datetime import timedelta
@@ -1901,9 +1842,7 @@ class BuyOrderValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
         self.assertIn(
             f"Contract: #{contract.contract_id} (finished)",
             self.buy_order.notes,
@@ -1930,9 +1869,7 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_finished_wrong_reference_stays_pending_issue(
-        self, mock_multi, mock_user
-    ):
+    def test_validate_buy_order_finished_wrong_reference_stays_pending_issue(self, mock_multi, mock_user):
         """Finished near-match with wrong title reference should remain an issue."""
         # Standard Library
         from datetime import timedelta
@@ -1975,9 +1912,7 @@ class BuyOrderValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
         self.assertIn(
             f"Contract: #{contract.contract_id} (finished)",
             self.buy_order.notes,
@@ -2002,9 +1937,7 @@ class BuyOrderValidationTaskTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_buy_order_finished_criteria_mismatch_stays_pending_issue(
-        self, mock_multi, mock_user
-    ):
+    def test_validate_buy_order_finished_criteria_mismatch_stays_pending_issue(self, mock_multi, mock_user):
         """Finished contract with criteria mismatch should remain an issue."""
         # Standard Library
         from datetime import timedelta
@@ -2047,9 +1980,7 @@ class BuyOrderValidationTaskTest(TestCase):
             validate_material_exchange_buy_orders()
 
         self.buy_order.refresh_from_db()
-        self.assertEqual(
-            self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT
-        )
+        self.assertEqual(self.buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
         self.assertIn(
             f"Contract: #{contract.contract_id} (finished)",
             self.buy_order.notes,
@@ -2072,9 +2003,7 @@ class BuyOrderValidationTaskTest(TestCase):
         )
         mock_user.assert_not_called()
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     def test_validate_buy_order_pending_mismatch_notification_includes_deltas(
         self, mock_user_chars, mock_notify_admins
@@ -2154,13 +2083,9 @@ class BuyOrderValidationTaskTest(TestCase):
         )
 
         old_created_at = timezone.now() - timedelta(hours=25)
-        MaterialExchangeBuyOrder.objects.filter(pk=self.buy_order.pk).update(
-            created_at=old_created_at
-        )
+        MaterialExchangeBuyOrder.objects.filter(pk=self.buy_order.pk).update(created_at=old_created_at)
 
-        cache.delete(
-            f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder"
-        )
+        cache.delete(f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder")
 
         validate_material_exchange_buy_orders()
 
@@ -2177,13 +2102,9 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Surplus:", admin_message)
         self.assertIn("- 3 Isogen", admin_message)
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
-    def test_validate_buy_order_pending_mismatch_notifies_immediately(
-        self, mock_user_chars, mock_notify_admins
-    ):
+    def test_validate_buy_order_pending_mismatch_notifies_immediately(self, mock_user_chars, mock_notify_admins):
         """Buy mismatch should notify admins immediately, even for newly created orders."""
         # Standard Library
         from datetime import timedelta
@@ -2221,9 +2142,7 @@ class BuyOrderValidationTaskTest(TestCase):
             is_included=True,
         )
 
-        cache.delete(
-            f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder"
-        )
+        cache.delete(f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder")
 
         validate_material_exchange_buy_orders()
 
@@ -2254,9 +2173,7 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIn("Reason: contract mismatch.", admin_message)
         self.assertIn("Issue(s): items mismatch", admin_message)
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     def test_validate_buy_order_pending_mismatch_lists_deleted_and_replacement_contracts(
         self, mock_user_chars, mock_notify_admins
@@ -2321,9 +2238,7 @@ class BuyOrderValidationTaskTest(TestCase):
             is_included=True,
         )
 
-        cache.delete(
-            f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder"
-        )
+        cache.delete(f"material_exchange:buy_order:{self.buy_order.id}:contract_reminder")
 
         validate_material_exchange_buy_orders()
 
@@ -2381,9 +2296,7 @@ class StructureNameMatchingTest(TestCase):
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_contract_matches_by_structure_name(
-        self, mock_notify_multi, mock_get_char_ids
-    ):
+    def test_contract_matches_by_structure_name(self, mock_notify_multi, mock_get_char_ids):
         """Test that contract with different structure ID matches by name"""
         # Standard Library
         from datetime import timedelta
@@ -2422,21 +2335,15 @@ class StructureNameMatchingTest(TestCase):
         )
 
         # Mock ESI client to return the structure name
-        mock_esi_client = patch(
-            "indy_hub.tasks.material_exchange_contracts.shared_client"
-        )
+        mock_esi_client = patch("indy_hub.tasks.material_exchange_contracts.shared_client")
         mock_client_instance = mock_esi_client.start()
-        mock_client_instance.get_structure_info.return_value = {
-            "name": "C-N4OD - Fountain of Life"
-        }
+        mock_client_instance.get_structure_info.return_value = {"name": "C-N4OD - Fountain of Life"}
 
         validate_material_exchange_sell_orders()
 
         # Check order was approved (matched by structure name)
         self.sell_order.refresh_from_db()
-        self.assertEqual(
-            self.sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED
-        )
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED)
         self.assertIn("226598409", self.sell_order.notes)
 
         # Verify admin notification was sent
@@ -2483,9 +2390,7 @@ class StructureNameMatchingTest(TestCase):
         )
 
         # Mock ESI client to fail (returns None)
-        with patch(
-            "indy_hub.tasks.material_exchange_contracts.shared_client"
-        ) as mock_client:
+        with patch("indy_hub.tasks.material_exchange_contracts.shared_client") as mock_client:
             mock_client.get_structure_info.side_effect = Exception("ESI Error")
 
             with patch("indy_hub.tasks.material_exchange_contracts.notify_multi"):
@@ -2493,16 +2398,12 @@ class StructureNameMatchingTest(TestCase):
 
         # Check order was approved (matched by ID fallback)
         self.sell_order.refresh_from_db()
-        self.assertEqual(
-            self.sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED
-        )
+        self.assertEqual(self.sell_order.status, MaterialExchangeSellOrder.Status.VALIDATED)
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_strict_id_mode_rejects_name_only_match(
-        self, _mock_notify_multi, _mock_notify_user, mock_get_char_ids
-    ):
+    def test_strict_id_mode_rejects_name_only_match(self, _mock_notify_multi, _mock_notify_user, mock_get_char_ids):
         """strict_id mode must reject contracts that only match by location name."""
         # Standard Library
         from datetime import timedelta
@@ -2542,9 +2443,7 @@ class StructureNameMatchingTest(TestCase):
         )
 
         with patch("indy_hub.tasks.material_exchange_contracts.shared_client") as mock_client:
-            mock_client.get_structure_info.return_value = {
-                "name": "C-N4OD - Fountain of Life"
-            }
+            mock_client.get_structure_info.return_value = {"name": "C-N4OD - Fountain of Life"}
             validate_material_exchange_sell_orders()
 
         self.sell_order.refresh_from_db()
@@ -2565,9 +2464,7 @@ class BuyOrderSignalTest(TestCase):
         self.buyer = User.objects.create_user(username="test_buyer")
         self.seller = User.objects.create_user(username="test_seller")
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_buy_order_created"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts.handle_material_exchange_buy_order_created")
     def test_buy_order_signal_on_create(self, mock_task):
         """Test that signal is triggered on buy order creation"""
         buy_order = MaterialExchangeBuyOrder.objects.create(
@@ -2591,9 +2488,7 @@ class BuyOrderSignalTest(TestCase):
         )
         self.assertEqual(buy_order.status, MaterialExchangeBuyOrder.Status.DRAFT)
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_buy_order_created"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts.handle_material_exchange_buy_order_created")
     def test_buy_order_signal_queues_on_commit(self, mock_task):
         """Task should queue only after outer transaction commit."""
         with self.captureOnCommitCallbacks(execute=False) as callbacks:
@@ -2615,9 +2510,7 @@ class BuyOrderSignalTest(TestCase):
             expires=1800,
         )
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_sell_order_created"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts.handle_material_exchange_sell_order_created")
     def test_sell_order_signal_on_create(self, mock_task):
         """Test that signal is triggered on sell order creation."""
         sell_order = MaterialExchangeSellOrder.objects.create(
@@ -2640,9 +2533,7 @@ class BuyOrderSignalTest(TestCase):
         )
         self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.DRAFT)
 
-    @patch(
-        "indy_hub.tasks.material_exchange_contracts.handle_material_exchange_sell_order_created"
-    )
+    @patch("indy_hub.tasks.material_exchange_contracts.handle_material_exchange_sell_order_created")
     def test_sell_order_signal_queues_on_commit(self, mock_task):
         """Sell-notification task should queue only after outer transaction commit."""
         with self.captureOnCommitCallbacks(execute=False) as callbacks:
@@ -2737,15 +2628,11 @@ class MaterialExchangeWebhookMessageFormatTest(TestCase):
             "Contract from pilot_x has completed.",
         )
         self.assertEqual(
-            _build_contract_state_webhook_line(
-                "pilot_x", "validated", relation="for"
-            ),
+            _build_contract_state_webhook_line("pilot_x", "validated", relation="for"),
             "Contract for pilot_x has validated.",
         )
         self.assertEqual(
-            _build_contract_state_webhook_line(
-                "pilot_x", "completed", relation="for"
-            ),
+            _build_contract_state_webhook_line("pilot_x", "completed", relation="for"),
             "Contract for pilot_x has completed.",
         )
 
@@ -2995,9 +2882,7 @@ class NotificationDeduplicationTest(TestCase):
         self.assertTrue(mock_notify_user.called)
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
-    def test_sell_validation_uses_order_source_location_when_present(
-        self, mock_get_character_ids
-    ):
+    def test_sell_validation_uses_order_source_location_when_present(self, mock_get_character_ids):
         # AA Example App
         from indy_hub.models import ESIContract, ESIContractItem
 

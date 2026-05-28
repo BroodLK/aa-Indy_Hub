@@ -5,8 +5,7 @@ from unittest.mock import patch
 # Django
 from django.contrib.auth.models import User
 from django.http import HttpResponse
-from django.test import RequestFactory
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
 # AA Example App
@@ -50,9 +49,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         "indy_hub.views.material_exchange.get_type_name",
         return_value="Capital Construction Parts Blueprint",
     )
-    def test_asset_is_blueprint_detects_singleton_blueprint_from_type_name_lookup(
-        self, _mock_get_type_name
-    ):
+    def test_asset_is_blueprint_detects_singleton_blueprint_from_type_name_lookup(self, _mock_get_type_name):
         self.assertTrue(
             _asset_is_blueprint(
                 {
@@ -129,13 +126,11 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         ]
         mock_get_user_assets_cached.return_value = (assets, False)
 
-        aggregated, by_character, by_location, scope_missing = (
-            _fetch_user_assets_for_structure_data(
-                self.user,
-                self.structure_id,
-                allow_refresh=False,
-                config=self.config,
-            )
+        aggregated, by_character, by_location, scope_missing = _fetch_user_assets_for_structure_data(
+            self.user,
+            self.structure_id,
+            allow_refresh=False,
+            config=self.config,
         )
 
         self.assertFalse(scope_missing)
@@ -179,13 +174,11 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         ]
         mock_get_user_assets_cached.return_value = (assets, False)
 
-        aggregated, _by_character, _by_location, _scope_missing = (
-            _fetch_user_assets_for_structure_data(
-                self.user,
-                self.structure_id,
-                allow_refresh=False,
-                config=self.config,
-            )
+        aggregated, _by_character, _by_location, _scope_missing = _fetch_user_assets_for_structure_data(
+            self.user,
+            self.structure_id,
+            allow_refresh=False,
+            config=self.config,
         )
 
         self.assertEqual(aggregated.get(999), 1)
@@ -202,9 +195,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
             35: "Pyerite",
             36: "Mexallon",
         }
-        mock_get_type_name.side_effect = lambda type_id: name_map.get(
-            int(type_id), f"Type {type_id}"
-        )
+        mock_get_type_name.side_effect = lambda type_id: name_map.get(int(type_id), f"Type {type_id}")
 
         assets = [
             {
@@ -257,9 +248,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
             price_data=price_data,
             reserved_quantities={34: 2},
             allowed_type_ids={34, 35, 36},
-            sell_override_map={
-                35: {"kind": "fixed", "price": Decimal("12.34")}
-            },
+            sell_override_map={35: {"kind": "fixed", "price": Decimal("12.34")}},
             character_name_by_id={1: "Pilot One"},
         )
 
@@ -283,9 +272,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertEqual(by_type[36]["depth"], 0)
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_nests_with_location_parent_fallback(
-        self, mock_get_type_name
-    ):
+    def test_build_sell_material_rows_nests_with_location_parent_fallback(self, mock_get_type_name):
         mock_get_type_name.side_effect = lambda type_id: {
             1000: "Station Container",
             34: "Tritanium",
@@ -334,13 +321,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertTrue(item_rows[0]["container_path"])
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_blueprint_copy_is_zero_priced(
-        self, mock_get_type_name
-    ):
-        mock_get_type_name.side_effect = (
-            lambda type_id: "Capital Armor Plates Blueprint"
-            if int(type_id) == 77777
-            else f"Type {type_id}"
+    def test_build_sell_material_rows_blueprint_copy_is_zero_priced(self, mock_get_type_name):
+        mock_get_type_name.side_effect = lambda type_id: (
+            "Capital Armor Plates Blueprint" if int(type_id) == 77777 else f"Type {type_id}"
         )
 
         assets = [
@@ -377,12 +360,8 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertIn("_bpc_", rows[0]["form_quantity_field_name"])
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_splits_same_type_by_character(
-        self, mock_get_type_name
-    ) -> None:
-        mock_get_type_name.side_effect = (
-            lambda type_id: "Tritanium" if int(type_id) == 34 else f"Type {type_id}"
-        )
+    def test_build_sell_material_rows_splits_same_type_by_character(self, mock_get_type_name) -> None:
+        mock_get_type_name.side_effect = lambda type_id: "Tritanium" if int(type_id) == 34 else f"Type {type_id}"
 
         assets = [
             {

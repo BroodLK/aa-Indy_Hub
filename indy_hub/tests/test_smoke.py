@@ -2,6 +2,7 @@
 
 # Standard Library
 from datetime import timedelta
+from decimal import Decimal
 from unittest import skip
 from unittest.mock import patch
 
@@ -23,14 +24,14 @@ from indy_hub.models import (
     BlueprintCopyChat,
     BlueprintCopyOffer,
     BlueprintCopyRequest,
-    CapitalShipOrder,
-    CapitalShipOrderEvent,
     CachedCharacterAsset,
     CachedStructureName,
+    CapitalShipOrder,
+    CapitalShipOrderEvent,
     CharacterSettings,
+    CorporationSharingSetting,
     ESIContract,
     ESIContractItem,
-    CorporationSharingSetting,
     IndustryJob,
     JobNotificationDigestEntry,
     MaterialExchangeBuyOrder,
@@ -39,7 +40,6 @@ from indy_hub.models import (
     MaterialExchangeSellOrder,
     MaterialExchangeSellOrderItem,
     NotificationWebhook,
-    SDESyncCompatState,
     UserOnboardingProgress,
 )
 from indy_hub.notifications import notify_user
@@ -260,12 +260,8 @@ class NavbarMaterialExchangeMyOrdersTests(TestCase):
         # Force timestamps so the completed order is newer (this used to place it in the middle).
         older = timezone.now() - timedelta(days=2)
         newer = timezone.now() - timedelta(days=1)
-        MaterialExchangeSellOrder.objects.filter(pk=in_progress.pk).update(
-            created_at=older
-        )
-        MaterialExchangeBuyOrder.objects.filter(pk=completed.pk).update(
-            created_at=newer
-        )
+        MaterialExchangeSellOrder.objects.filter(pk=in_progress.pk).update(created_at=older)
+        MaterialExchangeBuyOrder.objects.filter(pk=completed.pk).update(created_at=newer)
 
         self.client.force_login(self.user)
         response = self.client.get(reverse("indy_hub:my_orders"))
@@ -295,9 +291,7 @@ class NavbarMaterialExchangeMyOrdersTests(TestCase):
         self.client.force_login(self.user)
         response = self.client.get(reverse("indy_hub:my_orders"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response, reverse("indy_hub:sell_order_check_contract", args=[order.id])
-        )
+        self.assertContains(response, reverse("indy_hub:sell_order_check_contract", args=[order.id]))
 
 
 class MaterialExchangeContractCheckTests(TestCase):
@@ -386,9 +380,7 @@ class MaterialExchangeContractCheckTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["ok"])
-        amount_check = next(
-            check for check in payload["checks"] if check["key"] == "amount"
-        )
+        amount_check = next(check for check in payload["checks"] if check["key"] == "amount")
         self.assertFalse(amount_check["passed"])
 
     def test_buy_order_contract_check_reports_success_for_manager_creator_view(self) -> None:
@@ -431,9 +423,7 @@ class MaterialExchangeContractCheckTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["ok"])
-        amount_check = next(
-            check for check in payload["checks"] if check["key"] == "amount"
-        )
+        amount_check = next(check for check in payload["checks"] if check["key"] == "amount")
         self.assertEqual(amount_check["label"], "I will receive")
         self.assertTrue(amount_check["passed"])
 
@@ -473,9 +463,7 @@ class MaterialExchangeContractCheckTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["ok"])
-        amount_check = next(
-            check for check in payload["checks"] if check["key"] == "amount"
-        )
+        amount_check = next(check for check in payload["checks"] if check["key"] == "amount")
         self.assertEqual(amount_check["label"], "I will pay")
         self.assertTrue(amount_check["passed"])
 
@@ -514,9 +502,7 @@ class MaterialExchangeContractCheckTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        items_check = next(
-            check for check in payload["checks"] if check["key"] == "items"
-        )
+        items_check = next(check for check in payload["checks"] if check["key"] == "items")
         self.assertFalse(items_check["passed"])
         self.assertEqual(
             items_check["detail_sections"],
@@ -542,13 +528,9 @@ class MaterialExchangeContractCheckTests(TestCase):
             order_reference="INDY-SELL-DETAIL-CHECK",
         )
 
-        response = self.client.get(
-            reverse("indy_hub:sell_order_detail", args=[order.id])
-        )
+        response = self.client.get(reverse("indy_hub:sell_order_detail", args=[order.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response, reverse("indy_hub:sell_order_check_contract", args=[order.id])
-        )
+        self.assertContains(response, reverse("indy_hub:sell_order_check_contract", args=[order.id]))
 
     def test_buy_order_detail_renders_contract_check_button(self) -> None:
         order = MaterialExchangeBuyOrder.objects.create(
@@ -558,13 +540,9 @@ class MaterialExchangeContractCheckTests(TestCase):
             order_reference="INDY-BUY-DETAIL-CHECK",
         )
 
-        response = self.client.get(
-            reverse("indy_hub:buy_order_detail", args=[order.id])
-        )
+        response = self.client.get(reverse("indy_hub:buy_order_detail", args=[order.id]))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response, reverse("indy_hub:buy_order_check_contract", args=[order.id])
-        )
+        self.assertContains(response, reverse("indy_hub:buy_order_check_contract", args=[order.id]))
 
     def test_buy_order_detail_uses_receive_amount_label_for_manager(self) -> None:
         grant_indy_permissions(self.user, "can_manage_material_hub")
@@ -578,9 +556,7 @@ class MaterialExchangeContractCheckTests(TestCase):
             order_reference="INDY-BUY-DETAIL-MANAGER",
         )
 
-        response = self.client.get(
-            reverse("indy_hub:buy_order_detail", args=[order.id])
-        )
+        response = self.client.get(reverse("indy_hub:buy_order_detail", args=[order.id]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-amount-label="I will receive"')
 
@@ -593,9 +569,7 @@ class MaterialExchangeContractCheckTests(TestCase):
             order_reference="INDY-BUY-DETAIL-MANAGER-OWN",
         )
 
-        response = self.client.get(
-            reverse("indy_hub:buy_order_detail", args=[order.id])
-        )
+        response = self.client.get(reverse("indy_hub:buy_order_detail", args=[order.id]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-amount-label="I will pay"')
 
@@ -936,9 +910,7 @@ class JobNotificationSignalTests(TestCase):
             corp_jobs_notify_frequency=CharacterSettings.NOTIFY_DISABLED,
         )
 
-        other_corp_manager = User.objects.create_user(
-            "corpmanager3", password="test12345"
-        )
+        other_corp_manager = User.objects.create_user("corpmanager3", password="test12345")
         char = assign_main_character(other_corp_manager, character_id=9403)
         char.corporation_id = 4000000
         char.save(update_fields=["corporation_id"])
@@ -1433,9 +1405,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
         self.assertIn(scope_script_id, html)
         self.assertIn("data-scope-trigger", html)
 
-    @skip(
-        "Pre-existing test failure: personal_provider not seeing corporation-scoped requests after rejection"
-    )
+    @skip("Pre-existing test failure: personal_provider not seeing corporation-scoped requests after rejection")
     def test_corporate_rejection_hides_request_for_all_managers(self) -> None:
 
         settings = CharacterSettings.objects.get(user=self.user, character_id=0)
@@ -1460,9 +1430,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
         CharacterOwnership.objects.update_or_create(
             user=self.user,
             character=manager_character,
-            defaults={
-                "owner_hash": f"hash-{manager_character.character_id}-{self.user.id}"
-            },
+            defaults={"owner_hash": f"hash-{manager_character.character_id}-{self.user.id}"},
         )
 
         corp_owner = User.objects.create_user("corp_owner", password="owner123")
@@ -1480,9 +1448,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
         CharacterOwnership.objects.update_or_create(
             user=corp_owner,
             character=owner_character,
-            defaults={
-                "owner_hash": f"hash-{owner_character.character_id}-{corp_owner.id}"
-            },
+            defaults={"owner_hash": f"hash-{owner_character.character_id}-{corp_owner.id}"},
         )
         CharacterSettings.objects.create(
             user=corp_owner,
@@ -1535,9 +1501,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
         CharacterOwnership.objects.update_or_create(
             user=rejector,
             character=rejector_character,
-            defaults={
-                "owner_hash": f"hash-{rejector_character.character_id}-{rejector.id}"
-            },
+            defaults={"owner_hash": f"hash-{rejector_character.character_id}-{rejector.id}"},
         )
         CharacterSettings.objects.create(
             user=rejector,
@@ -1550,18 +1514,12 @@ class BlueprintCopyFulfillViewTests(TestCase):
             "can_manage_corp_bp_requests",
         )
 
-        personal_provider = User.objects.create_user(
-            "personal_builder", password="build123"
-        )
-        personal_character = assign_main_character(
-            personal_provider, character_id=3033001
-        )
+        personal_provider = User.objects.create_user("personal_builder", password="build123")
+        personal_character = assign_main_character(personal_provider, character_id=3033001)
         CharacterOwnership.objects.update_or_create(
             user=personal_provider,
             character=personal_character,
-            defaults={
-                "owner_hash": f"hash-{personal_character.character_id}-{personal_provider.id}"
-            },
+            defaults={"owner_hash": f"hash-{personal_character.character_id}-{personal_provider.id}"},
         )
         CharacterSettings.objects.create(
             user=personal_provider,
@@ -1682,9 +1640,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
             character_name="Capsuleer",
             type_name="Shared Blueprint",
         )
-        other_provider = User.objects.create_user(
-            "second_builder", password="test12345"
-        )
+        other_provider = User.objects.create_user("second_builder", password="test12345")
         assign_main_character(other_provider, character_id=101005)
         CharacterSettings.objects.create(
             user=other_provider,
@@ -1725,9 +1681,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
                 {"action": "reject", "message": "Can't right now"},
             )
             self.assertRedirects(response, reverse("indy_hub:bp_copy_fulfill_requests"))
-            self.assertTrue(
-                BlueprintCopyRequest.objects.filter(id=request_obj.id).exists()
-            )
+            self.assertTrue(BlueprintCopyRequest.objects.filter(id=request_obj.id).exists())
             mock_notify.assert_not_called()
 
             self.client.logout()
@@ -1738,9 +1692,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
             )
             self.assertRedirects(response, reverse("indy_hub:bp_copy_fulfill_requests"))
 
-            self.assertFalse(
-                BlueprintCopyRequest.objects.filter(id=request_obj.id).exists()
-            )
+            self.assertFalse(BlueprintCopyRequest.objects.filter(id=request_obj.id).exists())
             mock_notify.assert_called_once()
             args, kwargs = mock_notify.call_args
             self.assertEqual(args[0], requester)
@@ -1824,9 +1776,7 @@ class BlueprintCopyFulfillViewTests(TestCase):
             character_name="Capsuleer",
             type_name="Manufacturing Blueprint",
         )
-        buyer = User.objects.create_user(
-            "manufacturing_requester", password="test12345"
-        )
+        buyer = User.objects.create_user("manufacturing_requester", password="test12345")
         BlueprintCopyRequest.objects.create(
             type_id=blueprint.type_id,
             material_efficiency=blueprint.material_efficiency,
@@ -2320,9 +2270,7 @@ class BlueprintCopyRequestPageTests(TestCase):
         }
 
         with patch("indy_hub.views.industry.notify_user") as mock_notify:
-            response = self.client.post(
-                reverse("indy_hub:bp_copy_request_page"), post_data
-            )
+            response = self.client.post(reverse("indy_hub:bp_copy_request_page"), post_data)
 
         self.assertRedirects(response, reverse("indy_hub:bp_copy_my_requests"))
         recipients = {call.args[0] for call in mock_notify.call_args_list}
@@ -2377,9 +2325,7 @@ class BlueprintCopyRequestPageTests(TestCase):
                 "owner_hash": f"hash-{allied_character.character_id}-{self.user.id}",
             },
         )
-        CharacterOwnership.objects.filter(user=self.user).exclude(
-            character=allied_character
-        ).delete()
+        CharacterOwnership.objects.filter(user=self.user).exclude(character=allied_character).delete()
         profile = UserProfile.objects.get(user=self.user)
         profile.main_character = allied_character
         profile.save(update_fields=["main_character"])
@@ -2448,9 +2394,7 @@ class BlueprintCopyMyRequestsTests(TestCase):
             copies_requested=1,
         )
 
-        response = self.client.get(
-            reverse("indy_hub:bp_update_copy_request", args=[request_obj.id])
-        )
+        response = self.client.get(reverse("indy_hub:bp_update_copy_request", args=[request_obj.id]))
 
         self.assertRedirects(response, reverse("indy_hub:bp_copy_my_requests"))
         request_obj.refresh_from_db()
@@ -2496,9 +2440,7 @@ class BlueprintCopyMyRequestsTests(TestCase):
         )
 
         self.assertRedirects(response, reverse("indy_hub:bp_copy_my_requests"))
-        self.assertFalse(
-            BlueprintCopyRequest.objects.filter(id=request_obj.id).exists()
-        )
+        self.assertFalse(BlueprintCopyRequest.objects.filter(id=request_obj.id).exists())
 
 
 class StructureLookupForbiddenCacheTests(TestCase):
@@ -2511,9 +2453,7 @@ class StructureLookupForbiddenCacheTests(TestCase):
         structure_id = 610000001
         character_id = 7001
 
-        with patch(
-            "indy_hub.utils.eve.shared_client.fetch_structure_name"
-        ) as mock_fetch:
+        with patch("indy_hub.utils.eve.shared_client.fetch_structure_name") as mock_fetch:
             mock_fetch.side_effect = ESIForbiddenError(
                 "forbidden",
                 character_id=character_id,
@@ -2530,9 +2470,7 @@ class StructureLookupForbiddenCacheTests(TestCase):
             self.assertEqual(result, f"Structure {structure_id}")
             self.assertEqual(mock_fetch.call_count, 1)
 
-            mock_fetch.side_effect = RuntimeError(
-                "fetch_structure_name should not run again"
-            )
+            mock_fetch.side_effect = RuntimeError("fetch_structure_name should not run again")
 
             second_result = eve_utils.resolve_location_name(
                 structure_id,
@@ -2556,9 +2494,7 @@ class ManualRefreshCooldownTests(TestCase):
         reset_manual_refresh_cooldown(MANUAL_REFRESH_KIND_JOBS, self.user.id)
 
     def test_manual_refresh_sets_cooldown(self) -> None:
-        with patch(
-            "indy_hub.tasks.industry.update_blueprints_for_user.apply_async"
-        ) as mock_apply:
+        with patch("indy_hub.tasks.industry.update_blueprints_for_user.apply_async") as mock_apply:
             scheduled, remaining = request_manual_refresh(
                 MANUAL_REFRESH_KIND_BLUEPRINTS,
                 self.user.id,
@@ -2568,16 +2504,12 @@ class ManualRefreshCooldownTests(TestCase):
         self.assertIsNone(remaining)
         mock_apply.assert_called_once()
 
-        allowed, cooldown = manual_refresh_allowed(
-            MANUAL_REFRESH_KIND_BLUEPRINTS, self.user.id
-        )
+        allowed, cooldown = manual_refresh_allowed(MANUAL_REFRESH_KIND_BLUEPRINTS, self.user.id)
         self.assertFalse(allowed)
         self.assertIsNotNone(cooldown)
 
     def test_reset_clears_cooldown(self) -> None:
-        with patch(
-            "indy_hub.tasks.industry.update_industry_jobs_for_user.apply_async"
-        ) as mock_apply:
+        with patch("indy_hub.tasks.industry.update_industry_jobs_for_user.apply_async") as mock_apply:
             scheduled, _ = request_manual_refresh(
                 MANUAL_REFRESH_KIND_JOBS,
                 self.user.id,
@@ -2588,9 +2520,7 @@ class ManualRefreshCooldownTests(TestCase):
 
         reset_manual_refresh_cooldown(MANUAL_REFRESH_KIND_JOBS, self.user.id)
 
-        allowed, cooldown = manual_refresh_allowed(
-            MANUAL_REFRESH_KIND_JOBS, self.user.id
-        )
+        allowed, cooldown = manual_refresh_allowed(MANUAL_REFRESH_KIND_JOBS, self.user.id)
         self.assertTrue(allowed)
         self.assertIsNone(cooldown)
 
@@ -3148,9 +3078,7 @@ class CapitalOrderAdminActionsTests(TestCase):
             is_active=True,
         )
 
-    def _create_order(
-        self, *, status: str = CapitalShipOrder.Status.WAITING
-    ) -> CapitalShipOrder:
+    def _create_order(self, *, status: str = CapitalShipOrder.Status.WAITING) -> CapitalShipOrder:
         return CapitalShipOrder.objects.create(
             config=self.config,
             requester=self.requester,
@@ -3194,9 +3122,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         order = self._create_order(status=CapitalShipOrder.Status.WAITING)
         self.client.force_login(self.builder)
 
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id]))
 
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
@@ -3207,9 +3133,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         order = self._create_order(status=CapitalShipOrder.Status.WAITING)
         self.client.force_login(self.builder)
 
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_cancel", args=[order.id]))
 
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
@@ -3267,9 +3191,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         )
 
         self.client.force_login(other_builder)
-        release_response = self.client.post(
-            reverse("indy_hub:capital_ship_order_release_claim", args=[order.id])
-        )
+        release_response = self.client.post(reverse("indy_hub:capital_ship_order_release_claim", args=[order.id]))
         self.assertEqual(release_response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
@@ -3282,9 +3204,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         order.refresh_from_db()
         self.assertEqual(int(order.gathering_materials_by_id or 0), int(other_builder.id))
 
-        cancel_response = self.client.post(
-            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
-        )
+        cancel_response = self.client.post(reverse("indy_hub:capital_ship_order_cancel", args=[order.id]))
         self.assertEqual(cancel_response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
@@ -3299,9 +3219,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         )
         self.assertEqual(claim_response.status_code, 302)
 
-        release_response = self.client.post(
-            reverse("indy_hub:capital_ship_order_release_claim", args=[order.id])
-        )
+        release_response = self.client.post(reverse("indy_hub:capital_ship_order_release_claim", args=[order.id]))
         self.assertEqual(release_response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
@@ -3319,9 +3237,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         self.assertIsNotNone(release_event)
         self.assertEqual(release_event.payload.get("changed_by_role"), "worker")
 
-    @patch(
-        "indy_hub.views.capital_ship_orders._queue_capital_order_closed_by_manager_notification"
-    )
+    @patch("indy_hub.views.capital_ship_orders._queue_capital_order_closed_by_manager_notification")
     def test_builder_cancel_uses_worker_close_path(self, mock_queue_close_notification) -> None:
         order = self._create_order(status=CapitalShipOrder.Status.WAITING)
         self.client.force_login(self.builder)
@@ -3331,9 +3247,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         )
         self.assertEqual(claim_response.status_code, 302)
 
-        cancel_response = self.client.post(
-            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
-        )
+        cancel_response = self.client.post(reverse("indy_hub:capital_ship_order_cancel", args=[order.id]))
         self.assertEqual(cancel_response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
@@ -3368,11 +3282,8 @@ class CapitalOrderAdminActionsTests(TestCase):
 
         restore_events = [
             event
-            for event in order.events.filter(
-                event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED
-            )
-            if isinstance(event.payload, dict)
-            and bool(event.payload.get("restored_from_cancelled"))
+            for event in order.events.filter(event_type=CapitalShipOrderEvent.EventType.STATUS_CHANGED)
+            if isinstance(event.payload, dict) and bool(event.payload.get("restored_from_cancelled"))
         ]
         self.assertTrue(restore_events)
 
@@ -3541,6 +3452,7 @@ class CapitalOrderAdminActionsTests(TestCase):
         )
         order = self._create_order(status=CapitalShipOrder.Status.WAITING)
 
+        # AA Example App
         from indy_hub.tasks.material_exchange_contracts import (
             handle_capital_ship_order_created,
         )
@@ -3655,7 +3567,10 @@ class CapitalOrderAdminActionsTests(TestCase):
             ]
         )
 
-        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            process_capital_ship_orders,
+        )
 
         process_capital_ship_orders()
         process_capital_ship_orders()
@@ -3690,7 +3605,10 @@ class CapitalOrderAdminActionsTests(TestCase):
             ]
         )
 
-        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            process_capital_ship_orders,
+        )
 
         process_capital_ship_orders()
 
@@ -3734,7 +3652,10 @@ class CapitalOrderAdminActionsTests(TestCase):
             is_singleton=False,
         )
 
-        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            process_capital_ship_orders,
+        )
 
         process_capital_ship_orders()
         order.refresh_from_db()
@@ -3771,7 +3692,10 @@ class CapitalOrderAdminActionsTests(TestCase):
             corporation_id=0,
         )
 
-        from indy_hub.tasks.material_exchange_contracts import process_capital_ship_orders
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            process_capital_ship_orders,
+        )
 
         process_capital_ship_orders()
         order.refresh_from_db()
@@ -3823,7 +3747,10 @@ class MaterialExchangeContractValidationHeuristicsTests(TestCase):
         )
         contract = self._create_contract(status="outstanding")
 
-        from indy_hub.tasks.material_exchange_contracts import _contract_items_match_order_db
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            _contract_items_match_order_db,
+        )
 
         self.assertTrue(_contract_items_match_order_db(contract, order))
 
@@ -3843,6 +3770,9 @@ class MaterialExchangeContractValidationHeuristicsTests(TestCase):
         )
         contract = self._create_contract(status="deleted")
 
-        from indy_hub.tasks.material_exchange_contracts import _contract_items_match_order_db
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            _contract_items_match_order_db,
+        )
 
         self.assertFalse(_contract_items_match_order_db(contract, order))

@@ -4,17 +4,19 @@
 {% load humanize %}
 {% load tz %}
 
-{% block page_title %}{% trans "Buy Materials from Hub" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Buy Materials from Hub" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="page-header mb-4">
+    <div class="container-fluid py-4">
+        <div class="page-header mb-4">
             <div class="d-flex flex-wrap align-items-stretch justify-content-between gap-3">
                 <div class="d-flex flex-column h-100">
                     <h2 class="h3 mb-1">
@@ -50,22 +52,23 @@
         </div>
 
         {% if stock_refreshing %}
-        <div class="d-flex flex-column align-items-center justify-content-center py-5">
-            <svg width="56" height="56" viewBox="0 0 24 24" aria-hidden="true" class="text-info">
-                <g stroke="currentColor" fill="none" stroke-width="1" stroke-linecap="round">
+            <div class="d-flex flex-column align-items-center justify-content-center py-5">
+                <svg width="56" height="56" viewBox="0 0 24 24" aria-hidden="true" class="text-info">
+                    <g stroke="currentColor" fill="none" stroke-width="1" stroke-linecap="round">
                     <circle cx="12" cy="12" r="10">
-                        <animate attributeName="stroke-dasharray" dur="1.5s" calcMode="spline" values="0 150;42 150;42 150;42 150" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
-                        <animate attributeName="stroke-dashoffset" dur="1.5s" calcMode="spline" values="0;-16;-59;-59" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
+                    <animate attributeName="stroke-dasharray" dur="1.5s" calcMode="spline" values="0 150;42 150;42 150;42 150" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
+                    <animate attributeName="stroke-dashoffset" dur="1.5s" calcMode="spline" values="0;-16;-59;-59" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
                     </circle>
                     <animateTransform attributeName="transform" type="rotate" dur="2s" values="0 12 12;360 12 12" repeatCount="indefinite" />
-                </g>
-            </svg>
-            <div class="mt-3 text-muted">{% trans "Refreshing via ESI (assets + prices)." %}</div>
-        </div>
+                    </g>
+                </svg>
+                <div class="mt-3 text-muted">{% trans "Refreshing via ESI (assets + prices)." %}</div>
+            </div>
         {% endif %}
 
         <div class="{% if stock_refreshing %}d-none{% endif %}">
-            <div id="buyMultibuyTopAlert" class="alert alert-warning py-2 px-3 small mb-3 d-none" role="status" aria-live="polite"></div>
+            <div id="buyMultibuyTopAlert" class="alert alert-warning py-2 px-3 small mb-3 d-none" role="status" aria-live="polite">
+            </div>
 
             <div class="me-info-bar" role="status">
                 <i class="fas fa-clock" aria-hidden="true"></i>
@@ -104,347 +107,338 @@
             </div>
 
             {% if buy_stock_progress.error == "esi_down" %}
-            <div class="alert alert-warning d-flex align-items-start gap-2 mb-3" role="status">
-                <i class="fas fa-cloud-bolt mt-1" aria-hidden="true"></i>
-                <div>
-                    <div class="fw-semibold">{% trans "ESI is temporarily unavailable. Using cached stock." %}</div>
-                    {% if buy_stock_progress.retry_after_minutes %}
-                    <small class="text-muted">
-                        {% blocktrans with minutes=buy_stock_progress.retry_after_minutes %}Retry in about {{ minutes }} minute(s).{% endblocktrans %}
-                    </small>
-                    {% endif %}
+                <div class="alert alert-warning d-flex align-items-start gap-2 mb-3" role="status">
+                    <i class="fas fa-cloud-bolt mt-1" aria-hidden="true"></i>
+                    <div>
+                        <div class="fw-semibold">{% trans "ESI is temporarily unavailable. Using cached stock." %}</div>
+                        {% if buy_stock_progress.retry_after_minutes %}
+                            <small class="text-muted">
+                                {% blocktrans with minutes=buy_stock_progress.retry_after_minutes %}Retry in about {{ minutes }} minute(s).{% endblocktrans %}
+                            </small>
+                        {% endif %}
+                    </div>
                 </div>
-            </div>
             {% endif %}
 
             {% if corp_assets_scope_missing %}
-            <div class="glass-panel p-4 mb-4">
-                <div class="alert alert-danger mt-3 mb-0">
-                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-                        <div>
-                            <i class="fas fa-exclamation-triangle me-2"></i>
-                            {% trans "Missing corporation assets token: the hub cannot load stock. A director must authorize the required ESI scope for the corporation." %}
-                        </div>
-                        <div class="d-flex gap-2">
-                            <a class="btn btn-outline-light btn-sm" href="{% url 'indy_hub:esi_hub' %}">{% trans "Open ESI" %}</a>
-                            <a class="btn btn-outline-light btn-sm" href="{% url 'indy_hub:token_management' %}">{% trans "Manage tokens" %}</a>
+                <div class="glass-panel p-4 mb-4">
+                    <div class="alert alert-danger mt-3 mb-0">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                            <div>
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                {% trans "Missing corporation assets token: the hub cannot load stock. A director must authorize the required ESI scope for the corporation." %}
+                            </div>
+                            <div class="d-flex gap-2">
+                                <a class="btn btn-outline-light btn-sm" href="{% url 'indy_hub:esi_hub' %}">{% trans "Open ESI" %}</a>
+                                <a class="btn btn-outline-light btn-sm" href="{% url 'indy_hub:token_management' %}">{% trans "Manage tokens" %}</a>
+                            </div>
                         </div>
                     </div>
                 </div>
-            </div>
             {% endif %}
         </div>
 
         {% if stock %}
-        <div class="row g-4">
-            <div class="col-lg-8">
-                <div class="glass-panel p-4">
-                    <h5 class="mb-4">
-                        {% trans "Available Stock in" %} {{ buy_locations_label }}
-                    </h5>
-                    <div class="row g-2 mb-3 align-items-end">
-                        <div class="col-lg-5">
-                            <label class="form-label fw-semibold" for="buyStockSearch">{% trans "Search items" %}</label>
-                            <input
-                                type="text"
-                                class="form-control form-control-sm"
-                                id="buyStockSearch"
-                                placeholder="{% trans 'Type an item, type ID, or market group...' %}">
-                        </div>
-                        <div class="col-sm-6 col-lg-2">
-                            <label class="form-label fw-semibold" for="buySortMode">{% trans "Sort by" %}</label>
-                            <select id="buySortMode" class="form-select form-select-sm">
-                                <option value="az">{% trans "Sort by A-Z" %}</option>
-                                <option value="market_group">{% trans "Sort by Market Group" %}</option>
-                            </select>
-                        </div>
-                        <div class="col-sm-6 col-lg-2">
-                            <label class="form-label fw-semibold" for="buySortDirection">{% trans "Direction" %}</label>
-                            <select id="buySortDirection" class="form-select form-select-sm">
-                                <option value="asc">{% trans "Ascending" %}</option>
-                                <option value="desc">{% trans "Descending" %}</option>
-                            </select>
-                        </div>
-                        <div class="col-lg-3">
-                            <label class="form-label fw-semibold" for="buyMarketGroupFilter">{% trans "Market group filter" %}</label>
-                            <select id="buyMarketGroupFilter" class="form-select form-select-sm">
-                                <option value="">{% trans "All market groups" %}</option>
-                            </select>
-                        </div>
-                        <div class="col-12 d-flex justify-content-end">
-                            <button
-                                type="button"
-                                class="btn btn-outline-info btn-sm"
-                                id="buyMultibuyModalBtn"
-                                data-bs-toggle="modal"
-                                data-bs-target="#buyMultibuyModal">
-                                <i class="fas fa-paste me-2"></i>{% trans "Paste Multibuy" %}
-                            </button>
-                        </div>
-                    </div>
-                    <form method="post" id="purchaseForm">
-                        {% csrf_token %}
-                        <input type="hidden" id="hidden_order_reference" name="order_reference" value="">
-                        <div class="table-responsive">
-                            <table class="table table-hover stock-table align-middle">
-                                <thead>
-                                    <tr>
-                                        <th class="stock-col-icon"></th>
-                                        <th>{% trans "Item" %}</th>
-                                        <th class="text-end">{% trans "Stock" %}</th>
-                                        <th class="text-end">{% trans "Unit Price" %}</th>
-                                        <th class="text-center stock-col-qty">{% trans "Quantity" %}</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for item in stock %}
-                                    {% if item.row_kind == "container" %}
-                                    <tr class="stock-row stock-row-container"
-                                        data-row-kind="container"
-                                        data-container-key="{{ item.container_key }}"
-                                        data-container-path="{{ item.container_path }}"
-                                        data-type-id="{{ item.container_type_id|default:'' }}"
-                                        data-type-name="{{ item.container_name }}">
-                                        <td>
-                                            {% if item.container_type_id %}
-                                            <img
-                                                src="{{ item.container_icon_url }}"
-                                                data-fallback-src="{{ item.container_icon_fallback_url }}"
-                                                onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
-                                                alt="{{ item.container_name }}"
-                                                class="item-icon">
-                                            {% else %}
-                                            <div class="item-icon me-tree-fallback-icon" aria-hidden="true">
-                                                <i class="fas fa-box-open"></i>
-                                            </div>
-                                            {% endif %}
-                                        </td>
-                                        <td>
-                                            <div class="me-tree-label me-tree-container-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
-                                                <strong>{{ item.container_name }}</strong>
-                                                <div class="small text-muted">{% trans "Container" %}</div>
-                                            </div>
-                                        </td>
-                                        <td class="text-end text-muted">-</td>
-                                        <td class="text-end text-muted">-</td>
-                                        <td class="text-center">
-                                            <div class="container-action-group">
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-outline-secondary btn-sm container-collapse-btn"
-                                                    data-container-key="{{ item.container_key }}"
-                                                    data-label-hide="{% trans 'Hide contents' %}"
-                                                    data-label-show="{% trans 'Show contents' %}"
-                                                    aria-expanded="true">
-                                                    <i class="fas fa-eye-slash me-1"></i>{% trans "Hide contents" %}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    class="btn btn-outline-secondary btn-sm container-toggle-btn"
-                                                    data-container-key="{{ item.container_key }}"
-                                                    data-label-select="{% trans 'Select all' %}"
-                                                    data-label-clear="{% trans 'Clear selection' %}"
-                                                    aria-pressed="false">
-                                                    <i class="fas fa-layer-group me-1"></i>{% trans "Select all" %}
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    {% else %}
-                                    <tr class="stock-row stock-row-item"
-                                        data-row-kind="item"
-                                        data-row-index="{{ item.row_index }}"
-                                        data-container-path="{{ item.container_path }}"
-                                        data-type-id="{{ item.type_id }}"
-                                        data-type-name="{{ item.display_type_name }}"
-                                        data-market-group-name="{{ item.market_group_name|default:'' }}"
-                                        data-market-group-path="{{ item.market_group_path|default:'' }}"
-                                        data-blueprint-variant="{{ item.blueprint_variant }}"
-                                        data-unit-price="{{ item.display_sell_price_to_member|floatformat:2 }}"
-                                        data-max-qty="{{ item.available_quantity }}"
-                                        data-source-structure-ids="{{ item.source_structure_ids|join:',' }}">
-                                        <td>
-                                            <img
-                                                src="{{ item.icon_url }}"
-                                                data-fallback-src="{{ item.icon_fallback_url }}"
-                                                onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
-                                                alt="{{ item.display_type_name }}"
-                                                class="item-icon">
-                                        </td>
-                                        <td>
-                                            <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
-                                                <strong>{% if item.container_path %}- {% endif %}{{ item.display_type_name }}</strong>
-                                                {% if item.blueprint_variant == "bpc" %}
-                                                <div class="small text-muted">
-                                                    {% if item.bpc_runs %}
-                                                        {% blocktrans count run_count=item.bpc_runs %}Blueprint Copy ({{ run_count }} run){% plural %}Blueprint Copy ({{ run_count }} runs){% endblocktrans %}
-                                                    {% else %}
-                                                        {% trans "Blueprint Copy" %}
-                                                    {% endif %}
-                                                </div>
-                                                {% elif item.blueprint_variant == "bpo" %}
-                                                <div class="small text-muted">{% trans "Blueprint Original" %}</div>
-                                                {% elif item.blueprint_variant == "mixed" %}
-                                                <div class="small text-muted">{% trans "Mixed Blueprint Stock (BPO/BPC)" %}</div>
-                                                {% endif %}
-                                                <div class="small text-muted">
-                                                    {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}{% if item.container_name_path %} &middot; {{ item.container_name_path }}{% endif %}
-                                                </div>
-                                                {% if item.has_buy_price_override %}
-                                                <div class="small text-info">
-                                                    <i class="fas fa-sliders-h me-1"></i>
-                                                    {% trans "Custom buy price:" %} {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
-                                                    <span class="text-muted">
-                                                        ({% trans "default" %}: {{ item.default_sell_price_to_member|floatformat:2|intcomma }} ISK)
-                                                    </span>
-                                                </div>
-                                                {% endif %}
-                                                {% if item.reserved_quantity > 0 %}
-                                                <div class="small text-warning">
-                                                    <i class="fas fa-lock me-1"></i>{% trans "Reserved in open orders:" %} {{ item.reserved_quantity|intcomma }}
-                                                </div>
-                                                {% endif %}
-                                            </div>
-                                        </td>
-                                        <td class="text-end">
-                                            <span class="badge bg-primary">{{ item.quantity|intcomma }}</span>
-                                            <div class="small text-muted">
-                                                {% trans "Available now:" %} {{ item.available_quantity|intcomma }}
-                                            </div>
-                                        </td>
-                                        <td class="text-end text-primary fw-semibold">
-                                            {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
-                                        </td>
-                                        <td class="text-center">
-                                            <div class="qty-cell">
-                                                {% if item.container_path %}
-                                                <input
-                                                    type="hidden"
-                                                    name="{{ item.form_quantity_field_name }}"
-                                                    id="qty-{{ item.row_index }}"
-                                                    class="qty-input container-child-qty"
-                                                    min="0"
-                                                    max="{{ item.available_quantity }}"
-                                                    value="0"
-                                                    data-type-id="{{ item.type_id }}"
-                                                    data-container-path="{{ item.container_path }}"
-                                                    data-max="{{ item.available_quantity }}"
-                                                    data-error-id=""
-                                                    {% if item.available_quantity <= 0 %}disabled{% endif %}>
-                                                <div class="small text-muted">
-                                                    <i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>{% trans "Selected via container" %}
-                                                </div>
-                                                {% else %}
-                                                <div class="qty-input-row">
-                                                    <input
-                                                        type="number"
-                                                        name="{{ item.form_quantity_field_name }}"
-                                                        id="qty-{{ item.row_index }}"
-                                                        class="form-control qty-input"
-                                                        min="0"
-                                                        max="{{ item.available_quantity }}"
-                                                        value="0"
-                                                        data-type-id="{{ item.type_id }}"
-                                                        data-container-path="{{ item.container_path }}"
-                                                        data-max="{{ item.available_quantity }}"
-                                                        data-error-id="error-{{ item.row_index }}"
-                                                        {% if item.available_quantity <= 0 %}disabled{% endif %}>
-                                                    <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
-                                                        <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="zero" title="{% trans 'Zero' %}" aria-label="{% trans 'Zero' %}">
-                                                            <i class="fas fa-ban" aria-hidden="true"></i>
-                                                        </button>
-                                                        <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="max">{% trans "Max" %}</button>
-                                                    </div>
-                                                </div>
-                                                <div class="qty-error" id="error-{{ item.row_index }}">
-                                                    {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
-                                                </div>
-                                                {% endif %}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    {% endif %}
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <div class="col-lg-4">
-                <div class="invoice-panel">
+            <div class="row g-4">
+                <div class="col-lg-8">
                     <div class="glass-panel p-4">
-                        <h5 class="mb-3">
-                            <i class="fas fa-receipt me-2"></i>{% trans "Order Summary" %}
-                        </h5>
-                        <div id="invoiceContent">
-                            <div class="empty-invoice">
-                                <i class="fas fa-shopping-cart fa-3x mb-3 opacity-25"></i>
-                                <p class="mb-0">{% trans "Select items to see your order summary" %}</p>
+                        <h5 class="mb-4">{% trans "Available Stock in" %} {{ buy_locations_label }}</h5>
+                        <div class="row g-2 mb-3 align-items-end">
+                            <div class="col-lg-5">
+                                <label class="form-label fw-semibold" for="buyStockSearch">{% trans "Search items" %}</label>
+                                <input type="text"
+                                       class="form-control form-control-sm"
+                                       id="buyStockSearch"
+                                       placeholder="{% trans 'Type an item, type ID, or market group...' %}">
                             </div>
-                        </div>
-                        <div id="invoiceItems" class="d-none">
-                            <div id="itemsList"></div>
-                            <div class="invoice-total">
-                                <div class="d-flex justify-content-between align-items-center mb-2">
-                                    <span class="fw-bold">{% trans "Total Amount" %}</span>
-                                    <span class="h4 mb-0 text-primary" id="totalAmount">0 ISK</span>
-                                </div>
-                                <button type="submit" form="purchaseForm" class="btn btn-primary w-100 mt-3">
-                                    <i class="fas fa-shopping-cart me-2"></i>{% trans "Confirm Purchase" %}
+                            <div class="col-sm-6 col-lg-2">
+                                <label class="form-label fw-semibold" for="buySortMode">{% trans "Sort by" %}</label>
+                                <select id="buySortMode" class="form-select form-select-sm">
+                                    <option value="az">{% trans "Sort by A-Z" %}</option>
+                                    <option value="market_group">{% trans "Sort by Market Group" %}</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-6 col-lg-2">
+                                <label class="form-label fw-semibold" for="buySortDirection">{% trans "Direction" %}</label>
+                                <select id="buySortDirection" class="form-select form-select-sm">
+                                    <option value="asc">{% trans "Ascending" %}</option>
+                                    <option value="desc">{% trans "Descending" %}</option>
+                                </select>
+                            </div>
+                            <div class="col-lg-3">
+                                <label class="form-label fw-semibold" for="buyMarketGroupFilter">{% trans "Market group filter" %}</label>
+                                <select id="buyMarketGroupFilter" class="form-select form-select-sm">
+                                    <option value="">{% trans "All market groups" %}</option>
+                                </select>
+                            </div>
+                            <div class="col-12 d-flex justify-content-end">
+                                <button type="button"
+                                        class="btn btn-outline-info btn-sm"
+                                        id="buyMultibuyModalBtn"
+                                        data-bs-toggle="modal"
+                                        data-bs-target="#buyMultibuyModal">
+                                    <i class="fas fa-paste me-2"></i>{% trans "Paste Multibuy" %}
                                 </button>
                             </div>
                         </div>
+                        <form method="post" id="purchaseForm">
+                            {% csrf_token %}
+                            <input type="hidden" id="hidden_order_reference" name="order_reference" value="">
+                            <div class="table-responsive">
+                                <table class="table table-hover stock-table align-middle">
+                                    <thead>
+                                        <tr>
+                                            <th class="stock-col-icon"></th>
+                                            <th>{% trans "Item" %}</th>
+                                            <th class="text-end">{% trans "Stock" %}</th>
+                                            <th class="text-end">{% trans "Unit Price" %}</th>
+                                            <th class="text-center stock-col-qty">{% trans "Quantity" %}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in stock %}
+                                            {% if item.row_kind == "container" %}
+                                                <tr class="stock-row stock-row-container"
+                                                    data-row-kind="container"
+                                                    data-container-key="{{ item.container_key }}"
+                                                    data-container-path="{{ item.container_path }}"
+                                                    data-type-id="{{ item.container_type_id|default:'' }}"
+                                                    data-type-name="{{ item.container_name }}">
+                                                    <td>
+                                                        {% if item.container_type_id %}
+                                                            <img src="{{ item.container_icon_url }}"
+                                                                 data-fallback-src="{{ item.container_icon_fallback_url }}"
+                                                                 onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
+                                                                 alt="{{ item.container_name }}"
+                                                                 class="item-icon">
+                                                        {% else %}
+                                                            <div class="item-icon me-tree-fallback-icon" aria-hidden="true">
+                                                                <i class="fas fa-box-open"></i>
+                                                            </div>
+                                                        {% endif %}
+                                                    </td>
+                                                    <td>
+                                                        <div class="me-tree-label me-tree-container-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
+                                                            <strong>{{ item.container_name }}</strong>
+                                                            <div class="small text-muted">{% trans "Container" %}</div>
+                                                        </div>
+                                                    </td>
+                                                    <td class="text-end text-muted">-</td>
+                                                    <td class="text-end text-muted">-</td>
+                                                    <td class="text-center">
+                                                        <div class="container-action-group">
+                                                            <button type="button"
+                                                                    class="btn btn-outline-secondary btn-sm container-collapse-btn"
+                                                                    data-container-key="{{ item.container_key }}"
+                                                                    data-label-hide="{% trans 'Hide contents' %}"
+                                                                    data-label-show="{% trans 'Show contents' %}"
+                                                                    aria-expanded="true">
+                                                                <i class="fas fa-eye-slash me-1"></i>{% trans "Hide contents" %}
+                                                            </button>
+                                                            <button type="button"
+                                                                    class="btn btn-outline-secondary btn-sm container-toggle-btn"
+                                                                    data-container-key="{{ item.container_key }}"
+                                                                    data-label-select="{% trans 'Select all' %}"
+                                                                    data-label-clear="{% trans 'Clear selection' %}"
+                                                                    aria-pressed="false">
+                                                                <i class="fas fa-layer-group me-1"></i>{% trans "Select all" %}
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            {% else %}
+                                                <tr class="stock-row stock-row-item"
+                                                    data-row-kind="item"
+                                                    data-row-index="{{ item.row_index }}"
+                                                    data-container-path="{{ item.container_path }}"
+                                                    data-type-id="{{ item.type_id }}"
+                                                    data-type-name="{{ item.display_type_name }}"
+                                                    data-market-group-name="{{ item.market_group_name|default:'' }}"
+                                                    data-market-group-path="{{ item.market_group_path|default:'' }}"
+                                                    data-blueprint-variant="{{ item.blueprint_variant }}"
+                                                    data-unit-price="{{ item.display_sell_price_to_member|floatformat:2 }}"
+                                                    data-max-qty="{{ item.available_quantity }}"
+                                                    data-source-structure-ids="{{ item.source_structure_ids|join:',' }}">
+                                                    <td>
+                                                        <img src="{{ item.icon_url }}"
+                                                             data-fallback-src="{{ item.icon_fallback_url }}"
+                                                             onerror="if (!this.dataset.fallbackApplied && this.dataset.fallbackSrc) { this.dataset.fallbackApplied='1'; this.src=this.dataset.fallbackSrc; }"
+                                                             alt="{{ item.display_type_name }}"
+                                                             class="item-icon">
+                                                    </td>
+                                                    <td>
+                                                        <div class="me-tree-label" style="padding-left: {{ item.indent_padding_rem }}rem;">
+                                                            <strong>
+                                                                {% if item.container_path %}-{% endif %}
+                                                            {{ item.display_type_name }}</strong>
+                                                            {% if item.blueprint_variant == "bpc" %}
+                                                                <div class="small text-muted">
+                                                                    {% if item.bpc_runs %}
+                                                                        {% blocktrans count run_count=item.bpc_runs %}Blueprint Copy ({{ run_count }} run){% plural %}Blueprint Copy ({{ run_count }} runs){% endblocktrans %}
+                                                                    {% else %}
+                                                                        {% trans "Blueprint Copy" %}
+                                                                    {% endif %}
+                                                                </div>
+                                                            {% elif item.blueprint_variant == "bpo" %}
+                                                                <div class="small text-muted">{% trans "Blueprint Original" %}</div>
+                                                            {% elif item.blueprint_variant == "mixed" %}
+                                                                <div class="small text-muted">{% trans "Mixed Blueprint Stock (BPO/BPC)" %}</div>
+                                                            {% endif %}
+                                                            <div class="small text-muted">
+                                                                {% trans "Location:" %} {{ item.buy_location_label }} &middot; {{ hangar_division_label }}
+                                                                {% if item.container_name_path %}&middot; {{ item.container_name_path }}{% endif %}
+                                                            </div>
+                                                            {% if item.has_buy_price_override %}
+                                                                <div class="small text-info">
+                                                                    <i class="fas fa-sliders-h me-1"></i>
+                                                                    {% trans "Custom buy price:" %} {{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK
+                                                                    <span class="text-muted">
+                                                                        ({% trans "default" %}: {{ item.default_sell_price_to_member|floatformat:2|intcomma }} ISK)
+                                                                    </span>
+                                                                </div>
+                                                            {% endif %}
+                                                            {% if item.reserved_quantity > 0 %}
+                                                                <div class="small text-warning">
+                                                                    <i class="fas fa-lock me-1"></i>{% trans "Reserved in open orders:" %} {{ item.reserved_quantity|intcomma }}
+                                                                </div>
+                                                            {% endif %}
+                                                        </div>
+                                                    </td>
+                                                    <td class="text-end">
+                                                        <span class="badge bg-primary">{{ item.quantity|intcomma }}</span>
+                                                        <div class="small text-muted">{% trans "Available now:" %} {{ item.available_quantity|intcomma }}</div>
+                                                    </td>
+                                                    <td class="text-end text-primary fw-semibold">{{ item.display_sell_price_to_member|floatformat:2|intcomma }} ISK</td>
+                                                    <td class="text-center">
+                                                        <div class="qty-cell">
+                                                            {% if item.container_path %}
+                                                                <input type="hidden"
+                                                                       name="{{ item.form_quantity_field_name }}"
+                                                                       id="qty-{{ item.row_index }}"
+                                                                       class="qty-input container-child-qty"
+                                                                       min="0"
+                                                                       max="{{ item.available_quantity }}"
+                                                                       value="0"
+                                                                       data-type-id="{{ item.type_id }}"
+                                                                       data-container-path="{{ item.container_path }}"
+                                                                       data-max="{{ item.available_quantity }}"
+                                                                       data-error-id=""
+                                                                       {% if item.available_quantity <= 0 %}disabled{% endif %}>
+                                                                <div class="small text-muted">
+                                                                    <i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>{% trans "Selected via container" %}
+                                                                </div>
+                                                            {% else %}
+                                                                <div class="qty-input-row">
+                                                                    <input type="number"
+                                                                           name="{{ item.form_quantity_field_name }}"
+                                                                           id="qty-{{ item.row_index }}"
+                                                                           class="form-control qty-input"
+                                                                           min="0"
+                                                                           max="{{ item.available_quantity }}"
+                                                                           value="0"
+                                                                           data-type-id="{{ item.type_id }}"
+                                                                           data-container-path="{{ item.container_path }}"
+                                                                           data-max="{{ item.available_quantity }}"
+                                                                           data-error-id="error-{{ item.row_index }}"
+                                                                           {% if item.available_quantity <= 0 %}disabled{% endif %}>
+                                                                    <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
+                                                                        <button type="button"
+                                                                                class="btn btn-secondary btn-sm qty-btn"
+                                                                                data-action="zero"
+                                                                                title="{% trans 'Zero' %}"
+                                                                                aria-label="{% trans 'Zero' %}">
+                                                                            <i class="fas fa-ban" aria-hidden="true"></i>
+                                                                        </button>
+                                                                        <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="max">{% trans "Max" %}</button>
+                                                                    </div>
+                                                                </div>
+                                                                <div class="qty-error" id="error-{{ item.row_index }}">
+                                                                    {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
+                                                                </div>
+                                                            {% endif %}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="col-lg-4">
+                    <div class="invoice-panel">
+                        <div class="glass-panel p-4">
+                            <h5 class="mb-3">
+                                <i class="fas fa-receipt me-2"></i>{% trans "Order Summary" %}
+                            </h5>
+                            <div id="invoiceContent">
+                                <div class="empty-invoice">
+                                    <i class="fas fa-shopping-cart fa-3x mb-3 opacity-25"></i>
+                                    <p class="mb-0">{% trans "Select items to see your order summary" %}</p>
+                                </div>
+                            </div>
+                            <div id="invoiceItems" class="d-none">
+                                <div id="itemsList"></div>
+                                <div class="invoice-total">
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span class="fw-bold">{% trans "Total Amount" %}</span>
+                                        <span class="h4 mb-0 text-primary" id="totalAmount">0 ISK</span>
+                                    </div>
+                                    <button type="submit" form="purchaseForm" class="btn btn-primary w-100 mt-3">
+                                        <i class="fas fa-shopping-cart me-2"></i>{% trans "Confirm Purchase" %}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
         {% else %}
-        <div class="glass-panel p-4">
-            <div class="alert alert-warning mb-3">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                {% trans "No materials currently available in stock. Please check back later." %}
+            <div class="glass-panel p-4">
+                <div class="alert alert-warning mb-3">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    {% trans "No materials currently available in stock. Please check back later." %}
+                </div>
             </div>
-        </div>
         {% endif %}
-</div>
+    </div>
 
-<div class="modal fade" id="buyMultibuyModal" tabindex="-1" aria-labelledby="buyMultibuyModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="buyMultibuyModalLabel">
-                    <i class="fas fa-paste me-2"></i>{% trans "Paste Multibuy List" %}
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
-            </div>
-            <div class="modal-body">
-                <p class="text-muted small mb-3">
-                    {% trans "Paste an EVE multibuy list. Matching items from one hub location will be added to your current buy list." %}
-                </p>
-                <label class="form-label fw-semibold" for="buyMultibuyInput">{% trans "Multibuy lines" %}</label>
-                <textarea
-                    id="buyMultibuyInput"
-                    class="form-control"
-                    rows="8"
-                    placeholder="{% trans 'Examples: Tritanium 1000, Tritanium<tab>1000, or 1000 Tritanium' %}"></textarea>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
-                <button
-                    type="button"
-                    class="btn btn-primary"
-                    id="buyMultibuySearchBtn"
-                    data-parse-url="{% url 'indy_hub:material_exchange_buy_multibuy_parse' %}">
-                    <i class="fas fa-search me-2"></i>{% trans "Search" %}
-                </button>
+    <div class="modal fade" id="buyMultibuyModal" tabindex="-1" aria-labelledby="buyMultibuyModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="buyMultibuyModalLabel">
+                        <i class="fas fa-paste me-2"></i>{% trans "Paste Multibuy List" %}
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        {% trans "Paste an EVE multibuy list. Matching items from one hub location will be added to your current buy list." %}
+                    </p>
+                    <label class="form-label fw-semibold" for="buyMultibuyInput">{% trans "Multibuy lines" %}</label>
+                    <textarea id="buyMultibuyInput"
+                              class="form-control"
+                              rows="8"
+                              placeholder="{% trans 'Examples: Tritanium 1000, Tritanium<tab>1000, or 1000 Tritanium' %}"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+                    <button type="button"
+                            class="btn btn-primary"
+                            id="buyMultibuySearchBtn"
+                            data-parse-url="{% url 'indy_hub:material_exchange_buy_multibuy_parse' %}">
+                        <i class="fas fa-search me-2"></i>{% trans "Search" %}
+                    </button>
+                </div>
             </div>
         </div>
     </div>
-</div>
 
-<script>
+    <script>
 document.addEventListener('DOMContentLoaded', function() {
     const cleanUrl = new URL(window.location.href);
     if (cleanUrl.searchParams.get('refreshed') === '1') {
@@ -953,8 +947,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function escapeHtml(value) {
         return String(value || '')
             .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
+            .replace(/</g , '&lt;') .replace( />/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
@@ -1648,12 +1641,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             <strong class="me-2">${item.name}</strong>
                             <div class="d-flex align-items-center gap-2">
                                 <span class="text-primary fw-semibold">${formatNumber(item.subtotal)} ISK</span>
-                                <button
-                                    type="button"
-                                    class="btn btn-link btn-sm p-0 text-muted invoice-remove-btn"
-                                    data-row-index="${item.rowIndex}"
-                                    title="${clearItemLabel}"
-                                    aria-label="${clearItemLabel}">
+                                <button type="button" class="btn btn-link btn-sm p-0 text-muted invoice-remove-btn" data-row-index="${item.rowIndex}" title="${clearItemLabel}" aria-label="${clearItemLabel}">
                                     <i class="fas fa-times" aria-hidden="true"></i>
                                 </button>
                             </div>
@@ -1834,5 +1822,5 @@ document.addEventListener('DOMContentLoaded', function() {
         node.textContent = formatted.replace(/\//g, '-');
     });
 });
-</script>
+    </script>
 {% endblock content %}

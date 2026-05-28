@@ -34,18 +34,14 @@ def populate_bp_type(apps, schema_editor):
     Blueprint = apps.get_model("indy_hub", "Blueprint")
 
     try:
-        SdeIndustryActivityProduct = apps.get_model(
-            "indy_hub", "SdeIndustryActivityProduct"
-        )
+        SdeIndustryActivityProduct = apps.get_model("indy_hub", "SdeIndustryActivityProduct")
     except LookupError:
         SdeIndustryActivityProduct = None
 
     reaction_ids: set[int] = set()
     if SdeIndustryActivityProduct is not None:
         reaction_ids = set(
-            SdeIndustryActivityProduct.objects.filter(
-                activity_id__in=[9, 11]
-            ).values_list("eve_type_id", flat=True)
+            SdeIndustryActivityProduct.objects.filter(activity_id__in=[9, 11]).values_list("eve_type_id", flat=True)
         )
 
     to_update: list = []

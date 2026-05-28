@@ -26,9 +26,7 @@ class Migration(migrations.Migration):
             field=models.JSONField(
                 blank=True,
                 default=list,
-                help_text=(
-                    "Cached buy structure names aligned with source_structure_ids (same order)."
-                ),
+                help_text=("Cached buy structure names aligned with source_structure_ids (same order)."),
             ),
         ),
     ]

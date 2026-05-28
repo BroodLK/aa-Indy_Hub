@@ -6,25 +6,15 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
-SELL_STATUS_INDEX = models.Index(
-    fields=["status", "-created_at"], name="indy_hub_ma_status_cfa62a_idx"
-)
-SELLER_INDEX = models.Index(
-    fields=["seller", "-created_at"], name="indy_hub_ma_seller__c5b878_idx"
-)
-BUY_STATUS_INDEX = models.Index(
-    fields=["status", "-created_at"], name="indy_hub_ma_status_c3e4f4_idx"
-)
-BUYER_INDEX = models.Index(
-    fields=["buyer", "-created_at"], name="indy_hub_ma_buyer_i_6e10d2_idx"
-)
+SELL_STATUS_INDEX = models.Index(fields=["status", "-created_at"], name="indy_hub_ma_status_cfa62a_idx")
+SELLER_INDEX = models.Index(fields=["seller", "-created_at"], name="indy_hub_ma_seller__c5b878_idx")
+BUY_STATUS_INDEX = models.Index(fields=["status", "-created_at"], name="indy_hub_ma_status_c3e4f4_idx")
+BUYER_INDEX = models.Index(fields=["buyer", "-created_at"], name="indy_hub_ma_buyer_i_6e10d2_idx")
 
 
 def _index_exists(schema_editor, table_name: str, index_name: str) -> bool:
     with schema_editor.connection.cursor() as cursor:
-        constraints = schema_editor.connection.introspection.get_constraints(
-            cursor, table_name
-        )
+        constraints = schema_editor.connection.introspection.get_constraints(cursor, table_name)
     return index_name in constraints
 
 
@@ -102,15 +92,11 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "corporation_id",
-                    models.BigIntegerField(
-                        help_text="Corporation ID owning the hub hangar"
-                    ),
+                    models.BigIntegerField(help_text="Corporation ID owning the hub hangar"),
                 ),
                 (
                     "structure_id",
-                    models.BigIntegerField(
-                        help_text="Structure or station ID where the hub is located"
-                    ),
+                    models.BigIntegerField(help_text="Structure or station ID where the hub is located"),
                 ),
                 ("structure_name", models.CharField(blank=True, max_length=255)),
                 (
@@ -146,9 +132,7 @@ class Migration(migrations.Migration):
                 ("last_price_sync", models.DateTimeField(blank=True, null=True)),
                 (
                     "is_active",
-                    models.BooleanField(
-                        default=True, help_text="Enable/disable the Material Exchange"
-                    ),
+                    models.BooleanField(default=True, help_text="Enable/disable the Material Exchange"),
                 ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
@@ -174,9 +158,7 @@ class Migration(migrations.Migration):
                 ("type_name", models.CharField(blank=True, max_length=255)),
                 (
                     "quantity",
-                    models.BigIntegerField(
-                        validators=[django.core.validators.MinValueValidator(1)]
-                    ),
+                    models.BigIntegerField(validators=[django.core.validators.MinValueValidator(1)]),
                 ),
                 (
                     "unit_price",
@@ -297,9 +279,7 @@ class Migration(migrations.Migration):
                 ("type_name", models.CharField(blank=True, max_length=255)),
                 (
                     "quantity",
-                    models.BigIntegerField(
-                        validators=[django.core.validators.MinValueValidator(1)]
-                    ),
+                    models.BigIntegerField(validators=[django.core.validators.MinValueValidator(1)]),
                 ),
                 (
                     "unit_price",
@@ -488,15 +468,11 @@ class Migration(migrations.Migration):
                 ("quantity", models.BigIntegerField(default=0)),
                 (
                     "jita_buy_price",
-                    models.DecimalField(
-                        blank=True, decimal_places=2, default=0, max_digits=20
-                    ),
+                    models.DecimalField(blank=True, decimal_places=2, default=0, max_digits=20),
                 ),
                 (
                     "jita_sell_price",
-                    models.DecimalField(
-                        blank=True, decimal_places=2, default=0, max_digits=20
-                    ),
+                    models.DecimalField(blank=True, decimal_places=2, default=0, max_digits=20),
                 ),
                 ("last_price_update", models.DateTimeField(blank=True, null=True)),
                 ("updated_at", models.DateTimeField(auto_now=True)),
@@ -513,9 +489,7 @@ class Migration(migrations.Migration):
                 "verbose_name": "Material Exchange Stock",
                 "verbose_name_plural": "Material Exchange Stock",
                 "indexes": [
-                    models.Index(
-                        fields=["type_id"], name="indy_hub_ma_type_id_7b1dab_idx"
-                    ),
+                    models.Index(fields=["type_id"], name="indy_hub_ma_type_id_7b1dab_idx"),
                     models.Index(
                         fields=["config", "type_id"],
                         name="indy_hub_ma_config__05780a_idx",

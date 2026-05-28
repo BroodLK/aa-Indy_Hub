@@ -3,373 +3,429 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "Buyback" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Buyback" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-{% url 'indy_hub:capital_ship_orders_admin' as capital_ship_orders_admin_url %}
-<div class="container-fluid py-4">
-    <div class="page-header mb-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-store me-2"></i>
-                    {% trans "Buyback" %}
-                </h2>
-                <p class="description">{% trans "Supply hub for buying and selling materials" %}</p>
+    {% url 'indy_hub:capital_ship_orders_admin' as capital_ship_orders_admin_url %}
+    <div class="container-fluid py-4">
+        <div class="page-header mb-4">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-store me-2"></i>
+                        {% trans "Buyback" %}
+                    </h2>
+                    <p class="description">{% trans "Supply hub for buying and selling materials" %}</p>
+                </div>
+                <div class="d-flex gap-2">
+                    {% if perms.indy_hub.can_manage_material_hub %}
+                        <a href="{% url 'indy_hub:material_exchange_config' %}" class="btn btn-primary">
+                            <i class="fas fa-cog me-1"></i>{% trans "Configuration" %}
+                        </a>
+                    {% endif %}
+                    <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
+                        <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
+                    </a>
+                </div>
             </div>
-            <div class="d-flex gap-2">
-                {% if perms.indy_hub.can_manage_material_hub %}
-                <a href="{% url 'indy_hub:material_exchange_config' %}" class="btn btn-primary">
-                    <i class="fas fa-cog me-1"></i>{% trans "Configuration" %}
-                </a>
-                {% endif %}
-                <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
-                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
-                </a>
-            </div>
+            {% if superuser_without_material_hub_manage %}
+                <div class="alert alert-danger py-2 px-3 mt-2 mb-0 me-superuser-warning" role="alert">
+                    <small>
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        {% trans "Superuser detected without 'can_manage_material_hub': you won't receive Buyback admin notifications." %}
+                    </small>
+                </div>
+            {% endif %}
+            <i class="fas fa-store header-bg"></i>
         </div>
-        {% if superuser_without_material_hub_manage %}
-        <div class="alert alert-danger py-2 px-3 mt-2 mb-0 me-superuser-warning" role="alert">
-            <small>
-                <i class="fas fa-exclamation-triangle me-1"></i>
-                {% trans "Superuser detected without 'can_manage_material_hub': you won't receive Buyback admin notifications." %}
-            </small>
-        </div>
-        {% endif %}
-        <i class="fas fa-store header-bg"></i>
-    </div>
 
-    <div class="me-hub-banner" role="note">
-        <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
-        <span class="me-hub-banner-label">{% trans "Hub Locations" %}:</span>
-        <span class="me-hub-banner-value">
-            <span class="me-hub-line">
-                <strong>{% trans "Sell" %}:</strong>
-                {% for location_name in sell_location_names %}
-                    <span class="me-hub-line-item">{{ location_name }}</span>
-                {% empty %}
-                    <span class="me-hub-line-item">{{ hub_location_label }}</span>
-                {% endfor %}
-            </span>
-            <span class="me-hub-line">
-                <strong>{% trans "Buy" %}:</strong>
-                {% if buy_enabled %}
-                    {% for location_name in buy_location_names %}
+        <div class="me-hub-banner" role="note">
+            <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+            <span class="me-hub-banner-label">{% trans "Hub Locations" %}:</span>
+            <span class="me-hub-banner-value">
+                <span class="me-hub-line">
+                    <strong>{% trans "Sell" %}:</strong>
+                    {% for location_name in sell_location_names %}
                         <span class="me-hub-line-item">{{ location_name }}</span>
                     {% empty %}
-                        <span class="me-hub-line-item text-muted">{% trans "No buy locations configured" %}</span>
+                        <span class="me-hub-line-item">{{ hub_location_label }}</span>
                     {% endfor %}
-                {% else %}
-                    <span class="me-hub-line-item text-muted">{% trans "Disabled" %}</span>
-                {% endif %}
-            </span>
-        </span>
-    </div>
-
-    <!-- Hub Actions -->
-    <div class="me-hub-actions mb-4">
-        <article class="me-hub-action-card" data-accent="success">
-            <div class="me-hub-action-icon" aria-hidden="true">
-                <i class="fas fa-hand-holding-usd"></i>
-            </div>
-            <h5 class="me-hub-action-title">{% trans "Sell to Hub" %}</h5>
-            <span class="me-hub-action-badge">{{ pending_sell_orders|intcomma }} {% trans "pending" %}</span>
-            <p class="me-hub-action-desc">{% trans "Sell your materials to the Hub, prices based on Jita." %}</p>
-            <div class="d-flex flex-wrap justify-content-center gap-2">
-                <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success me-hub-action-btn">
-                    <i class="fas fa-coins me-1"></i>{% trans "Start Selling" %}
-                </a>
-                <button type="button" class="btn btn-outline-light me-hub-action-btn" data-buyback-estimate-trigger="true" data-bs-toggle="modal" data-bs-target="#sellEstimateModal">
-                    <i class="fas fa-calculator me-1"></i>{% trans "Get an Estimate" %}
-                </button>
-            </div>
-        </article>
-
-        <article class="me-hub-action-card" data-accent="info">
-            <div class="me-hub-action-icon" aria-hidden="true">
-                <i class="fas fa-shopping-cart"></i>
-            </div>
-            <h5 class="me-hub-action-title">{% trans "Buy from Hub" %}</h5>
-            <span class="me-hub-action-badge">{{ pending_buy_orders|intcomma }} {% trans "pending" %}</span>
-            <p class="me-hub-action-desc">{% trans "Purchase materials from the Hub stock without going to Jita." %}</p>
-            {% if buy_enabled %}
-            <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info me-hub-action-btn">
-                <i class="fas fa-shopping-bag me-1"></i>{% trans "Browse Stock" %}
-            </a>
-            {% else %}
-            <button class="btn btn-outline-secondary me-hub-action-btn" disabled>
-                <i class="fas fa-ban me-1"></i>{% trans "Buy Disabled" %}
-            </button>
-            {% endif %}
-        </article>
-
-    </div>
-
-    <!-- Your Recent Orders -->
-    <div class="row g-3">
-        <div class="col-12">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <h5 class="mb-0">
-                    <i class="fas fa-list me-2 text-primary"></i>
-                    {% trans "Your Active Orders" %}
-                </h5>
-                <a href="{% url 'indy_hub:my_orders' %}" class="btn btn-sm me-panel-action-btn">
-                    <i class="fas fa-eye me-1"></i>{% trans "My Orders History" %}
-                </a>
-            </div>
-            {% if recent_orders %}
-            <div class="me-user-orders">
-                    {% for order in recent_orders %}
-                    <article class="me-user-order-row status-{{ order.status }}" data-order-kind="{{ order.order_kind }}">
-                        <div class="me-user-order-main me-user-layout-grid">
-                            <div class="me-user-order-ref">
-                                <span class="me-order-ref-title">
-                                    <span class="me-order-kind-label me-order-kind-{{ order.order_kind }}">{% if order.order_kind == 'sell' %}{% trans "Sell" %}{% else %}{% trans "Buy" %}{% endif %}</span>
-                                    · {{ order.order_reference }}
-                                    {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' %}
-                                    <span class="me-order-anomaly-badge" title="{% trans 'Anomaly detected' %}" aria-label="{% trans 'Anomaly detected' %}">
-                                        <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
-                                        <span>{% trans "Anomaly" %}</span>
-                                    </span>
-                                    {% endif %}
-                                </span>
-                            </div>
-                            <div class="me-user-order-meta me-user-order-items">
-                                {% for item in order.items.all %}
-                                    {{ item.type_name }}{% if not forloop.last %}, {% endif %}
-                                {% endfor %}
-                            </div>
-                            <span class="me-order-flow-inline" aria-label="{% trans 'Order workflow' %}" title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
-                                <span class="me-order-progress-inline-bar">
-                                    {% if order.progress_active_width %}
-                                    <span class="me-order-progress-active-segment" style="left: {{ order.progress_active_start }}%; width: {{ order.progress_active_width }}%;"></span>
-                                    {% endif %}
-                                    <span class="me-order-progress-points" aria-hidden="true">
-                                        {% for step in order.timeline_breadcrumb %}
-                                        <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
-                                        {% endfor %}
-                                    </span>
-                                </span>
-                                <span class="me-order-breadcrumb-inline" aria-hidden="true">
-                                    {% for step in order.timeline_breadcrumb %}
-                                    <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
-                                    {% endfor %}
-                                </span>
-                            </span>
-                        </div>
-                        <div class="me-user-order-side">
-                            <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
-                            {% url 'indy_hub:material_exchange_index' as exchange_index %}
-                            {% if order.order_kind == 'sell' %}
-                            <a class="btn btn-outline-secondary btn-sm me-user-order-detail-btn" href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}" aria-label="{% trans 'Details' %}">
-                                <i class="fas fa-eye" aria-hidden="true"></i>
-                            </a>
-                            {% else %}
-                            <a class="btn btn-outline-secondary btn-sm me-user-order-detail-btn" href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}" aria-label="{% trans 'Details' %}">
-                                <i class="fas fa-eye" aria-hidden="true"></i>
-                            </a>
-                            {% endif %}
-                        </div>
-                    </article>
-                    {% endfor %}
-            </div>
-            {% else %}
-            <p class="text-muted text-center py-3">{% trans "No active orders." %}</p>
-            {% endif %}
-        </div>
-    </div>
-
-    {% if can_admin %}
-    {% with sell_count=admin_sell_orders|length buy_count=admin_buy_orders|length %}
-    {% with active_admin_orders=sell_count|add:buy_count %}
-    <div class="d-flex align-items-center mb-3 mt-5" id="admin-panel">
-        <div class="d-flex align-items-center gap-3 flex-grow-1">
-            <div class="flex-grow-1 border-bottom admin-divider-line"></div>
-            <button type="button"
-                    class="px-3 py-2 d-flex align-items-center gap-2 rounded-pill admin-divider-chip admin-panel-toggle"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#admin-panel-content"
-                    aria-controls="admin-panel-content"
-                    aria-expanded="{% if admin_sell_orders or admin_buy_orders %}true{% else %}false{% endif %}">
-                <i class="fas fa-shield-alt text-primary"></i>
-                <span class="text-muted small">{% trans "Admin Panel" %}</span>
-                <span class="admin-panel-toggle-count small">
-                    ({% blocktrans count order_count=active_admin_orders %}{{ order_count }} active order{% plural %}{{ order_count }} active orders{% endblocktrans %})
                 </span>
-                <i class="fas fa-chevron-down small text-muted"></i>
-            </button>
-            <div class="flex-grow-1 border-bottom admin-divider-line"></div>
+                <span class="me-hub-line">
+                    <strong>{% trans "Buy" %}:</strong>
+                    {% if buy_enabled %}
+                        {% for location_name in buy_location_names %}
+                            <span class="me-hub-line-item">{{ location_name }}</span>
+                        {% empty %}
+                            <span class="me-hub-line-item text-muted">{% trans "No buy locations configured" %}</span>
+                        {% endfor %}
+                    {% else %}
+                        <span class="me-hub-line-item text-muted">{% trans "Disabled" %}</span>
+                    {% endif %}
+                </span>
+            </span>
         </div>
-        <a href="{% url 'indy_hub:material_exchange_history' %}" class="btn btn-sm me-panel-action-btn ms-3">
-            <i class="fas fa-history me-1"></i>{% trans "Closed Orders" %}
-        </a>
-        <a href="{% url 'indy_hub:material_exchange_history' %}?status=rejected" class="btn btn-sm btn-outline-danger ms-2">
-            <i class="fas fa-ban me-1"></i>{% trans "Rejected" %}
-        </a>
-        {% if capital_ship_orders_admin_url %}
-            <a href="{{ capital_ship_orders_admin_url }}" class="btn btn-sm btn-warning ms-2">
-                <i class="fas fa-ship me-1"></i>{% trans "Capital Orders" %}
-                <span class="ms-1">({{ capital_orders_active_count|default:0 }})</span>
-            </a>
-        {% endif %}
-    </div>
 
-    <div id="admin-panel-content" class="collapse {% if admin_sell_orders or admin_buy_orders %}show{% endif %}">
-    <!-- Sell Orders Admin -->
-    <div class="mb-3">
-        <h5 class="mb-2">
-            <i class="fas fa-arrow-up text-danger me-2"></i>{% trans "Sell Orders" %}
-        </h5>
-        {% if admin_sell_orders %}
-        <div class="me-user-orders">
-            {% for order in admin_sell_orders %}
-            <div class="me-user-order-row me-admin-order-row status-{{ order.status }}" data-order-kind="{{ order.order_kind }}">
-                    <div class="me-user-order-main me-admin-layout-grid">
-                        <span class="me-order-ref-title">
-                            <span class="me-order-kind-label me-order-kind-{{ order.order_kind }}">{% if order.order_kind == 'sell' %}{% trans "Sell" %}{% else %}{% trans "Buy" %}{% endif %}</span>
-                            · {{ order.order_reference }}
-                            {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' %}
-                            <span class="me-order-anomaly-badge" title="{% trans 'Anomaly detected' %}" aria-label="{% trans 'Anomaly detected' %}">
-                                <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
-                                <span>{% trans "Anomaly" %}</span>
-                            </span>
-                            {% endif %}
-                        </span>
-                        <span class="me-admin-order-user">{% trans "User" %}: {{ order.seller_display_name|default:order.seller.username }}</span>
-                        <span class="me-admin-order-items">
-                            {% for item in order.items.all %}
-                                {{ item.type_name }}{% if not forloop.last %}, {% endif %}
-                            {% endfor %}
-                        </span>
-                        <span class="me-order-flow-inline" aria-label="{% trans 'Order workflow' %}" title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
-                            <span class="me-order-progress-inline-bar">
-                                {% if order.progress_active_width %}
-                                <span class="me-order-progress-active-segment" style="left: {{ order.progress_active_start }}%; width: {{ order.progress_active_width }}%;"></span>
-                                {% endif %}
-                                <span class="me-order-progress-points" aria-hidden="true">
-                                    {% for step in order.timeline_breadcrumb %}
-                                    <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
-                                    {% endfor %}
-                                </span>
-                            </span>
-                            <span class="me-order-breadcrumb-inline" aria-hidden="true">
-                                {% for step in order.timeline_breadcrumb %}
-                                <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
-                                {% endfor %}
-                            </span>
-                        </span>
+        <!-- Hub Actions -->
+        <div class="me-hub-actions mb-4">
+            <article class="me-hub-action-card" data-accent="success">
+                <div class="me-hub-action-icon" aria-hidden="true">
+                    <i class="fas fa-hand-holding-usd"></i>
+                </div>
+                <h5 class="me-hub-action-title">{% trans "Sell to Hub" %}</h5>
+                <span class="me-hub-action-badge">{{ pending_sell_orders|intcomma }} {% trans "pending" %}</span>
+                <p class="me-hub-action-desc">{% trans "Sell your materials to the Hub, prices based on Jita." %}</p>
+                <div class="d-flex flex-wrap justify-content-center gap-2">
+                    <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success me-hub-action-btn">
+                        <i class="fas fa-coins me-1"></i>{% trans "Start Selling" %}
+                    </a>
+                    <button type="button"
+                            class="btn btn-outline-light me-hub-action-btn"
+                            data-buyback-estimate-trigger="true"
+                            data-bs-toggle="modal"
+                            data-bs-target="#sellEstimateModal">
+                        <i class="fas fa-calculator me-1"></i>{% trans "Get an Estimate" %}
+                    </button>
+                </div>
+            </article>
+
+            <article class="me-hub-action-card" data-accent="info">
+                <div class="me-hub-action-icon" aria-hidden="true">
+                    <i class="fas fa-shopping-cart"></i>
+                </div>
+                <h5 class="me-hub-action-title">{% trans "Buy from Hub" %}</h5>
+                <span class="me-hub-action-badge">{{ pending_buy_orders|intcomma }} {% trans "pending" %}</span>
+                <p class="me-hub-action-desc">{% trans "Purchase materials from the Hub stock without going to Jita." %}</p>
+                {% if buy_enabled %}
+                    <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info me-hub-action-btn">
+                        <i class="fas fa-shopping-bag me-1"></i>{% trans "Browse Stock" %}
+                    </a>
+                {% else %}
+                    <button class="btn btn-outline-secondary me-hub-action-btn" disabled>
+                        <i class="fas fa-ban me-1"></i>{% trans "Buy Disabled" %}
+                    </button>
+                {% endif %}
+            </article>
+
+        </div>
+
+        <!-- Your Recent Orders -->
+        <div class="row g-3">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list me-2 text-primary"></i>
+                        {% trans "Your Active Orders" %}
+                    </h5>
+                    <a href="{% url 'indy_hub:my_orders' %}" class="btn btn-sm me-panel-action-btn">
+                        <i class="fas fa-eye me-1"></i>{% trans "My Orders History" %}
+                    </a>
+                </div>
+                {% if recent_orders %}
+                    <div class="me-user-orders">
+                        {% for order in recent_orders %}
+                            <article class="me-user-order-row status-{{ order.status }}" data-order-kind="{{ order.order_kind }}">
+                                <div class="me-user-order-main me-user-layout-grid">
+                                    <div class="me-user-order-ref">
+                                        <span class="me-order-ref-title">
+                                            <span class="me-order-kind-label me-order-kind-{{ order.order_kind }}">
+                                                {% if order.order_kind == 'sell' %}
+                                                    {% trans "Sell" %}
+                                                {% else %}
+                                                    {% trans "Buy" %}
+                                                {% endif %}
+                                            </span>
+                                            · {{ order.order_reference }}
+                                            {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' %}
+                                                <span class="me-order-anomaly-badge" title="{% trans 'Anomaly detected' %}" aria-label="{% trans 'Anomaly detected' %}">
+                                                    <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+                                                    <span>{% trans "Anomaly" %}</span>
+                                                </span>
+                                            {% endif %}
+                                        </span>
+                                    </div>
+                                    <div class="me-user-order-meta me-user-order-items">
+                                        {% for item in order.items.all %}
+                                            {{ item.type_name }}
+                                            {% if not forloop.last %},{% endif %}
+                                        {% endfor %}
+                                    </div>
+                                    <span class="me-order-flow-inline"
+                                          aria-label="{% trans 'Order workflow' %}"
+                                          title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
+                                        <span class="me-order-progress-inline-bar">
+                                            {% if order.progress_active_width %}
+                                                <span class="me-order-progress-active-segment"
+                                                      style="left: {{ order.progress_active_start }}%;
+                                                             width: {{ order.progress_active_width }}%"></span>
+                                            {% endif %}
+                                            <span class="me-order-progress-points" aria-hidden="true">
+                                                {% for step in order.timeline_breadcrumb %}
+                                                    <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}"
+                                                          style="left: {{ step.position_percent }}%"></span>
+                                                {% endfor %}
+                                            </span>
+                                        </span>
+                                        <span class="me-order-breadcrumb-inline" aria-hidden="true">
+                                            {% for step in order.timeline_breadcrumb %}
+                                                <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}"
+                                                      style="left: {{ step.position_percent }}%">{{ step.status }}</span>
+                                            {% endfor %}
+                                        </span>
+                                    </span>
+                                </div>
+                                <div class="me-user-order-side">
+                                    <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
+                                    {% url 'indy_hub:material_exchange_index' as exchange_index %}
+                                    {% if order.order_kind == 'sell' %}
+                                        <a class="btn btn-outline-secondary btn-sm me-user-order-detail-btn"
+                                           href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}"
+                                           aria-label="{% trans 'Details' %}">
+                                            <i class="fas fa-eye" aria-hidden="true"></i>
+                                        </a>
+                                    {% else %}
+                                        <a class="btn btn-outline-secondary btn-sm me-user-order-detail-btn"
+                                           href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}"
+                                           aria-label="{% trans 'Details' %}">
+                                            <i class="fas fa-eye" aria-hidden="true"></i>
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </article>
+                        {% endfor %}
                     </div>
-                    <div class="me-user-order-side me-admin-order-side">
-                        <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
-                        <div class="me-admin-order-actions">
-                        {% url 'indy_hub:material_exchange_index' as exchange_index %}
-                        <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn" href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
-                            <i class="fas fa-eye me-1"></i>{% trans "Details" %}
-                        </a>
-                        {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
-                        <form method="post" class="me-admin-order-action-form">
-                            {% csrf_token %}
-                            <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
-                            <button formaction="{% url 'indy_hub:material_exchange_reject_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject sell order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
-                                <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                {% else %}
+                    <p class="text-muted text-center py-3">{% trans "No active orders." %}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if can_admin %}
+            {% with sell_count=admin_sell_orders|length buy_count=admin_buy_orders|length %}
+                {% with active_admin_orders=sell_count|add:buy_count %}
+                    <div class="d-flex align-items-center mb-3 mt-5" id="admin-panel">
+                        <div class="d-flex align-items-center gap-3 flex-grow-1">
+                            <div class="flex-grow-1 border-bottom admin-divider-line"></div>
+                            <button type="button"
+                                    class="px-3 py-2 d-flex align-items-center gap-2 rounded-pill admin-divider-chip admin-panel-toggle"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#admin-panel-content"
+                                    aria-controls="admin-panel-content"
+                                    aria-expanded="{% if admin_sell_orders or admin_buy_orders %}true{% else %}false{% endif %}">
+                                <i class="fas fa-shield-alt text-primary"></i>
+                                <span class="text-muted small">{% trans "Admin Panel" %}</span>
+                                <span class="admin-panel-toggle-count small">
+                                    ({% blocktrans count order_count=active_admin_orders %}{{ order_count }} active order{% plural %}{{ order_count }} active orders{% endblocktrans %})
+                                </span>
+                                <i class="fas fa-chevron-down small text-muted"></i>
                             </button>
-                        </form>
+                            <div class="flex-grow-1 border-bottom admin-divider-line"></div>
+                        </div>
+                        <a href="{% url 'indy_hub:material_exchange_history' %}" class="btn btn-sm me-panel-action-btn ms-3">
+                            <i class="fas fa-history me-1"></i>{% trans "Closed Orders" %}
+                        </a>
+                        <a href="{% url 'indy_hub:material_exchange_history' %}?status=rejected" class="btn btn-sm btn-outline-danger ms-2">
+                            <i class="fas fa-ban me-1"></i>{% trans "Rejected" %}
+                        </a>
+                        {% if capital_ship_orders_admin_url %}
+                            <a href="{{ capital_ship_orders_admin_url }}" class="btn btn-sm btn-warning ms-2">
+                                <i class="fas fa-ship me-1"></i>{% trans "Capital Orders" %}
+                                <span class="ms-1">({{ capital_orders_active_count|default:0 }})</span>
+                            </a>
                         {% endif %}
+                    </div>
+
+                    <div id="admin-panel-content" class="collapse {% if admin_sell_orders or admin_buy_orders %}show{% endif %}">
+                        <!-- Sell Orders Admin -->
+                        <div class="mb-3">
+                            <h5 class="mb-2">
+                                <i class="fas fa-arrow-up text-danger me-2"></i>{% trans "Sell Orders" %}
+                            </h5>
+                            {% if admin_sell_orders %}
+                                <div class="me-user-orders">
+                                    {% for order in admin_sell_orders %}
+                                        <div class="me-user-order-row me-admin-order-row status-{{ order.status }}" data-order-kind="{{ order.order_kind }}">
+                                            <div class="me-user-order-main me-admin-layout-grid">
+                                                <span class="me-order-ref-title">
+                                                    <span class="me-order-kind-label me-order-kind-{{ order.order_kind }}">
+                                                        {% if order.order_kind == 'sell' %}
+                                                            {% trans "Sell" %}
+                                                        {% else %}
+                                                            {% trans "Buy" %}
+                                                        {% endif %}
+                                                    </span>
+                                                    · {{ order.order_reference }}
+                                                    {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' %}
+                                                        <span class="me-order-anomaly-badge" title="{% trans 'Anomaly detected' %}" aria-label="{% trans 'Anomaly detected' %}">
+                                                            <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+                                                            <span>{% trans "Anomaly" %}</span>
+                                                        </span>
+                                                    {% endif %}
+                                                </span>
+                                                <span class="me-admin-order-user">{% trans "User" %}: {{ order.seller_display_name|default:order.seller.username }}</span>
+                                                <span class="me-admin-order-items">
+                                                    {% for item in order.items.all %}
+                                                        {{ item.type_name }}
+                                                        {% if not forloop.last %},{% endif %}
+                                                    {% endfor %}
+                                                </span>
+                                                <span class="me-order-flow-inline"
+                                                      aria-label="{% trans 'Order workflow' %}"
+                                                      title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
+                                                    <span class="me-order-progress-inline-bar">
+                                                        {% if order.progress_active_width %}
+                                                            <span class="me-order-progress-active-segment"
+                                                                  style="left: {{ order.progress_active_start }}%;
+                                                                         width: {{ order.progress_active_width }}%"></span>
+                                                        {% endif %}
+                                                        <span class="me-order-progress-points" aria-hidden="true">
+                                                            {% for step in order.timeline_breadcrumb %}
+                                                                <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}"
+                                                                      style="left: {{ step.position_percent }}%"></span>
+                                                            {% endfor %}
+                                                        </span>
+                                                    </span>
+                                                    <span class="me-order-breadcrumb-inline" aria-hidden="true">
+                                                        {% for step in order.timeline_breadcrumb %}
+                                                            <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}"
+                                                                  style="left: {{ step.position_percent }}%">{{ step.status }}</span>
+                                                        {% endfor %}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div class="me-user-order-side me-admin-order-side">
+                                                <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
+                                                <div class="me-admin-order-actions">
+                                                    {% url 'indy_hub:material_exchange_index' as exchange_index %}
+                                                    <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn"
+                                                       href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
+                                                        <i class="fas fa-eye me-1"></i>{% trans "Details" %}
+                                                    </a>
+                                                    {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
+                                                        <form method="post" class="me-admin-order-action-form">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
+                                                            <button formaction="{% url 'indy_hub:material_exchange_reject_sell' order.id %}"
+                                                                    type="submit"
+                                                                    class="btn btn-sm btn-outline-danger me-admin-order-action-btn"
+                                                                    onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject sell order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
+                                                                <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                                                            </button>
+                                                        </form>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle me-2"></i>{% trans "No sell orders found." %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Buy Orders Admin -->
+                        <div>
+                            <h5 class="mb-2">
+                                <i class="fas fa-arrow-down text-success me-2"></i>{% trans "Buy Orders" %}
+                            </h5>
+                            {% if admin_buy_orders %}
+                                <div class="me-user-orders">
+                                    {% for order in admin_buy_orders %}
+                                        <div class="me-user-order-row me-admin-order-row status-{{ order.status }}" data-order-kind="{{ order.order_kind }}">
+                                            <div class="me-user-order-main me-admin-layout-grid">
+                                                <span class="me-order-ref-title">
+                                                    <span class="me-order-kind-label me-order-kind-{{ order.order_kind }}">
+                                                        {% if order.order_kind == 'sell' %}
+                                                            {% trans "Sell" %}
+                                                        {% else %}
+                                                            {% trans "Buy" %}
+                                                        {% endif %}
+                                                    </span>
+                                                    · {{ order.order_reference }}
+                                                    {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' %}
+                                                        <span class="me-order-anomaly-badge" title="{% trans 'Anomaly detected' %}" aria-label="{% trans 'Anomaly detected' %}">
+                                                            <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
+                                                            <span>{% trans "Anomaly" %}</span>
+                                                        </span>
+                                                    {% endif %}
+                                                </span>
+                                                <span class="me-admin-order-user">{% trans "User" %}: {{ order.buyer_display_name|default:order.buyer.username }}</span>
+                                                <span class="me-admin-order-items">
+                                                    {% for item in order.items.all %}
+                                                        {{ item.type_name }}
+                                                        {% if not forloop.last %},{% endif %}
+                                                    {% endfor %}
+                                                </span>
+                                                <span class="me-order-flow-inline"
+                                                      aria-label="{% trans 'Order workflow' %}"
+                                                      title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
+                                                    <span class="me-order-progress-inline-bar">
+                                                        {% if order.progress_active_width %}
+                                                            <span class="me-order-progress-active-segment"
+                                                                  style="left: {{ order.progress_active_start }}%;
+                                                                         width: {{ order.progress_active_width }}%"></span>
+                                                        {% endif %}
+                                                        <span class="me-order-progress-points" aria-hidden="true">
+                                                            {% for step in order.timeline_breadcrumb %}
+                                                                <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}"
+                                                                      style="left: {{ step.position_percent }}%"></span>
+                                                            {% endfor %}
+                                                        </span>
+                                                    </span>
+                                                    <span class="me-order-breadcrumb-inline" aria-hidden="true">
+                                                        {% for step in order.timeline_breadcrumb %}
+                                                            <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}"
+                                                                  style="left: {{ step.position_percent }}%">{{ step.status }}</span>
+                                                        {% endfor %}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                            <div class="me-user-order-side me-admin-order-side">
+                                                <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
+                                                <div class="me-admin-order-actions">
+                                                    {% url 'indy_hub:material_exchange_index' as exchange_index %}
+                                                    <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn"
+                                                       href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
+                                                        <i class="fas fa-eye me-1"></i>{% trans "Details" %}
+                                                    </a>
+                                                    {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
+                                                        <form method="post" class="me-admin-order-action-form">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
+                                                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}"
+                                                                    type="submit"
+                                                                    class="btn btn-sm btn-outline-danger me-admin-order-action-btn"
+                                                                    onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject buy order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
+                                                                <i class="fas fa-times me-1"></i>{% trans "Reject" %}
+                                                            </button>
+                                                        </form>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle me-2"></i>{% trans "No buy orders found." %}
+                                </div>
+                            {% endif %}
                         </div>
                     </div>
-                </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>{% trans "No sell orders found." %}
-        </div>
+                {% endwith %}
+            {% endwith %}
         {% endif %}
-    </div>
 
-    <!-- Buy Orders Admin -->
-    <div>
-        <h5 class="mb-2">
-            <i class="fas fa-arrow-down text-success me-2"></i>{% trans "Buy Orders" %}
-        </h5>
-        {% if admin_buy_orders %}
-        <div class="me-user-orders">
-            {% for order in admin_buy_orders %}
-            <div class="me-user-order-row me-admin-order-row status-{{ order.status }}" data-order-kind="{{ order.order_kind }}">
-                    <div class="me-user-order-main me-admin-layout-grid">
-                        <span class="me-order-ref-title">
-                            <span class="me-order-kind-label me-order-kind-{{ order.order_kind }}">{% if order.order_kind == 'sell' %}{% trans "Sell" %}{% else %}{% trans "Buy" %}{% endif %}</span>
-                            · {{ order.order_reference }}
-                            {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' %}
-                            <span class="me-order-anomaly-badge" title="{% trans 'Anomaly detected' %}" aria-label="{% trans 'Anomaly detected' %}">
-                                <i class="fas fa-exclamation-triangle" aria-hidden="true"></i>
-                                <span>{% trans "Anomaly" %}</span>
-                            </span>
-                            {% endif %}
-                        </span>
-                        <span class="me-admin-order-user">{% trans "User" %}: {{ order.buyer_display_name|default:order.buyer.username }}</span>
-                        <span class="me-admin-order-items">
-                            {% for item in order.items.all %}
-                                {{ item.type_name }}{% if not forloop.last %}, {% endif %}
-                            {% endfor %}
-                        </span>
-                        <span class="me-order-flow-inline" aria-label="{% trans 'Order workflow' %}" title="{% for step in order.timeline_breadcrumb %}{{ step.status }}{% if not forloop.last %} › {% endif %}{% endfor %}">
-                            <span class="me-order-progress-inline-bar">
-                                {% if order.progress_active_width %}
-                                <span class="me-order-progress-active-segment" style="left: {{ order.progress_active_start }}%; width: {{ order.progress_active_width }}%;"></span>
-                                {% endif %}
-                                <span class="me-order-progress-points" aria-hidden="true">
-                                    {% for step in order.timeline_breadcrumb %}
-                                    <span class="me-order-progress-point {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if step.status == order.progress_current_label and order.status == 'anomaly' or step.status == order.progress_current_label and order.status == 'anomaly_rejected' %} anomaly-current{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;"></span>
-                                    {% endfor %}
-                                </span>
-                            </span>
-                            <span class="me-order-breadcrumb-inline" aria-hidden="true">
-                                {% for step in order.timeline_breadcrumb %}
-                                <span class="me-order-crumb-inline {% if step.status == order.progress_current_label %}current{% elif step.completed %}done{% else %}pending{% endif %}{% if forloop.first %} start{% endif %}{% if forloop.last %} end{% endif %}" style="left: {{ step.position_percent }}%;">{{ step.status }}</span>
-                                {% endfor %}
-                            </span>
-                        </span>
-                    </div>
-                    <div class="me-user-order-side me-admin-order-side">
-                        <strong class="me-user-order-total text-primary">{{ order.total_price|floatformat:0|intcomma }} ISK</strong>
-                        <div class="me-admin-order-actions">
-                        {% url 'indy_hub:material_exchange_index' as exchange_index %}
-                        <a class="btn btn-outline-secondary btn-sm me-admin-order-action-btn" href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ exchange_index }}%23admin-panel">
-                            <i class="fas fa-eye me-1"></i>{% trans "Details" %}
-                        </a>
-                        {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
-                        <form method="post" class="me-admin-order-action-form">
-                            {% csrf_token %}
-                            <input type="hidden" name="next" value="{{ exchange_index }}#admin-panel">
-                            <button formaction="{% url 'indy_hub:material_exchange_reject_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-danger me-admin-order-action-btn" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reject buy order {{ reference }}? You can reopen it later from Closed Orders if this was accidental.{% endblocktrans %}')">
-                                <i class="fas fa-times me-1"></i>{% trans "Reject" %}
-                            </button>
-                        </form>
-                        {% endif %}
-                        </div>
-                    </div>
-                </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <div class="alert alert-info">
-            <i class="fas fa-info-circle me-2"></i>{% trans "No buy orders found." %}
-        </div>
-        {% endif %}
     </div>
-    </div>
-    {% endwith %}
-    {% endwith %}
-    {% endif %}
-
-</div>
-{% include "indy_hub/material_exchange/includes/sell_estimate_modal.html" %}
+    {% include "indy_hub/material_exchange/includes/sell_estimate_modal.html" %}
 {% endblock content %}
-

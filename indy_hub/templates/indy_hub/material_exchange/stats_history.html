@@ -3,19 +3,21 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "Buyback Stats" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Buyback Stats" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_stats_dashboard.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_stats_dashboard.css' %}">
 {% endblock extra_css %}
 
 {% block extra_javascript %}
-{{ block.super }}
-{{ capital_trend_chart_labels|json_script:"capitalTrendLabels" }}
-{{ capital_trend_wallet_values|json_script:"capitalTrendWalletValues" }}
-{{ capital_trend_inventory_values|json_script:"capitalTrendInventoryValues" }}
-{{ capital_trend_total_values|json_script:"capitalTrendTotalValues" }}
-<script>
+    {{ block.super }}
+    {{ capital_trend_chart_labels|json_script:"capitalTrendLabels" }}
+    {{ capital_trend_wallet_values|json_script:"capitalTrendWalletValues" }}
+    {{ capital_trend_inventory_values|json_script:"capitalTrendInventoryValues" }}
+    {{ capital_trend_total_values|json_script:"capitalTrendTotalValues" }}
+    <script>
     document.addEventListener("DOMContentLoaded", function () {
         const canvas = document.getElementById("capitalTrendChart");
         if (!canvas) {
@@ -168,784 +170,971 @@
         drawChart();
         window.addEventListener("resize", drawChart);
     });
-</script>
+    </script>
 {% endblock extra_javascript %}
 
 {% block content %}
-<div class="container-fluid py-4 buyback-stats-dashboard">
-    <div class="buyback-dashboard">
-        <div class="card shadow-sm buyback-dashboard-card">
-            <div class="card-body p-4 p-xl-5">
-                <div class="buyback-dashboard-inner">
-                    <div class="dashboard-hero">
-                        <div>
-                            <p class="dashboard-kicker mb-2">{% trans "Corporation Logistics" %}</p>
-                            <h2 class="dashboard-title">{% trans "Buyback Stats" %}</h2>
-                            <p class="dashboard-subtitle mb-0">{% trans "Review on-hand hangar value, wallet flow, order throughput, and operator activity from one dashboard." %}</p>
-                        </div>
-                        <div class="dashboard-hero-actions">
-                            <a href="{% url 'indy_hub:material_exchange_transactions' %}" class="btn btn-primary">
-                                <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Transactions" %}
-                            </a>
-                        </div>
-                    </div>
-
-                    <div class="dashboard-chip-row">
-                        <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Corp" %}</span> {{ chosen_corporation_name }}</span>
-                        <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Wallet" %}</span> {{ chosen_wallet_division_name }}</span>
-                        <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Period" %}</span> {{ selected_period_label }}</span>
-                        <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Configs" %}</span> {{ selected_config_count|intcomma }}</span>
-                    </div>
-
-                    <div class="dashboard-tiles-grid">
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Current Total Asset Value" %}</div>
-                            <div class="stats-tile-value">{{ current_total_asset_value|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">
-                                {% if current_total_asset_value_partial %}
-                                {% trans "Hangars + partial wallet data" %}
-                                {% else %}
-                                {% trans "Wallet + on-hand market value" %}
-                                {% endif %}
+    <div class="container-fluid py-4 buyback-stats-dashboard">
+        <div class="buyback-dashboard">
+            <div class="card shadow-sm buyback-dashboard-card">
+                <div class="card-body p-4 p-xl-5">
+                    <div class="buyback-dashboard-inner">
+                        <div class="dashboard-hero">
+                            <div>
+                                <p class="dashboard-kicker mb-2">{% trans "Corporation Logistics" %}</p>
+                                <h2 class="dashboard-title">{% trans "Buyback Stats" %}</h2>
+                                <p class="dashboard-subtitle mb-0">
+                                    {% trans "Review on-hand hangar value, wallet flow, order throughput, and operator activity from one dashboard." %}
+                                </p>
+                            </div>
+                            <div class="dashboard-hero-actions">
+                                <a href="{% url 'indy_hub:material_exchange_transactions' %}" class="btn btn-primary">
+                                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Transactions" %}
+                                </a>
                             </div>
                         </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Current Hangar Value" %}</div>
-                            <div class="stats-tile-value">{{ current_buy_hangar_inventory_value|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">ISK &middot; {{ current_buy_hangar_inventory_item_count|intcomma }} {% trans "units" %}</div>
+
+                        <div class="dashboard-chip-row">
+                            <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Corp" %}</span> {{ chosen_corporation_name }}</span>
+                            <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Wallet" %}</span> {{ chosen_wallet_division_name }}</span>
+                            <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Period" %}</span> {{ selected_period_label }}</span>
+                            <span class="dashboard-chip"><span class="dashboard-chip-label">{% trans "Configs" %}</span> {{ selected_config_count|intcomma }}</span>
                         </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Wallet Inflow" %}</div>
-                            <div class="stats-tile-value">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">ISK</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Wallet Outflow" %}</div>
-                            <div class="stats-tile-value">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">ISK</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Wallet Net Total" %}</div>
-                            <div class="stats-tile-value">{{ donation_stats.wallet_net_total|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">ISK</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Total Bought (Hub)" %}</div>
-                            <div class="stats-tile-value">{{ total_sell_volume|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">ISK</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Total Sold (Hub)" %}</div>
-                            <div class="stats-tile-value">{{ total_buy_volume|floatformat:0|intcomma }}</div>
-                            <div class="stats-tile-meta">ISK</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Total Orders" %}</div>
-                            <div class="stats-tile-value">{{ contract_progress_stats.made|intcomma }}</div>
-                            <div class="stats-tile-meta">{% trans "Buy + Sell" %}</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Avg Time To Completion" %}</div>
-                            <div class="stats-tile-value">{{ average_order_completion_duration_display }}</div>
-                            <div class="stats-tile-meta">{{ average_order_completion_count|intcomma }} {% trans "completed orders" %}</div>
-                        </div>
-                        <div class="stats-tile">
-                            <div class="stats-tile-label">{% trans "Relevant Market Orders" %}</div>
-                            <div class="stats-tile-value">{{ donation_stats.market_orders_total|intcomma }}</div>
-                            <div class="stats-tile-meta">{% trans "Open or proxy count" %}</div>
+
+                        <div class="dashboard-tiles-grid">
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Current Total Asset Value" %}</div>
+                                <div class="stats-tile-value">{{ current_total_asset_value|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">
+                                    {% if current_total_asset_value_partial %}
+                                        {% trans "Hangars + partial wallet data" %}
+                                    {% else %}
+                                        {% trans "Wallet + on-hand market value" %}
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Current Hangar Value" %}</div>
+                                <div class="stats-tile-value">{{ current_buy_hangar_inventory_value|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">
+                                    ISK &middot; {{ current_buy_hangar_inventory_item_count|intcomma }} {% trans "units" %}
+                                </div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Wallet Inflow" %}</div>
+                                <div class="stats-tile-value">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">ISK</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Wallet Outflow" %}</div>
+                                <div class="stats-tile-value">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">ISK</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Wallet Net Total" %}</div>
+                                <div class="stats-tile-value">{{ donation_stats.wallet_net_total|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">ISK</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Total Bought (Hub)" %}</div>
+                                <div class="stats-tile-value">{{ total_sell_volume|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">ISK</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Total Sold (Hub)" %}</div>
+                                <div class="stats-tile-value">{{ total_buy_volume|floatformat:0|intcomma }}</div>
+                                <div class="stats-tile-meta">ISK</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Total Orders" %}</div>
+                                <div class="stats-tile-value">{{ contract_progress_stats.made|intcomma }}</div>
+                                <div class="stats-tile-meta">{% trans "Buy + Sell" %}</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Avg Time To Completion" %}</div>
+                                <div class="stats-tile-value">{{ average_order_completion_duration_display }}</div>
+                                <div class="stats-tile-meta">{{ average_order_completion_count|intcomma }} {% trans "completed orders" %}</div>
+                            </div>
+                            <div class="stats-tile">
+                                <div class="stats-tile-label">{% trans "Relevant Market Orders" %}</div>
+                                <div class="stats-tile-value">{{ donation_stats.market_orders_total|intcomma }}</div>
+                                <div class="stats-tile-meta">{% trans "Open or proxy count" %}</div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <div class="dashboard-panels-grid">
-            <div class="stats-panel">
-                <div class="stats-panel-header">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "On-Hand Inventory" %}</div>
-                        <h3 class="stats-panel-title">{% trans "Buy Hangar Snapshot" %}</h3>
-                        <p class="stats-panel-subtitle">{% trans "Current assets found in the configured buy structures and hangar divisions." %}</p>
+            <div class="dashboard-panels-grid">
+                <div class="stats-panel">
+                    <div class="stats-panel-header">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "On-Hand Inventory" %}</div>
+                            <h3 class="stats-panel-title">{% trans "Buy Hangar Snapshot" %}</h3>
+                            <p class="stats-panel-subtitle">
+                                {% trans "Current assets found in the configured buy structures and hangar divisions." %}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="usage-metric-layout mt-3">
+                        <div class="usage-metric-stack">
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Units on Hand" %}</span>
+                                <span class="usage-metric-value">{{ current_buy_hangar_inventory_item_count|intcomma }}</span>
+                            </div>
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Item Types" %}</span>
+                                <span class="usage-metric-value">{{ current_buy_hangar_inventory_type_count|intcomma }}</span>
+                            </div>
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Priced Types" %}</span>
+                                <span class="usage-metric-value">{{ current_buy_hangar_inventory_priced_type_count|intcomma }}</span>
+                            </div>
+                        </div>
+                        <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
+                            <span class="usage-metric-label">{% trans "Current Value" %}</span>
+                            <span class="usage-metric-value">{{ current_buy_hangar_inventory_value|floatformat:0|intcomma }}</span>
+                        </div>
+                    </div>
+                    <div class="table-metric-grid mt-3">
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Locations" %}</span>
+                            <span class="table-metric-value">{{ current_buy_hangar_location_count|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Configured Hangars" %}</span>
+                            <span class="table-metric-value">{{ current_buy_hangar_count|intcomma }}</span>
+                        </div>
                     </div>
                 </div>
-                <div class="usage-metric-layout mt-3">
+
+                <div class="stats-panel">
+                    <div class="stats-panel-header">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Wallet Activity" %}</div>
+                            <h3 class="stats-panel-title">{% trans "Cash Flow" %}</h3>
+                            <p class="stats-panel-subtitle">
+                                {% trans "Wallet journal performance for the selected corporation and division." %}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="usage-metric-layout mt-3">
+                        <div class="usage-metric-stack">
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Inflow" %}</span>
+                                <span class="usage-metric-value">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }}</span>
+                            </div>
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Outflow" %}</span>
+                                <span class="usage-metric-value">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }}</span>
+                            </div>
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Division Balance" %}</span>
+                                <span class="usage-metric-value">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }}</span>
+                            </div>
+                        </div>
+                        <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
+                            <span class="usage-metric-label">{% trans "Projected 30D Net" %}</span>
+                            <span class="usage-metric-value">{{ donation_stats.wallet_net_projected_30d|floatformat:0|intcomma }}</span>
+                        </div>
+                    </div>
+                    <div class="table-metric-grid mt-3">
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Wallet Entries" %}</span>
+                            <span class="table-metric-value">{{ donation_stats.wallet_activity_count|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Data Source" %}</span>
+                            <span class="table-metric-value">
+                                {% if wallet_data_source == "corptools" %}
+                                    {% trans "Corptools" %}
+                                {% else %}
+                                    {% trans "ESI" %}
+                                {% endif %}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="stats-panel">
+                    <div class="stats-panel-header">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Profitability" %}</div>
+                            <h3 class="stats-panel-title">{% trans "Exchange Performance" %}</h3>
+                            <p class="stats-panel-subtitle">{% trans "Contract-backed totals with transaction and wallet-adjusted rollups." %}</p>
+                        </div>
+                    </div>
+                    <div class="usage-metric-layout mt-3">
+                        <div class="usage-metric-stack">
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Actual Exchange Profit" %}</span>
+                                <span class="usage-metric-value">{{ actual_exchange_profit|floatformat:0|intcomma }}</span>
+                            </div>
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Profit With Wallet" %}</span>
+                                <span class="usage-metric-value">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }}</span>
+                            </div>
+                            <div class="usage-metric-item usage-metric-item-compact">
+                                <span class="usage-metric-label">{% trans "Potential Profit (Split)" %}</span>
+                                <span class="usage-metric-value">{{ potential_profit_jita_split|floatformat:0|intcomma }}</span>
+                            </div>
+                        </div>
+                        <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
+                            <span class="usage-metric-label">{% trans "Forecast 30D Profit" %}</span>
+                            <span class="usage-metric-value">{{ forecast_30d_profit|floatformat:0|intcomma }}</span>
+                        </div>
+                    </div>
+                    <div class="table-metric-grid mt-3">
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Contract Margin" %}</span>
+                            <span class="table-metric-value">{{ contract_profit_margin_pct|floatformat:1 }}%</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Snapshot Coverage" %}</span>
+                            <span class="table-metric-value">{{ snapshot_coverage_pct|floatformat:1 }}%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stats-panel">
+                    <div class="stats-panel-header">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Order Throughput" %}</div>
+                            <h3 class="stats-panel-title">{% trans "Progress Mix" %}</h3>
+                            <p class="stats-panel-subtitle">{% trans "Current state of the buyback order pipeline." %}</p>
+                        </div>
+                    </div>
+                    <div class="table-metric-grid mt-3">
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Total Orders" %}</span>
+                            <span class="table-metric-value">{{ contract_progress_stats.made|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Completed" %}</span>
+                            <span class="table-metric-value">{{ contract_progress_stats.completed|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Validated" %}</span>
+                            <span class="table-metric-value">{{ contract_progress_stats.current_validated|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Awaiting Validation" %}</span>
+                            <span class="table-metric-value">{{ contract_progress_stats.current_awaiting_validation|intcomma }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stats-panel">
+                    <div class="stats-panel-header">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Contract Outcomes" %}</div>
+                            <h3 class="stats-panel-title">{% trans "Completion Quality" %}</h3>
+                            <p class="stats-panel-subtitle">{% trans "High-level contract result counts for the selected range." %}</p>
+                        </div>
+                    </div>
+                    <div class="table-metric-grid mt-3">
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Completed" %}</span>
+                            <span class="table-metric-value">{{ contract_stats.completed|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Rejected" %}</span>
+                            <span class="table-metric-value">{{ contract_stats.rejected|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Deleted Pre-Accept" %}</span>
+                            <span class="table-metric-value">{{ contract_stats.deleted_before_acceptance|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Deleted Post-Accept" %}</span>
+                            <span class="table-metric-value">{{ contract_stats.deleted_after_acceptance|intcomma }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="stats-panel">
+                    <div class="stats-panel-header">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Scope Health" %}</div>
+                            <h3 class="stats-panel-title">{% trans "Data Coverage" %}</h3>
+                            <p class="stats-panel-subtitle">
+                                {% trans "What this page is able to evaluate from the available cache and scopes." %}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="table-metric-grid mt-3">
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Configured Corps" %}</span>
+                            <span class="table-metric-value">{{ corp_config_count|intcomma }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Analysis Window" %}</span>
+                            <span class="table-metric-value">{{ analysis_window_days|intcomma }} {% trans "days" %}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Market Trend Source" %}</span>
+                            <span class="table-metric-value">{{ market_trend_source_label }}</span>
+                        </div>
+                        <div class="table-metric-item table-metric-item-compact">
+                            <span class="table-metric-label">{% trans "Contract Transactions" %}</span>
+                            <span class="table-metric-value">{{ donation_stats.contract_transaction_count|intcomma }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-table-card">
+                <div class="dashboard-table-header mb-3">
+                    <div>
+                        <div class="stats-panel-kicker">{% trans "Net Worth" %}</div>
+                        <h3 class="dashboard-table-title">{% trans "Total Value Over Time" %}</h3>
+                        <p class="dashboard-table-subtitle">{{ capital_trend_note }}</p>
+                    </div>
+                </div>
+                <div class="usage-metric-layout mt-3 mb-3">
                     <div class="usage-metric-stack">
                         <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Units on Hand" %}</span>
-                            <span class="usage-metric-value">{{ current_buy_hangar_inventory_item_count|intcomma }}</span>
+                            <span class="usage-metric-label">{% trans "Current Wallet Balance" %}</span>
+                            <span class="usage-metric-value">
+                                {% if wallet_division_balance_available %}
+                                    {{ donation_stats.wallet_division_balance|floatformat:0|intcomma }}
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </span>
                         </div>
                         <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Item Types" %}</span>
-                            <span class="usage-metric-value">{{ current_buy_hangar_inventory_type_count|intcomma }}</span>
+                            <span class="usage-metric-label">{% trans "Current On-Hand Market Value" %}</span>
+                            <span class="usage-metric-value">{{ current_buy_hangar_inventory_value|floatformat:0|intcomma }}</span>
                         </div>
                         <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Priced Types" %}</span>
-                            <span class="usage-metric-value">{{ current_buy_hangar_inventory_priced_type_count|intcomma }}</span>
+                            <span class="usage-metric-label">{% trans "Latest Snapshot" %}</span>
+                            <span class="usage-metric-value">{{ capital_trend_latest_snapshot_date|default:"-" }}</span>
                         </div>
                     </div>
                     <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
-                        <span class="usage-metric-label">{% trans "Current Value" %}</span>
-                        <span class="usage-metric-value">{{ current_buy_hangar_inventory_value|floatformat:0|intcomma }}</span>
-                    </div>
-                </div>
-                <div class="table-metric-grid mt-3">
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Locations" %}</span>
-                        <span class="table-metric-value">{{ current_buy_hangar_location_count|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Configured Hangars" %}</span>
-                        <span class="table-metric-value">{{ current_buy_hangar_count|intcomma }}</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-panel">
-                <div class="stats-panel-header">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Wallet Activity" %}</div>
-                        <h3 class="stats-panel-title">{% trans "Cash Flow" %}</h3>
-                        <p class="stats-panel-subtitle">{% trans "Wallet journal performance for the selected corporation and division." %}</p>
-                    </div>
-                </div>
-                <div class="usage-metric-layout mt-3">
-                    <div class="usage-metric-stack">
-                        <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Inflow" %}</span>
-                            <span class="usage-metric-value">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }}</span>
-                        </div>
-                        <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Outflow" %}</span>
-                            <span class="usage-metric-value">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }}</span>
-                        </div>
-                        <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Division Balance" %}</span>
-                            <span class="usage-metric-value">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }}</span>
-                        </div>
-                    </div>
-                    <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
-                        <span class="usage-metric-label">{% trans "Projected 30D Net" %}</span>
-                        <span class="usage-metric-value">{{ donation_stats.wallet_net_projected_30d|floatformat:0|intcomma }}</span>
-                    </div>
-                </div>
-                <div class="table-metric-grid mt-3">
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Wallet Entries" %}</span>
-                        <span class="table-metric-value">{{ donation_stats.wallet_activity_count|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Data Source" %}</span>
-                        <span class="table-metric-value">{% if wallet_data_source == "corptools" %}{% trans "Corptools" %}{% else %}{% trans "ESI" %}{% endif %}</span>
-                    </div>
-                </div>
-            </div>
-            <div class="stats-panel">
-                <div class="stats-panel-header">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Profitability" %}</div>
-                        <h3 class="stats-panel-title">{% trans "Exchange Performance" %}</h3>
-                        <p class="stats-panel-subtitle">{% trans "Contract-backed totals with transaction and wallet-adjusted rollups." %}</p>
-                    </div>
-                </div>
-                <div class="usage-metric-layout mt-3">
-                    <div class="usage-metric-stack">
-                        <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Actual Exchange Profit" %}</span>
-                            <span class="usage-metric-value">{{ actual_exchange_profit|floatformat:0|intcomma }}</span>
-                        </div>
-                        <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Profit With Wallet" %}</span>
-                            <span class="usage-metric-value">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }}</span>
-                        </div>
-                        <div class="usage-metric-item usage-metric-item-compact">
-                            <span class="usage-metric-label">{% trans "Potential Profit (Split)" %}</span>
-                            <span class="usage-metric-value">{{ potential_profit_jita_split|floatformat:0|intcomma }}</span>
-                        </div>
-                    </div>
-                    <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
-                        <span class="usage-metric-label">{% trans "Forecast 30D Profit" %}</span>
-                        <span class="usage-metric-value">{{ forecast_30d_profit|floatformat:0|intcomma }}</span>
-                    </div>
-                </div>
-                <div class="table-metric-grid mt-3">
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Contract Margin" %}</span>
-                        <span class="table-metric-value">{{ contract_profit_margin_pct|floatformat:1 }}%</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Snapshot Coverage" %}</span>
-                        <span class="table-metric-value">{{ snapshot_coverage_pct|floatformat:1 }}%</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-panel">
-                <div class="stats-panel-header">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Order Throughput" %}</div>
-                        <h3 class="stats-panel-title">{% trans "Progress Mix" %}</h3>
-                        <p class="stats-panel-subtitle">{% trans "Current state of the buyback order pipeline." %}</p>
-                    </div>
-                </div>
-                <div class="table-metric-grid mt-3">
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Total Orders" %}</span>
-                        <span class="table-metric-value">{{ contract_progress_stats.made|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Completed" %}</span>
-                        <span class="table-metric-value">{{ contract_progress_stats.completed|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Validated" %}</span>
-                        <span class="table-metric-value">{{ contract_progress_stats.current_validated|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Awaiting Validation" %}</span>
-                        <span class="table-metric-value">{{ contract_progress_stats.current_awaiting_validation|intcomma }}</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-panel">
-                <div class="stats-panel-header">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Contract Outcomes" %}</div>
-                        <h3 class="stats-panel-title">{% trans "Completion Quality" %}</h3>
-                        <p class="stats-panel-subtitle">{% trans "High-level contract result counts for the selected range." %}</p>
-                    </div>
-                </div>
-                <div class="table-metric-grid mt-3">
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Completed" %}</span>
-                        <span class="table-metric-value">{{ contract_stats.completed|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Rejected" %}</span>
-                        <span class="table-metric-value">{{ contract_stats.rejected|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Deleted Pre-Accept" %}</span>
-                        <span class="table-metric-value">{{ contract_stats.deleted_before_acceptance|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Deleted Post-Accept" %}</span>
-                        <span class="table-metric-value">{{ contract_stats.deleted_after_acceptance|intcomma }}</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="stats-panel">
-                <div class="stats-panel-header">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Scope Health" %}</div>
-                        <h3 class="stats-panel-title">{% trans "Data Coverage" %}</h3>
-                        <p class="stats-panel-subtitle">{% trans "What this page is able to evaluate from the available cache and scopes." %}</p>
-                    </div>
-                </div>
-                <div class="table-metric-grid mt-3">
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Configured Corps" %}</span>
-                        <span class="table-metric-value">{{ corp_config_count|intcomma }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Analysis Window" %}</span>
-                        <span class="table-metric-value">{{ analysis_window_days|intcomma }} {% trans "days" %}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Market Trend Source" %}</span>
-                        <span class="table-metric-value">{{ market_trend_source_label }}</span>
-                    </div>
-                    <div class="table-metric-item table-metric-item-compact">
-                        <span class="table-metric-label">{% trans "Contract Transactions" %}</span>
-                        <span class="table-metric-value">{{ donation_stats.contract_transaction_count|intcomma }}</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="dashboard-table-card">
-            <div class="dashboard-table-header mb-3">
-                <div>
-                    <div class="stats-panel-kicker">{% trans "Net Worth" %}</div>
-                    <h3 class="dashboard-table-title">{% trans "Total Value Over Time" %}</h3>
-                    <p class="dashboard-table-subtitle">{{ capital_trend_note }}</p>
-                </div>
-            </div>
-            <div class="usage-metric-layout mt-3 mb-3">
-                <div class="usage-metric-stack">
-                    <div class="usage-metric-item usage-metric-item-compact">
-                        <span class="usage-metric-label">{% trans "Current Wallet Balance" %}</span>
+                        <span class="usage-metric-label">{% trans "Change In Window" %}</span>
                         <span class="usage-metric-value">
-                            {% if wallet_division_balance_available %}
-                            {{ donation_stats.wallet_division_balance|floatformat:0|intcomma }}
+                            {% if capital_trend_total_change is not None %}
+                                {{ capital_trend_total_change|floatformat:0|intcomma }}
                             {% else %}
-                            -
+                                -
                             {% endif %}
                         </span>
                     </div>
-                    <div class="usage-metric-item usage-metric-item-compact">
-                        <span class="usage-metric-label">{% trans "Current On-Hand Market Value" %}</span>
-                        <span class="usage-metric-value">{{ current_buy_hangar_inventory_value|floatformat:0|intcomma }}</span>
-                    </div>
-                    <div class="usage-metric-item usage-metric-item-compact">
-                        <span class="usage-metric-label">{% trans "Latest Snapshot" %}</span>
-                        <span class="usage-metric-value">{{ capital_trend_latest_snapshot_date|default:"-" }}</span>
-                    </div>
                 </div>
-                <div class="usage-metric-item usage-metric-item-highlight usage-metric-item-feature">
-                    <span class="usage-metric-label">{% trans "Change In Window" %}</span>
-                    <span class="usage-metric-value">
-                        {% if capital_trend_total_change is not None %}
-                        {{ capital_trend_total_change|floatformat:0|intcomma }}
-                        {% else %}
-                        -
-                        {% endif %}
-                    </span>
-                </div>
-            </div>
-            {% if not capital_trend_wallet_history_available and capital_trend_rows %}
-            <div class="dashboard-alert dashboard-alert-warning mb-3">
-                <span class="dashboard-alert-label">{% trans "Wallet balance" %}</span>
-                {% trans "Saved snapshots do not currently include wallet balances for this division, so total asset value is unavailable for the affected days." %}
-            </div>
-            {% endif %}
-            {% if capital_trend_assets_scope_missing %}
-            <div class="dashboard-alert dashboard-alert-warning mb-3">
-                <span class="dashboard-alert-label">{% trans "Assets cache" %}</span>
-                {% trans "At least one saved snapshot used cached corporation assets because live asset scope data was unavailable at capture time." %}
-            </div>
-            {% endif %}
-            {% if capital_trend_rows %}
-            <div class="dashboard-chart-shell mb-3">
-                <div class="dashboard-chart-legend">
-                    <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch dashboard-chart-swatch-total"></span>{% trans "Total asset value" %}</span>
-                    <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch dashboard-chart-swatch-wallet"></span>{{ capital_trend_wallet_label }}</span>
-                    <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch dashboard-chart-swatch-inventory"></span>{% trans "On-hand market value" %}</span>
-                </div>
-                <div class="dashboard-chart-stage">
-                    <canvas id="capitalTrendChart" class="dashboard-chart-canvas" aria-label="{% trans 'Total value over time chart' %}"></canvas>
-                </div>
-            </div>
-            {% endif %}
-            {% if capital_trend_rows %}
-            <div class="table-responsive">
-                <table class="table align-middle dashboard-table mb-0">
-                    <thead>
-                        <tr>
-                            <th>{% trans "Date" %}</th>
-                            <th class="text-end">{{ capital_trend_wallet_label }}</th>
-                            <th class="text-end">{% trans "On-Hand Market Value" %}</th>
-                            <th class="text-end">{% trans "Total Asset Value" %}</th>
-                            <th class="text-end">{% trans "Delta" %}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for row in capital_trend_rows %}
-                        <tr>
-                            <td>{{ row.month }}</td>
-                            <td class="text-end">
-                                {% if row.wallet_balance is not None %}
-                                {{ row.wallet_balance|floatformat:0|intcomma }}
-                                {% else %}
-                                -
-                                {% endif %}
-                            </td>
-                            <td class="text-end">{{ row.inventory_market_value|floatformat:0|intcomma }}</td>
-                            <td class="text-end">
-                                {% if row.total_asset_value is not None %}
-                                {{ row.total_asset_value|floatformat:0|intcomma }}
-                                {% else %}
-                                -
-                                {% endif %}
-                            </td>
-                            <td class="text-end">
-                                {% if row.total_asset_delta is not None %}
-                                {{ row.total_asset_delta|floatformat:0|intcomma }}
-                                {% else %}
-                                -
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <div class="dashboard-empty">
-                {% trans "No daily Buyback snapshots have been saved yet for this corporation and wallet division." %}
-                {% trans "The snapshot task runs once per day, or you can trigger it manually to capture a point immediately." %}
-            </div>
-            {% endif %}
-        </div>
-
-        <div class="dashboard-control-grid">
-            <div class="dashboard-control-panel">
-                <div class="stats-panel-kicker">{% trans "Date Window" %}</div>
-                <h3 class="stats-panel-title">{% trans "Filters" %}</h3>
-                <form method="get" class="dashboard-filter-grid mt-3">
-                    <div>
-                        <label for="statsPeriod" class="form-label mb-1">{% trans "Period" %}</label>
-                        <select id="statsPeriod" name="period" class="form-select">
-                            {% for value, label in period_options %}
-                            <option value="{{ value }}" {% if selected_period == value %}selected{% endif %}>{{ label }}</option>
-                            {% endfor %}
-                        </select>
+                {% if not capital_trend_wallet_history_available and capital_trend_rows %}
+                    <div class="dashboard-alert dashboard-alert-warning mb-3">
+                        <span class="dashboard-alert-label">{% trans "Wallet balance" %}</span>
+                        {% trans "Saved snapshots do not currently include wallet balances for this division, so total asset value is unavailable for the affected days." %}
                     </div>
-                    <div>
-                        <label for="statsStartDate" class="form-label mb-1">{% trans "Start date" %}</label>
-                        <input id="statsStartDate" type="date" name="start_date" value="{{ start_date }}" class="form-control">
+                {% endif %}
+                {% if capital_trend_assets_scope_missing %}
+                    <div class="dashboard-alert dashboard-alert-warning mb-3">
+                        <span class="dashboard-alert-label">{% trans "Assets cache" %}</span>
+                        {% trans "At least one saved snapshot used cached corporation assets because live asset scope data was unavailable at capture time." %}
                     </div>
-                    <div>
-                        <label for="statsEndDate" class="form-label mb-1">{% trans "End date" %}</label>
-                        <input id="statsEndDate" type="date" name="end_date" value="{{ end_date }}" class="form-control">
+                {% endif %}
+                {% if capital_trend_rows %}
+                    <div class="dashboard-chart-shell mb-3">
+                        <div class="dashboard-chart-legend">
+                            <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch dashboard-chart-swatch-total"></span>{% trans "Total asset value" %}</span>
+                            <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch dashboard-chart-swatch-wallet"></span>{{ capital_trend_wallet_label }}</span>
+                            <span class="dashboard-chart-legend-item"><span class="dashboard-chart-swatch dashboard-chart-swatch-inventory"></span>{% trans "On-hand market value" %}</span>
+                        </div>
+                        <div class="dashboard-chart-stage">
+                            <canvas id="capitalTrendChart" class="dashboard-chart-canvas" aria-label="{% trans 'Total value over time chart' %}"></canvas>
+                        </div>
                     </div>
-                    <div class="d-grid align-self-end">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-filter me-1"></i>{% trans "Apply Filters" %}
-                        </button>
+                {% endif %}
+                {% if capital_trend_rows %}
+                    <div class="table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "Date" %}</th>
+                                    <th class="text-end">{{ capital_trend_wallet_label }}</th>
+                                    <th class="text-end">{% trans "On-Hand Market Value" %}</th>
+                                    <th class="text-end">{% trans "Total Asset Value" %}</th>
+                                    <th class="text-end">{% trans "Delta" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in capital_trend_rows %}
+                                    <tr>
+                                        <td>{{ row.month }}</td>
+                                        <td class="text-end">
+                                            {% if row.wallet_balance is not None %}
+                                                {{ row.wallet_balance|floatformat:0|intcomma }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">{{ row.inventory_market_value|floatformat:0|intcomma }}</td>
+                                        <td class="text-end">
+                                            {% if row.total_asset_value is not None %}
+                                                {{ row.total_asset_value|floatformat:0|intcomma }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-end">
+                                            {% if row.total_asset_delta is not None %}
+                                                {{ row.total_asset_delta|floatformat:0|intcomma }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
-                </form>
-                <div class="dashboard-control-note">{% trans "Use a saved period or pin an exact start and end date." %}</div>
+                {% else %}
+                    <div class="dashboard-empty">
+                        {% trans "No daily Buyback snapshots have been saved yet for this corporation and wallet division." %}
+                        {% trans "The snapshot task runs once per day, or you can trigger it manually to capture a point immediately." %}
+                    </div>
+                {% endif %}
             </div>
 
-            <div class="dashboard-control-panel">
-                <div class="stats-panel-kicker">{% trans "Operator Preferences" %}</div>
-                <h3 class="stats-panel-title">{% trans "Saved Scope" %}</h3>
-                <form method="post" class="dashboard-filter-grid mt-3">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="save_stats_preferences">
-                    <div>
-                        <label for="chosenCorporation" class="form-label mb-1">{% trans "Chosen Corp" %}</label>
-                        <select id="chosenCorporation" name="chosen_corporation_id" class="form-select">
-                            {% for corp in corp_options %}
-                            <option value="{{ corp.id }}" {% if chosen_corporation_id == corp.id %}selected{% endif %}>{{ corp.name }} - {{ corp.id }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div>
-                        <label for="chosenWalletDivision" class="form-label mb-1">{% trans "Chosen Wallet Division" %}</label>
-                        <select id="chosenWalletDivision" name="chosen_wallet_division" class="form-select">
-                            {% for division in wallet_division_options %}
-                            <option value="{{ division.id }}" {% if chosen_wallet_division == division.id %}selected{% endif %}>{{ division.name }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="dashboard-field">
-                        <span class="dashboard-field-label">{% trans "Selected Configs" %}</span>
-                        <span class="dashboard-field-value">{{ selected_config_count|intcomma }}</span>
-                    </div>
-                    <div class="d-grid align-self-end">
-                        <button type="submit" class="btn btn-warning">
-                            <i class="fas fa-save me-1"></i>{% trans "Save Preferences" %}
-                        </button>
-                    </div>
-                </form>
-                <div class="dashboard-control-note">{% trans "Saved choices define which corp wallet and buyback configs the dashboard evaluates." %}</div>
-            </div>
+            <div class="dashboard-control-grid">
+                <div class="dashboard-control-panel">
+                    <div class="stats-panel-kicker">{% trans "Date Window" %}</div>
+                    <h3 class="stats-panel-title">{% trans "Filters" %}</h3>
+                    <form method="get" class="dashboard-filter-grid mt-3">
+                        <div>
+                            <label for="statsPeriod" class="form-label mb-1">{% trans "Period" %}</label>
+                            <select id="statsPeriod" name="period" class="form-select">
+                                {% for value, label in period_options %}
+                                    <option value="{{ value }}" {% if selected_period == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="statsStartDate" class="form-label mb-1">{% trans "Start date" %}</label>
+                            <input id="statsStartDate" type="date" name="start_date" value="{{ start_date }}" class="form-control">
+                        </div>
+                        <div>
+                            <label for="statsEndDate" class="form-label mb-1">{% trans "End date" %}</label>
+                            <input id="statsEndDate" type="date" name="end_date" value="{{ end_date }}" class="form-control">
+                        </div>
+                        <div class="d-grid align-self-end">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-filter me-1"></i>{% trans "Apply Filters" %}
+                            </button>
+                        </div>
+                    </form>
+                    <div class="dashboard-control-note">{% trans "Use a saved period or pin an exact start and end date." %}</div>
+                </div>
 
-            <div class="dashboard-control-panel">
-                <div class="stats-panel-kicker">{% trans "Snapshots" %}</div>
-                <h3 class="stats-panel-title">{% trans "Manual Capture" %}</h3>
-                <form method="post" class="mt-3">
-                    {% csrf_token %}
-                    <input type="hidden" name="action" value="run_manual_snapshot">
-                    <input type="hidden" name="chosen_corporation_id" value="{{ chosen_corporation_id }}">
-                    <input type="hidden" name="chosen_wallet_division" value="{{ chosen_wallet_division }}">
-                    <div class="dashboard-field mb-3">
-                        <span class="dashboard-field-label">{% trans "Target Scope" %}</span>
-                        <span class="dashboard-field-value">{{ chosen_corporation_name }} / {{ chosen_wallet_division_name }}</span>
+                <div class="dashboard-control-panel">
+                    <div class="stats-panel-kicker">{% trans "Operator Preferences" %}</div>
+                    <h3 class="stats-panel-title">{% trans "Saved Scope" %}</h3>
+                    <form method="post" class="dashboard-filter-grid mt-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="save_stats_preferences">
+                        <div>
+                            <label for="chosenCorporation" class="form-label mb-1">{% trans "Chosen Corp" %}</label>
+                            <select id="chosenCorporation" name="chosen_corporation_id" class="form-select">
+                                {% for corp in corp_options %}
+                                    <option value="{{ corp.id }}" {% if chosen_corporation_id == corp.id %}selected{% endif %}>
+                                        {{ corp.name }} - {{ corp.id }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label for="chosenWalletDivision" class="form-label mb-1">{% trans "Chosen Wallet Division" %}</label>
+                            <select id="chosenWalletDivision" name="chosen_wallet_division" class="form-select">
+                                {% for division in wallet_division_options %}
+                                    <option value="{{ division.id }}" {% if chosen_wallet_division == division.id %}selected{% endif %}>
+                                        {{ division.name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="dashboard-field">
+                            <span class="dashboard-field-label">{% trans "Selected Configs" %}</span>
+                            <span class="dashboard-field-value">{{ selected_config_count|intcomma }}</span>
+                        </div>
+                        <div class="d-grid align-self-end">
+                            <button type="submit" class="btn btn-warning">
+                                <i class="fas fa-save me-1"></i>{% trans "Save Preferences" %}
+                            </button>
+                        </div>
+                    </form>
+                    <div class="dashboard-control-note">
+                        {% trans "Saved choices define which corp wallet and buyback configs the dashboard evaluates." %}
                     </div>
-                    <div class="dashboard-field mb-3">
-                        <span class="dashboard-field-label">{% trans "Latest Snapshot" %}</span>
-                        <span class="dashboard-field-value">{{ capital_trend_latest_snapshot_date|default:"-" }}</span>
+                </div>
+
+                <div class="dashboard-control-panel">
+                    <div class="stats-panel-kicker">{% trans "Snapshots" %}</div>
+                    <h3 class="stats-panel-title">{% trans "Manual Capture" %}</h3>
+                    <form method="post" class="mt-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="run_manual_snapshot">
+                        <input type="hidden" name="chosen_corporation_id" value="{{ chosen_corporation_id }}">
+                        <input type="hidden" name="chosen_wallet_division" value="{{ chosen_wallet_division }}">
+                        <div class="dashboard-field mb-3">
+                            <span class="dashboard-field-label">{% trans "Target Scope" %}</span>
+                            <span class="dashboard-field-value">{{ chosen_corporation_name }} / {{ chosen_wallet_division_name }}</span>
+                        </div>
+                        <div class="dashboard-field mb-3">
+                            <span class="dashboard-field-label">{% trans "Latest Snapshot" %}</span>
+                            <span class="dashboard-field-value">{{ capital_trend_latest_snapshot_date|default:"-" }}</span>
+                        </div>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-outline-primary">
+                                <i class="fas fa-camera me-1"></i>{% trans "Capture Snapshot Now" %}
+                            </button>
+                        </div>
+                    </form>
+                    <div class="dashboard-control-note">
+                        {% trans "Runs the snapshot immediately for the currently selected corporation and shows any warnings or errors on reload." %}
                     </div>
-                    <div class="d-grid">
-                        <button type="submit" class="btn btn-outline-primary">
-                            <i class="fas fa-camera me-1"></i>{% trans "Capture Snapshot Now" %}
-                        </button>
-                    </div>
-                </form>
-                <div class="dashboard-control-note">{% trans "Runs the snapshot immediately for the currently selected corporation and shows any warnings or errors on reload." %}</div>
-            </div>
-        </div>
-        <div class="dashboard-note-panel">
-            <div class="stats-panel-header mb-3">
-                <div>
-                    <div class="stats-panel-kicker">{% trans "Read Before Using" %}</div>
-                    <h3 class="stats-panel-title">{% trans "Scope Notes and Limitations" %}</h3>
                 </div>
             </div>
-            <div class="dashboard-alert-stack mb-3">
-                {% if stats_scope_note %}
-                <div class="dashboard-alert dashboard-alert-info"><span class="dashboard-alert-label">{% trans "Scope" %}</span> {{ stats_scope_note }} {% trans "Selected configs:" %} {{ selected_config_count }}.</div>
-                {% endif %}
-                {% if division_scope_missing %}
-                <div class="dashboard-alert dashboard-alert-warning"><span class="dashboard-alert-label">{% trans "Wallet divisions" %}</span> {% trans "Division names are stale or missing from cache for this corporation." %}</div>
-                {% endif %}
-                {% if wallet_scope_missing %}
-                <div class="dashboard-alert dashboard-alert-warning"><span class="dashboard-alert-label">{% trans "Wallet scope" %}</span> {% trans "Wallet journal scope is missing for this corporation." %}</div>
-                {% endif %}
-                {% if market_scope_missing %}
-                <div class="dashboard-alert dashboard-alert-warning"><span class="dashboard-alert-label">{% trans "Market scope" %}</span> {% trans "Corporation market orders scope is missing for this corporation." %}</div>
-                {% endif %}
-                {% if wallet_activity_error %}
-                <div class="dashboard-alert dashboard-alert-danger"><span class="dashboard-alert-label">{% trans "Wallet sync" %}</span> {{ wallet_activity_error }}</div>
-                {% endif %}
-                {% if current_buy_hangar_assets_scope_missing %}
-                <div class="dashboard-alert dashboard-alert-warning"><span class="dashboard-alert-label">{% trans "Assets cache" %}</span> {% trans "Current hangar value is based on the latest cached corp assets because live corp-assets scope is missing or stale." %}</div>
-                {% endif %}
-                {% if current_buy_hangar_inventory_priced_type_count < current_buy_hangar_inventory_type_count %}
-                <div class="dashboard-alert dashboard-alert-warning"><span class="dashboard-alert-label">{% trans "Valuation" %}</span> {% trans "Current hangar value excludes item types without a cached sell price." %} {% trans "Priced types:" %} {{ current_buy_hangar_inventory_priced_type_count|intcomma }} / {{ current_buy_hangar_inventory_type_count|intcomma }}.</div>
-                {% endif %}
+            <div class="dashboard-note-panel">
+                <div class="stats-panel-header mb-3">
+                    <div>
+                        <div class="stats-panel-kicker">{% trans "Read Before Using" %}</div>
+                        <h3 class="stats-panel-title">{% trans "Scope Notes and Limitations" %}</h3>
+                    </div>
+                </div>
+                <div class="dashboard-alert-stack mb-3">
+                    {% if stats_scope_note %}
+                        <div class="dashboard-alert dashboard-alert-info">
+                            <span class="dashboard-alert-label">{% trans "Scope" %}</span> {{ stats_scope_note }} {% trans "Selected configs:" %} {{ selected_config_count }}.
+                        </div>
+                    {% endif %}
+                    {% if division_scope_missing %}
+                        <div class="dashboard-alert dashboard-alert-warning">
+                            <span class="dashboard-alert-label">{% trans "Wallet divisions" %}</span> {% trans "Division names are stale or missing from cache for this corporation." %}
+                        </div>
+                    {% endif %}
+                    {% if wallet_scope_missing %}
+                        <div class="dashboard-alert dashboard-alert-warning">
+                            <span class="dashboard-alert-label">{% trans "Wallet scope" %}</span> {% trans "Wallet journal scope is missing for this corporation." %}
+                        </div>
+                    {% endif %}
+                    {% if market_scope_missing %}
+                        <div class="dashboard-alert dashboard-alert-warning">
+                            <span class="dashboard-alert-label">{% trans "Market scope" %}</span> {% trans "Corporation market orders scope is missing for this corporation." %}
+                        </div>
+                    {% endif %}
+                    {% if wallet_activity_error %}
+                        <div class="dashboard-alert dashboard-alert-danger">
+                            <span class="dashboard-alert-label">{% trans "Wallet sync" %}</span> {{ wallet_activity_error }}
+                        </div>
+                    {% endif %}
+                    {% if current_buy_hangar_assets_scope_missing %}
+                        <div class="dashboard-alert dashboard-alert-warning">
+                            <span class="dashboard-alert-label">{% trans "Assets cache" %}</span> {% trans "Current hangar value is based on the latest cached corp assets because live corp-assets scope is missing or stale." %}
+                        </div>
+                    {% endif %}
+                    {% if current_buy_hangar_inventory_priced_type_count < current_buy_hangar_inventory_type_count %}
+                        <div class="dashboard-alert dashboard-alert-warning">
+                            <span class="dashboard-alert-label">{% trans "Valuation" %}</span> {% trans "Current hangar value excludes item types without a cached sell price." %} {% trans "Priced types:" %} {{ current_buy_hangar_inventory_priced_type_count|intcomma }} / {{ current_buy_hangar_inventory_type_count|intcomma }}.
+                        </div>
+                    {% endif %}
+                </div>
+                <ul class="dashboard-note-list">
+                    <li class="dashboard-note-item">
+                        <span class="dashboard-note-icon"><i class="fas fa-layer-group"></i></span>
+                        <span>{% trans "Capital ship orders are excluded from this page." %}</span>
+                    </li>
+                    <li class="dashboard-note-item">
+                        <span class="dashboard-note-icon"><i class="fas fa-file-contract"></i></span>
+                        <span>{% trans "Bought and sold totals prefer matched ESI contract prices, with transaction fallbacks when contract prices are missing." %}</span>
+                    </li>
+                    <li class="dashboard-note-item">
+                        <span class="dashboard-note-icon"><i class="fas fa-wallet"></i></span>
+                        <span>{% trans "Wallet totals come from the selected corporation and wallet division." %}</span>
+                    </li>
+                    <li class="dashboard-note-item">
+                        <span class="dashboard-note-icon"><i class="fas fa-chart-area"></i></span>
+                        <span>{{ data_limitations }}</span>
+                    </li>
+                </ul>
             </div>
-            <ul class="dashboard-note-list">
-                <li class="dashboard-note-item">
-                    <span class="dashboard-note-icon"><i class="fas fa-layer-group"></i></span>
-                    <span>{% trans "Capital ship orders are excluded from this page." %}</span>
-                </li>
-                <li class="dashboard-note-item">
-                    <span class="dashboard-note-icon"><i class="fas fa-file-contract"></i></span>
-                    <span>{% trans "Bought and sold totals prefer matched ESI contract prices, with transaction fallbacks when contract prices are missing." %}</span>
-                </li>
-                <li class="dashboard-note-item">
-                    <span class="dashboard-note-icon"><i class="fas fa-wallet"></i></span>
-                    <span>{% trans "Wallet totals come from the selected corporation and wallet division." %}</span>
-                </li>
-                <li class="dashboard-note-item">
-                    <span class="dashboard-note-icon"><i class="fas fa-chart-area"></i></span>
-                    <span>{{ data_limitations }}</span>
-                </li>
-            </ul>
-        </div>
 
-        <div class="dashboard-summary-grid">
+            <div class="dashboard-summary-grid">
+                <div class="dashboard-table-card">
+                    <div class="dashboard-table-header mb-3">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Detailed Metrics" %}</div>
+                            <h3 class="dashboard-table-title">{% trans "Wallet Summary" %}</h3>
+                        </div>
+                    </div>
+                    <div class="dashboard-table-wrap table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <tbody>
+                                <tr>
+                                    <th>{% trans "Chosen Corp" %}</th>
+                                    <td class="text-end">{{ chosen_corporation_name }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Chosen Wallet Division" %}</th>
+                                    <td class="text-end">{{ chosen_wallet_division_name }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Data Source" %}</th>
+                                    <td class="text-end">
+                                        {% if wallet_data_source == "corptools" %}
+                                            {% trans "Corptools cache" %}
+                                        {% else %}
+                                            {% trans "ESI live" %}
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Division Balance" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Activity Entries" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_activity_count|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Inflow" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Outflow" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Net Total" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_net_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Net (Projected 30D)" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_net_projected_30d|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Wallet Market Activity Total" %}</th>
+                                    <td class="text-end">{{ donation_stats.wallet_market_activity_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Open Market Order Value" %}</th>
+                                    <td class="text-end">{{ donation_stats.open_order_value|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="dashboard-table-card">
+                    <div class="dashboard-table-header mb-3">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Detailed Metrics" %}</div>
+                            <h3 class="dashboard-table-title">{% trans "Order Summary" %}</h3>
+                        </div>
+                    </div>
+                    <div class="dashboard-table-wrap table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <tbody>
+                                <tr>
+                                    <th>{% trans "Total Orders" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.made|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Contract-backed Transactions" %}</th>
+                                    <td class="text-end">{{ donation_stats.contract_transaction_count|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Total Bought (Hub)" %}</th>
+                                    <td class="text-end">{{ total_sell_volume|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Total Sold (Hub)" %}</th>
+                                    <td class="text-end">{{ total_buy_volume|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Open Market Orders (Relevant)" %}</th>
+                                    <td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Open Buy / Sell Orders" %}</th>
+                                    <td class="text-end">
+                                        {{ donation_stats.open_buy_orders|intcomma }} / {{ donation_stats.open_sell_orders|intcomma }}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Completed Orders" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.completed|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Cancelled Orders" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.cancelled|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Rejected Orders" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.rejected|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Current Validated" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.current_validated|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Current Awaiting Validation" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.current_awaiting_validation|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Current Anomaly" %}</th>
+                                    <td class="text-end">{{ contract_progress_stats.current_anomaly|intcomma }}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="dashboard-table-card">
+                    <div class="dashboard-table-header mb-3">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Detailed Metrics" %}</div>
+                            <h3 class="dashboard-table-title">{% trans "Profitability Summary" %}</h3>
+                        </div>
+                    </div>
+                    <div class="dashboard-table-wrap table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <tbody>
+                                <tr>
+                                    <th>{% trans "Sell Expected Cost Total" %}</th>
+                                    <td class="text-end">{{ sell_expected_cost_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Sell Actual Cost Total" %}</th>
+                                    <td class="text-end">{{ sell_actual_cost_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Buy Expected Jita Sell Total" %}</th>
+                                    <td class="text-end">{{ buy_expected_jita_sell_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Buy Actual Revenue Total" %}</th>
+                                    <td class="text-end">{{ buy_actual_revenue_total|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Actual Exchange Profit" %}</th>
+                                    <td class="text-end">{{ actual_exchange_profit|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Profit With Wallet" %}</th>
+                                    <td class="text-end">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Potential Profit (Jita Buy)" %}</th>
+                                    <td class="text-end">{{ potential_profit_jita_buy|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Potential Profit (Jita Sell)" %}</th>
+                                    <td class="text-end">{{ potential_profit_jita_sell|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Potential Profit (Split)" %}</th>
+                                    <td class="text-end">{{ potential_profit_jita_split|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Forecast 30D Profit" %}</th>
+                                    <td class="text-end">{{ forecast_30d_profit|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Forecast 90D Profit" %}</th>
+                                    <td class="text-end">{{ forecast_90d_profit|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Snapshot Coverage" %}</th>
+                                    <td class="text-end">{{ snapshot_coverage_pct|floatformat:1 }}%</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
             <div class="dashboard-table-card">
                 <div class="dashboard-table-header mb-3">
                     <div>
-                        <div class="stats-panel-kicker">{% trans "Detailed Metrics" %}</div>
-                        <h3 class="dashboard-table-title">{% trans "Wallet Summary" %}</h3>
-                    </div>
-                </div>
-                <div class="dashboard-table-wrap table-responsive">
-                    <table class="table align-middle dashboard-table mb-0">
-                        <tbody>
-                            <tr><th>{% trans "Chosen Corp" %}</th><td class="text-end">{{ chosen_corporation_name }}</td></tr>
-                            <tr><th>{% trans "Chosen Wallet Division" %}</th><td class="text-end">{{ chosen_wallet_division_name }}</td></tr>
-                            <tr><th>{% trans "Wallet Data Source" %}</th><td class="text-end">{% if wallet_data_source == "corptools" %}{% trans "Corptools cache" %}{% else %}{% trans "ESI live" %}{% endif %}</td></tr>
-                            <tr><th>{% trans "Wallet Division Balance" %}</th><td class="text-end">{{ donation_stats.wallet_division_balance|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Wallet Activity Entries" %}</th><td class="text-end">{{ donation_stats.wallet_activity_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Wallet Inflow" %}</th><td class="text-end">{{ donation_stats.wallet_inflow_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Wallet Outflow" %}</th><td class="text-end">{{ donation_stats.wallet_outflow_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Wallet Net Total" %}</th><td class="text-end">{{ donation_stats.wallet_net_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Wallet Net (Projected 30D)" %}</th><td class="text-end">{{ donation_stats.wallet_net_projected_30d|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Wallet Market Activity Total" %}</th><td class="text-end">{{ donation_stats.wallet_market_activity_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Open Market Order Value" %}</th><td class="text-end">{{ donation_stats.open_order_value|floatformat:0|intcomma }} ISK</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div class="dashboard-table-card">
-                <div class="dashboard-table-header mb-3">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Detailed Metrics" %}</div>
-                        <h3 class="dashboard-table-title">{% trans "Order Summary" %}</h3>
-                    </div>
-                </div>
-                <div class="dashboard-table-wrap table-responsive">
-                    <table class="table align-middle dashboard-table mb-0">
-                        <tbody>
-                            <tr><th>{% trans "Total Orders" %}</th><td class="text-end">{{ contract_progress_stats.made|intcomma }}</td></tr>
-                            <tr><th>{% trans "Contract-backed Transactions" %}</th><td class="text-end">{{ donation_stats.contract_transaction_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Total Bought (Hub)" %}</th><td class="text-end">{{ total_sell_volume|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Total Sold (Hub)" %}</th><td class="text-end">{{ total_buy_volume|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Open Market Orders (Relevant)" %}</th><td class="text-end">{{ donation_stats.market_orders_total|intcomma }}</td></tr>
-                            <tr><th>{% trans "Open Buy / Sell Orders" %}</th><td class="text-end">{{ donation_stats.open_buy_orders|intcomma }} / {{ donation_stats.open_sell_orders|intcomma }}</td></tr>
-                            <tr><th>{% trans "Completed Orders" %}</th><td class="text-end">{{ contract_progress_stats.completed|intcomma }}</td></tr>
-                            <tr><th>{% trans "Cancelled Orders" %}</th><td class="text-end">{{ contract_progress_stats.cancelled|intcomma }}</td></tr>
-                            <tr><th>{% trans "Rejected Orders" %}</th><td class="text-end">{{ contract_progress_stats.rejected|intcomma }}</td></tr>
-                            <tr><th>{% trans "Current Validated" %}</th><td class="text-end">{{ contract_progress_stats.current_validated|intcomma }}</td></tr>
-                            <tr><th>{% trans "Current Awaiting Validation" %}</th><td class="text-end">{{ contract_progress_stats.current_awaiting_validation|intcomma }}</td></tr>
-                            <tr><th>{% trans "Current Anomaly" %}</th><td class="text-end">{{ contract_progress_stats.current_anomaly|intcomma }}</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="dashboard-table-card">
-                <div class="dashboard-table-header mb-3">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Detailed Metrics" %}</div>
-                        <h3 class="dashboard-table-title">{% trans "Profitability Summary" %}</h3>
-                    </div>
-                </div>
-                <div class="dashboard-table-wrap table-responsive">
-                    <table class="table align-middle dashboard-table mb-0">
-                        <tbody>
-                            <tr><th>{% trans "Sell Expected Cost Total" %}</th><td class="text-end">{{ sell_expected_cost_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Sell Actual Cost Total" %}</th><td class="text-end">{{ sell_actual_cost_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Buy Expected Jita Sell Total" %}</th><td class="text-end">{{ buy_expected_jita_sell_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Buy Actual Revenue Total" %}</th><td class="text-end">{{ buy_actual_revenue_total|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Actual Exchange Profit" %}</th><td class="text-end">{{ actual_exchange_profit|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Profit With Wallet" %}</th><td class="text-end">{{ actual_exchange_profit_with_wallet|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Potential Profit (Jita Buy)" %}</th><td class="text-end">{{ potential_profit_jita_buy|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Potential Profit (Jita Sell)" %}</th><td class="text-end">{{ potential_profit_jita_sell|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Potential Profit (Split)" %}</th><td class="text-end">{{ potential_profit_jita_split|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Forecast 30D Profit" %}</th><td class="text-end">{{ forecast_30d_profit|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Forecast 90D Profit" %}</th><td class="text-end">{{ forecast_90d_profit|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Snapshot Coverage" %}</th><td class="text-end">{{ snapshot_coverage_pct|floatformat:1 }}%</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div class="dashboard-table-card">
-            <div class="dashboard-table-header mb-3">
-                <div>
-                    <div class="stats-panel-kicker">{% trans "Operational Feed" %}</div>
-                    <h3 class="dashboard-table-title">{% trans "Recent Transactions" %}</h3>
-                    <p class="dashboard-table-subtitle">{% trans "Latest completed buyback transactions in the selected window." %}</p>
-                </div>
-            </div>
-            <div class="table-responsive">
-                <table class="table align-middle dashboard-table mb-0">
-                    <thead>
-                        <tr>
-                            <th>{% trans "Order" %}</th>
-                            <th>{% trans "Type" %}</th>
-                            <th>{% trans "Who" %}</th>
-                            <th>{% trans "From" %}</th>
-                            <th>{% trans "To" %}</th>
-                            <th class="text-end">{% trans "Total Price" %}</th>
-                            <th class="text-end">{% trans "Created -> Accepted" %}</th>
-                            <th class="text-end">{% trans "Completed" %}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for tx in recent_transactions %}
-                        <tr>
-                            <td class="dashboard-table-strong">{{ tx.order_reference }}</td>
-                            <td>
-                                {% if tx.transaction_type == "sell" %}
-                                <span class="dashboard-pill dashboard-pill-sell">{% trans "Sell" %}</span>
-                                {% else %}
-                                <span class="dashboard-pill dashboard-pill-buy">{% trans "Buy" %}</span>
-                                {% endif %}
-                            </td>
-                            <td>{{ tx.who }}</td>
-                            <td>{{ tx.party_from }}</td>
-                            <td>{{ tx.party_to }}</td>
-                            <td class="text-end">{{ tx.total_price|floatformat:0|intcomma }} ISK</td>
-                            <td class="text-end">{{ tx.acceptance_duration_display }}</td>
-                            <td class="text-end">{{ tx.completed_at|date:"Y-m-d H:i" }}</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="8" class="dashboard-table-muted">{% trans "No completed transactions in this range." %}</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="dashboard-summary-grid">
-            <div class="dashboard-table-card">
-                <div class="dashboard-table-header mb-3">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Operator Mix" %}</div>
-                        <h3 class="dashboard-table-title">{% trans "Top Users" %}</h3>
+                        <div class="stats-panel-kicker">{% trans "Operational Feed" %}</div>
+                        <h3 class="dashboard-table-title">{% trans "Recent Transactions" %}</h3>
+                        <p class="dashboard-table-subtitle">{% trans "Latest completed buyback transactions in the selected window." %}</p>
                     </div>
                 </div>
                 <div class="table-responsive">
                     <table class="table align-middle dashboard-table mb-0">
                         <thead>
                             <tr>
-                                <th>{% trans "User" %}</th>
-                                <th class="text-end">{% trans "Orders" %}</th>
-                                <th class="text-end">{% trans "Bought" %}</th>
-                                <th class="text-end">{% trans "Sold" %}</th>
-                                <th class="text-end">{% trans "Net" %}</th>
+                                <th>{% trans "Order" %}</th>
+                                <th>{% trans "Type" %}</th>
+                                <th>{% trans "Who" %}</th>
+                                <th>{% trans "From" %}</th>
+                                <th>{% trans "To" %}</th>
+                                <th class="text-end">{% trans "Total Price" %}</th>
+                                <th class="text-end">{% trans "Created -> Accepted" %}</th>
+                                <th class="text-end">{% trans "Completed" %}</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for row in top_user_stats %}
-                            <tr>
-                                <td class="dashboard-table-strong">{{ row.main_character|default:row.username }}</td>
-                                <td class="text-end">{{ row.total_orders|intcomma }}</td>
-                                <td class="text-end">{{ row.buy_volume|floatformat:0|intcomma }} ISK</td>
-                                <td class="text-end">{{ row.sell_volume|floatformat:0|intcomma }} ISK</td>
-                                <td class="text-end">{{ row.net_flow|floatformat:0|intcomma }} ISK</td>
-                            </tr>
+                            {% for tx in recent_transactions %}
+                                <tr>
+                                    <td class="dashboard-table-strong">{{ tx.order_reference }}</td>
+                                    <td>
+                                        {% if tx.transaction_type == "sell" %}
+                                            <span class="dashboard-pill dashboard-pill-sell">{% trans "Sell" %}</span>
+                                        {% else %}
+                                            <span class="dashboard-pill dashboard-pill-buy">{% trans "Buy" %}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ tx.who }}</td>
+                                    <td>{{ tx.party_from }}</td>
+                                    <td>{{ tx.party_to }}</td>
+                                    <td class="text-end">{{ tx.total_price|floatformat:0|intcomma }} ISK</td>
+                                    <td class="text-end">{{ tx.acceptance_duration_display }}</td>
+                                    <td class="text-end">{{ tx.completed_at|date:"Y-m-d H:i" }}</td>
+                                </tr>
                             {% empty %}
-                            <tr><td colspan="5" class="dashboard-table-muted">{% trans "No user totals in this range." %}</td></tr>
+                                <tr>
+                                    <td colspan="8" class="dashboard-table-muted">{% trans "No completed transactions in this range." %}</td>
+                                </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            <div class="dashboard-table-card">
-                <div class="dashboard-table-header mb-3">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Trend" %}</div>
-                        <h3 class="dashboard-table-title">{% trans "Orders Over Time" %}</h3>
+            <div class="dashboard-summary-grid">
+                <div class="dashboard-table-card">
+                    <div class="dashboard-table-header mb-3">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Operator Mix" %}</div>
+                            <h3 class="dashboard-table-title">{% trans "Top Users" %}</h3>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "User" %}</th>
+                                    <th class="text-end">{% trans "Orders" %}</th>
+                                    <th class="text-end">{% trans "Bought" %}</th>
+                                    <th class="text-end">{% trans "Sold" %}</th>
+                                    <th class="text-end">{% trans "Net" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in top_user_stats %}
+                                    <tr>
+                                        <td class="dashboard-table-strong">{{ row.main_character|default:row.username }}</td>
+                                        <td class="text-end">{{ row.total_orders|intcomma }}</td>
+                                        <td class="text-end">{{ row.buy_volume|floatformat:0|intcomma }} ISK</td>
+                                        <td class="text-end">{{ row.sell_volume|floatformat:0|intcomma }} ISK</td>
+                                        <td class="text-end">{{ row.net_flow|floatformat:0|intcomma }} ISK</td>
+                                    </tr>
+                                {% empty %}
+                                    <tr>
+                                        <td colspan="5" class="dashboard-table-muted">{% trans "No user totals in this range." %}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-                <div class="table-responsive">
-                    <table class="table align-middle dashboard-table mb-0">
-                        <thead>
-                            <tr>
-                                <th>{% trans "Month" %}</th>
-                                <th class="text-end">{% trans "Buy Transactions" %}</th>
-                                <th class="text-end">{% trans "Sell Transactions" %}</th>
-                                <th class="text-end">{{ market_trend_source_label }}</th>
-                                <th class="text-end">{% trans "Buy Value" %}</th>
-                                <th class="text-end">{% trans "Sell Value" %}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in trend_rows %}
-                            <tr>
-                                <td>{{ row.month }}</td>
-                                <td class="text-end">{{ row.buy_order_count|intcomma }}</td>
-                                <td class="text-end">{{ row.sell_order_count|intcomma }}</td>
-                                <td class="text-end">{{ row.market_order_count|intcomma }}</td>
-                                <td class="text-end">{{ row.buy_order_value|floatformat:0|intcomma }} ISK</td>
-                                <td class="text-end">{{ row.sell_order_value|floatformat:0|intcomma }} ISK</td>
-                            </tr>
-                            {% empty %}
-                            <tr><td colspan="6" class="dashboard-table-muted">{% trans "No order history in this range." %}</td></tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
 
-            <div class="dashboard-table-card">
-                <div class="dashboard-table-header mb-3">
-                    <div>
-                        <div class="stats-panel-kicker">{% trans "Reference Stats" %}</div>
-                        <h3 class="dashboard-table-title">{% trans "Contract Status Breakdown" %}</h3>
+                <div class="dashboard-table-card">
+                    <div class="dashboard-table-header mb-3">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Trend" %}</div>
+                            <h3 class="dashboard-table-title">{% trans "Orders Over Time" %}</h3>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>{% trans "Month" %}</th>
+                                    <th class="text-end">{% trans "Buy Transactions" %}</th>
+                                    <th class="text-end">{% trans "Sell Transactions" %}</th>
+                                    <th class="text-end">{{ market_trend_source_label }}</th>
+                                    <th class="text-end">{% trans "Buy Value" %}</th>
+                                    <th class="text-end">{% trans "Sell Value" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in trend_rows %}
+                                    <tr>
+                                        <td>{{ row.month }}</td>
+                                        <td class="text-end">{{ row.buy_order_count|intcomma }}</td>
+                                        <td class="text-end">{{ row.sell_order_count|intcomma }}</td>
+                                        <td class="text-end">{{ row.market_order_count|intcomma }}</td>
+                                        <td class="text-end">{{ row.buy_order_value|floatformat:0|intcomma }} ISK</td>
+                                        <td class="text-end">{{ row.sell_order_value|floatformat:0|intcomma }} ISK</td>
+                                    </tr>
+                                {% empty %}
+                                    <tr>
+                                        <td colspan="6" class="dashboard-table-muted">{% trans "No order history in this range." %}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-                <div class="table-responsive">
-                    <table class="table align-middle dashboard-table mb-0">
-                        <tbody>
-                            <tr><th>{% trans "Total Contracts Seen" %}</th><td class="text-end">{{ contract_stats.total|intcomma }}</td></tr>
-                            <tr><th>{% trans "Completed Contracts" %}</th><td class="text-end">{{ contract_stats.completed|intcomma }}</td></tr>
-                            <tr><th>{% trans "Rejected Contracts" %}</th><td class="text-end">{{ contract_stats.rejected|intcomma }}</td></tr>
-                            <tr><th>{% trans "Deleted Contracts" %}</th><td class="text-end">{{ contract_stats.deleted|intcomma }}</td></tr>
-                            <tr><th>{% trans "Deleted Before Acceptance" %}</th><td class="text-end">{{ contract_stats.deleted_before_acceptance|intcomma }}</td></tr>
-                            <tr><th>{% trans "Deleted After Acceptance" %}</th><td class="text-end">{{ contract_stats.deleted_after_acceptance|intcomma }}</td></tr>
-                            <tr><th>{% trans "Potential Priced Types" %}</th><td class="text-end">{{ potential_priced_type_count|intcomma }}</td></tr>
-                            <tr><th>{% trans "Average Daily Revenue" %}</th><td class="text-end">{{ average_daily_revenue|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Average Daily Cost" %}</th><td class="text-end">{{ average_daily_cost|floatformat:0|intcomma }} ISK</td></tr>
-                            <tr><th>{% trans "Average Daily Net Profit" %}</th><td class="text-end">{{ average_daily_net_profit|floatformat:0|intcomma }} ISK</td></tr>
-                        </tbody>
-                    </table>
+
+                <div class="dashboard-table-card">
+                    <div class="dashboard-table-header mb-3">
+                        <div>
+                            <div class="stats-panel-kicker">{% trans "Reference Stats" %}</div>
+                            <h3 class="dashboard-table-title">{% trans "Contract Status Breakdown" %}</h3>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-middle dashboard-table mb-0">
+                            <tbody>
+                                <tr>
+                                    <th>{% trans "Total Contracts Seen" %}</th>
+                                    <td class="text-end">{{ contract_stats.total|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Completed Contracts" %}</th>
+                                    <td class="text-end">{{ contract_stats.completed|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Rejected Contracts" %}</th>
+                                    <td class="text-end">{{ contract_stats.rejected|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Deleted Contracts" %}</th>
+                                    <td class="text-end">{{ contract_stats.deleted|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Deleted Before Acceptance" %}</th>
+                                    <td class="text-end">{{ contract_stats.deleted_before_acceptance|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Deleted After Acceptance" %}</th>
+                                    <td class="text-end">{{ contract_stats.deleted_after_acceptance|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Potential Priced Types" %}</th>
+                                    <td class="text-end">{{ potential_priced_type_count|intcomma }}</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Average Daily Revenue" %}</th>
+                                    <td class="text-end">{{ average_daily_revenue|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Average Daily Cost" %}</th>
+                                    <td class="text-end">{{ average_daily_cost|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                                <tr>
+                                    <th>{% trans "Average Daily Net Profit" %}</th>
+                                    <td class="text-end">{{ average_daily_net_profit|floatformat:0|intcomma }} ISK</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
-</div>
 {% endblock content %}

@@ -81,9 +81,7 @@ def indy_hub_permission_required(permission_codename):
                 return redirect("auth_login_user")
             full_codename = f"indy_hub.{permission_codename}"
             if not request.user.has_perm(full_codename):
-                messages.error(
-                    request, "You do not have the required Indy Hub permission."
-                )
+                messages.error(request, "You do not have the required Indy Hub permission.")
                 return redirect("indy_hub:index")
             return view_func(request, *args, **kwargs)
 

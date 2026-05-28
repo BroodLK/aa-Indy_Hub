@@ -21,6 +21,7 @@ from allianceauth.services.hooks import get_extension_logger
 from esi.models import Token
 
 try:  # Optional dependency.
+    # Third Party
     from corptools.models import CorporationWalletDivision
 except Exception:  # pragma: no cover - Corptools not installed/enabled.
     CorporationWalletDivision = None
@@ -117,9 +118,7 @@ def _me_sell_assets_progress_key(user_id: int) -> str:
     soft_time_limit=280,
 )
 @rate_limit_retry_task
-def refresh_corp_assets_cached(
-    corporation_id: int, director_character_id: int | None = None
-) -> None:
+def refresh_corp_assets_cached(corporation_id: int, director_character_id: int | None = None) -> None:
     """Refresh corp assets cache and structure names for a given corporation.
 
     Uses the director_character_id (if provided) for all ESI calls.
@@ -154,9 +153,7 @@ def refresh_corp_assets_cached(
 
         # Refresh corp assets using the provided director character
         force_refresh_corp_assets(int(corporation_id))
-        logger.info(
-            "Successfully refreshed corp assets for corporation %s", corporation_id
-        )
+        logger.info("Successfully refreshed corp assets for corporation %s", corporation_id)
 
         # Get all structure IDs from the refreshed corp assets
         # Only include locations that have "structure" location flags
@@ -205,9 +202,7 @@ def refresh_corp_assets_cached(
             # Then fallback to /universe/names/ for any unresolved structures
             resolve_structure_names(
                 structure_ids,
-                character_id=(
-                    int(director_character_id) if director_character_id else None
-                ),
+                character_id=(int(director_character_id) if director_character_id else None),
                 corporation_id=int(corporation_id),
                 task=current_task,  # Pass task for progress updates
                 schedule_async=True,
@@ -296,9 +291,7 @@ def refresh_material_exchange_sell_user_assets(user_id: int) -> None:
         from allianceauth.authentication.models import CharacterOwnership
 
         character_ids = list(
-            CharacterOwnership.objects.filter(user=user)
-            .values_list("character__character_id", flat=True)
-            .distinct()
+            CharacterOwnership.objects.filter(user=user).values_list("character__character_id", flat=True).distinct()
         )
         character_ids = [int(cid) for cid in character_ids if cid]
     except Exception:
@@ -350,9 +343,9 @@ def refresh_material_exchange_sell_user_assets(user_id: int) -> None:
             # Only use a token actually owned by this user.
             # Otherwise Token.get_token() could (in edge cases) resolve a token from
             # another user that happens to have the same character_id.
-            token_qs = Token.objects.filter(
-                user=user, character_id=int(character_id)
-            ).require_scopes(["esi-assets.read_assets.v1"])
+            token_qs = Token.objects.filter(user=user, character_id=int(character_id)).require_scopes(
+                ["esi-assets.read_assets.v1"]
+            )
             if hasattr(token_qs, "require_valid"):
                 token_qs = token_qs.require_valid()
             if not token_qs.exists():
@@ -488,9 +481,7 @@ def refresh_material_exchange_sell_user_assets(user_id: int) -> None:
             if item_id_int and item_id_int > 0:
                 set_name = str(asset_name_map.get(item_id_int) or "").strip()
 
-            resolved_location_id = resolve_asset_root_location_id(
-                asset, index_by_item_id
-            )
+            resolved_location_id = resolve_asset_root_location_id(asset, index_by_item_id)
             if resolved_location_id is None:
                 resolved_location_id = int(asset.get("location_id", 0) or 0)
 
@@ -794,9 +785,7 @@ def _get_snapshot_scoped_corp_assets(
             context_id_int = int(context_id)
             if context_id_int not in effective_location_ids:
                 effective_location_ids.append(context_id_int)
-            context_to_structure_ids.setdefault(context_id_int, set()).add(
-                structure_id_int
-            )
+            context_to_structure_ids.setdefault(context_id_int, set()).add(structure_id_int)
 
     index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
 
@@ -962,9 +951,7 @@ def _build_daily_snapshot_inventory(
 
     stock_price_rows = (
         MaterialExchangeStock.objects.filter(
-            config_id__in=[
-                int(config.id) for config in selected_configs if int(config.id or 0) > 0
-            ],
+            config_id__in=[int(config.id) for config in selected_configs if int(config.id or 0) > 0],
             type_id__in=list(aggregated_quantities.keys()),
         )
         .values("type_id")
@@ -1023,9 +1010,7 @@ def _get_wallet_balance_map(corporation_id: int) -> dict[int, Decimal]:
         if division not in range(1, 8):
             continue
         try:
-            balance_map[division] = Decimal(str(row.get("balance") or 0)).quantize(
-                Decimal("0.01")
-            )
+            balance_map[division] = Decimal(str(row.get("balance") or 0)).quantize(Decimal("0.01"))
         except Exception:
             continue
     return balance_map
@@ -1095,9 +1080,7 @@ def capture_material_exchange_daily_holdings(
     }
 
     try:
-        corp_configs = _collect_snapshot_corporation_configs(
-            corporation_id=target_corporation_id or None
-        )
+        corp_configs = _collect_snapshot_corporation_configs(corporation_id=target_corporation_id or None)
     except Exception as exc:
         message = f"Snapshot configuration lookup failed: {exc}"
         logger.exception(message)
@@ -1106,9 +1089,7 @@ def capture_material_exchange_daily_holdings(
 
     if not corp_configs:
         if target_corporation_id > 0:
-            report["warnings"].append(
-                f"Corporation {target_corporation_id}: no active Buyback configs found."
-            )
+            report["warnings"].append(f"Corporation {target_corporation_id}: no active Buyback configs found.")
         else:
             report["warnings"].append("No active Buyback configs found.")
         return report
@@ -1134,9 +1115,7 @@ def capture_material_exchange_daily_holdings(
             continue
 
         wallet_balance_map = _get_wallet_balance_map(corporation_id)
-        buy_enabled_configs = [
-            config for config in configs if bool(getattr(config, "buy_enabled", True))
-        ]
+        buy_enabled_configs = [config for config in configs if bool(getattr(config, "buy_enabled", True))]
         if not buy_enabled_configs:
             corp_report["warnings"].append(
                 f"Corporation {corporation_id}: no buy-enabled configs are active for snapshot capture."
@@ -1164,9 +1143,9 @@ def capture_material_exchange_daily_holdings(
                 wallet_balance_available = wallet_balance is not None
                 total_asset_value = None
                 if wallet_balance_available:
-                    total_asset_value = (
-                        Decimal(str(inventory_snapshot["value"])) + wallet_balance
-                    ).quantize(Decimal("0.01"))
+                    total_asset_value = (Decimal(str(inventory_snapshot["value"])) + wallet_balance).quantize(
+                        Decimal("0.01")
+                    )
 
                 MaterialExchangeDailySnapshot.objects.update_or_create(
                     corporation_id=int(corporation_id),
@@ -1176,21 +1155,13 @@ def capture_material_exchange_daily_holdings(
                         "inventory_market_value": inventory_snapshot["value"],
                         "inventory_item_count": int(inventory_snapshot["item_count"]),
                         "inventory_type_count": int(inventory_snapshot["type_count"]),
-                        "inventory_priced_type_count": int(
-                            inventory_snapshot["priced_type_count"]
-                        ),
-                        "inventory_location_count": int(
-                            inventory_snapshot["location_count"]
-                        ),
-                        "inventory_hangar_count": int(
-                            inventory_snapshot["hangar_count"]
-                        ),
+                        "inventory_priced_type_count": int(inventory_snapshot["priced_type_count"]),
+                        "inventory_location_count": int(inventory_snapshot["location_count"]),
+                        "inventory_hangar_count": int(inventory_snapshot["hangar_count"]),
                         "wallet_balance": wallet_balance,
                         "wallet_balance_available": bool(wallet_balance_available),
                         "total_asset_value": total_asset_value,
-                        "assets_scope_missing": bool(
-                            inventory_snapshot["assets_scope_missing"]
-                        ),
+                        "assets_scope_missing": bool(inventory_snapshot["assets_scope_missing"]),
                     },
                 )
                 corp_report["saved_rows"] = int(corp_report["saved_rows"]) + 1
@@ -1298,9 +1269,7 @@ def _sync_stock_impl():
         stock_updates: dict[int, int] = {}
         stock_source_structures: dict[int, set[int]] = {}
 
-        corp_assets, assets_scope_missing = get_corp_assets_cached(
-            int(config.corporation_id)
-        )
+        corp_assets, assets_scope_missing = get_corp_assets_cached(int(config.corporation_id))
         if assets_scope_missing:
             logger.warning("Missing corp assets scope for %s", config.corporation_id)
 
@@ -1400,9 +1369,7 @@ def _sync_stock_impl():
                         )
                 if matched:
                     matches_any_location = True
-                    structure_candidates = context_to_structure_ids.get(
-                        location_id_int, set()
-                    )
+                    structure_candidates = context_to_structure_ids.get(location_id_int, set())
                     matched_structure_ids = {int(sid) for sid in structure_candidates}
                     break
             if not matches_any_location:
@@ -1427,8 +1394,7 @@ def _sync_stock_impl():
                 type_structures.update(matched_structure_ids)
                 for matched_structure_id in matched_structure_ids:
                     matched_assets_by_structure[matched_structure_id] = (
-                        matched_assets_by_structure.get(matched_structure_id, 0)
-                        + quantity
+                        matched_assets_by_structure.get(matched_structure_id, 0) + quantity
                     )
 
         logger.info(
@@ -1440,10 +1406,7 @@ def _sync_stock_impl():
         if matched_assets_by_structure:
             logger.info(
                 "Buy stock matched quantities by structure: %s",
-                ", ".join(
-                    f"{sid}={qty}"
-                    for sid, qty in sorted(matched_assets_by_structure.items())
-                ),
+                ", ".join(f"{sid}={qty}" for sid, qty in sorted(matched_assets_by_structure.items())),
             )
 
         source_structure_name_map = config.get_buy_structure_name_map()
@@ -1481,9 +1444,7 @@ def _sync_stock_impl():
             now = timezone.now()
 
             # Current set of type_ids in MaterialExchangeStock for this config
-            existing_stocks = MaterialExchangeStock.objects.filter(
-                config=config
-            ).values_list("type_id", "quantity")
+            existing_stocks = MaterialExchangeStock.objects.filter(config=config).values_list("type_id", "quantity")
             current_data = {int(tid): int(qty) for tid, qty in existing_stocks}
             current_ids = set(current_data.keys())
 
@@ -1501,9 +1462,7 @@ def _sync_stock_impl():
 
             # If no assets found, ensure table reflects reality (empty)
             if not desired_ids and current_ids:
-                deleted_count, _ = MaterialExchangeStock.objects.filter(
-                    config=config
-                ).delete()
+                deleted_count, _ = MaterialExchangeStock.objects.filter(config=config).delete()
                 logger.info(
                     "Cleared all stock items for config %s (no assets in structure)",
                     config.pk,
@@ -1514,10 +1473,7 @@ def _sync_stock_impl():
             to_update = []
 
             # Fetch existing items with their PKs for updates
-            existing_items = {
-                int(item.type_id): item
-                for item in MaterialExchangeStock.objects.filter(config=config)
-            }
+            existing_items = {int(item.type_id): item for item in MaterialExchangeStock.objects.filter(config=config)}
 
             # Track which items had quantity changes
             items_with_qty_change = set()
@@ -1529,12 +1485,9 @@ def _sync_stock_impl():
 
                 if type_id not in current_ids:
                     # New item
-                    source_structure_ids = sorted(
-                        int(sid) for sid in stock_source_structures.get(type_id, set())
-                    )
+                    source_structure_ids = sorted(int(sid) for sid in stock_source_structures.get(type_id, set()))
                     source_structure_names = [
-                        source_structure_name_map.get(int(sid))
-                        or f"Structure {int(sid)}"
+                        source_structure_name_map.get(int(sid)) or f"Structure {int(sid)}"
                         for sid in source_structure_ids
                     ]
                     to_create.append(
@@ -1550,12 +1503,9 @@ def _sync_stock_impl():
                     )
                 else:
                     existing_item = existing_items[type_id]
-                    source_structure_ids = sorted(
-                        int(sid) for sid in stock_source_structures.get(type_id, set())
-                    )
+                    source_structure_ids = sorted(int(sid) for sid in stock_source_structures.get(type_id, set()))
                     source_structure_names = [
-                        source_structure_name_map.get(int(sid))
-                        or f"Structure {int(sid)}"
+                        source_structure_name_map.get(int(sid)) or f"Structure {int(sid)}"
                         for sid in source_structure_ids
                     ]
                     # Check if quantity or type_name changed
@@ -1703,9 +1653,7 @@ def sync_material_exchange_prices():
                 config.last_price_sync = timezone.now()
                 config.save(update_fields=["last_price_sync"])
 
-        logger.info(
-            f"Buyback prices sync completed: {len(type_ids)} types updated"
-        )
+        logger.info(f"Buyback prices sync completed: {len(type_ids)} types updated")
         emit_analytics_event(
             task="material_exchange.sync_prices",
             label="success",
@@ -1720,4 +1668,3 @@ def sync_material_exchange_prices():
             label="failed",
             result="error",
         )
-

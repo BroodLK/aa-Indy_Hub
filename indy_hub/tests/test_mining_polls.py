@@ -4,13 +4,14 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+# Third Party
+from django_celery_beat.models import CrontabSchedule
+
 # Django
 from django.test import TestCase
 from django.utils import timezone
 
-# Third Party
-from django_celery_beat.models import CrontabSchedule
-
+# AA Example App
 from indy_hub.models import WeeklyMiningPollConfig, WeeklyMiningPollRun
 from indy_hub.services.mining_polls import create_main_poll_run, finalize_poll_run
 from indy_hub.tasks.mining_polls import (
@@ -172,9 +173,7 @@ class WeeklyMiningPollTaskTests(TestCase):
         )
 
     @patch("indy_hub.tasks.mining_polls._queue_bot_task", return_value=True)
-    def test_dispatch_due_weekly_mining_polls_creates_and_queues_run(
-        self, mock_queue
-    ) -> None:
+    def test_dispatch_due_weekly_mining_polls_creates_and_queues_run(self, mock_queue) -> None:
         now = timezone.now().replace(second=0, microsecond=0)
         config = self.create_due_config(now=now)
 
@@ -189,9 +188,7 @@ class WeeklyMiningPollTaskTests(TestCase):
         mock_queue.assert_called_once()
 
     @patch("indy_hub.tasks.mining_polls._queue_bot_task", return_value=True)
-    def test_queue_closed_weekly_mining_polls_marks_runs_pending_resolution(
-        self, mock_queue
-    ) -> None:
+    def test_queue_closed_weekly_mining_polls_marks_runs_pending_resolution(self, mock_queue) -> None:
         now = timezone.now()
         config = WeeklyMiningPollConfig.objects.create(
             system_name="Y-2ANO",

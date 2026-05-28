@@ -2,224 +2,228 @@
 {% load i18n %}
 {% load static %}
 
-{% block page_title %}{% trans "Overview" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Overview" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/components.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/index.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/components.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/index.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="page-header mb-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-start gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-chart-simple me-2"></i>
-                    {% trans "Indy Hub" %}
-                </h2>
-                <p class="description mb-0">{% trans "Unified overview of blueprints, jobs, sharing, and notifications." %}</p>
+    <div class="container-fluid py-4">
+        <div class="page-header mb-4">
+            <div class="d-flex flex-wrap align-items-center justify-content-start gap-3">
+                <div>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-chart-simple me-2"></i>
+                        {% trans "Indy Hub" %}
+                    </h2>
+                    <p class="description mb-0">{% trans "Unified overview of blueprints, jobs, sharing, and notifications." %}</p>
+                </div>
             </div>
+            <i class="fas fa-chart-simple header-bg"></i>
         </div>
-        <i class="fas fa-chart-simple header-bg"></i>
-    </div>
 
-    <div class="row g-4 align-items-stretch">
-        <div class="col-lg-8">
-            <section class="dashboard-section mb-4">
-                <header class="section-heading">
-                    <div>
-                        <h3>{% trans "Watch your operations" %}</h3>
-                        <p class="text-muted small mb-0">{% trans "Blueprints, industry jobs, and sharing at a glance." %}</p>
-                    </div>
-                </header>
+        <div class="row g-4 align-items-stretch">
+            <div class="col-lg-8">
+                <section class="dashboard-section mb-4">
+                    <header class="section-heading">
+                        <div>
+                            <h3>{% trans "Watch your operations" %}</h3>
+                            <p class="text-muted small mb-0">{% trans "Blueprints, industry jobs, and sharing at a glance." %}</p>
+                        </div>
+                    </header>
 
-                <div class="card focus-card">
-                    <div class="card-body p-4">
-                        <div class="share-metrics">
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label"><i class="fas fa-layer-group me-2"></i>{% trans "Blueprints" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Originals and copies." %}</p>
-                                    {% if not has_blueprint_tokens %}
-                                    <p class="text-danger small mb-0">{% trans "ESI: missing blueprint scope/tokens. Add a character in the ESI tab." %}</p>
-                                    {% endif %}
+                    <div class="card focus-card">
+                        <div class="card-body p-4">
+                            <div class="share-metrics">
+                                <div class="share-metric">
+                                    <div>
+                                        <span class="share-metric-label"><i class="fas fa-layer-group me-2"></i>{% trans "Blueprints" %}</span>
+                                        <p class="text-muted small mb-0">{% trans "Originals and copies." %}</p>
+                                        {% if not has_blueprint_tokens %}
+                                            <p class="text-danger small mb-0">
+                                                {% trans "ESI: missing blueprint scope/tokens. Add a character in the ESI tab." %}
+                                            </p>
+                                        {% endif %}
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                                        {% if has_blueprint_tokens %}
+                                            <span class="badge rounded-pill bg-primary-subtle text-primary">{% trans "Originals" %}: {{ original_blueprints|default:0 }}</span>
+                                            <span class="badge rounded-pill bg-primary-subtle text-primary">{% trans "Copies" %}: {{ copy_blueprints|default:0 }}</span>
+                                        {% else %}
+                                            <span class="badge rounded-pill bg-secondary-subtle text-secondary">{% trans "No token" %}</span>
+                                        {% endif %}
+                                        <a class="btn btn-sm btn-outline-primary" href="{% url 'indy_hub:all_bp_list' %}">{% trans "Open" %}</a>
+                                    </div>
                                 </div>
-                                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                                    {% if has_blueprint_tokens %}
-                                    <span class="badge rounded-pill bg-primary-subtle text-primary">{% trans "Originals" %}: {{ original_blueprints|default:0 }}</span>
-                                    <span class="badge rounded-pill bg-primary-subtle text-primary">{% trans "Copies" %}: {{ copy_blueprints|default:0 }}</span>
-                                    {% else %}
-                                    <span class="badge rounded-pill bg-secondary-subtle text-secondary">{% trans "No token" %}</span>
-                                    {% endif %}
-                                    <a class="btn btn-sm btn-outline-primary" href="{% url 'indy_hub:all_bp_list' %}">
-                                        {% trans "Open" %}
-                                    </a>
-                                </div>
-                            </div>
 
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label"><i class="fas fa-industry me-2"></i>{% trans "Industry" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Active slots and completions." %}</p>
-                                    {% if not has_jobs_tokens %}
-                                    <p class="text-danger small mb-0">{% trans "ESI: missing job scope/tokens. Add a character in the ESI tab." %}</p>
-                                    {% endif %}
+                                <div class="share-metric">
+                                    <div>
+                                        <span class="share-metric-label"><i class="fas fa-industry me-2"></i>{% trans "Industry" %}</span>
+                                        <p class="text-muted small mb-0">{% trans "Active slots and completions." %}</p>
+                                        {% if not has_jobs_tokens %}
+                                            <p class="text-danger small mb-0">{% trans "ESI: missing job scope/tokens. Add a character in the ESI tab." %}</p>
+                                        {% endif %}
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                                        {% if has_jobs_tokens %}
+                                            <span class="badge rounded-pill bg-success-subtle text-success">{% trans "Completed" %}: {{ completed_jobs_count|default:0 }}</span>
+                                            {% if unused_slots_summary %}
+                                                <span class="badge rounded-pill bg-primary-subtle text-primary slot-chip" title="{% trans 'Unused manufacturing slots' %}">{% trans "Mfg" %}: {{ unused_slots_summary.manufacturing.available }} / {{ unused_slots_summary.manufacturing.total }}</span>
+                                                <span class="badge rounded-pill bg-info-subtle text-info slot-chip" title="{% trans 'Unused research slots' %}">{% trans "Res" %}: {{ unused_slots_summary.research.available }} / {{ unused_slots_summary.research.total }}</span>
+                                                <span class="badge rounded-pill bg-warning-subtle text-warning slot-chip" title="{% trans 'Unused reaction slots' %}">{% trans "React" %}: {{ unused_slots_summary.reactions.available }} / {{ unused_slots_summary.reactions.total }}</span>
+                                                {% if unused_slots_summary.characters_with_data != unused_slots_summary.characters_total %}
+                                                    <span class="badge rounded-pill bg-secondary-subtle text-secondary slot-chip"
+                                                          title="{% trans 'Characters with cached skill data' %}">{{ unused_slots_summary.characters_with_data }}/{{ unused_slots_summary.characters_total }} {% trans "chars" %}</span>
+                                                {% endif %}
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="badge rounded-pill bg-secondary-subtle text-secondary">{% trans "No token" %}</span>
+                                        {% endif %}
+                                        <a class="btn btn-sm btn-outline-success" href="{% url 'indy_hub:personnal_job_list' %}">{% trans "Open" %}</a>
+                                    </div>
                                 </div>
-                                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                                    {% if has_jobs_tokens %}
-                                    <span class="badge rounded-pill bg-success-subtle text-success">{% trans "Completed" %}: {{ completed_jobs_count|default:0 }}</span>
-                                    {% if unused_slots_summary %}
-                                    <span class="badge rounded-pill bg-primary-subtle text-primary slot-chip" title="{% trans 'Unused manufacturing slots' %}">{% trans "Mfg" %}: {{ unused_slots_summary.manufacturing.available }} / {{ unused_slots_summary.manufacturing.total }}</span>
-                                    <span class="badge rounded-pill bg-info-subtle text-info slot-chip" title="{% trans 'Unused research slots' %}">{% trans "Res" %}: {{ unused_slots_summary.research.available }} / {{ unused_slots_summary.research.total }}</span>
-                                    <span class="badge rounded-pill bg-warning-subtle text-warning slot-chip" title="{% trans 'Unused reaction slots' %}">{% trans "React" %}: {{ unused_slots_summary.reactions.available }} / {{ unused_slots_summary.reactions.total }}</span>
-                                    {% if unused_slots_summary.characters_with_data != unused_slots_summary.characters_total %}
-                                    <span class="badge rounded-pill bg-secondary-subtle text-secondary slot-chip" title="{% trans 'Characters with cached skill data' %}">{{ unused_slots_summary.characters_with_data }}/{{ unused_slots_summary.characters_total }} {% trans "chars" %}</span>
-                                    {% endif %}
-                                    {% endif %}
-                                    {% else %}
-                                    <span class="badge rounded-pill bg-secondary-subtle text-secondary">{% trans "No token" %}</span>
-                                    {% endif %}
-                                    <a class="btn btn-sm btn-outline-success" href="{% url 'indy_hub:personnal_job_list' %}">
-                                        {% trans "Open" %}
-                                    </a>
-                                </div>
-                            </div>
 
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label"><i class="fas fa-share-alt me-2"></i>{% trans "Blueprint sharing" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Requests and unread chats." %}</p>
-                                </div>
-                                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                                    <span id="copy-chat-unread-badge" class="badge rounded-pill bg-warning-subtle text-warning">{% trans "Unread" %}: {{ copy_chat_unread_count|default:0 }}</span>
-                                    <span class="badge rounded-pill bg-warning-subtle text-warning">{% trans "My requests" %}: {{ copy_my_requests_total|default:0 }}</span>
-                                    <a class="btn btn-sm btn-outline-warning" href="{% url 'indy_hub:bp_copy_request_page' %}">
-                                        {% trans "Open" %}
-                                    </a>
+                                <div class="share-metric">
+                                    <div>
+                                        <span class="share-metric-label"><i class="fas fa-share-alt me-2"></i>{% trans "Blueprint sharing" %}</span>
+                                        <p class="text-muted small mb-0">{% trans "Requests and unread chats." %}</p>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                                        <span id="copy-chat-unread-badge" class="badge rounded-pill bg-warning-subtle text-warning">{% trans "Unread" %}: {{ copy_chat_unread_count|default:0 }}</span>
+                                        <span class="badge rounded-pill bg-warning-subtle text-warning">{% trans "My requests" %}: {{ copy_my_requests_total|default:0 }}</span>
+                                        <a class="btn btn-sm btn-outline-warning" href="{% url 'indy_hub:bp_copy_request_page' %}">{% trans "Open" %}</a>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </section>
+                </section>
 
-            {% if can_manage_corp_bp_requests %}
-            <section class="dashboard-section">
-                <header class="section-heading">
-                    <div>
-                        <h3>{% trans "Corporation" %}</h3>
-                        <p class="text-muted small mb-0">{% trans "Corporate overview counters." %}</p>
-                    </div>
-                </header>
-
-                <div class="card focus-card">
-                    <div class="card-body p-4">
-                        <div class="share-metrics">
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label"><i class="fas fa-building me-2"></i>{% trans "Corporation blueprints" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Originals and copies." %}</p>
-                                    {% if not has_corp_blueprint_tokens %}
-                                    <p class="text-danger small mb-0">{% trans "ESI: missing corporation blueprint scopes (no valid token detected)." %}</p>
-                                    {% endif %}
-                                </div>
-                                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                                    <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Originals" %}: {{ corp_original_blueprints|default:0 }}</span>
-                                    <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Copies" %}: {{ corp_copy_blueprints|default:0 }}</span>
-                                    <a class="btn btn-sm btn-outline-info" href="{% url 'indy_hub:corporation_bp_list' %}">
-                                        {% trans "Open" %}
-                                    </a>
-                                </div>
+                {% if can_manage_corp_bp_requests %}
+                    <section class="dashboard-section">
+                        <header class="section-heading">
+                            <div>
+                                <h3>{% trans "Corporation" %}</h3>
+                                <p class="text-muted small mb-0">{% trans "Corporate overview counters." %}</p>
                             </div>
+                        </header>
 
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label"><i class="fas fa-building me-2"></i>{% trans "Corporation jobs" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Active slots and completions." %}</p>
-                                    {% if not has_corp_job_tokens %}
-                                    <p class="text-danger small mb-0">{% trans "ESI: missing corporation job scopes (no valid token detected)." %}</p>
-                                    {% endif %}
-                                </div>
-                                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-                                    <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Active" %}: {{ corp_active_jobs_count|default:0 }}</span>
-                                    <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Completed" %}: {{ corp_jobs_completed|default:0 }}</span>
-                                    <a class="btn btn-sm btn-outline-info" href="{% url 'indy_hub:corporation_job_list' %}">
-                                        {% trans "Open" %}
-                                    </a>
+                        <div class="card focus-card">
+                            <div class="card-body p-4">
+                                <div class="share-metrics">
+                                    <div class="share-metric">
+                                        <div>
+                                            <span class="share-metric-label"><i class="fas fa-building me-2"></i>{% trans "Corporation blueprints" %}</span>
+                                            <p class="text-muted small mb-0">{% trans "Originals and copies." %}</p>
+                                            {% if not has_corp_blueprint_tokens %}
+                                                <p class="text-danger small mb-0">
+                                                    {% trans "ESI: missing corporation blueprint scopes (no valid token detected)." %}
+                                                </p>
+                                            {% endif %}
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                                            <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Originals" %}: {{ corp_original_blueprints|default:0 }}</span>
+                                            <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Copies" %}: {{ corp_copy_blueprints|default:0 }}</span>
+                                            <a class="btn btn-sm btn-outline-info" href="{% url 'indy_hub:corporation_bp_list' %}">{% trans "Open" %}</a>
+                                        </div>
+                                    </div>
+
+                                    <div class="share-metric">
+                                        <div>
+                                            <span class="share-metric-label"><i class="fas fa-building me-2"></i>{% trans "Corporation jobs" %}</span>
+                                            <p class="text-muted small mb-0">{% trans "Active slots and completions." %}</p>
+                                            {% if not has_corp_job_tokens %}
+                                                <p class="text-danger small mb-0">{% trans "ESI: missing corporation job scopes (no valid token detected)." %}</p>
+                                            {% endif %}
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                                            <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Active" %}: {{ corp_active_jobs_count|default:0 }}</span>
+                                            <span class="badge rounded-pill bg-info-subtle text-info">{% trans "Completed" %}: {{ corp_jobs_completed|default:0 }}</span>
+                                            <a class="btn btn-sm btn-outline-info" href="{% url 'indy_hub:corporation_job_list' %}">{% trans "Open" %}</a>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>
-            </section>
-            {% endif %}
-        </div>
+                    </section>
+                {% endif %}
+            </div>
 
-        <div class="col-lg-4">
-            <section class="dashboard-section h-100">
-                <header class="section-heading">
-                    <div>
-                        <h3>{% trans "Unread" %}</h3>
-                        <p class="text-muted small mb-0">{% trans "Notifications you haven't checked yet." %}</p>
-                    </div>
-                </header>
+            <div class="col-lg-4">
+                <section class="dashboard-section h-100">
+                    <header class="section-heading">
+                        <div>
+                            <h3>{% trans "Unread" %}</h3>
+                            <p class="text-muted small mb-0">{% trans "Notifications you haven't checked yet." %}</p>
+                        </div>
+                    </header>
 
-                <div class="card focus-card h-100">
-                    <div class="card-body p-4 d-flex flex-column">
-                        <div class="share-metrics mb-4">
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label">{% trans "Copy chats" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Unread conversation threads." %}</p>
+                    <div class="card focus-card h-100">
+                        <div class="card-body p-4 d-flex flex-column">
+                            <div class="share-metrics mb-4">
+                                <div class="share-metric">
+                                    <div>
+                                        <span class="share-metric-label">{% trans "Copy chats" %}</span>
+                                        <p class="text-muted small mb-0">{% trans "Unread conversation threads." %}</p>
+                                    </div>
+                                    <span id="copy-chat-unread-value" class="share-metric-value">{{ copy_chat_unread_count|default:0 }}</span>
                                 </div>
-                                <span id="copy-chat-unread-value" class="share-metric-value">{{ copy_chat_unread_count|default:0 }}</span>
-                            </div>
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label">{% trans "Pending job digests" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Queued digest entries." %}</p>
+                                <div class="share-metric">
+                                    <div>
+                                        <span class="share-metric-label">{% trans "Pending job digests" %}</span>
+                                        <p class="text-muted small mb-0">{% trans "Queued digest entries." %}</p>
+                                    </div>
+                                    <span class="share-metric-value">{{ job_digest_pending_count|default:0 }}</span>
                                 </div>
-                                <span class="share-metric-value">{{ job_digest_pending_count|default:0 }}</span>
+                                {% if aa_unread_notifications_count != None %}
+                                    <div class="share-metric">
+                                        <div>
+                                            <span class="share-metric-label">{% trans "Auth notifications" %}</span>
+                                            <p class="text-muted small mb-0">{% trans "Alliance Auth notifications." %}</p>
+                                        </div>
+                                        <span class="share-metric-value">{{ aa_unread_notifications_count|default:0 }}</span>
+                                    </div>
+                                {% endif %}
                             </div>
-                            {% if aa_unread_notifications_count != None %}
-                            <div class="share-metric">
-                                <div>
-                                    <span class="share-metric-label">{% trans "Auth notifications" %}</span>
-                                    <p class="text-muted small mb-0">{% trans "Alliance Auth notifications." %}</p>
+
+                            {% if copy_chat_alerts %}
+                                <h6 id="copy-chat-alerts-header" class="mb-3">{% trans "Latest unread copy chats" %}</h6>
+                                <div id="copy-chat-alerts" class="share-metrics">
+                                    {% for alert in copy_chat_alerts %}
+                                        <a class="share-metric share-metric--alert text-decoration-none"
+                                           href="{{ alert.source_url }}"
+                                           data-chat-id="{{ alert.chat_id }}"
+                                           aria-label="{% trans 'Open chat' %}: {{ alert.type_name }}">
+                                            <div>
+                                                <span class="share-metric-label">{{ alert.type_name }}</span>
+                                                <p class="text-muted small mb-0">{{ alert.other_label }} · {{ alert.last_message_display }}</p>
+                                            </div>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span class="badge rounded-pill bg-warning-subtle text-warning">{% trans "Unread" %}</span>
+                                            </div>
+                                        </a>
+                                    {% endfor %}
                                 </div>
-                                <span class="share-metric-value">{{ aa_unread_notifications_count|default:0 }}</span>
-                            </div>
+                                <p id="copy-chat-alerts-empty" class="text-muted small mb-0 mt-auto d-none">
+                                    {% trans "No unread items right now." %}
+                                </p>
+                                {% if copy_chat_alerts_has_more %}
+                                    <p id="copy-chat-alerts-more" class="text-muted small mt-3 mb-0">
+                                        {% trans "More unread chats are available in Blueprint Sharing." %}
+                                    </p>
+                                {% endif %}
+                            {% else %}
+                                <p id="copy-chat-alerts-empty" class="text-muted small mb-0 mt-auto">{% trans "No unread items right now." %}</p>
                             {% endif %}
                         </div>
-
-                        {% if copy_chat_alerts %}
-                        <h6 id="copy-chat-alerts-header" class="mb-3">{% trans "Latest unread copy chats" %}</h6>
-                        <div id="copy-chat-alerts" class="share-metrics">
-                            {% for alert in copy_chat_alerts %}
-                            <a class="share-metric share-metric--alert text-decoration-none" href="{{ alert.source_url }}" data-chat-id="{{ alert.chat_id }}" aria-label="{% trans 'Open chat' %}: {{ alert.type_name }}">
-                                <div>
-                                    <span class="share-metric-label">{{ alert.type_name }}</span>
-                                    <p class="text-muted small mb-0">{{ alert.other_label }} · {{ alert.last_message_display }}</p>
-                                </div>
-                                <div class="d-flex align-items-center gap-2">
-                                    <span class="badge rounded-pill bg-warning-subtle text-warning">{% trans "Unread" %}</span>
-                                </div>
-                            </a>
-                            {% endfor %}
-                        </div>
-                        <p id="copy-chat-alerts-empty" class="text-muted small mb-0 mt-auto d-none">{% trans "No unread items right now." %}</p>
-                        {% if copy_chat_alerts_has_more %}
-                        <p id="copy-chat-alerts-more" class="text-muted small mt-3 mb-0">{% trans "More unread chats are available in Blueprint Sharing." %}</p>
-                        {% endif %}
-                        {% else %}
-                        <p id="copy-chat-alerts-empty" class="text-muted small mb-0 mt-auto">{% trans "No unread items right now." %}</p>
-                        {% endif %}
                     </div>
-                </div>
-            </section>
+                </section>
+            </div>
         </div>
     </div>
-</div>
 {% endblock content %}

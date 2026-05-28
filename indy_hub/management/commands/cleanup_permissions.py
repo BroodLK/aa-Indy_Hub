@@ -21,13 +21,9 @@ class Command(BaseCommand):
 
         try:
             # Count existing permissions before deletion
-            total_before = Permission.objects.filter(
-                content_type__in=indy_hub_content_types
-            ).count()
+            total_before = Permission.objects.filter(content_type__in=indy_hub_content_types).count()
 
-            self.stdout.write(
-                f"Found {total_before} total permissions for indy_hub models"
-            )
+            self.stdout.write(f"Found {total_before} total permissions for indy_hub models")
             logger.info("Found %s permissions for indy_hub models.", total_before)
 
             # Delete all default Django permissions
@@ -51,9 +47,7 @@ class Command(BaseCommand):
                 if deleted[0] > 0:
                     deleted_count += deleted[0]
                     self.stdout.write(
-                        self.style.WARNING(
-                            f"  Deleted {deleted[0]} default permissions for {content_type.model}"
-                        )
+                        self.style.WARNING(f"  Deleted {deleted[0]} default permissions for {content_type.model}")
                     )
                     logger.debug(
                         "Deleted %s default permissions for %s.",
@@ -62,15 +56,9 @@ class Command(BaseCommand):
                     )
 
             # Count remaining permissions
-            total_after = Permission.objects.filter(
-                content_type__in=indy_hub_content_types
-            ).count()
+            total_after = Permission.objects.filter(content_type__in=indy_hub_content_types).count()
 
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"\n✓ Deleted {deleted_count} default Django permissions"
-                )
-            )
+            self.stdout.write(self.style.SUCCESS(f"\n✓ Deleted {deleted_count} default Django permissions"))
             self.stdout.write(
                 self.style.SUCCESS(
                     f"✓ Remaining permissions: {total_after} (should be 3: can_access_indy_hub, can_manage_corp_bp_requests, can_manage_material_hub)"
@@ -83,9 +71,9 @@ class Command(BaseCommand):
             )
 
             # List remaining permissions for verification
-            remaining_perms = Permission.objects.filter(
-                content_type__in=indy_hub_content_types
-            ).values_list("codename", "name")
+            remaining_perms = Permission.objects.filter(content_type__in=indy_hub_content_types).values_list(
+                "codename", "name"
+            )
 
             if remaining_perms:
                 self.stdout.write("\nRemaining permissions:")

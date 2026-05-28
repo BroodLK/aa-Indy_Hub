@@ -1,5 +1,7 @@
+# Django
 from django.test import TestCase
 
+# AA Example App
 from indy_hub.models import MaterialExchangeConfig, MaterialExchangeSettings
 from indy_hub.tasks.material_exchange import _collect_snapshot_corporation_configs
 
@@ -20,9 +22,7 @@ class MaterialExchangeSnapshotConfigSelectionTests(TestCase):
             buy_enabled=True,
         )
 
-        corp_configs = _collect_snapshot_corporation_configs(
-            corporation_id=98660859
-        )
+        corp_configs = _collect_snapshot_corporation_configs(corporation_id=98660859)
 
         self.assertIn(98660859, corp_configs)
         self.assertEqual([item.id for item in corp_configs[98660859]], [config.id])
@@ -42,8 +42,6 @@ class MaterialExchangeSnapshotConfigSelectionTests(TestCase):
             buy_enabled=True,
         )
 
-        corp_configs = _collect_snapshot_corporation_configs(
-            corporation_id=98660859
-        )
+        corp_configs = _collect_snapshot_corporation_configs(corporation_id=98660859)
 
         self.assertEqual(corp_configs, {})

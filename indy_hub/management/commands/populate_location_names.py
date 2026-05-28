@@ -69,9 +69,7 @@ class Command(BaseCommand):
             normalized_ids = [int(value) for value in location_ids if value is not None]
             if not normalized_ids:
                 self.stdout.write(self.style.WARNING("No valid location IDs provided."))
-                logger.warning(
-                    "populate_location_names aborted: no valid location IDs."
-                )
+                logger.warning("populate_location_names aborted: no valid location IDs.")
                 return
 
         if enqueue:
@@ -89,15 +87,9 @@ class Command(BaseCommand):
                     getattr(result, "id", "<unknown>"),
                 )
             except Exception as exc:
-                logger.exception(
-                    "Failed to enqueue populate_location_names_async: %s", exc
-                )
+                logger.exception("Failed to enqueue populate_location_names_async: %s", exc)
                 raise
-            self.stdout.write(
-                self.style.SUCCESS(
-                    f"Enqueued populate_location_names_async task with id {result.id}."
-                )
-            )
+            self.stdout.write(self.style.SUCCESS(f"Enqueued populate_location_names_async task with id {result.id}."))
             return
 
         try:
@@ -127,6 +119,4 @@ class Command(BaseCommand):
             )
         )
         if dry_run:
-            self.stdout.write(
-                self.style.WARNING("Dry-run mode: no records were updated.")
-            )
+            self.stdout.write(self.style.WARNING("Dry-run mode: no records were updated."))

@@ -105,12 +105,7 @@ def _has_valid_token_for_scopes(user, scopes: list[str]) -> bool:
     if not user or not Token:
         return False
     try:
-        token = (
-            Token.objects.filter(user=user)
-            .require_scopes(scopes)
-            .order_by("-created")
-            .first()
-        )
+        token = Token.objects.filter(user=user).require_scopes(scopes).order_by("-created").first()
         if not token:
             return False
         try:
@@ -182,9 +177,7 @@ def _ensure_location_name(instance, *, id_field: str, name_field: str) -> None:
         should_refresh = True
 
     previous_id = _normalize_int(
-        _get_previous_field_value(
-            instance.__class__, getattr(instance, "pk", None), id_field
-        )
+        _get_previous_field_value(instance.__class__, getattr(instance, "pk", None), id_field)
     )
 
     if previous_id is not None and previous_id != normalized_id:
@@ -274,9 +267,7 @@ def detect_config_change(sender, instance, **kwargs):
 
         changed = False
         try:
-            if prev_structure is not None and int(prev_structure) != int(
-                instance.structure_id
-            ):
+            if prev_structure is not None and int(prev_structure) != int(instance.structure_id):
                 logger.info(
                     "MaterialExchangeConfig structure_id changed: %s → %s",
                     prev_structure,
@@ -287,9 +278,7 @@ def detect_config_change(sender, instance, **kwargs):
             logger.debug("Exception comparing structure_id: %s", e)
             changed = True
         try:
-            if prev_corporation is not None and int(prev_corporation) != int(
-                instance.corporation_id
-            ):
+            if prev_corporation is not None and int(prev_corporation) != int(instance.corporation_id):
                 logger.info(
                     "MaterialExchangeConfig corporation_id changed: %s → %s",
                     prev_corporation,
@@ -300,9 +289,7 @@ def detect_config_change(sender, instance, **kwargs):
             logger.debug("Exception comparing corporation_id: %s", e)
             changed = True
         try:
-            if prev_division is not None and int(prev_division) != int(
-                instance.hangar_division
-            ):
+            if prev_division is not None and int(prev_division) != int(instance.hangar_division):
                 logger.info(
                     "MaterialExchangeConfig hangar_division changed: %s → %s",
                     prev_division,
@@ -409,14 +396,10 @@ if Token:
             logger.debug(f"Token {instance.pk} updated but not created, skipping sync")
             return
 
-        logger.info(
-            f"New token created for user {instance.user_id}, character {instance.character_id}"
-        )
+        logger.info(f"New token created for user {instance.user_id}, character {instance.character_id}")
 
         # Check blueprint scope
-        blueprint_scopes = instance.scopes.filter(
-            name="esi-characters.read_blueprints.v1"
-        )
+        blueprint_scopes = instance.scopes.filter(name="esi-characters.read_blueprints.v1")
         if blueprint_scopes.exists():
             logger.info(f"Triggering blueprint sync for user {instance.user_id}")
             try:
@@ -459,9 +442,7 @@ if Token:
             except Exception as e:
                 logger.error(f"Failed to trigger skill snapshot sync: {e}")
 
-        roles_scopes = instance.scopes.filter(
-            name="esi-characters.read_corporation_roles.v1"
-        )
+        roles_scopes = instance.scopes.filter(name="esi-characters.read_corporation_roles.v1")
         if roles_scopes.exists():
             logger.info(
                 "Triggering role snapshot sync for user %s, character %s",
@@ -568,6 +549,7 @@ def notify_admins_on_capital_order_created(sender, instance, created, **kwargs):
 
     def _enqueue_notification_task():
         try:
+            # AA Example App
             from indy_hub.tasks.material_exchange_contracts import (
                 handle_capital_ship_order_created,
             )
@@ -586,4 +568,3 @@ def notify_admins_on_capital_order_created(sender, instance, created, **kwargs):
             )
 
     transaction.on_commit(_enqueue_notification_task)
-

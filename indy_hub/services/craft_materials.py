@@ -31,7 +31,5 @@ def calculate_job_material_quantity(
     structure_multiplier = max(0.0, 1.0 - float(structure_bonus or 0.0))
     rig_multiplier = max(0.0, 1.0 - float(rig_bonus or 0.0))
 
-    adjusted_per_run_quantity = ceil(
-        per_run_quantity * me_multiplier * structure_multiplier * rig_multiplier
-    )
+    adjusted_per_run_quantity = ceil(per_run_quantity * me_multiplier * structure_multiplier * rig_multiplier)
     return adjusted_per_run_quantity * run_count

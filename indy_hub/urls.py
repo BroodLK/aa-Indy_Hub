@@ -6,11 +6,11 @@ from .views.api import (
     calculate_build_schedule,
     calculate_import_fees,
     convert_minerals_to_compressed_ore,
-    craft_build_environment,
-    craft_bpc_contracts,
-    craft_sync_owned_bpcs,
-    craft_industry_fees,
     craft_bp_payload,
+    craft_bpc_contracts,
+    craft_build_environment,
+    craft_industry_fees,
+    craft_sync_owned_bpcs,
     fuzzwork_price,
     get_character_slots,
     load_production_config,
@@ -52,26 +52,28 @@ from .views.industry import (
     personnal_job_list,
     production_simulations_list,
 )
+
 try:
     from .views.capital_ship_orders import (
         capital_ship_order_cancel,
-        capital_ship_order_uncancel,
         capital_ship_order_chat_decide,
         capital_ship_order_chat_history,
         capital_ship_order_chat_send,
-        capital_ship_order_release_claim,
         capital_ship_order_refresh_guideline,
         capital_ship_order_reject,
+        capital_ship_order_release_claim,
         capital_ship_order_set_definitive_eta,
         capital_ship_order_set_gathering_materials,
         capital_ship_order_set_in_production,
         capital_ship_order_transfer_manager,
+        capital_ship_order_uncancel,
         capital_ship_order_update_offer,
-        capital_ship_orders_config,
         capital_ship_orders,
         capital_ship_orders_admin,
+        capital_ship_orders_config,
     )
 except ModuleNotFoundError:
+
     def _capital_orders_module_missing(*_args, **_kwargs):
         return HttpResponse(
             "Capital Orders module is not deployed on this server node.",
@@ -112,9 +114,9 @@ from .views.material_exchange import (
     material_exchange_reopen_buy,
     material_exchange_reopen_sell,
     material_exchange_sell,
-    material_exchange_sell_multibuy_parse,
-    material_exchange_sell_estimate,
     material_exchange_sell_assets_refresh_status,
+    material_exchange_sell_estimate,
+    material_exchange_sell_multibuy_parse,
     material_exchange_stats_history,
     material_exchange_sync_prices,
     material_exchange_sync_stock,
@@ -282,9 +284,7 @@ urlpatterns = [
         craft_industry_fees,
         name="craft_industry_fees",
     ),
-    path(
-        "api/craft-bp-payload/<int:type_id>/", craft_bp_payload, name="craft_bp_payload"
-    ),
+    path("api/craft-bp-payload/<int:type_id>/", craft_bp_payload, name="craft_bp_payload"),
     path(
         "api/production-config/save/",
         save_production_config,
@@ -296,9 +296,7 @@ urlpatterns = [
         name="load_production_config",
     ),
     path("api/menu-badge-count/", menu_badge_count, name="menu_badge_count"),
-    path(
-        "simulations/", production_simulations_list, name="production_simulations_list"
-    ),
+    path("simulations/", production_simulations_list, name="production_simulations_list"),
     path(
         "simulations/<int:simulation_id>/delete/",
         delete_production_simulation_view,
@@ -320,14 +318,10 @@ urlpatterns = [
         name="rename_production_simulation",
     ),
     path("bp-copy/request/", bp_copy_request_page, name="bp_copy_request_page"),
-    path(
-        "bp-copy/request/create/", bp_copy_request_create, name="bp_copy_request_create"
-    ),
+    path("bp-copy/request/create/", bp_copy_request_create, name="bp_copy_request_create"),
     path("bp-copy/fulfill/", bp_copy_fulfill_requests, name="bp_copy_fulfill_requests"),
     path("bp-copy/history/", bp_copy_history, name="bp_copy_history"),
-    path(
-        "bp-copy/my-requests/", bp_copy_my_requests, name="bp_copy_my_requests"
-    ),  # my requests
+    path("bp-copy/my-requests/", bp_copy_my_requests, name="bp_copy_my_requests"),  # my requests
     path(
         "bp-copy/my-requests/<int:request_id>/update/",
         bp_update_copy_request,
@@ -811,4 +805,3 @@ urlpatterns = [
         name="reprocessing_request_dispute",
     ),
 ]
-

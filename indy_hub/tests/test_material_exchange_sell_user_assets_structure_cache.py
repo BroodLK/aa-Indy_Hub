@@ -101,9 +101,7 @@ class MaterialExchangeSellAssetsStructureCacheTests(TestCase):
 
         # Ensure we attempted to resolve/cache the structure name.
         self.assertTrue(mocked_resolve.called)
-        self.assertTrue(
-            CachedStructureName.objects.filter(structure_id=structure_id).exists()
-        )
+        self.assertTrue(CachedStructureName.objects.filter(structure_id=structure_id).exists())
 
     def test_refresh_sell_user_assets_persists_container_set_name(self) -> None:
         user = User.objects.create_user("me_assets_names_user", password="secret123")

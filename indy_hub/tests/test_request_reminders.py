@@ -14,6 +14,7 @@ from django.utils import timezone
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
+# AA Example App
 # Local
 from indy_hub.models import (
     Blueprint,
@@ -151,7 +152,7 @@ class BlueprintCopyWaitingReminderTests(TestCase):
             type_name="Reminder Widget Blueprint",
         )
 
-    @patch("indy_hub.views.industry.notify_user")
+    @patch("indy_hub.services.blueprint_copy_requests.notify_user")
     def test_sends_24_hour_and_3_day_waiting_reminders(self, mock_notify_user) -> None:
         first_request = BlueprintCopyRequest.objects.create(
             type_id=905401,
@@ -182,7 +183,7 @@ class BlueprintCopyWaitingReminderTests(TestCase):
         self.assertTrue(any("24 hours" in message for message in messages))
         self.assertTrue(any("3 days" in message for message in messages))
 
-    @patch("indy_hub.views.industry.notify_user")
+    @patch("indy_hub.services.blueprint_copy_requests.notify_user")
     def test_skips_reminder_after_provider_action(self, mock_notify_user) -> None:
         copy_request = BlueprintCopyRequest.objects.create(
             type_id=905401,

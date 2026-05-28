@@ -100,4 +100,3 @@ class Migration(migrations.Migration):
             reverse_code=migrations.RunPython.noop,
         ),
     ]
-

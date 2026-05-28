@@ -70,9 +70,7 @@ class MaterialExchangeRejectSellTests(TestCase):
         )
 
         self.client.force_login(self.admin)
-        response = self.client.post(
-            reverse("indy_hub:material_exchange_reject_sell", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:material_exchange_reject_sell", args=[order.id]))
         self.assertEqual(response.status_code, 302)
 
         order.refresh_from_db()
@@ -86,9 +84,7 @@ class MaterialExchangeRejectSellTests(TestCase):
         )
 
         self.client.force_login(self.admin)
-        response = self.client.post(
-            reverse("indy_hub:material_exchange_reject_sell", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:material_exchange_reject_sell", args=[order.id]))
         self.assertEqual(response.status_code, 302)
 
         order.refresh_from_db()

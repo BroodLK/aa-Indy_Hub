@@ -3,302 +3,288 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "My Copy Requests" %}{% endblock %}
+{% block page_title %}
+    {% trans "My Copy Requests" %}
+{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/bp_copy_list.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/chat.css' %}?v=20260118-2040">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/bp_copy_list.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/chat.css' %}?v=20260118-2040">
 {% endblock %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div data-auto-open-chat="{{ auto_open_chat_id|default:'' }}"></div>
-    {# Page Header #}
-    <div class="page-header mb-4">
-        <i class="fas fa-clipboard-list header-bg"></i>
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-clipboard-list me-2"></i>
-                    {% trans "My Copy Requests" %}
-                </h2>
-                <p class="description mb-0">{% trans "Monitor each request, respond to offers, and follow delivery progress." %}</p>
-            </div>
-            <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
-                <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
-            </a>
-        </div>
-    </div>
-
-    {# Metric Tiles #}
-    <div class="row g-3 mb-4">
-        <div class="col-md-6">
-            <a href="?status=open" class="metric-tile-link">
-                <div class="metric-tile bg-gradient-info">
-                    <div>
-                        <p class="label text-info mb-1">
-                            <i class="fas fa-hourglass-half me-2"></i>{% trans "Waiting for Builders" %}
-                        </p>
-                        <div class="metric-value text-info">{{ metrics.open|default:0 }}</div>
-                    </div>
-                    <div class="metric-icon text-info">
-                        <i class="fas fa-clock"></i>
-                    </div>
-                </div>
-            </a>
-        </div>
-        <div class="col-md-6">
-            <a href="?status=action_required" class="metric-tile-link">
-                <div class="metric-tile bg-gradient-warning">
-                    <div>
-                        <p class="label text-warning mb-1">
-                            <i class="fas fa-exclamation-circle me-2"></i>{% trans "Your Action" %}
-                        </p>
-                        <div class="metric-value text-warning">{{ metrics.action_required|default:0 }}</div>
-                    </div>
-                    <div class="metric-icon text-warning">
-                        <i class="fas fa-bell"></i>
-                    </div>
-                </div>
-            </a>
-        </div>
-        <div class="col-md-6">
-            <a href="?status=awaiting_delivery" class="metric-tile-link">
-                <div class="metric-tile bg-gradient-success">
-                    <div>
-                        <p class="label text-success mb-1">
-                            <i class="fas fa-shipping-fast me-2"></i>{% trans "In Delivery" %}
-                        </p>
-                        <div class="metric-value text-success">{{ metrics.awaiting_delivery|default:0 }}</div>
-                    </div>
-                    <div class="metric-icon text-success">
-                        <i class="fas fa-truck"></i>
-                    </div>
-                </div>
-            </a>
-        </div>
-        <div class="col-md-6">
-            <a href="?status=delivered" class="metric-tile-link">
-                <div class="metric-tile bg-gradient-secondary">
-                    <div>
-                        <p class="label text-secondary mb-1">
-                            <i class="fas fa-check-double me-2"></i>{% trans "Completed" %}
-                        </p>
-                        <div class="metric-value text-secondary">{{ metrics.delivered|default:0 }}</div>
-                    </div>
-                    <div class="metric-icon text-secondary">
-                        <i class="fas fa-inbox"></i>
-                    </div>
-                </div>
-            </a>
-        </div>
-    </div>
-
-    {# Tabs #}
-    <ul class="nav nav-tabs bp-request-tabs mb-3" id="bp-request-tabs" role="tablist">
-        <li class="nav-item" role="presentation">
-            <button
-                class="nav-link active"
-                id="bp-request-tab-active"
-                data-bs-toggle="tab"
-                data-bs-target="#bp-request-pane-active"
-                type="button"
-                role="tab"
-                aria-controls="bp-request-pane-active"
-                aria-selected="true"
-            >
-                <i class="fas fa-stream me-1"></i>{% trans "Active" %}
-            </button>
-        </li>
-        <li class="nav-item" role="presentation">
-            <button
-                class="nav-link"
-                id="bp-request-tab-history"
-                data-bs-toggle="tab"
-                data-bs-target="#bp-request-pane-history"
-                type="button"
-                role="tab"
-                aria-controls="bp-request-pane-history"
-                aria-selected="false"
-            >
-                <i class="fas fa-history me-1"></i>{% trans "History" %}
-            </button>
-        </li>
-    </ul>
-
-    <div class="tab-content" id="bp-request-tab-content">
-        {# Active Tab #}
-        <div
-            class="tab-pane fade show active"
-            id="bp-request-pane-active"
-            role="tabpanel"
-            aria-labelledby="bp-request-tab-active"
-        >
-            <form method="get" class="d-flex flex-wrap align-items-end gap-2 mb-3">
+    <div class="container-fluid py-4">
+        <div data-auto-open-chat="{{ auto_open_chat_id|default:'' }}"></div>
+        {# Page Header #}
+        <div class="page-header mb-4">
+            <i class="fas fa-clipboard-list header-bg"></i>
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
                 <div>
-                    <label for="bp-my-filter-status" class="form-label small text-muted mb-1">{% trans "Display" %}</label>
-                    <select id="bp-my-filter-status" name="status" class="form-select form-select-sm" onchange="this.form.submit()">
-                        <option value="all" {% if active_filter == 'all' %}selected{% endif %}>{% trans "All" %}</option>
-                        <option value="open" {% if active_filter == 'open' %}selected{% endif %}>{% trans "Waiting for builders" %}</option>
-                        <option value="action_required" {% if active_filter == 'action_required' %}selected{% endif %}>{% trans "Your action needed" %}</option>
-                        <option value="awaiting_delivery" {% if active_filter == 'awaiting_delivery' %}selected{% endif %}>{% trans "In progress" %}</option>
-                        <option value="waiting_on_builder" {% if active_filter == 'waiting_on_builder' %}selected{% endif %}>{% trans "Waiting on builder" %}</option>
-                        <option value="waiting_on_you" {% if active_filter == 'waiting_on_you' %}selected{% endif %}>{% trans "Confirm agreement" %}</option>
-                    </select>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-clipboard-list me-2"></i>
+                        {% trans "My Copy Requests" %}
+                    </h2>
+                    <p class="description mb-0">{% trans "Monitor each request, respond to offers, and follow delivery progress." %}</p>
                 </div>
-            </form>
-            {% if my_requests %}
-            <div class="fulfill-requests-list">
-                {% for req in my_requests %}
-                {% if not req.is_history %}
-                <div class="fulfill-card">
-                    <div class="fulfill-card__icon">
-                        <img
-                            src="{{ req.icon_url }}"
-                            alt="{{ req.display_name }}"
-                            loading="lazy"
-                            onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'"
-                        >
-                    </div>
-
-                    <div class="fulfill-card__info">
-                        <div class="fulfill-card__main">
-                            <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
-                            <div class="fulfill-card__specs">
-                                <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
-                                <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
-                                <span class="fulfill-spec fulfill-spec--copies">{{ req.copies_requested }} {% trans "copies" %} · {{ req.runs_requested }} {% trans "runs" %}</span>
-                            </div>
-                        </div>
-                        <div class="fulfill-card__meta">
-                            <div class="fulfill-meta-item fulfill-meta-item--time">
-                                <i class="far fa-clock"></i>
-                                <span>{{ req.created_at|naturaltime }}</span>
-                            </div>
-                            {% if req.accepted_offer %}
-                            <span class="badge bg-success"><i class="fas fa-handshake me-1"></i>{% trans "Accepted" %}</span>
-                            {% elif req.cond_accepted %}
-                            <span class="badge bg-info"><i class="fas fa-file-signature me-1"></i>{% trans "Conditions Accepted" %}</span>
-                            {% elif req.cond_waiting_builder %}
-                            <span class="badge bg-warning"><i class="fas fa-hourglass-half me-1"></i>{% trans "Awaiting Confirmation" %}</span>
-                            {% elif req.cond_waiting_buyer %}
-                            <span class="badge bg-info"><i class="fas fa-handshake me-1"></i>{% trans "Ready to Accept" %}</span>
-                            {% elif req.cond_offers %}
-                            <span class="badge bg-warning"><i class="fas fa-comments me-1"></i>{% trans "Offers Pending" %}</span>
-                            {% endif %}
-                        </div>
-                    </div>
-
-                    <div class="fulfill-card__actions">
-                        <div class="fulfill-card__status">
-                            <span class="fulfill-status {{ req.status_class|default:'bg-secondary' }}">{{ req.status_label }}</span>
-                        </div>
-                        <div class="fulfill-card__buttons">
-                            {% if req.chat_actions %}
-                                {% for action in req.chat_actions %}
-                                <button
-                                    type="button"
-                                    class="fulfill-btn fulfill-btn--chat bp-chat-trigger"
-                                    data-chat-fetch-url="{{ action.chat.fetch_url }}"
-                                    data-chat-send-url="{{ action.chat.send_url }}"
-                                    data-chat-role="buyer"
-                                    data-chat-type-name="{{ req.display_name }}"
-                                    data-chat-type-id="{{ req.type_id }}"
-                                    data-chat-id="{{ action.chat.id }}"
-                                >
-                                    <i class="fas fa-comments"></i>{% trans "Open chat" %}
-                                </button>
-                                {% endfor %}
-                            {% endif %}
-                            {% if req.can_cancel %}
-                            <form method="post" action="{% url 'indy_hub:bp_cancel_copy_request' req.id %}">
-                                {% csrf_token %}
-                                <button
-                                    type="submit"
-                                    class="fulfill-btn fulfill-btn--decline"
-                                    onclick="return confirm('{% trans "Cancel this request?" %}')"
-                                >
-                                    <i class="fas fa-times"></i>{% trans "Cancel" %}
-                                </button>
-                            </form>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-                {% endif %}
-                {% endfor %}
+                <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light">
+                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Overview" %}
+                </a>
             </div>
-            {% else %}
-            <div class="empty-state">
-                <i class="fas fa-inbox"></i>
-                <h3>{% trans "No active requests" %}</h3>
-                <p class="text-muted">{% trans "Create a new copy request to get started." %}</p>
-            </div>
-            {% endif %}
         </div>
 
-        {# History Tab #}
-        <div
-            class="tab-pane fade"
-            id="bp-request-pane-history"
-            role="tabpanel"
-            aria-labelledby="bp-request-tab-history"
-        >
-            {% if history_requests %}
-            <div class="fulfill-requests-list">
-                {% for req in history_requests %}
-                <div class="fulfill-card">
-                    <div class="fulfill-card__icon">
-                        <img
-                            src="https://images.evetech.net/types/{{ req.type_id }}/bp?size=64"
-                            alt="{{ req.display_name }}"
-                            loading="lazy"
-                            onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'"
-                        >
+        {# Metric Tiles #}
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <a href="?status=open" class="metric-tile-link">
+                    <div class="metric-tile bg-gradient-info">
+                        <div>
+                            <p class="label text-info mb-1">
+                                <i class="fas fa-hourglass-half me-2"></i>{% trans "Waiting for Builders" %}
+                            </p>
+                            <div class="metric-value text-info">{{ metrics.open|default:0 }}</div>
+                        </div>
+                        <div class="metric-icon text-info">
+                            <i class="fas fa-clock"></i>
+                        </div>
                     </div>
-                    <div class="fulfill-card__info">
-                        <div class="fulfill-card__main">
-                            <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
-                            <div class="fulfill-card__specs">
-                                <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
-                                <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
-                                <span class="fulfill-spec fulfill-spec--copies">{{ req.copies_requested }} {% trans "copies" %} · {{ req.runs_requested }} {% trans "runs" %}</span>
+                </a>
+            </div>
+            <div class="col-md-6">
+                <a href="?status=action_required" class="metric-tile-link">
+                    <div class="metric-tile bg-gradient-warning">
+                        <div>
+                            <p class="label text-warning mb-1">
+                                <i class="fas fa-exclamation-circle me-2"></i>{% trans "Your Action" %}
+                            </p>
+                            <div class="metric-value text-warning">{{ metrics.action_required|default:0 }}</div>
+                        </div>
+                        <div class="metric-icon text-warning">
+                            <i class="fas fa-bell"></i>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            <div class="col-md-6">
+                <a href="?status=awaiting_delivery" class="metric-tile-link">
+                    <div class="metric-tile bg-gradient-success">
+                        <div>
+                            <p class="label text-success mb-1">
+                                <i class="fas fa-shipping-fast me-2"></i>{% trans "In Delivery" %}
+                            </p>
+                            <div class="metric-value text-success">{{ metrics.awaiting_delivery|default:0 }}</div>
+                        </div>
+                        <div class="metric-icon text-success">
+                            <i class="fas fa-truck"></i>
+                        </div>
+                    </div>
+                </a>
+            </div>
+            <div class="col-md-6">
+                <a href="?status=delivered" class="metric-tile-link">
+                    <div class="metric-tile bg-gradient-secondary">
+                        <div>
+                            <p class="label text-secondary mb-1">
+                                <i class="fas fa-check-double me-2"></i>{% trans "Completed" %}
+                            </p>
+                            <div class="metric-value text-secondary">{{ metrics.delivered|default:0 }}</div>
+                        </div>
+                        <div class="metric-icon text-secondary">
+                            <i class="fas fa-inbox"></i>
+                        </div>
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        {# Tabs #}
+        <ul class="nav nav-tabs bp-request-tabs mb-3" id="bp-request-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active"
+                        id="bp-request-tab-active"
+                        data-bs-toggle="tab"
+                        data-bs-target="#bp-request-pane-active"
+                        type="button"
+                        role="tab"
+                        aria-controls="bp-request-pane-active"
+                        aria-selected="true">
+                    <i class="fas fa-stream me-1"></i>{% trans "Active" %}
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link"
+                        id="bp-request-tab-history"
+                        data-bs-toggle="tab"
+                        data-bs-target="#bp-request-pane-history"
+                        type="button"
+                        role="tab"
+                        aria-controls="bp-request-pane-history"
+                        aria-selected="false">
+                    <i class="fas fa-history me-1"></i>{% trans "History" %}
+                </button>
+            </li>
+        </ul>
+
+        <div class="tab-content" id="bp-request-tab-content">
+            {# Active Tab #}
+            <div class="tab-pane fade show active" id="bp-request-pane-active" role="tabpanel" aria-labelledby="bp-request-tab-active">
+                <form method="get" class="d-flex flex-wrap align-items-end gap-2 mb-3">
+                    <div>
+                        <label for="bp-my-filter-status" class="form-label small text-muted mb-1">{% trans "Display" %}</label>
+                        <select id="bp-my-filter-status" name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="all" {% if active_filter == 'all' %}selected{% endif %}>{% trans "All" %}</option>
+                            <option value="open" {% if active_filter == 'open' %}selected{% endif %}>{% trans "Waiting for builders" %}</option>
+                            <option value="action_required" {% if active_filter == 'action_required' %}selected{% endif %}>
+                                {% trans "Your action needed" %}
+                            </option>
+                            <option value="awaiting_delivery" {% if active_filter == 'awaiting_delivery' %}selected{% endif %}>
+                                {% trans "In progress" %}
+                            </option>
+                            <option value="waiting_on_builder" {% if active_filter == 'waiting_on_builder' %}selected{% endif %}>
+                                {% trans "Waiting on builder" %}
+                            </option>
+                            <option value="waiting_on_you" {% if active_filter == 'waiting_on_you' %}selected{% endif %}>
+                                {% trans "Confirm agreement" %}
+                            </option>
+                        </select>
+                    </div>
+                </form>
+                {% if my_requests %}
+                    <div class="fulfill-requests-list">
+                        {% for req in my_requests %}
+                            {% if not req.is_history %}
+                                <div class="fulfill-card">
+                                    <div class="fulfill-card__icon">
+                                        <img src="{{ req.icon_url }}"
+                                             alt="{{ req.display_name }}"
+                                             loading="lazy"
+                                             onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'">
+                                    </div>
+
+                                    <div class="fulfill-card__info">
+                                        <div class="fulfill-card__main">
+                                            <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
+                                            <div class="fulfill-card__specs">
+                                                <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
+                                                <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
+                                                <span class="fulfill-spec fulfill-spec--copies">{{ req.copies_requested }} {% trans "copies" %} · {{ req.runs_requested }} {% trans "runs" %}</span>
+                                            </div>
+                                        </div>
+                                        <div class="fulfill-card__meta">
+                                            <div class="fulfill-meta-item fulfill-meta-item--time">
+                                                <i class="far fa-clock"></i>
+                                                <span>{{ req.created_at|naturaltime }}</span>
+                                            </div>
+                                            {% if req.accepted_offer %}
+                                                <span class="badge bg-success"><i class="fas fa-handshake me-1"></i>{% trans "Accepted" %}</span>
+                                            {% elif req.cond_accepted %}
+                                                <span class="badge bg-info"><i class="fas fa-file-signature me-1"></i>{% trans "Conditions Accepted" %}</span>
+                                            {% elif req.cond_waiting_builder %}
+                                                <span class="badge bg-warning"><i class="fas fa-hourglass-half me-1"></i>{% trans "Awaiting Confirmation" %}</span>
+                                            {% elif req.cond_waiting_buyer %}
+                                                <span class="badge bg-info"><i class="fas fa-handshake me-1"></i>{% trans "Ready to Accept" %}</span>
+                                            {% elif req.cond_offers %}
+                                                <span class="badge bg-warning"><i class="fas fa-comments me-1"></i>{% trans "Offers Pending" %}</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+
+                                    <div class="fulfill-card__actions">
+                                        <div class="fulfill-card__status">
+                                            <span class="fulfill-status {{ req.status_class|default:'bg-secondary' }}">{{ req.status_label }}</span>
+                                        </div>
+                                        <div class="fulfill-card__buttons">
+                                            {% if req.chat_actions %}
+                                                {% for action in req.chat_actions %}
+                                                    <button type="button"
+                                                            class="fulfill-btn fulfill-btn--chat bp-chat-trigger"
+                                                            data-chat-fetch-url="{{ action.chat.fetch_url }}"
+                                                            data-chat-send-url="{{ action.chat.send_url }}"
+                                                            data-chat-role="buyer"
+                                                            data-chat-type-name="{{ req.display_name }}"
+                                                            data-chat-type-id="{{ req.type_id }}"
+                                                            data-chat-id="{{ action.chat.id }}">
+                                                        <i class="fas fa-comments"></i>{% trans "Open chat" %}
+                                                    </button>
+                                                {% endfor %}
+                                            {% endif %}
+                                            {% if req.can_cancel %}
+                                                <form method="post" action="{% url 'indy_hub:bp_cancel_copy_request' req.id %}">
+                                                    {% csrf_token %}
+                                                    <button type="submit" class="fulfill-btn fulfill-btn--decline" onclick="return confirm('{% trans "Cancel this request?" %}')">
+                                                        <i class="fas fa-times"></i>{% trans "Cancel" %}
+                                                    </button>
+                                                </form>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="empty-state">
+                        <i class="fas fa-inbox"></i>
+                        <h3>{% trans "No active requests" %}</h3>
+                        <p class="text-muted">{% trans "Create a new copy request to get started." %}</p>
+                    </div>
+                {% endif %}
+            </div>
+
+            {# History Tab #}
+            <div class="tab-pane fade" id="bp-request-pane-history" role="tabpanel" aria-labelledby="bp-request-tab-history">
+                {% if history_requests %}
+                    <div class="fulfill-requests-list">
+                        {% for req in history_requests %}
+                            <div class="fulfill-card">
+                                <div class="fulfill-card__icon">
+                                    <img src="https://images.evetech.net/types/{{ req.type_id }}/bp?size=64"
+                                         alt="{{ req.display_name }}"
+                                         loading="lazy"
+                                         onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ req.type_id }}/icon?size=64'">
+                                </div>
+                                <div class="fulfill-card__info">
+                                    <div class="fulfill-card__main">
+                                        <h3 class="fulfill-card__title">{{ req.display_name }}</h3>
+                                        <div class="fulfill-card__specs">
+                                            <span class="fulfill-spec fulfill-spec--me">ME {{ req.material_efficiency }}</span>
+                                            <span class="fulfill-spec fulfill-spec--te">TE {{ req.time_efficiency }}</span>
+                                            <span class="fulfill-spec fulfill-spec--copies">{{ req.copies_requested }} {% trans "copies" %} · {{ req.runs_requested }} {% trans "runs" %}</span>
+                                        </div>
+                                    </div>
+                                    <div class="fulfill-card__time">
+                                        <i class="far fa-clock"></i>
+                                        <span>{{ req.closed_at|naturaltime }}</span>
+                                    </div>
+                                </div>
+                                <div class="fulfill-card__actions">
+                                    <div class="fulfill-card__status">
+                                        <span class="fulfill-status bg-secondary">{{ req.status_label }}</span>
+                                    </div>
+                                    <div class="fulfill-card__buttons">
+                                        <span class="fulfill-spec fulfill-spec--copies"><i class="fas fa-check me-1"></i>{% trans "Completed" %}</span>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        <div class="fulfill-card__time">
-                            <i class="far fa-clock"></i>
-                            <span>{{ req.closed_at|naturaltime }}</span>
-                        </div>
+                        {% endfor %}
                     </div>
-                    <div class="fulfill-card__actions">
-                        <div class="fulfill-card__status">
-                            <span class="fulfill-status bg-secondary">{{ req.status_label }}</span>
-                        </div>
-                        <div class="fulfill-card__buttons">
-                            <span class="fulfill-spec fulfill-spec--copies"><i class="fas fa-check me-1"></i>{% trans "Completed" %}</span>
-                        </div>
+                {% else %}
+                    <div class="empty-state">
+                        <i class="fas fa-history"></i>
+                        <h3>{% trans "No history" %}</h3>
+                        <p class="text-muted">{% trans "Completed requests will appear here." %}</p>
                     </div>
-                </div>
-                {% endfor %}
+                {% endif %}
             </div>
-            {% else %}
-            <div class="empty-state">
-                <i class="fas fa-history"></i>
-                <h3>{% trans "No history" %}</h3>
-                <p class="text-muted">{% trans "Completed requests will appear here." %}</p>
-            </div>
-            {% endif %}
         </div>
     </div>
-</div>
 
-{% include "indy_hub/includes/bp_chat_modal.html" %}
+    {% include "indy_hub/includes/bp_chat_modal.html" %}
 {% endblock %}
 
 {% block extra_javascript %}
-{{ block.super }}
-<script>
+    {{ block.super }}
+    <script>
     window.BPCopyChat = window.BPCopyChat || {};
     Object.assign(window.BPCopyChat, {
         labels: {
@@ -307,6 +293,6 @@
             system: '{% trans "System" %}'
         }
     });
-</script>
-<script src="{% static 'indy_hub/js/bp_copy_chat.js' %}?v=20260118-2230"></script>
+    </script>
+    <script src="{% static 'indy_hub/js/bp_copy_chat.js' %}?v=20260118-2230"></script>
 {% endblock %}

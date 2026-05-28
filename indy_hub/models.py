@@ -54,9 +54,7 @@ class Blueprint(models.Model):
         ORIGINAL = "ORIGINAL", "Original"
         COPY = "COPY", "Copy"
 
-    owner_user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="blueprints"
-    )
+    owner_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="blueprints")
     character_id = models.BigIntegerField(blank=True, null=True)
     corporation_id = models.BigIntegerField(blank=True, null=True)
     corporation_name = models.CharField(max_length=255, blank=True)
@@ -250,9 +248,7 @@ class Blueprint(models.Model):
 
 
 class IndustryJob(models.Model):
-    owner_user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="industry_jobs"
-    )
+    owner_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="industry_jobs")
     character_id = models.BigIntegerField(blank=True, null=True)
     corporation_id = models.BigIntegerField(blank=True, null=True)
     corporation_name = models.CharField(max_length=255, blank=True)
@@ -295,16 +291,12 @@ class IndustryJob(models.Model):
         verbose_name = "Industry Job"
         verbose_name_plural = "Industry Jobs"
         indexes = [
-            models.Index(
-                fields=["character_id", "status"], name="indy_hub_in_charact_9ec4da_idx"
-            ),
+            models.Index(fields=["character_id", "status"], name="indy_hub_in_charact_9ec4da_idx"),
             models.Index(
                 fields=["owner_user", "start_date"],
                 name="indy_hub_in_owner_u_b59db7_idx",
             ),
-            models.Index(
-                fields=["activity_id", "status"], name="indy_hub_in_activit_8408d4_idx"
-            ),
+            models.Index(fields=["activity_id", "status"], name="indy_hub_in_activit_8408d4_idx"),
             models.Index(
                 fields=["owner_kind", "corporation_id", "status"],
                 name="indy_hub_in_corp_scope_idx",
@@ -322,9 +314,7 @@ class IndustryJob(models.Model):
     @property
     def is_active(self):
         # Active only if status is active and end_date is in the future
-        return (
-            self.status == "active" and self.end_date and self.end_date > timezone.now()
-        )
+        return self.status == "active" and self.end_date and self.end_date > timezone.now()
 
     @property
     def is_completed(self):
@@ -375,19 +365,11 @@ class IndustryJob(models.Model):
 
             parts: list[str] = []
             if weeks:
-                parts.append(
-                    ngettext("%(count)d week", "%(count)d weeks", weeks)
-                    % {"count": weeks}
-                )
+                parts.append(ngettext("%(count)d week", "%(count)d weeks", weeks) % {"count": weeks})
             if days:
-                parts.append(
-                    ngettext("%(count)d day", "%(count)d days", days) % {"count": days}
-                )
+                parts.append(ngettext("%(count)d day", "%(count)d days", days) % {"count": days})
             if hours:
-                parts.append(
-                    ngettext("%(count)d hour", "%(count)d hours", hours)
-                    % {"count": hours}
-                )
+                parts.append(ngettext("%(count)d hour", "%(count)d hours", hours) % {"count": hours})
             if minutes:
                 parts.append(
                     ngettext(
@@ -435,29 +417,18 @@ class IndustryJob(models.Model):
 
         # When blueprint and product IDs match, prefer the blueprint original artwork
         if self.product_type_id and self.blueprint_type_id == self.product_type_id:
-            return (
-                "https://images.evetech.net/types/"
-                f"{self.product_type_id}/bp?size={size}"
-            )
+            return "https://images.evetech.net/types/" f"{self.product_type_id}/bp?size={size}"
 
         # Otherwise favour the product icon if available
         if self.product_type_id:
-            return (
-                "https://images.evetech.net/types/"
-                f"{self.product_type_id}/icon?size={size}"
-            )
+            return "https://images.evetech.net/types/" f"{self.product_type_id}/icon?size={size}"
 
         # Fallback for missing product IDs – display the blueprint artwork
-        return (
-            "https://images.evetech.net/types/"
-            f"{self.blueprint_type_id}/bp?size={size}"
-        )
+        return "https://images.evetech.net/types/" f"{self.blueprint_type_id}/bp?size={size}"
 
 
 class IndustrySkillSnapshot(models.Model):
-    owner_user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="industry_skill_snapshots"
-    )
+    owner_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="industry_skill_snapshots")
     character_id = models.BigIntegerField(unique=True)
     skill_levels = models.JSONField(default=dict, blank=True)
     mass_production_level = models.PositiveSmallIntegerField(default=0)
@@ -469,9 +440,7 @@ class IndustrySkillSnapshot(models.Model):
     trained_mass_production_level = models.PositiveSmallIntegerField(default=0)
     trained_advanced_mass_production_level = models.PositiveSmallIntegerField(default=0)
     trained_laboratory_operation_level = models.PositiveSmallIntegerField(default=0)
-    trained_advanced_laboratory_operation_level = models.PositiveSmallIntegerField(
-        default=0
-    )
+    trained_advanced_laboratory_operation_level = models.PositiveSmallIntegerField(default=0)
     trained_mass_reactions_level = models.PositiveSmallIntegerField(default=0)
     trained_advanced_mass_reactions_level = models.PositiveSmallIntegerField(default=0)
     last_updated = models.DateTimeField(auto_now=True)
@@ -493,23 +462,15 @@ class IndustrySkillSnapshot(models.Model):
 
     @property
     def manufacturing_slots(self) -> int:
-        return min(
-            10, 1 + self.mass_production_level + self.advanced_mass_production_level
-        )
+        return min(10, 1 + self.mass_production_level + self.advanced_mass_production_level)
 
     @property
     def research_slots(self) -> int:
-        return (
-            1
-            + self.laboratory_operation_level
-            + self.advanced_laboratory_operation_level
-        )
+        return 1 + self.laboratory_operation_level + self.advanced_laboratory_operation_level
 
     @property
     def reaction_slots(self) -> int:
-        return min(
-            10, 1 + self.mass_reactions_level + self.advanced_mass_reactions_level
-        )
+        return min(10, 1 + self.mass_reactions_level + self.advanced_mass_reactions_level)
 
     def get_active_skill_level(self, skill_type_id: int) -> int:
         entry = (self.skill_levels or {}).get(str(int(skill_type_id)))
@@ -547,19 +508,11 @@ class IndustrySkillSnapshot(models.Model):
 
             parts: list[str] = []
             if weeks:
-                parts.append(
-                    ngettext("%(count)d week", "%(count)d weeks", weeks)
-                    % {"count": weeks}
-                )
+                parts.append(ngettext("%(count)d week", "%(count)d weeks", weeks) % {"count": weeks})
             if days:
-                parts.append(
-                    ngettext("%(count)d day", "%(count)d days", days) % {"count": days}
-                )
+                parts.append(ngettext("%(count)d day", "%(count)d days", days) % {"count": days})
             if hours:
-                parts.append(
-                    ngettext("%(count)d hour", "%(count)d hours", hours)
-                    % {"count": hours}
-                )
+                parts.append(ngettext("%(count)d hour", "%(count)d hours", hours) % {"count": hours})
             if minutes:
                 parts.append(
                     ngettext(
@@ -595,9 +548,7 @@ class IndustrySkillSnapshot(models.Model):
 
 
 class CharacterRoles(models.Model):
-    owner_user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="character_roles"
-    )
+    owner_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="character_roles")
     character_id = models.BigIntegerField(unique=True)
     corporation_id = models.BigIntegerField(blank=True, null=True)
     roles = models.JSONField(default=list, blank=True)
@@ -631,9 +582,7 @@ class CharacterRoles(models.Model):
 
 
 class CharacterOnlineStatus(models.Model):
-    owner_user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="character_online_statuses"
-    )
+    owner_user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="character_online_statuses")
     character_id = models.BigIntegerField(unique=True)
     online = models.BooleanField(default=False)
     last_login = models.DateTimeField(blank=True, null=True)
@@ -674,9 +623,7 @@ class BlueprintCopyRequest(models.Model):
     type_id = models.IntegerField()
     material_efficiency = models.IntegerField()
     time_efficiency = models.IntegerField()
-    requested_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="bp_copy_requests"
-    )
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bp_copy_requests")
     runs_requested = models.IntegerField(default=1)
     copies_requested = models.IntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -721,12 +668,8 @@ class BlueprintCopyRequest(models.Model):
 
 
 class BlueprintCopyOffer(models.Model):
-    request = models.ForeignKey(
-        "BlueprintCopyRequest", on_delete=models.CASCADE, related_name="offers"
-    )
-    owner = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="bp_copy_offers"
-    )
+    request = models.ForeignKey("BlueprintCopyRequest", on_delete=models.CASCADE, related_name="offers")
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name="bp_copy_offers")
     status = models.CharField(
         max_length=16,
         choices=[
@@ -925,9 +868,7 @@ class BlueprintCopyChat(models.Model):
         }:
             return False
 
-        last_seen = (
-            self.buyer_last_seen_at if role == "buyer" else self.seller_last_seen_at
-        )
+        last_seen = self.buyer_last_seen_at if role == "buyer" else self.seller_last_seen_at
         if not last_seen:
             return True
         return last_seen < self.last_message_at
@@ -1114,9 +1055,7 @@ class CharacterSettings(models.Model):
             self.jobs_notify_completed = True
 
         if frequency == self.NOTIFY_CUSTOM:
-            days_value = (
-                custom_days if custom_days is not None else self.jobs_notify_custom_days
-            )
+            days_value = custom_days if custom_days is not None else self.jobs_notify_custom_days
             try:
                 days_value = int(days_value)
             except (TypeError, ValueError):
@@ -1124,11 +1063,7 @@ class CharacterSettings(models.Model):
             self.jobs_notify_custom_days = max(1, days_value)
 
         if frequency == self.NOTIFY_CUSTOM_HOURS:
-            hours_value = (
-                custom_hours
-                if custom_hours is not None
-                else self.jobs_notify_custom_hours
-            )
+            hours_value = custom_hours if custom_hours is not None else self.jobs_notify_custom_hours
             try:
                 hours_value = int(hours_value)
             except (TypeError, ValueError):
@@ -1149,11 +1084,7 @@ class CharacterSettings(models.Model):
         self.corp_jobs_notify_frequency = frequency
 
         if frequency == self.NOTIFY_CUSTOM:
-            days_value = (
-                custom_days
-                if custom_days is not None
-                else self.corp_jobs_notify_custom_days
-            )
+            days_value = custom_days if custom_days is not None else self.corp_jobs_notify_custom_days
             try:
                 days_value = int(days_value)
             except (TypeError, ValueError):
@@ -1161,11 +1092,7 @@ class CharacterSettings(models.Model):
             self.corp_jobs_notify_custom_days = max(1, days_value)
 
         if frequency == self.NOTIFY_CUSTOM_HOURS:
-            hours_value = (
-                custom_hours
-                if custom_hours is not None
-                else self.corp_jobs_notify_custom_hours
-            )
+            hours_value = custom_hours if custom_hours is not None else self.corp_jobs_notify_custom_hours
             try:
                 hours_value = int(hours_value)
             except (TypeError, ValueError):
@@ -1250,10 +1177,7 @@ class CharacterSettings(models.Model):
         self.corp_jobs_next_digest_at = next_at
 
     def save(self, *args, **kwargs):
-        if (
-            self.jobs_notify_completed
-            and self.jobs_notify_frequency == self.NOTIFY_DISABLED
-        ):
+        if self.jobs_notify_completed and self.jobs_notify_frequency == self.NOTIFY_DISABLED:
             self.jobs_notify_frequency = self.NOTIFY_IMMEDIATE
 
         if self.jobs_notify_frequency == self.NOTIFY_DISABLED:
@@ -1261,10 +1185,7 @@ class CharacterSettings(models.Model):
             self.jobs_next_digest_at = None
         elif self.jobs_notify_frequency:
             self.jobs_notify_completed = True
-            if (
-                self.jobs_notify_frequency != self.NOTIFY_IMMEDIATE
-                and not self.jobs_next_digest_at
-            ):
+            if self.jobs_notify_frequency != self.NOTIFY_IMMEDIATE and not self.jobs_next_digest_at:
                 self.schedule_next_digest()
         super().save(*args, **kwargs)
 
@@ -1472,21 +1393,11 @@ class NotificationWebhook(models.Model):
 
         if self.webhook_type == self.TYPE_MATERIAL_EXCHANGE:
             if self.corporation_ids:
-                raise ValidationError(
-                    {
-                        NON_FIELD_ERRORS: [
-                            "Corporations must be empty for Buyback webhooks."
-                        ]
-                    }
-                )
+                raise ValidationError({NON_FIELD_ERRORS: ["Corporations must be empty for Buyback webhooks."]})
         elif self.webhook_type == self.TYPE_BLUEPRINT_SHARING:
             if not self.corporation_ids:
                 raise ValidationError(
-                    {
-                        NON_FIELD_ERRORS: [
-                            "At least one corporation is required for blueprint sharing webhooks."
-                        ]
-                    }
+                    {NON_FIELD_ERRORS: ["At least one corporation is required for blueprint sharing webhooks."]}
                 )
 
     @classmethod
@@ -1554,9 +1465,7 @@ class NotificationWebhook(models.Model):
             return urls
 
     @classmethod
-    def get_blueprint_sharing_webhooks(
-        cls, corporation_id: int | None
-    ) -> list["NotificationWebhook"]:
+    def get_blueprint_sharing_webhooks(cls, corporation_id: int | None) -> list["NotificationWebhook"]:
         if not corporation_id:
             return []
         # Django
@@ -1680,27 +1589,20 @@ class WeeklyMiningPollConfig(models.Model):
 
     def build_crontab(self):
         if not self.crontab_schedule_id:
-            raise ValidationError(
-                {"crontab_schedule_id": "A periodic-task crontab schedule is required."}
-            )
+            raise ValidationError({"crontab_schedule_id": "A periodic-task crontab schedule is required."})
 
         try:
+            # Third Party
             from django_celery_beat.models import CrontabSchedule
         except ImportError as exc:
-            raise ValidationError(
-                {"crontab_schedule_id": "django_celery_beat is not installed."}
-            ) from exc
+            raise ValidationError({"crontab_schedule_id": "django_celery_beat is not installed."}) from exc
 
         try:
             return CrontabSchedule.objects.get(pk=self.crontab_schedule_id).schedule
         except CrontabSchedule.DoesNotExist as exc:
-            raise ValidationError(
-                {"crontab_schedule_id": "Selected crontab schedule no longer exists."}
-            ) from exc
+            raise ValidationError({"crontab_schedule_id": "Selected crontab schedule no longer exists."}) from exc
 
-    def build_question_text(
-        self, *, tiebreak_round: int = 0, include_suffix: bool = True
-    ) -> str:
+    def build_question_text(self, *, tiebreak_round: int = 0, include_suffix: bool = True) -> str:
         base_question = f"{self.system_name}: {self.poll_name}"
         if tiebreak_round > 0 and include_suffix:
             return f"{base_question} (Tiebreaker {tiebreak_round})"
@@ -1714,34 +1616,18 @@ class WeeklyMiningPollConfig(models.Model):
 
         normalized_options = self.options
         if len(normalized_options) < 2:
-            raise ValidationError(
-                {"options_json": "At least two poll options are required."}
-            )
+            raise ValidationError({"options_json": "At least two poll options are required."})
         if len(normalized_options) > 10:
-            raise ValidationError(
-                {"options_json": "Discord native polls support at most 10 options."}
-            )
+            raise ValidationError({"options_json": "Discord native polls support at most 10 options."})
         for option in normalized_options:
             if len(option) > 55:
                 raise ValidationError(
-                    {
-                        "options_json": (
-                            "Each poll option must be 55 characters or fewer "
-                            "for Discord native polls."
-                        )
-                    }
+                    {"options_json": ("Each poll option must be 55 characters or fewer " "for Discord native polls.")}
                 )
 
-        if (
-            self.current_winner_option
-            and self.current_winner_option not in normalized_options
-        ):
+        if self.current_winner_option and self.current_winner_option not in normalized_options:
             raise ValidationError(
-                {
-                    "current_winner_option": (
-                        "Current winner must match one of the configured poll options."
-                    )
-                }
+                {"current_winner_option": ("Current winner must match one of the configured poll options.")}
             )
 
         try:
@@ -1759,19 +1645,13 @@ class WeeklyMiningPollConfig(models.Model):
             raise ValidationError(
                 {
                     "poll_name": (
-                        "System name and poll name must fit within Discord's "
-                        "300 character poll question limit."
+                        "System name and poll name must fit within Discord's " "300 character poll question limit."
                     )
                 }
             )
         if len(self.build_question_text(tiebreak_round=3)) > 300:
             raise ValidationError(
-                {
-                    "poll_name": (
-                        "System name and poll name are too long to include "
-                        "the tie-breaker suffix."
-                    )
-                }
+                {"poll_name": ("System name and poll name are too long to include " "the tie-breaker suffix.")}
             )
 
     def save(self, *args, **kwargs):
@@ -1929,12 +1809,8 @@ class BlueprintEfficiency(models.Model):
         on_delete=models.CASCADE,
         related_name="blueprint_efficiencies",
     )
-    material_efficiency = models.IntegerField(
-        default=0, validators=[MinValueValidator(0), MaxValueValidator(10)]
-    )
-    time_efficiency = models.IntegerField(
-        default=0, validators=[MinValueValidator(0), MaxValueValidator(20)]
-    )
+    material_efficiency = models.IntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(10)])
+    time_efficiency = models.IntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(20)])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1960,13 +1836,9 @@ class CustomPrice(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     item_type_id = models.BigIntegerField()
-    simulation = models.ForeignKey(
-        "ProductionSimulation", on_delete=models.CASCADE, related_name="custom_prices"
-    )
+    simulation = models.ForeignKey("ProductionSimulation", on_delete=models.CASCADE, related_name="custom_prices")
     unit_price = models.DecimalField(max_digits=20, decimal_places=2, default=0)
-    is_sale_price = models.BooleanField(
-        default=False
-    )  # True when this is the sale price of the final product
+    is_sale_price = models.BooleanField(default=False)  # True when this is the sale price of the final product
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2071,9 +1943,7 @@ class ProductionSimulation(models.Model):
         """Return the blueprint icon URL for fallback display."""
         if not self.blueprint_type_id:
             return None
-        return (
-            f"https://images.evetech.net/types/{int(self.blueprint_type_id)}/bp?size=32"
-        )
+        return f"https://images.evetech.net/types/{int(self.blueprint_type_id)}/bp?size=32"
 
     @property
     def profit_margin(self):
@@ -2132,26 +2002,18 @@ class MaterialExchangeConfig(models.Model):
     """
 
     # ESI targeting
-    corporation_id = models.BigIntegerField(
-        help_text=_("Corporation ID owning the hub hangar")
-    )
-    structure_id = models.BigIntegerField(
-        help_text=_("Structure or station ID where the hub is located")
-    )
+    corporation_id = models.BigIntegerField(help_text=_("Corporation ID owning the hub hangar"))
+    structure_id = models.BigIntegerField(help_text=_("Structure or station ID where the hub is located"))
     structure_name = models.CharField(max_length=255, blank=True)
     sell_structure_ids = models.JSONField(
         blank=True,
         default=list,
-        help_text=_(
-            "List of structure IDs where members can SELL to the hub. Empty = use primary structure."
-        ),
+        help_text=_("List of structure IDs where members can SELL to the hub. Empty = use primary structure."),
     )
     sell_structure_names = models.JSONField(
         blank=True,
         default=list,
-        help_text=_(
-            "Cached structure names aligned with sell_structure_ids (same order)."
-        ),
+        help_text=_("Cached structure names aligned with sell_structure_ids (same order)."),
     )
     buy_structure_ids = models.JSONField(
         blank=True,
@@ -2163,9 +2025,7 @@ class MaterialExchangeConfig(models.Model):
     buy_structure_names = models.JSONField(
         blank=True,
         default=list,
-        help_text=_(
-            "Cached structure names aligned with buy_structure_ids (same order)."
-        ),
+        help_text=_("Cached structure names aligned with buy_structure_ids (same order)."),
     )
     buy_enabled = models.BooleanField(
         default=True,
@@ -2173,9 +2033,7 @@ class MaterialExchangeConfig(models.Model):
     )
     allow_fitted_ships = models.BooleanField(
         default=False,
-        help_text=_(
-            "When enabled, fitted ships and their fitted/cargo contents are allowed in sell listings."
-        ),
+        help_text=_("When enabled, fitted ships and their fitted/cargo contents are allowed in sell listings."),
     )
     LOCATION_MATCH_MODE_CHOICES = [
         ("name_or_id", _("Match by name or ID")),
@@ -2235,9 +2093,7 @@ class MaterialExchangeConfig(models.Model):
 
     notify_admins_on_sell_anomaly = models.BooleanField(
         default=True,
-        help_text=_(
-            "When enabled, Material Hub admins are notified when a sell contract anomaly is detected."
-        ),
+        help_text=_("When enabled, Material Hub admins are notified when a sell contract anomaly is detected."),
     )
 
     # Capital order defaults and safeguards
@@ -2281,16 +2137,12 @@ class MaterialExchangeConfig(models.Model):
     capital_auto_cancel_preapproved_state_names = models.JSONField(
         default=list,
         blank=True,
-        help_text=_(
-            "State names treated as preapproved for capital-order auto-cancel checks."
-        ),
+        help_text=_("State names treated as preapproved for capital-order auto-cancel checks."),
     )
     capital_auto_cancel_eligible_statuses = models.JSONField(
         default=list,
         blank=True,
-        help_text=_(
-            "Capital order statuses eligible for auto-cancel when requester leaves preapproved state."
-        ),
+        help_text=_("Capital order statuses eligible for auto-cancel when requester leaves preapproved state."),
     )
     CAPITAL_AUTO_CANCEL_DELAY_HOURS = "hours"
     CAPITAL_AUTO_CANCEL_DELAY_DAYS = "days"
@@ -2300,9 +2152,7 @@ class MaterialExchangeConfig(models.Model):
     ]
     capital_auto_cancel_delay_value = models.PositiveIntegerField(
         default=0,
-        help_text=_(
-            "Grace period before auto-cancel once requester is in the wrong state. 0 means immediate."
-        ),
+        help_text=_("Grace period before auto-cancel once requester is in the wrong state. 0 means immediate."),
     )
     capital_auto_cancel_delay_unit = models.CharField(
         max_length=8,
@@ -2312,9 +2162,7 @@ class MaterialExchangeConfig(models.Model):
     capital_disabled_ship_type_ids = models.JSONField(
         default=list,
         blank=True,
-        help_text=_(
-            "Ship type IDs hidden from the capital order menu for this configuration."
-        ),
+        help_text=_("Ship type IDs hidden from the capital order menu for this configuration."),
     )
     capital_custom_ship_options = models.JSONField(
         default=list,
@@ -2327,16 +2175,12 @@ class MaterialExchangeConfig(models.Model):
     capital_disabled_ship_groups = models.JSONField(
         default=list,
         blank=True,
-        help_text=_(
-            "Ship-group keys hidden from the capital order menu (for example dread, carrier, fax)."
-        ),
+        help_text=_("Ship-group keys hidden from the capital order menu (for example dread, carrier, fax)."),
     )
     capital_ship_estimated_price_overrides = models.JSONField(
         default=list,
         blank=True,
-        help_text=_(
-            "Per-ship estimated price overrides. Each row should define type_id and price_isk."
-        ),
+        help_text=_("Per-ship estimated price overrides. Each row should define type_id and price_isk."),
     )
     capital_ship_auto_estimated_prices = models.JSONField(
         default=list,
@@ -2351,16 +2195,12 @@ class MaterialExchangeConfig(models.Model):
     allowed_market_groups_buy = models.JSONField(
         blank=True,
         default=list,
-        help_text=_(
-            "List of market group IDs allowed for buying. Empty = all industry market groups allowed."
-        ),
+        help_text=_("List of market group IDs allowed for buying. Empty = all industry market groups allowed."),
     )
     allowed_market_groups_sell = models.JSONField(
         blank=True,
         default=list,
-        help_text=_(
-            "List of market group IDs allowed for selling. Empty = all industry market groups allowed."
-        ),
+        help_text=_("List of market group IDs allowed for selling. Empty = all industry market groups allowed."),
     )
     allowed_market_groups_sell_by_structure = models.JSONField(
         blank=True,
@@ -2408,9 +2248,7 @@ class MaterialExchangeConfig(models.Model):
     last_price_sync = models.DateTimeField(blank=True, null=True)
 
     # Status
-    is_active = models.BooleanField(
-        default=True, help_text=_("Enable/disable the Buyback")
-    )
+    is_active = models.BooleanField(default=True, help_text=_("Enable/disable the Buyback"))
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -2598,10 +2436,7 @@ class MaterialExchangeConfig(models.Model):
             if not group_value:
                 continue
             group_value = group_value.replace("-", "_").replace(" ", "_")
-            group_value = "".join(
-                char if (char.isalnum() or char == "_") else "_"
-                for char in group_value
-            ).strip("_")
+            group_value = "".join(char if (char.isalnum() or char == "_") else "_" for char in group_value).strip("_")
             if not group_value:
                 continue
             if group_value not in normalized:
@@ -2660,9 +2495,7 @@ class MaterialExchangeConfig(models.Model):
         return list(normalized_by_type.values())
 
     def get_capital_ship_estimated_price_map(self) -> dict[int, Decimal]:
-        raw_rows = list(
-            getattr(self, "capital_ship_estimated_price_overrides", []) or []
-        )
+        raw_rows = list(getattr(self, "capital_ship_estimated_price_overrides", []) or [])
         normalized: dict[int, Decimal] = {}
         for row in raw_rows:
             if not isinstance(row, dict):
@@ -2674,9 +2507,7 @@ class MaterialExchangeConfig(models.Model):
             if type_id <= 0:
                 continue
             try:
-                price_value = Decimal(str(row.get("price_isk") or "0")).quantize(
-                    Decimal("0.01")
-                )
+                price_value = Decimal(str(row.get("price_isk") or "0")).quantize(Decimal("0.01"))
             except Exception:
                 continue
             if price_value <= 0:
@@ -2697,9 +2528,7 @@ class MaterialExchangeConfig(models.Model):
             if type_id <= 0:
                 continue
             try:
-                price_value = Decimal(str(row.get("price_isk") or "0")).quantize(
-                    Decimal("0.01")
-                )
+                price_value = Decimal(str(row.get("price_isk") or "0")).quantize(Decimal("0.01"))
             except Exception:
                 continue
             if price_value <= 0:
@@ -2775,9 +2604,7 @@ class MaterialExchangeItemPriceOverride(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
-        help_text=_(
-            "Override sell markup % applied when members sell to hub (same format as global sell markup)."
-        ),
+        help_text=_("Override sell markup % applied when members sell to hub (same format as global sell markup)."),
     )
     sell_markup_base_override = models.CharField(
         max_length=8,
@@ -2791,9 +2618,7 @@ class MaterialExchangeItemPriceOverride(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
-        help_text=_(
-            "Override buy markup % applied when members buy from hub (same format as global buy markup)."
-        ),
+        help_text=_("Override buy markup % applied when members buy from hub (same format as global buy markup)."),
     )
     buy_markup_base_override = models.CharField(
         max_length=8,
@@ -2839,15 +2664,9 @@ class CachedCorporationAsset(models.Model):
         default_permissions = ()
         db_table = "indy_hub_corp_assets"
         indexes = [
-            models.Index(
-                fields=["corporation_id", "location_id"], name="cca_corp_loc_idx"
-            ),
-            models.Index(
-                fields=["corporation_id", "type_id"], name="cca_corp_type_idx"
-            ),
-            models.Index(
-                fields=["corporation_id", "location_flag"], name="cca_corp_flag_idx"
-            ),
+            models.Index(fields=["corporation_id", "location_id"], name="cca_corp_loc_idx"),
+            models.Index(fields=["corporation_id", "type_id"], name="cca_corp_type_idx"),
+            models.Index(fields=["corporation_id", "location_flag"], name="cca_corp_flag_idx"),
         ]
 
     def __str__(self):
@@ -2866,9 +2685,7 @@ class CachedCorporationDivision(models.Model):
         unique_together = ("corporation_id", "division")
         default_permissions = ()
         indexes = [
-            models.Index(
-                fields=["corporation_id", "division"], name="ccd_corp_div_idx"
-            ),
+            models.Index(fields=["corporation_id", "division"], name="ccd_corp_div_idx"),
         ]
 
     def __str__(self):
@@ -2935,9 +2752,7 @@ class MaterialExchangeStock(models.Model):
     Single source of truth for Buyback inventory.
     """
 
-    config = models.ForeignKey(
-        MaterialExchangeConfig, on_delete=models.CASCADE, related_name="stock_items"
-    )
+    config = models.ForeignKey(MaterialExchangeConfig, on_delete=models.CASCADE, related_name="stock_items")
     type_id = models.IntegerField(help_text=_("EVE item type ID"))
     type_name = models.CharField(max_length=255, blank=True, db_index=True)
     quantity = models.BigIntegerField(default=0)
@@ -2949,18 +2764,12 @@ class MaterialExchangeStock(models.Model):
     source_structure_names = models.JSONField(
         blank=True,
         default=list,
-        help_text=_(
-            "Cached buy structure names aligned with source_structure_ids (same order)."
-        ),
+        help_text=_("Cached buy structure names aligned with source_structure_ids (same order)."),
     )
 
     # Pricing cache (from Jita via Fuzzwork)
-    jita_buy_price = models.DecimalField(
-        max_digits=20, decimal_places=2, default=0, blank=True
-    )
-    jita_sell_price = models.DecimalField(
-        max_digits=20, decimal_places=2, default=0, blank=True
-    )
+    jita_buy_price = models.DecimalField(max_digits=20, decimal_places=2, default=0, blank=True)
+    jita_sell_price = models.DecimalField(max_digits=20, decimal_places=2, default=0, blank=True)
     last_price_update = models.DateTimeField(blank=True, null=True)
 
     # Audit trail
@@ -3017,9 +2826,7 @@ class MaterialExchangeDailySnapshot(models.Model):
     """Daily saved Buyback holdings snapshot for history charts."""
 
     corporation_id = models.BigIntegerField(db_index=True)
-    wallet_division = models.IntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(7)]
-    )
+    wallet_division = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(7)])
     snapshot_date = models.DateField(db_index=True)
 
     inventory_market_value = models.DecimalField(
@@ -3074,10 +2881,7 @@ class MaterialExchangeDailySnapshot(models.Model):
         ]
 
     def __str__(self):
-        return (
-            f"Buyback snapshot corp {self.corporation_id} "
-            f"wallet {self.wallet_division} @ {self.snapshot_date}"
-        )
+        return f"Buyback snapshot corp {self.corporation_id} " f"wallet {self.wallet_division} @ {self.snapshot_date}"
 
 
 class MaterialExchangeSellOrder(models.Model):
@@ -3096,9 +2900,7 @@ class MaterialExchangeSellOrder(models.Model):
         DRAFT = "draft", _("Order Created - Awaiting Contract")
         AWAITING_VALIDATION = "awaiting_validation", _("Awaiting Auth Validation")
         ANOMALY = "anomaly", _("Anomaly - Waiting User/Admin Action")
-        ANOMALY_REJECTED = "anomaly_rejected", _(
-            "Anomaly - Contract Refused In-Game (Redo Required)"
-        )
+        ANOMALY_REJECTED = "anomaly_rejected", _("Anomaly - Contract Refused In-Game (Redo Required)")
         VALIDATED = "validated", _("Validated - Awaiting Contract Accept")
         COMPLETED = "completed", _("Completed")
         REJECTED = "rejected", _("Rejected")
@@ -3109,13 +2911,9 @@ class MaterialExchangeSellOrder(models.Model):
         on_delete=models.CASCADE,
         related_name="sell_orders",
     )
-    seller = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="material_sell_orders"
-    )
+    seller = models.ForeignKey(User, on_delete=models.CASCADE, related_name="material_sell_orders")
 
-    status = models.CharField(
-        max_length=30, choices=Status.choices, default=Status.DRAFT
-    )
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT)
 
     # ESI Contract tracking
     esi_contract_id = models.BigIntegerField(
@@ -3212,9 +3010,7 @@ class MaterialExchangeSellOrder(models.Model):
             max_attempts = 100
             for attempt in range(max_attempts):
                 reference = generate_order_reference()
-                if not MaterialExchangeSellOrder.objects.filter(
-                    order_reference=reference
-                ).exists():
+                if not MaterialExchangeSellOrder.objects.filter(order_reference=reference).exists():
                     self.order_reference = reference
                     break
             else:
@@ -3353,13 +3149,9 @@ class MaterialExchangeBuyOrder(models.Model):
         on_delete=models.CASCADE,
         related_name="buy_orders",
     )
-    buyer = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="material_buy_orders"
-    )
+    buyer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="material_buy_orders")
 
-    status = models.CharField(
-        max_length=30, choices=Status.choices, default=Status.DRAFT
-    )
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT)
 
     # ESI Contract tracking
     esi_contract_id = models.BigIntegerField(
@@ -3460,9 +3252,7 @@ class MaterialExchangeBuyOrder(models.Model):
             max_attempts = 100
             for attempt in range(max_attempts):
                 reference = generate_order_reference()
-                if not MaterialExchangeBuyOrder.objects.filter(
-                    order_reference=reference
-                ).exists():
+                if not MaterialExchangeBuyOrder.objects.filter(order_reference=reference).exists():
                     self.order_reference = reference
                     break
             else:
@@ -3603,15 +3393,11 @@ class CapitalShipOrder(models.Model):
         CANCELLED = "cancelled", _("Cancelled")
 
     class Reason(models.TextChoices):
-        NO_CAP = "no_cap", _(
-            "I currently have no cap of this type and need one to be minimally combat effective."
-        )
+        NO_CAP = "no_cap", _("I currently have no cap of this type and need one to be minimally combat effective.")
         ALT_NEEDS_CAP = "alt_needs_cap", _(
             "I currently have at least one cap of this type, but another pilot needs one to be minimally combat effective."
         )
-        BACKUP = "backup", _(
-            "I currently have at least one cap for all pilots. This order is for backup/reship/aux."
-        )
+        BACKUP = "backup", _("I currently have at least one cap for all pilots. This order is for backup/reship/aux.")
 
     config = models.ForeignKey(
         MaterialExchangeConfig,
@@ -3760,10 +3546,7 @@ class CapitalShipOrder(models.Model):
         ]
 
     def __str__(self):
-        return (
-            f"Capital #{self.id}: {self.requester.username} - "
-            f"{self.ship_type_name or self.ship_type_id}"
-        )
+        return f"Capital #{self.id}: {self.requester.username} - " f"{self.ship_type_name or self.ship_type_id}"
 
     def save(self, *args, **kwargs):
         creating_without_reference = not self.pk and not self.order_reference
@@ -3840,9 +3623,7 @@ class CapitalShipOrderChat(models.Model):
             return None
         if int(getattr(user, "id", 0) or 0) == int(self.requester_id):
             return self.SenderRole.REQUESTER
-        if user.has_perm("indy_hub.can_manage_capital_orders") or user.has_perm(
-            "indy_hub.can_build_capital_orders"
-        ):
+        if user.has_perm("indy_hub.can_manage_capital_orders") or user.has_perm("indy_hub.can_build_capital_orders"):
             return self.SenderRole.ADMIN
         return None
 
@@ -3868,11 +3649,7 @@ class CapitalShipOrderChat(models.Model):
         if role not in {self.SenderRole.REQUESTER, self.SenderRole.ADMIN}:
             return
 
-        field = (
-            "requester_last_seen_at"
-            if role == self.SenderRole.REQUESTER
-            else "admin_last_seen_at"
-        )
+        field = "requester_last_seen_at" if role == self.SenderRole.REQUESTER else "admin_last_seen_at"
         now = timezone.now()
         if force or not self.last_message_at:
             setattr(self, field, now)
@@ -3898,11 +3675,7 @@ class CapitalShipOrderChat(models.Model):
             return False
         if self.last_message_role in {None, "", role, self.SenderRole.SYSTEM}:
             return False
-        last_seen = (
-            self.requester_last_seen_at
-            if role == self.SenderRole.REQUESTER
-            else self.admin_last_seen_at
-        )
+        last_seen = self.requester_last_seen_at if role == self.SenderRole.REQUESTER else self.admin_last_seen_at
         if not last_seen:
             return True
         return last_seen < self.last_message_at
@@ -4023,9 +3796,7 @@ class MaterialExchangeTransaction(models.Model):
         related_name="transaction",
     )
 
-    user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="material_transactions"
-    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="material_transactions")
     type_id = models.IntegerField()
     type_name = models.CharField(max_length=255)
     quantity = models.BigIntegerField()
@@ -4133,9 +3904,7 @@ class MaterialExchangeTransaction(models.Model):
         jita_buy = cls._snapshot_price(stock_row.get("jita_buy_price"))
         jita_sell = cls._snapshot_price(stock_row.get("jita_sell_price"))
         if jita_buy is not None and jita_sell is not None:
-            jita_split = ((jita_buy + jita_sell) / Decimal("2")).quantize(
-                Decimal("0.01")
-            )
+            jita_split = ((jita_buy + jita_sell) / Decimal("2")).quantize(Decimal("0.01"))
         elif jita_buy is not None:
             jita_split = jita_buy
         elif jita_sell is not None:
@@ -4207,9 +3976,7 @@ class ReprocessingServiceProfile(models.Model):
     )
     admin_force_unavailable = models.BooleanField(
         default=False,
-        help_text=_(
-            "When enabled by a Buyback admin, the reprocessor cannot self-enable availability."
-        ),
+        help_text=_("When enabled by a Buyback admin, the reprocessor cannot self-enable availability."),
     )
     margin_percent = models.DecimalField(
         max_digits=6,
@@ -4292,16 +4059,10 @@ class ReprocessingServiceRequest(models.Model):
 
     class Status(models.TextChoices):
         REQUEST_SUBMITTED = "request_submitted", _("Request submitted")
-        AWAITING_INBOUND_CONTRACT = "awaiting_inbound_contract", _(
-            "Awaiting inbound contract"
-        )
-        INBOUND_CONTRACT_VERIFIED = "inbound_contract_verified", _(
-            "Inbound contract verified"
-        )
+        AWAITING_INBOUND_CONTRACT = "awaiting_inbound_contract", _("Awaiting inbound contract")
+        INBOUND_CONTRACT_VERIFIED = "inbound_contract_verified", _("Inbound contract verified")
         PROCESSING = "processing", _("Processing")
-        AWAITING_RETURN_CONTRACT = "awaiting_return_contract", _(
-            "Awaiting return contract"
-        )
+        AWAITING_RETURN_CONTRACT = "awaiting_return_contract", _("Awaiting return contract")
         COMPLETED = "completed", _("Completed")
         DISPUTED = "disputed", _("Disputed")
         CANCELLED = "cancelled", _("Cancelled")
@@ -4412,9 +4173,7 @@ class ReprocessingServiceRequest(models.Model):
             max_attempts = 100
             for _attempt in range(max_attempts):
                 reference = generate_reprocessing_reference()
-                if not ReprocessingServiceRequest.objects.filter(
-                    request_reference=reference
-                ).exists():
+                if not ReprocessingServiceRequest.objects.filter(request_reference=reference).exists():
                     self.request_reference = reference
                     break
             else:
@@ -4488,10 +4247,7 @@ class ReprocessingServiceRequestOutput(models.Model):
         ]
 
     def __str__(self):
-        return (
-            f"{self.type_name or self.type_id}: "
-            f"{self.expected_quantity} expected"
-        )
+        return f"{self.type_name or self.type_id}: " f"{self.expected_quantity} expected"
 
 
 class ESIContract(models.Model):
@@ -4528,9 +4284,7 @@ class ESIContract(models.Model):
     date_completed = models.DateTimeField(blank=True, null=True)
 
     # Tracking
-    corporation_id = models.BigIntegerField(
-        db_index=True, help_text="Corporation this contract belongs to"
-    )
+    corporation_id = models.BigIntegerField(db_index=True, help_text="Corporation this contract belongs to")
     last_synced = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -4569,9 +4323,7 @@ class ESIContractItem(models.Model):
         blank=True,
         help_text="Raw quantity from ESI; -1 or -2 indicates item is inside a container",
     )
-    is_included = models.BooleanField(
-        default=False, help_text="Item is given by issuer"
-    )
+    is_included = models.BooleanField(default=False, help_text="Item is given by issuer")
     is_singleton = models.BooleanField(default=False)
 
     last_synced = models.DateTimeField(auto_now=True)
@@ -4713,10 +4465,7 @@ class SdeIndustryActivityMaterial(models.Model):
         ]
 
     def __str__(self):
-        return (
-            f"{self.eve_type_id}:{self.activity_id} -> "
-            f"{self.material_eve_type_id} x{self.quantity}"
-        )
+        return f"{self.eve_type_id}:{self.activity_id} -> " f"{self.material_eve_type_id} x{self.quantity}"
 
 
 class SdeIndustryActivityProduct(models.Model):
@@ -4751,10 +4500,7 @@ class SdeIndustryActivityProduct(models.Model):
         ]
 
     def __str__(self):
-        return (
-            f"{self.eve_type_id}:{self.activity_id} -> "
-            f"{self.product_eve_type_id} x{self.quantity}"
-        )
+        return f"{self.eve_type_id}:{self.activity_id} -> " f"{self.product_eve_type_id} x{self.quantity}"
 
 
 class SdeMarketGroup(models.Model):
@@ -4826,8 +4572,7 @@ class CompressedOreCache(models.Model):
 
         # Check if any entries have old cache version
         old_version_exists = cls.objects.filter(
-            models.Q(cache_version__lt=cls.CACHE_VERSION) |
-            models.Q(cache_version__isnull=True)
+            models.Q(cache_version__lt=cls.CACHE_VERSION) | models.Q(cache_version__isnull=True)
         ).exists()
 
         return old_version_exists
@@ -4837,7 +4582,5 @@ class CompressedOreCache(models.Model):
         """Check if any prices are stale or missing."""
         stale_cutoff = timezone.now() - timedelta(days=7)
         return cls.objects.filter(
-            models.Q(pricing_data_updated__isnull=True) |
-            models.Q(pricing_data_updated__lt=stale_cutoff)
+            models.Q(pricing_data_updated__isnull=True) | models.Q(pricing_data_updated__lt=stale_cutoff)
         ).exists()
-

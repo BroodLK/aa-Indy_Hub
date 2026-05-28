@@ -3,6 +3,7 @@ from django.core.cache import cache
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+# AA Example App
 # Local
 from indy_hub.models import PublicJitaContract, PublicJitaContractItem
 from indy_hub.services.public_contracts_store import SYNC_META_KEY
@@ -15,8 +16,7 @@ class Command(BaseCommand):
         before_contracts = PublicJitaContract.objects.count()
         before_items = PublicJitaContractItem.objects.count()
         self.stdout.write(
-            f"Clearing public Jita contract cache rows "
-            f"(contracts={before_contracts}, items={before_items})..."
+            f"Clearing public Jita contract cache rows " f"(contracts={before_contracts}, items={before_items})..."
         )
 
         with transaction.atomic():

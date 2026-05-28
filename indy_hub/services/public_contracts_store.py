@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 # Standard Library
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
-from datetime import timedelta
 
 # Django
 from django.core.cache import cache
@@ -16,6 +16,7 @@ from django.utils import timezone
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
+# AA Example App
 # Local
 from indy_hub.models import PublicJitaContract, PublicJitaContractItem
 from indy_hub.services.public_contracts import (
@@ -131,11 +132,7 @@ def _get_last_sync_at() -> timezone.datetime | None:
         if synced_at is not None:
             return synced_at
 
-    return (
-        PublicJitaContract.objects.order_by("-last_synced")
-        .values_list("last_synced", flat=True)
-        .first()
-    )
+    return PublicJitaContract.objects.order_by("-last_synced").values_list("last_synced", flat=True).first()
 
 
 def _build_rate_limited_result(*, now: timezone.datetime) -> dict[str, Any] | None:
@@ -197,9 +194,7 @@ def _upsert_contract_rows(
     for contract_id, row in candidate_rows.items():
         payload = {
             "region_id": _to_int(_row_value(row, "region_id"), 10000002),
-            "contract_type": str(
-                _row_value(row, "contract_type", "type") or ""
-            ).strip(),
+            "contract_type": str(_row_value(row, "contract_type", "type") or "").strip(),
             "status": str(_row_value(row, "status") or "").strip(),
             "title": str(_row_value(row, "title") or "").strip(),
             "issuer_id": _to_int(_row_value(row, "issuer_id"), 0),
@@ -365,9 +360,7 @@ def sync_public_jita_contract_cache(
 
         with transaction.atomic():
             if candidate_ids:
-                stale_qs = PublicJitaContract.objects.exclude(
-                    contract_id__in=candidate_ids
-                )
+                stale_qs = PublicJitaContract.objects.exclude(contract_id__in=candidate_ids)
                 stale_deleted = stale_qs.count()
                 stale_qs.delete()
 
@@ -420,11 +413,7 @@ def get_public_jita_contract_cache_meta() -> dict[str, Any]:
                 "is_cached": timezone.now() <= expires_at,
             }
 
-    latest_sync = (
-        PublicJitaContract.objects.order_by("-last_synced")
-        .values_list("last_synced", flat=True)
-        .first()
-    )
+    latest_sync = PublicJitaContract.objects.order_by("-last_synced").values_list("last_synced", flat=True).first()
     if latest_sync is None:
         return {
             "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
@@ -516,10 +505,7 @@ def get_public_jita_bpc_offers(
         runs = max(1, int(offer.get("runs") or 0))
         price_total = float(offer.get("price_total") or 0)
         offer["price_per_run"] = price_total / runs if runs > 0 else price_total
-        offer["mixed_stats"] = (
-            len(offer.get("_me_values") or set()) > 1
-            or len(offer.get("_te_values") or set()) > 1
-        )
+        offer["mixed_stats"] = len(offer.get("_me_values") or set()) > 1 or len(offer.get("_te_values") or set()) > 1
         offer.pop("_me_values", None)
         offer.pop("_te_values", None)
         offers.append(offer)

@@ -1,9 +1,13 @@
+# Standard Library
 from unittest.mock import MagicMock
 
+# Django
 from django.test import SimpleTestCase
 
+# Alliance Auth
 from esi.exceptions import HTTPNotModified
 
+# AA Example App
 from indy_hub.services.esi_client import ESIClient
 
 

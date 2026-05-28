@@ -6,14 +6,10 @@
                 {% if icon_class %}<i class="{{ icon_class }} me-2"></i>{% endif %}
                 {{ title|default:_("Untitled") }}
             </h2>
-            {% if subtitle %}
-                <p class="description">{{ subtitle }}</p>
-            {% endif %}
+            {% if subtitle %}<p class="description">{{ subtitle }}</p>{% endif %}
         </div>
         <div class="d-flex flex-wrap align-items-center gap-2">
-            {% if header_controls %}
-                {{ header_controls|safe }}
-            {% endif %}
+            {% if header_controls %}{{ header_controls|safe }}{% endif %}
             {% if back_url %}
                 <a href="{{ back_url }}" class="btn btn-outline-light">
                     <i class="fas fa-arrow-left me-1"></i>{{ back_label|default:_("Back") }}
@@ -21,7 +17,5 @@
             {% endif %}
         </div>
     </div>
-    {% if icon_class %}
-        <i class="{{ icon_class }} header-bg"></i>
-    {% endif %}
+    {% if icon_class %}<i class="{{ icon_class }} header-bg"></i>{% endif %}
 </div>

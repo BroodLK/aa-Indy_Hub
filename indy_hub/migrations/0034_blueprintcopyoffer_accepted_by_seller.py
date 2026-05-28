@@ -4,9 +4,7 @@ from django.db import migrations, models
 
 def mark_existing_offers(apps, schema_editor):
     Offer = apps.get_model("indy_hub", "BlueprintCopyOffer")
-    Offer.objects.filter(status="accepted").update(
-        accepted_by_seller=True, accepted_by_buyer=True
-    )
+    Offer.objects.filter(status="accepted").update(accepted_by_seller=True, accepted_by_buyer=True)
 
 
 def unmark_existing_offers(apps, schema_editor):

@@ -3,345 +3,346 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "Buy Order Details" %} - {{ order.order_reference }}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Buy Order Details" %} - {{ order.order_reference }}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_order_details.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_order_details.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<main class="bg-body p-4 buy-order-detail">
-    <div class="container-fluid my-0 bg-body">
-        <!-- Header -->
-        <div class="page-header mb-4">
-            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-                <div>
-                    <h2 class="h3 mb-1">
-                        <i class="fas fa-shopping-cart me-2"></i>
-                        {% trans "Buy Order Details" %}
-                    </h2>
-                    <p class="description">{% trans "Order" %} #{{ order.id }}</p>
+    <main class="bg-body p-4 buy-order-detail">
+        <div class="container-fluid my-0 bg-body">
+            <!-- Header -->
+            <div class="page-header mb-4">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                    <div>
+                        <h2 class="h3 mb-1">
+                            <i class="fas fa-shopping-cart me-2"></i>
+                            {% trans "Buy Order Details" %}
+                        </h2>
+                        <p class="description">{% trans "Order" %} #{{ order.id }}</p>
+                    </div>
+                    {% url 'indy_hub:my_orders' as my_orders_url %}
+                    {% with back_url=request.GET.next|default:my_orders_url %}
+                        <div class="d-flex gap-2">
+                            <a href="{{ back_url }}" class="btn btn-outline-light">
+                                <i class="fas fa-arrow-left me-1"></i>{% trans "My Orders" %}
+                            </a>
+                            {% if can_manage_material_hub and order.status == 'rejected' %}
+                                <form method="post" class="d-inline">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{{ back_url }}">
+                                    <button formaction="{% url 'indy_hub:material_exchange_reopen_buy' order.id %}"
+                                            type="submit"
+                                            class="btn btn-outline-success"
+                                            onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen buy order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
+                                        <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                                    </button>
+                                </form>
+                            {% endif %}
+                        </div>
+                    {% endwith %}
                 </div>
-                {% url 'indy_hub:my_orders' as my_orders_url %}
-                {% with back_url=request.GET.next|default:my_orders_url %}
-                <div class="d-flex gap-2">
-                    <a href="{{ back_url }}" class="btn btn-outline-light">
-                        <i class="fas fa-arrow-left me-1"></i>{% trans "My Orders" %}
-                    </a>
-                    {% if can_manage_material_hub and order.status == 'rejected' %}
-                    <form method="post" class="d-inline">
-                        {% csrf_token %}
-                        <input type="hidden" name="next" value="{{ back_url }}">
-                        <button formaction="{% url 'indy_hub:material_exchange_reopen_buy' order.id %}" type="submit" class="btn btn-outline-success" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen buy order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
-                            <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
-                {% endwith %}
+                <i class="fas fa-shopping-cart header-bg"></i>
             </div>
-            <i class="fas fa-shopping-cart header-bg"></i>
-        </div>
 
-        <!-- Order Reference Display -->
-        <div class="order-reference-display order-summary">
-            <div class="order-summary-grid">
-                <div class="order-summary-icon" aria-hidden="true">
-                    <i class="fas fa-qrcode"></i>
-                </div>
-
-                <div class="order-summary-main">
-                    <div class="order-summary-label">{% trans "Order Reference" %}</div>
-                    <div class="order-summary-ref-row">
-                        <div id="orderReference" class="order-summary-ref">{{ order.order_reference }}</div>
-                        <button type="button" class="btn btn-info btn-sm copy-button" onclick="copyOrderReference(this)" title="{% trans "Copy" %}">
-                            <i class="fas fa-copy"></i>
-                        </button>
+            <!-- Order Reference Display -->
+            <div class="order-reference-display order-summary">
+                <div class="order-summary-grid">
+                    <div class="order-summary-icon" aria-hidden="true">
+                        <i class="fas fa-qrcode"></i>
                     </div>
 
-                    <div class="order-summary-meta">
-                        <span class="order-summary-chip">
-                            <i class="fas fa-user me-1" aria-hidden="true"></i>
-                            <span class="order-summary-chip-label">{% trans "Buyer" %}:</span>
-                            <span id="buyerMainCharacter" class="order-summary-chip-value">{{ buyer_main_character }}</span>
-                            <button type="button" class="btn btn-link p-0 ms-2 order-summary-chip-copy" onclick="copyBuyerMainCharacter(this)" title="{% trans "Copy" %}">
-                                <i class="fas fa-copy" aria-hidden="true"></i>
+                    <div class="order-summary-main">
+                        <div class="order-summary-label">{% trans "Order Reference" %}</div>
+                        <div class="order-summary-ref-row">
+                            <div id="orderReference" class="order-summary-ref">{{ order.order_reference }}</div>
+                            <button type="button" class="btn btn-info btn-sm copy-button" onclick="copyOrderReference(this)" title="{% trans "Copy" %}">
+                                <i class="fas fa-copy"></i>
                             </button>
-                        </span>
+                        </div>
 
-                        <span class="order-summary-sep" aria-hidden="true">•</span>
-
-                        <span class="order-summary-chip">
-                            <i class="fas fa-coins me-1" aria-hidden="true"></i>
-                            <span class="order-summary-chip-label">{% trans "Total" %}:</span>
-                            <span class="order-summary-chip-value text-info fw-bold">
-                                <span id="orderTotalFormatted" data-raw="{{ order.total_price|floatformat:0 }}"></span> ISK
+                        <div class="order-summary-meta">
+                            <span class="order-summary-chip">
+                                <i class="fas fa-user me-1" aria-hidden="true"></i>
+                                <span class="order-summary-chip-label">{% trans "Buyer" %}:</span>
+                                <span id="buyerMainCharacter" class="order-summary-chip-value">{{ buyer_main_character }}</span>
+                                <button type="button"
+                                        class="btn btn-link p-0 ms-2 order-summary-chip-copy"
+                                        onclick="copyBuyerMainCharacter(this)"
+                                        title="{% trans "Copy" %}">
+                                    <i class="fas fa-copy" aria-hidden="true"></i>
+                                </button>
                             </span>
-                            <button type="button" class="btn btn-link p-0 ms-2 order-summary-chip-copy" onclick="copyOrderTotal(this)" title="{% trans "Copy" %}">
-                                <i class="fas fa-copy" aria-hidden="true"></i>
-                            </button>
-                        </span>
-                    </div>
-                </div>
 
-                <div class="order-summary-actions">
-                    {% if can_cancel %}
-                        <button
-                            type="button"
-                            class="btn btn-outline-light btn-sm"
-                            title="{% trans 'Paste the in-game Copy All result to compare the contract with this order' %}"
-                            aria-label="{% trans 'Check Contract Before Creating' %}"
-                            data-contract-check-trigger="true"
-                            data-check-url="{% url 'indy_hub:buy_order_check_contract' order.id %}"
-                            data-order-ref="{{ order.order_reference }}"
-                            data-recipient="{{ contract_check_recipient_label }}"
-                            data-location="{{ order_location_label }}"
-                            data-amount="{{ order.total_price|floatformat:0|intcomma }}"
-                            data-amount-raw="{{ order.total_price|floatformat:0 }}"
-                            data-amount-label="{{ contract_check_amount_label }}"
-                        >
-                            <i class="fas fa-paste me-1"></i>{% trans "Paste & Check" %}
-                        </button>
-                    {% endif %}
-                    {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
-                        <a href="{% url 'indy_hub:buy_order_delete' order.id %}" class="btn btn-outline-danger btn-sm">
-                            <i class="fas fa-trash me-1"></i>{% trans "Delete" %}
-                        </a>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
+                            <span class="order-summary-sep" aria-hidden="true">•</span>
 
-        <div class="row">
-            <!-- Left Column: Order Info -->
-            <div class="col-lg-8">
-                <!-- Status Card -->
-                <div class="card mb-4">
-                    <div class="card-header bg-success bg-opacity-10">
-                        <h5 class="mb-0">
-                            <i class="fas fa-info-circle me-2"></i>{% trans "Order Status" %}
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <h3>
-                                    <span class="order-status-badge status-{{ order.status }}">
-                                        <i class="fas {{ timeline.0.icon }} status-icon"></i>
-                                        {{ order.get_status_display }}
-                                    </span>
-                                </h3>
-                            </div>
-                            <div class="text-end">
-                                <small class="text-muted">
-                                    {% trans "Created:" %} {{ order.created_at|date:"Y-m-d H:i" }}
-                                </small>
-                            </div>
+                            <span class="order-summary-chip">
+                                <i class="fas fa-coins me-1" aria-hidden="true"></i>
+                                <span class="order-summary-chip-label">{% trans "Total" %}:</span>
+                                <span class="order-summary-chip-value text-info fw-bold">
+                                    <span id="orderTotalFormatted" data-raw="{{ order.total_price|floatformat:0 }}"></span> ISK
+                                </span>
+                                <button type="button"
+                                        class="btn btn-link p-0 ms-2 order-summary-chip-copy"
+                                        onclick="copyOrderTotal(this)"
+                                        title="{% trans "Copy" %}">
+                                    <i class="fas fa-copy" aria-hidden="true"></i>
+                                </button>
+                            </span>
                         </div>
                     </div>
-                </div>
 
-                <!-- Contract Instructions (show until contract validated/accepted) -->
-                {% if order.status == 'draft' or order.status == 'awaiting_validation' %}
+                    <div class="order-summary-actions">
+                        {% if can_cancel %}
+                            <button type="button"
+                                    class="btn btn-outline-light btn-sm"
+                                    title="{% trans 'Paste the in-game Copy All result to compare the contract with this order' %}"
+                                    aria-label="{% trans 'Check Contract Before Creating' %}"
+                                    data-contract-check-trigger="true"
+                                    data-check-url="{% url 'indy_hub:buy_order_check_contract' order.id %}"
+                                    data-order-ref="{{ order.order_reference }}"
+                                    data-recipient="{{ contract_check_recipient_label }}"
+                                    data-location="{{ order_location_label }}"
+                                    data-amount="{{ order.total_price|floatformat:0|intcomma }}"
+                                    data-amount-raw="{{ order.total_price|floatformat:0 }}"
+                                    data-amount-label="{{ contract_check_amount_label }}">
+                                <i class="fas fa-paste me-1"></i>{% trans "Paste & Check" %}
+                            </button>
+                        {% endif %}
+                        {% if order.status != 'completed' and order.status != 'rejected' and order.status != 'cancelled' %}
+                            <a href="{% url 'indy_hub:buy_order_delete' order.id %}" class="btn btn-outline-danger btn-sm">
+                                <i class="fas fa-trash me-1"></i>{% trans "Delete" %}
+                            </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <!-- Left Column: Order Info -->
+                <div class="col-lg-8">
+                    <!-- Status Card -->
                     <div class="card mb-4">
-                        <div class="card-header bg-info bg-opacity-10">
+                        <div class="card-header bg-success bg-opacity-10">
                             <h5 class="mb-0">
-                                <i class="fas fa-info-circle me-2"></i>{% trans "How This Works" %}
+                                <i class="fas fa-info-circle me-2"></i>{% trans "Order Status" %}
                             </h5>
                         </div>
                         <div class="card-body">
-                            {% if perms.indy_hub.can_manage_material_hub %}
-                                <div class="contract-instructions">
-                                    <p class="mb-3">
-                                        <i class="fas fa-handshake me-2 text-info"></i>
-                                        {% trans "You create an Item Exchange contract to the buyer with the details below. The system auto-validates the contract once it matches." %}
-                                    </p>
-                                    <ol class="mb-3">
-                                        <li>
-                                            <strong>{% trans "Type:" %}</strong> {% trans "Item Exchange" %}
-                                        </li>
-                                        <li>
-                                            <strong>{% trans "Assign to:" %}</strong>
-                                            <span id="orderAssignTo">{{ buyer_main_character }}</span>
-                                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyAssignTo(this)" title="{% trans "Copy" %}">
-                                                <i class="fas fa-copy" aria-hidden="true"></i>
-                                            </button>
-                                        </li>
-                                        <li>
-                                            <strong>{% trans "Location:" %}</strong>
-                                            <span id="orderLocation">{{ order_location_label }}</span>
-                                        </li>
-                                        <li>
-                                            <strong>{% trans "Price:" %}</strong>
-                                            <span id="orderPrice" class="text-info fw-bold">{{ order.total_price|floatformat:0|intcomma }} ISK</span>
-                                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyPrice(this)" title="{% trans "Copy" %}">
-                                                <i class="fas fa-copy" aria-hidden="true"></i>
-                                            </button>
-                                        </li>
-                                        <li>
-                                            <strong class="text-danger">{% trans "Title/Description:" %}</strong>
-                                            <span id="orderTitleDescription" class="text-info fw-bold">{{ order.order_reference }}</span>
-                                            <button type="button" class="btn btn-link p-0 ms-2" onclick="copyTitleDescription(this)" title="{% trans "Copy" %}">
-                                                <i class="fas fa-copy" aria-hidden="true"></i>
-                                            </button>
-                                            <span class="text-danger">({% trans "REQUIRED!" %})</span>
-                                        </li>
-                                        <li>
-                                            <strong>{% trans "Duration:" %}</strong> {% trans "4 weeks" %}
-                                        </li>
-                                    </ol>
-                                    <div class="alert alert-warning mt-3 mb-0">
-                                        <i class="fas fa-exclamation-triangle me-2"></i>
-                                        <strong>{% trans "Important:" %}</strong>
-                                        {% trans "Use this exact location and include the exact order reference in the contract title. Once the contract matches these details, validation happens automatically within a few minutes." %}
-                                    </div>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h3>
+                                        <span class="order-status-badge status-{{ order.status }}">
+                                            <i class="fas {{ timeline.0.icon }} status-icon"></i>
+                                            {{ order.get_status_display }}
+                                        </span>
+                                    </h3>
                                 </div>
-                            {% else %}
-                                <div class="info-box">
-                                    <p class="mb-3">
-                                        <i class="fas fa-building me-2 text-info"></i>
-                                        <strong>{% trans "The corporation" %}</strong> {% trans "will create an" %} <strong>{% trans "Item Exchange contract" %}</strong> {% trans "with the items listed below." %}
-                                    </p>
-                                    <p class="mb-3">
-                                        {% trans "You will receive a notification when the contract is created. Review the items and accept the contract to complete the transaction." %}
-                                    </p>
-                                    <div class="alert alert-info mb-0">
-                                        <i class="fas fa-lightbulb me-2"></i>
-                                            {% trans "No action is required from you at this moment. Wait for the in-game contract notification." %}
-                                    </div>
+                                <div class="text-end">
+                                    <small class="text-muted">{% trans "Created:" %} {{ order.created_at|date:"Y-m-d H:i" }}</small>
                                 </div>
-                            {% endif %}
+                            </div>
                         </div>
                     </div>
-                {% endif %}
 
-                <!-- Items List -->
-                <div class="card mb-4">
-                    <div class="card-header bg-success bg-opacity-10">
-                        <h5 class="mb-0">
-                            <i class="fas fa-boxes me-2"></i>{% trans "Items Wanted" %} ({{ items.count }})
-                        </h5>
-                    </div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>{% trans "Item" %}</th>
-                                        <th class="text-end">{% trans "Quantity" %}</th>
-                                        <th class="text-end">{% trans "Unit Price" %}</th>
-                                        <th class="text-end">{% trans "Total" %}</th>
-                                        {% if order.status != 'draft' and order.status != 'awaiting_validation' %}
-                                            <th class="text-center">{% trans "Validated" %}</th>
-                                        {% endif %}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for item in items %}
-                                        <tr>
-                                            <td>
-                                                <strong>{{ item.type_name }}</strong>
-                                            </td>
-                                            <td class="text-end">{{ item.quantity|intcomma }}</td>
-                                            <td class="text-end">{{ item.unit_price|floatformat:2|intcomma }} ISK</td>
-                                            <td class="text-end fw-bold text-info">
-                                                {{ item.total_price|floatformat:2|intcomma }} ISK
-                                            </td>
-                                            {% if order.status != 'draft' and order.status != 'awaiting_validation' %}
-                                                <td class="text-center">
-                                                    {% if item.esi_contract_validated %}
-                                                        <i class="fas fa-check-circle text-success"></i>
-                                                    {% else %}
-                                                        <i class="fas fa-hourglass-half text-warning"></i>
-                                                    {% endif %}
-                                                </td>
-                                            {% endif %}
-                                        </tr>
-                                    {% endfor %}
-                                </tbody>
-                                <tfoot>
-                                    <tr class="table-active fw-bold">
-                                        <td colspan="3" class="text-end">{% trans "TOTAL PURCHASE PRICE:" %}</td>
-                                        <td class="text-end text-info fs-5">
-                                            {{ order.total_price|floatformat:0|intcomma }} ISK
-                                        </td>
-                                        {% if order.status != 'draft' and order.status != 'awaiting_validation' %}
-                                            <td></td>
-                                        {% endif %}
-                                    </tr>
-                                </tfoot>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- Right Column: Timeline -->
-            <div class="col-lg-4">
-                <div class="card mb-4">
-                    <div class="card-header bg-primary bg-opacity-10">
-                        <h5 class="mb-0">
-                            <i class="fas fa-history me-2"></i>{% trans "Timeline" %}
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="timeline">
-                            {% for step in timeline %}
-                                <div class="timeline-item">
-                                    <div class="timeline-icon {% if step.completed %}completed{% else %}pending{% endif %}">
-                                        <i class="{{ step.icon }}"></i>
+                    <!-- Contract Instructions (show until contract validated/accepted) -->
+                    {% if order.status == 'draft' or order.status == 'awaiting_validation' %}
+                        <div class="card mb-4">
+                            <div class="card-header bg-info bg-opacity-10">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-info-circle me-2"></i>{% trans "How This Works" %}
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                {% if perms.indy_hub.can_manage_material_hub %}
+                                    <div class="contract-instructions">
+                                        <p class="mb-3">
+                                            <i class="fas fa-handshake me-2 text-info"></i>
+                                            {% trans "You create an Item Exchange contract to the buyer with the details below. The system auto-validates the contract once it matches." %}
+                                        </p>
+                                        <ol class="mb-3">
+                                            <li>
+                                                <strong>{% trans "Type:" %}</strong> {% trans "Item Exchange" %}
+                                            </li>
+                                            <li>
+                                                <strong>{% trans "Assign to:" %}</strong>
+                                                <span id="orderAssignTo">{{ buyer_main_character }}</span>
+                                                <button type="button" class="btn btn-link p-0 ms-2" onclick="copyAssignTo(this)" title="{% trans "Copy" %}">
+                                                    <i class="fas fa-copy" aria-hidden="true"></i>
+                                                </button>
+                                            </li>
+                                            <li>
+                                                <strong>{% trans "Location:" %}</strong>
+                                                <span id="orderLocation">{{ order_location_label }}</span>
+                                            </li>
+                                            <li>
+                                                <strong>{% trans "Price:" %}</strong>
+                                                <span id="orderPrice" class="text-info fw-bold">{{ order.total_price|floatformat:0|intcomma }} ISK</span>
+                                                <button type="button" class="btn btn-link p-0 ms-2" onclick="copyPrice(this)" title="{% trans "Copy" %}">
+                                                    <i class="fas fa-copy" aria-hidden="true"></i>
+                                                </button>
+                                            </li>
+                                            <li>
+                                                <strong class="text-danger">{% trans "Title/Description:" %}</strong>
+                                                <span id="orderTitleDescription" class="text-info fw-bold">{{ order.order_reference }}</span>
+                                                <button type="button" class="btn btn-link p-0 ms-2" onclick="copyTitleDescription(this)" title="{% trans "Copy" %}">
+                                                    <i class="fas fa-copy" aria-hidden="true"></i>
+                                                </button>
+                                                <span class="text-danger">({% trans "REQUIRED!" %})</span>
+                                            </li>
+                                            <li>
+                                                <strong>{% trans "Duration:" %}</strong> {% trans "4 weeks" %}
+                                            </li>
+                                        </ol>
+                                        <div class="alert alert-warning mt-3 mb-0">
+                                            <i class="fas fa-exclamation-triangle me-2"></i>
+                                            <strong>{% trans "Important:" %}</strong>
+                                            {% trans "Use this exact location and include the exact order reference in the contract title. Once the contract matches these details, validation happens automatically within a few minutes." %}
+                                        </div>
                                     </div>
-                                    <div>
-                                        <h6 class="mb-1">{{ step.status }}</h6>
-                                        {% if step.timestamp %}
-                                            <small class="text-muted">
-                                                <i class="far fa-clock me-1"></i>
-                                                {{ step.timestamp|date:"Y-m-d H:i" }}
-                                            </small>
-                                        {% endif %}
-                                        {% if step.user %}
-                                            <div>
-                                                <small class="text-muted">
-                                                    <i class="far fa-user me-1"></i>
-                                                    {{ step.user }}
-                                                </small>
-                                            </div>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Notes (if any) -->
-                {% if order.notes %}
-                    <div class="card order-notes-card {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' or order.status == 'rejected' or order.status == 'cancelled' %}order-notes-alert{% elif order.status == 'completed' or order.status == 'validated' %}order-notes-success{% else %}order-notes-neutral{% endif %}">
-                        <div class="card-header order-notes-header">
-                            <h5 class="mb-0">
-                                {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' or order.status == 'rejected' or order.status == 'cancelled' %}
-                                    <i class="fas fa-exclamation-triangle me-2"></i>
                                 {% else %}
-                                    <i class="fas fa-sticky-note me-2"></i>
+                                    <div class="info-box">
+                                        <p class="mb-3">
+                                            <i class="fas fa-building me-2 text-info"></i>
+                                            <strong>{% trans "The corporation" %}</strong> {% trans "will create an" %} <strong>{% trans "Item Exchange contract" %}</strong> {% trans "with the items listed below." %}
+                                        </p>
+                                        <p class="mb-3">
+                                            {% trans "You will receive a notification when the contract is created. Review the items and accept the contract to complete the transaction." %}
+                                        </p>
+                                        <div class="alert alert-info mb-0">
+                                            <i class="fas fa-lightbulb me-2"></i>
+                                            {% trans "No action is required from you at this moment. Wait for the in-game contract notification." %}
+                                        </div>
+                                    </div>
                                 {% endif %}
-                                {% trans "Notes" %}
+                            </div>
+                        </div>
+                    {% endif %}
+
+                    <!-- Items List -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-success bg-opacity-10">
+                            <h5 class="mb-0">
+                                <i class="fas fa-boxes me-2"></i>{% trans "Items Wanted" %} ({{ items.count }})
                             </h5>
                         </div>
-                        <div class="card-body order-notes-body">
-                            <p class="mb-0 order-notes-text">{{ order.notes|linebreaksbr }}</p>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>{% trans "Item" %}</th>
+                                            <th class="text-end">{% trans "Quantity" %}</th>
+                                            <th class="text-end">{% trans "Unit Price" %}</th>
+                                            <th class="text-end">{% trans "Total" %}</th>
+                                            {% if order.status != 'draft' and order.status != 'awaiting_validation' %}
+                                                <th class="text-center">{% trans "Validated" %}</th>
+                                            {% endif %}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in items %}
+                                            <tr>
+                                                <td>
+                                                    <strong>{{ item.type_name }}</strong>
+                                                </td>
+                                                <td class="text-end">{{ item.quantity|intcomma }}</td>
+                                                <td class="text-end">{{ item.unit_price|floatformat:2|intcomma }} ISK</td>
+                                                <td class="text-end fw-bold text-info">{{ item.total_price|floatformat:2|intcomma }} ISK</td>
+                                                {% if order.status != 'draft' and order.status != 'awaiting_validation' %}
+                                                    <td class="text-center">
+                                                        {% if item.esi_contract_validated %}
+                                                            <i class="fas fa-check-circle text-success"></i>
+                                                        {% else %}
+                                                            <i class="fas fa-hourglass-half text-warning"></i>
+                                                        {% endif %}
+                                                    </td>
+                                                {% endif %}
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr class="table-active fw-bold">
+                                            <td colspan="3" class="text-end">{% trans "TOTAL PURCHASE PRICE:" %}</td>
+                                            <td class="text-end text-info fs-5">{{ order.total_price|floatformat:0|intcomma }} ISK</td>
+                                            {% if order.status != 'draft' and order.status != 'awaiting_validation' %}<td></td>{% endif %}
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
                         </div>
                     </div>
-                {% endif %}
+
+                </div>
+
+                <!-- Right Column: Timeline -->
+                <div class="col-lg-4">
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary bg-opacity-10">
+                            <h5 class="mb-0">
+                                <i class="fas fa-history me-2"></i>{% trans "Timeline" %}
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="timeline">
+                                {% for step in timeline %}
+                                    <div class="timeline-item">
+                                        <div class="timeline-icon {% if step.completed %}completed{% else %}pending{% endif %}">
+                                            <i class="{{ step.icon }}"></i>
+                                        </div>
+                                        <div>
+                                            <h6 class="mb-1">{{ step.status }}</h6>
+                                            {% if step.timestamp %}
+                                                <small class="text-muted">
+                                                    <i class="far fa-clock me-1"></i>
+                                                    {{ step.timestamp|date:"Y-m-d H:i" }}
+                                                </small>
+                                            {% endif %}
+                                            {% if step.user %}
+                                                <div>
+                                                    <small class="text-muted">
+                                                        <i class="far fa-user me-1"></i>
+                                                        {{ step.user }}
+                                                    </small>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notes (if any) -->
+                    {% if order.notes %}
+                        <div class="card order-notes-card {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' or order.status == 'rejected' or order.status == 'cancelled' %}order-notes-alert{% elif order.status == 'completed' or order.status == 'validated' %}order-notes-success{% else %}order-notes-neutral{% endif %}">
+                            <div class="card-header order-notes-header">
+                                <h5 class="mb-0">
+                                    {% if order.status == 'anomaly' or order.status == 'anomaly_rejected' or order.status == 'rejected' or order.status == 'cancelled' %}
+                                        <i class="fas fa-exclamation-triangle me-2"></i>
+                                    {% else %}
+                                        <i class="fas fa-sticky-note me-2"></i>
+                                    {% endif %}
+                                    {% trans "Notes" %}
+                                </h5>
+                            </div>
+                            <div class="card-body order-notes-body">
+                                <p class="mb-0 order-notes-text">{{ order.notes|linebreaksbr }}</p>
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
             </div>
         </div>
-    </div>
-</main>
+    </main>
 
-{% include "indy_hub/material_exchange/includes/contract_check_modal.html" %}
+    {% include "indy_hub/material_exchange/includes/contract_check_modal.html" %}
 
-<script>
+    <script>
 function flashCopied(btn) {
     const originalHTML = btn.innerHTML;
     const originalClass = btn.className;
@@ -461,5 +462,5 @@ function copyTitleDescription(btn) {
         alert('Failed to copy to clipboard');
     });
 }
-</script>
+    </script>
 {% endblock content %}

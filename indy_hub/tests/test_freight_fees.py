@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+# Standard Library
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
+# Django
 from django.test import SimpleTestCase
 
+# AA Example App
 from indy_hub.services.freight_fees import (
     JITA_4_4_STATION_ID,
     calculate_import_fees,

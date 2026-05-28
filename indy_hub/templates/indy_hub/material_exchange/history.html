@@ -3,165 +3,182 @@
 {% load static %}
 {% load humanize %}
 
-{% block page_title %}{% trans "Buyback History" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Buyback History" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
-<style>
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange.css' %}">
+    <style>
     .history-table th { text-transform: uppercase; font-size: 12px; letter-spacing: 0.4px; }
     .history-table td { vertical-align: middle; }
     .history-panel { background: #ffffff; border: 1px solid rgba(15, 23, 42, 0.08); border-radius: 12px; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08); }
-</style>
+    </style>
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <div class="page-header mb-4">
-        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
-            <div>
-                <h2 class="h4 mb-1">
-                    <i class="fas fa-archive me-2"></i>
-                    {% trans "Closed Orders History" %}
-                </h2>
-                <p class="description">{% trans "Completed, rejected and cancelled contracts" %}</p>
-            </div>
-            <div class="d-flex gap-2">
-                <a href="{% url 'indy_hub:material_exchange_index' %}#admin-panel" class="btn btn-outline-secondary">
-                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Admin" %}
-                </a>
-            </div>
-        </div>
-    </div>
-
-    <div class="d-flex flex-wrap gap-2 mb-4">
-        <a href="{% url 'indy_hub:material_exchange_history' %}" class="btn btn-sm {% if history_status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
-            {% trans "All Closed" %}
-        </a>
-        <a href="{% url 'indy_hub:material_exchange_history' %}?status=rejected" class="btn btn-sm {% if history_status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">
-            {% trans "Rejected" %}
-        </a>
-        <a href="{% url 'indy_hub:material_exchange_history' %}?status=completed" class="btn btn-sm {% if history_status_filter == 'completed' %}btn-success{% else %}btn-outline-success{% endif %}">
-            {% trans "Completed" %}
-        </a>
-        <a href="{% url 'indy_hub:material_exchange_history' %}?status=cancelled" class="btn btn-sm {% if history_status_filter == 'cancelled' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
-            {% trans "Cancelled" %}
-        </a>
-    </div>
-
-    <div class="row g-4">
-        <div class="col-12 col-lg-6">
-            <div class="history-panel p-3">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h5 class="mb-0"><i class="fas fa-arrow-up text-danger me-2"></i>{% trans "Sell Orders" %}</h5>
-                    <span class="badge bg-light text-dark">{{ sell_history|length }}</span>
+    <div class="container-fluid py-4">
+        <div class="page-header mb-4">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                    <h2 class="h4 mb-1">
+                        <i class="fas fa-archive me-2"></i>
+                        {% trans "Closed Orders History" %}
+                    </h2>
+                    <p class="description">{% trans "Completed, rejected and cancelled contracts" %}</p>
                 </div>
-                {% if sell_history %}
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover history-table mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>{% trans "Ref" %}</th>
-                                <th>{% trans "Seller" %}</th>
-                                <th class="text-end">{% trans "Total" %}</th>
-                                <th>{% trans "Status" %}</th>
-                                <th>{% trans "Date" %}</th>
-                                <th class="text-end">{% trans "Actions" %}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for order in sell_history %}
-                            <tr>
-                                <td class="fw-semibold">{{ order.order_reference }}</td>
-                                <td>{{ order.seller.username }}</td>
-                                <td class="text-end text-success fw-semibold">{{ order.total_price|floatformat:0|intcomma }} ISK</td>
-                                <td>
-                                    <span class="badge bg-secondary">{{ order.get_status_display }}</span>
-                                </td>
-                                <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
-                                <td class="text-end">
-                                    <div class="d-inline-flex gap-2">
-                                        <a href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ history_return_url|urlencode }}" class="btn btn-sm btn-outline-secondary">
-                                            <i class="fas fa-eye me-1"></i>{% trans "Details" %}
-                                        </a>
-                                        {% if order.status == 'rejected' %}
-                                        <form method="post" class="d-inline">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="next" value="{{ history_return_url }}">
-                                            <button formaction="{% url 'indy_hub:material_exchange_reopen_sell' order.id %}" type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen sell order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
-                                                <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
-                                            </button>
-                                        </form>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'indy_hub:material_exchange_index' %}#admin-panel" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Admin" %}
+                    </a>
                 </div>
-                {% else %}
-                <p class="text-muted mb-0">{% trans "No closed sell orders." %}</p>
-                {% endif %}
             </div>
         </div>
 
-        <div class="col-12 col-lg-6">
-            <div class="history-panel p-3">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h5 class="mb-0"><i class="fas fa-arrow-down text-success me-2"></i>{% trans "Buy Orders" %}</h5>
-                    <span class="badge bg-light text-dark">{{ buy_history|length }}</span>
+        <div class="d-flex flex-wrap gap-2 mb-4">
+            <a href="{% url 'indy_hub:material_exchange_history' %}"
+               class="btn btn-sm {% if history_status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                {% trans "All Closed" %}
+            </a>
+            <a href="{% url 'indy_hub:material_exchange_history' %}?status=rejected"
+               class="btn btn-sm {% if history_status_filter == 'rejected' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+                {% trans "Rejected" %}
+            </a>
+            <a href="{% url 'indy_hub:material_exchange_history' %}?status=completed"
+               class="btn btn-sm {% if history_status_filter == 'completed' %}btn-success{% else %}btn-outline-success{% endif %}">
+                {% trans "Completed" %}
+            </a>
+            <a href="{% url 'indy_hub:material_exchange_history' %}?status=cancelled"
+               class="btn btn-sm {% if history_status_filter == 'cancelled' %}btn-secondary{% else %}btn-outline-secondary{% endif %}">
+                {% trans "Cancelled" %}
+            </a>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-12 col-lg-6">
+                <div class="history-panel p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0">
+                            <i class="fas fa-arrow-up text-danger me-2"></i>{% trans "Sell Orders" %}
+                        </h5>
+                        <span class="badge bg-light text-dark">{{ sell_history|length }}</span>
+                    </div>
+                    {% if sell_history %}
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover history-table mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>{% trans "Ref" %}</th>
+                                        <th>{% trans "Seller" %}</th>
+                                        <th class="text-end">{% trans "Total" %}</th>
+                                        <th>{% trans "Status" %}</th>
+                                        <th>{% trans "Date" %}</th>
+                                        <th class="text-end">{% trans "Actions" %}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in sell_history %}
+                                        <tr>
+                                            <td class="fw-semibold">{{ order.order_reference }}</td>
+                                            <td>{{ order.seller.username }}</td>
+                                            <td class="text-end text-success fw-semibold">{{ order.total_price|floatformat:0|intcomma }} ISK</td>
+                                            <td>
+                                                <span class="badge bg-secondary">{{ order.get_status_display }}</span>
+                                            </td>
+                                            <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+                                            <td class="text-end">
+                                                <div class="d-inline-flex gap-2">
+                                                    <a href="{% url 'indy_hub:sell_order_detail' order.id %}?next={{ history_return_url|urlencode }}"
+                                                       class="btn btn-sm btn-outline-secondary">
+                                                        <i class="fas fa-eye me-1"></i>{% trans "Details" %}
+                                                    </a>
+                                                    {% if order.status == 'rejected' %}
+                                                        <form method="post" class="d-inline">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="next" value="{{ history_return_url }}">
+                                                            <button formaction="{% url 'indy_hub:material_exchange_reopen_sell' order.id %}"
+                                                                    type="submit"
+                                                                    class="btn btn-sm btn-outline-success"
+                                                                    onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen sell order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
+                                                                <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                                                            </button>
+                                                        </form>
+                                                    {% endif %}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">{% trans "No closed sell orders." %}</p>
+                    {% endif %}
                 </div>
-                {% if buy_history %}
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover history-table mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>{% trans "Ref" %}</th>
-                                <th>{% trans "Buyer" %}</th>
-                                <th class="text-end">{% trans "Total" %}</th>
-                                <th>{% trans "Status" %}</th>
-                                <th>{% trans "Date" %}</th>
-                                <th class="text-end">{% trans "Actions" %}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for order in buy_history %}
-                            <tr>
-                                <td class="fw-semibold">{{ order.order_reference }}</td>
-                                <td>{{ order.buyer.username }}</td>
-                                <td class="text-end text-success fw-semibold">{{ order.total_price|floatformat:0|intcomma }} ISK</td>
-                                <td>
-                                    <span class="badge bg-secondary">{{ order.get_status_display }}</span>
-                                </td>
-                                <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
-                                <td class="text-end">
-                                    <div class="d-inline-flex gap-2">
-                                        <a href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ history_return_url|urlencode }}" class="btn btn-sm btn-outline-secondary">
-                                            <i class="fas fa-eye me-1"></i>{% trans "Details" %}
-                                        </a>
-                                        {% if order.status == 'rejected' %}
-                                        <form method="post" class="d-inline">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="next" value="{{ history_return_url }}">
-                                            <button formaction="{% url 'indy_hub:material_exchange_reopen_buy' order.id %}" type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen buy order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
-                                                <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
-                                            </button>
-                                        </form>
-                                        {% endif %}
-                                    </div>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+            </div>
+
+            <div class="col-12 col-lg-6">
+                <div class="history-panel p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0">
+                            <i class="fas fa-arrow-down text-success me-2"></i>{% trans "Buy Orders" %}
+                        </h5>
+                        <span class="badge bg-light text-dark">{{ buy_history|length }}</span>
+                    </div>
+                    {% if buy_history %}
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover history-table mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>{% trans "Ref" %}</th>
+                                        <th>{% trans "Buyer" %}</th>
+                                        <th class="text-end">{% trans "Total" %}</th>
+                                        <th>{% trans "Status" %}</th>
+                                        <th>{% trans "Date" %}</th>
+                                        <th class="text-end">{% trans "Actions" %}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for order in buy_history %}
+                                        <tr>
+                                            <td class="fw-semibold">{{ order.order_reference }}</td>
+                                            <td>{{ order.buyer.username }}</td>
+                                            <td class="text-end text-success fw-semibold">{{ order.total_price|floatformat:0|intcomma }} ISK</td>
+                                            <td>
+                                                <span class="badge bg-secondary">{{ order.get_status_display }}</span>
+                                            </td>
+                                            <td>{{ order.created_at|date:"Y-m-d H:i" }}</td>
+                                            <td class="text-end">
+                                                <div class="d-inline-flex gap-2">
+                                                    <a href="{% url 'indy_hub:buy_order_detail' order.id %}?next={{ history_return_url|urlencode }}"
+                                                       class="btn btn-sm btn-outline-secondary">
+                                                        <i class="fas fa-eye me-1"></i>{% trans "Details" %}
+                                                    </a>
+                                                    {% if order.status == 'rejected' %}
+                                                        <form method="post" class="d-inline">
+                                                            {% csrf_token %}
+                                                            <input type="hidden" name="next" value="{{ history_return_url }}">
+                                                            <button formaction="{% url 'indy_hub:material_exchange_reopen_buy' order.id %}"
+                                                                    type="submit"
+                                                                    class="btn btn-sm btn-outline-success"
+                                                                    onclick="return confirm('{% blocktrans with reference=order.order_reference %}Reopen buy order {{ reference }} and restore it to its previous workflow state?{% endblocktrans %}')">
+                                                                <i class="fas fa-rotate-left me-1"></i>{% trans "Reopen" %}
+                                                            </button>
+                                                        </form>
+                                                    {% endif %}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-muted mb-0">{% trans "No closed buy orders." %}</p>
+                    {% endif %}
                 </div>
-                {% else %}
-                <p class="text-muted mb-0">{% trans "No closed buy orders." %}</p>
-                {% endif %}
             </div>
         </div>
     </div>
-</div>
 {% endblock content %}
-

@@ -63,9 +63,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="materialexchangeitempriceoverride",
-            index=models.Index(
-                fields=["config", "type_id"], name="me_ovr_cfg_type_idx"
-            ),
+            index=models.Index(fields=["config", "type_id"], name="me_ovr_cfg_type_idx"),
         ),
         migrations.AddIndex(
             model_name="materialexchangeitempriceoverride",

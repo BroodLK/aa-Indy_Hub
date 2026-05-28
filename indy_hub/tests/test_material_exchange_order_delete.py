@@ -6,6 +6,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
 from django.urls import reverse
 
+# AA Example App
 # Local
 from indy_hub.models import (
     MaterialExchangeBuyOrder,

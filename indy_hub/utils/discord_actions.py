@@ -43,9 +43,7 @@ def generate_action_token(
 
 
 def decode_action_token(token: str, *, max_age: int | None = None) -> dict:
-    logger.debug(
-        "Decoding discord action token (max_age=%s)", max_age or _DEFAULT_TOKEN_MAX_AGE
-    )
+    logger.debug("Decoding discord action token (max_age=%s)", max_age or _DEFAULT_TOKEN_MAX_AGE)
     try:
         raw = _get_signer().unsign(token, max_age=max_age or _DEFAULT_TOKEN_MAX_AGE)
         return json.loads(raw)

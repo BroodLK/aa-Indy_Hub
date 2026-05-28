@@ -207,6 +207,8 @@ MARKET_GROUP_GRANULAR_CHILDREN: dict[str, list[str]] = {
         "Unknown Components",
     ],
 }
+
+
 def _normalize_market_group_name(raw_value: str) -> str:
     return " ".join(str(raw_value or "").replace("&amp;", "&").split()).strip().casefold()
 
@@ -234,9 +236,7 @@ def _find_market_group_id_by_name(
         root_matches = [
             gid
             for gid in matches
-            if payload_parent_id_is_none(
-                all_groups.get(gid, {}).get("parent_market_group_id", None)
-            )
+            if payload_parent_id_is_none(all_groups.get(gid, {}).get("parent_market_group_id", None))
         ]
         if root_matches:
             return int(sorted(root_matches)[0])
@@ -245,8 +245,7 @@ def _find_market_group_id_by_name(
     direct_matches = [
         gid
         for gid in matches
-        if int(all_groups.get(gid, {}).get("parent_market_group_id") or 0)
-        == int(parent_id_value)
+        if int(all_groups.get(gid, {}).get("parent_market_group_id") or 0) == int(parent_id_value)
     ]
     if direct_matches:
         return int(sorted(direct_matches)[0])
@@ -291,9 +290,7 @@ def _get_market_group_children_lookup(
     for parent_key, child_ids in children_lookup.items():
         children_lookup[parent_key] = sorted(
             child_ids,
-            key=lambda group_id: _normalize_market_group_name(
-                all_groups.get(int(group_id), {}).get("name", "")
-            ),
+            key=lambda group_id: _normalize_market_group_name(all_groups.get(int(group_id), {}).get("name", "")),
         )
 
     return children_lookup
@@ -396,9 +393,7 @@ def _get_market_group_tree() -> list[dict[str, object]]:
             {
                 "id": int(major_group_id),
                 "label": str(major_label),
-                "expandable": bool(
-                    major_label not in NON_EXPANDABLE_GRANULAR_GROUPS and children
-                ),
+                "expandable": bool(major_label not in NON_EXPANDABLE_GRANULAR_GROUPS and children),
                 "children": children,
             }
         )
@@ -486,9 +481,7 @@ def material_exchange_request_all_scopes(request):
 @indy_hub_permission_required("can_manage_material_hub")
 def material_exchange_request_contracts_scope(request):
     """Request ESI token with contracts scope, then redirect back to config."""
-    emit_view_analytics_event(
-        view_name="material_exchange_config.request_contracts_scope", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.request_contracts_scope", request=request)
     return sso_redirect(
         request,
         scopes="esi-contracts.read_corporation_contracts.v1",
@@ -551,9 +544,7 @@ def _get_token_for_corp(user, corp_id, scope, require_corporation_token: bool = 
             f"type={getattr(token, 'token_type', '')}, char_id={token.character_id}"
         )
         if corp_attr is not None and int(corp_attr) == int(corp_id):
-            logger.info(
-                f"Found matching corp token id={token.id} for corp_id={corp_id}"
-            )
+            logger.info(f"Found matching corp token id={token.id} for corp_id={corp_id}")
             return token
         # For corp tokens missing corp_attr, accept if backing character belongs to corp
         if corp_attr is None and _character_matches(token):
@@ -563,9 +554,7 @@ def _get_token_for_corp(user, corp_id, scope, require_corporation_token: bool = 
     # (character tokens from the corp can still access corp endpoints if the character has roles)
     for token in tokens:
         if _character_matches(token):
-            logger.info(
-                f"Using character token id={token.id} (char_id={token.character_id}) for corp_id={corp_id}"
-            )
+            logger.info(f"Using character token id={token.id} (char_id={token.character_id}) for corp_id={corp_id}")
             return token
 
     # No suitable token for this corporation
@@ -580,9 +569,7 @@ def _get_token_for_corp(user, corp_id, scope, require_corporation_token: bool = 
 @indy_hub_permission_required("can_manage_material_hub")
 @tokens_required(scopes="esi-characters.read_corporation_roles.v1")
 def material_exchange_config(request, tokens):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.page", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.page", request=request)
     """
     Buyback configuration page.
     Allows admins to configure corp, structure, and pricing.
@@ -602,9 +589,7 @@ def material_exchange_config(request, tokens):
 
     if config and getattr(config, "corporation_id", None):
         try:
-            hangar_divisions, division_scope_missing = _get_corp_hangar_divisions(
-                request.user, config.corporation_id
-            )
+            hangar_divisions, division_scope_missing = _get_corp_hangar_divisions(request.user, config.corporation_id)
             current_hangar_name = hangar_divisions.get(
                 int(config.hangar_division),
                 f"Hangar Division {config.hangar_division}",
@@ -651,9 +636,7 @@ def material_exchange_config(request, tokens):
             }
             for group_id in sorted(
                 allowed_choice_ids,
-                key=lambda gid: _build_market_group_path_label(
-                    int(gid), all_groups
-                ).lower(),
+                key=lambda gid: _build_market_group_path_label(int(gid), all_groups).lower(),
             )
             if int(group_id) in all_groups
         ]
@@ -680,9 +663,7 @@ def material_exchange_config(request, tokens):
                     break
         return sorted(normalized)
 
-    def _normalize_saved_market_group_profiles(
-        raw_profiles, *, allow_all_supported: bool
-    ) -> list[dict[str, object]]:
+    def _normalize_saved_market_group_profiles(raw_profiles, *, allow_all_supported: bool) -> list[dict[str, object]]:
         if not isinstance(raw_profiles, (list, tuple)):
             return []
 
@@ -698,9 +679,7 @@ def material_exchange_config(request, tokens):
                 continue
 
             normalized_name_key = name.casefold()
-            allow_all = (
-                bool(row.get("allow_all")) if allow_all_supported else False
-            )
+            allow_all = bool(row.get("allow_all")) if allow_all_supported else False
             market_group_ids = _normalize_selected_group_ids_for_ui(
                 row.get("market_group_ids") or row.get("group_ids") or []
             )
@@ -722,16 +701,12 @@ def material_exchange_config(request, tokens):
         )
 
     selected_market_groups_buy = (
-        _normalize_selected_group_ids_for_ui(
-            list(getattr(config, "allowed_market_groups_buy", []) or [])
-        )
+        _normalize_selected_group_ids_for_ui(list(getattr(config, "allowed_market_groups_buy", []) or []))
         if config
         else []
     )
     selected_market_groups_sell = (
-        _normalize_selected_group_ids_for_ui(
-            list(getattr(config, "allowed_market_groups_sell", []) or [])
-        )
+        _normalize_selected_group_ids_for_ui(list(getattr(config, "allowed_market_groups_sell", []) or []))
         if config
         else []
     )
@@ -772,33 +747,15 @@ def material_exchange_config(request, tokens):
         capital_default_price_dread = getattr(config, "capital_default_price_dread", None)
         capital_default_price_carrier = getattr(config, "capital_default_price_carrier", None)
         capital_default_price_fax = getattr(config, "capital_default_price_fax", None)
-        capital_default_eta_min_days_dread = int(
-            getattr(config, "capital_default_eta_min_days_dread", 14) or 14
-        )
-        capital_default_eta_max_days_dread = int(
-            getattr(config, "capital_default_eta_max_days_dread", 28) or 28
-        )
-        capital_default_eta_min_days_carrier = int(
-            getattr(config, "capital_default_eta_min_days_carrier", 14) or 14
-        )
-        capital_default_eta_max_days_carrier = int(
-            getattr(config, "capital_default_eta_max_days_carrier", 28) or 28
-        )
-        capital_default_eta_min_days_fax = int(
-            getattr(config, "capital_default_eta_min_days_fax", 14) or 14
-        )
-        capital_default_eta_max_days_fax = int(
-            getattr(config, "capital_default_eta_max_days_fax", 28) or 28
-        )
-        capital_default_lead_time_days = int(
-            getattr(config, "capital_default_lead_time_days", 0) or 0
-        )
-        capital_auto_cancel_on_state_change = bool(
-            getattr(config, "capital_auto_cancel_on_state_change", False)
-        )
-        capital_auto_cancel_delay_value = int(
-            getattr(config, "capital_auto_cancel_delay_value", 0) or 0
-        )
+        capital_default_eta_min_days_dread = int(getattr(config, "capital_default_eta_min_days_dread", 14) or 14)
+        capital_default_eta_max_days_dread = int(getattr(config, "capital_default_eta_max_days_dread", 28) or 28)
+        capital_default_eta_min_days_carrier = int(getattr(config, "capital_default_eta_min_days_carrier", 14) or 14)
+        capital_default_eta_max_days_carrier = int(getattr(config, "capital_default_eta_max_days_carrier", 28) or 28)
+        capital_default_eta_min_days_fax = int(getattr(config, "capital_default_eta_min_days_fax", 14) or 14)
+        capital_default_eta_max_days_fax = int(getattr(config, "capital_default_eta_max_days_fax", 28) or 28)
+        capital_default_lead_time_days = int(getattr(config, "capital_default_lead_time_days", 0) or 0)
+        capital_auto_cancel_on_state_change = bool(getattr(config, "capital_auto_cancel_on_state_change", False))
+        capital_auto_cancel_delay_value = int(getattr(config, "capital_auto_cancel_delay_value", 0) or 0)
         capital_auto_cancel_delay_unit = str(
             getattr(
                 config,
@@ -807,12 +764,8 @@ def material_exchange_config(request, tokens):
             )
             or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
         )
-        capital_auto_cancel_preapproved_state_names_text = ", ".join(
-            config.get_capital_preapproved_state_names()
-        )
-        capital_auto_cancel_eligible_statuses = (
-            config.get_capital_auto_cancel_eligible_statuses()
-        )
+        capital_auto_cancel_preapproved_state_names_text = ", ".join(config.get_capital_preapproved_state_names())
+        capital_auto_cancel_eligible_statuses = config.get_capital_auto_cancel_eligible_statuses()
         capital_disabled_ship_type_ids_text = ", ".join(
             str(type_id) for type_id in config.get_capital_disabled_ship_type_ids()
         )
@@ -824,14 +777,8 @@ def material_exchange_config(request, tokens):
         buy_ids = config.get_buy_structure_ids(include_primary=False)
         sell_name_map = config.get_sell_structure_name_map()
         buy_name_map = config.get_buy_structure_name_map()
-        selected_sell_structures = [
-            {"id": int(sid), "name": sell_name_map.get(int(sid), "")}
-            for sid in sell_ids
-        ]
-        selected_buy_structures = [
-            {"id": int(sid), "name": buy_name_map.get(int(sid), "")}
-            for sid in buy_ids
-        ]
+        selected_sell_structures = [{"id": int(sid), "name": sell_name_map.get(int(sid), "")} for sid in sell_ids]
+        selected_buy_structures = [{"id": int(sid), "name": buy_name_map.get(int(sid), "")} for sid in buy_ids]
         sell_group_map = config.get_sell_market_group_map()
         if sell_group_map:
             for sid in sell_ids:
@@ -842,23 +789,15 @@ def material_exchange_config(request, tokens):
                 if groups is None:
                     selected_sell_market_groups_by_structure[str(sid_int)] = None
                     continue
-                selected_sell_market_groups_by_structure[str(sid_int)] = (
-                    _normalize_selected_group_ids_for_ui(groups)
-                )
+                selected_sell_market_groups_by_structure[str(sid_int)] = _normalize_selected_group_ids_for_ui(groups)
         elif selected_market_groups_sell:
-            fallback_sell_groups = _normalize_selected_group_ids_for_ui(
-                selected_market_groups_sell
-            )
+            fallback_sell_groups = _normalize_selected_group_ids_for_ui(selected_market_groups_sell)
             for sid in sell_ids:
-                selected_sell_market_groups_by_structure[str(int(sid))] = list(
-                    fallback_sell_groups
-                )
+                selected_sell_market_groups_by_structure[str(int(sid))] = list(fallback_sell_groups)
 
     market_group_search_index = {}
     try:
-        market_group_search_index = _get_market_group_search_index_for_ids(
-            allowed_choice_ids
-        )
+        market_group_search_index = _get_market_group_search_index_for_ids(allowed_choice_ids)
     except Exception as exc:
         logger.warning("Failed to build market group search index: %s", exc)
 
@@ -897,13 +836,9 @@ def material_exchange_config(request, tokens):
                 {
                     "type_id": type_id,
                     "type_name": type_name,
-                    "sell_markup_percent_override": row.get(
-                        "sell_markup_percent_override"
-                    ),
+                    "sell_markup_percent_override": row.get("sell_markup_percent_override"),
                     "sell_markup_base_override": row.get("sell_markup_base_override"),
-                    "buy_markup_percent_override": row.get(
-                        "buy_markup_percent_override"
-                    ),
+                    "buy_markup_percent_override": row.get("buy_markup_percent_override"),
                     "buy_markup_base_override": row.get("buy_markup_base_override"),
                     # Legacy fixed-price values are still surfaced so existing rows can be
                     # migrated by admins during normal config edits.
@@ -926,22 +861,16 @@ def material_exchange_config(request, tokens):
 
         item_override_type_choices = [
             {"id": int(type_id), "name": str(type_name)}
-            for type_id, type_name in sorted(
-                choice_map.items(), key=lambda pair: pair[1].lower()
-            )
+            for type_id, type_name in sorted(choice_map.items(), key=lambda pair: pair[1].lower())
         ]
 
-        raw_group_override_rows = list(
-            getattr(config, "market_group_price_overrides", []) or []
-        )
+        raw_group_override_rows = list(getattr(config, "market_group_price_overrides", []) or [])
         parsed_group_overrides: dict[int, dict[str, object]] = {}
         for row in raw_group_override_rows:
             if not isinstance(row, dict):
                 continue
             try:
-                market_group_id = int(
-                    row.get("market_group_id") or row.get("group_id") or 0
-                )
+                market_group_id = int(row.get("market_group_id") or row.get("group_id") or 0)
             except (TypeError, ValueError):
                 continue
             if market_group_id <= 0:
@@ -973,18 +902,10 @@ def material_exchange_config(request, tokens):
         raw_container_override = getattr(config, "container_price_overrides", {}) or {}
         if isinstance(raw_container_override, dict):
             container_price_override = {
-                "sell_markup_percent_override": raw_container_override.get(
-                    "sell_markup_percent_override"
-                ),
-                "sell_markup_base_override": raw_container_override.get(
-                    "sell_markup_base_override"
-                ),
-                "buy_markup_percent_override": raw_container_override.get(
-                    "buy_markup_percent_override"
-                ),
-                "buy_markup_base_override": raw_container_override.get(
-                    "buy_markup_base_override"
-                ),
+                "sell_markup_percent_override": raw_container_override.get("sell_markup_percent_override"),
+                "sell_markup_base_override": raw_container_override.get("sell_markup_base_override"),
+                "buy_markup_percent_override": raw_container_override.get("buy_markup_percent_override"),
+                "buy_markup_base_override": raw_container_override.get("buy_markup_base_override"),
                 "sell_price_override": raw_container_override.get("sell_price_override"),
                 "buy_price_override": raw_container_override.get("buy_price_override"),
             }
@@ -1043,7 +964,8 @@ def material_exchange_config(request, tokens):
         "capital_auto_cancel_status_choices": [
             (value, label)
             for value, label in CapitalShipOrder.Status.choices
-            if value not in {
+            if value
+            not in {
                 CapitalShipOrder.Status.COMPLETED,
                 CapitalShipOrder.Status.REJECTED,
                 CapitalShipOrder.Status.CANCELLED,
@@ -1064,15 +986,11 @@ def material_exchange_config(request, tokens):
         build_nav_context(
             request.user,
             active_tab="material_hub",
-            can_manage_corp=request.user.has_perm(
-                "indy_hub.can_manage_corp_bp_requests"
-            ),
+            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
         )
     )
     context["back_to_overview_url"] = reverse("indy_hub:index")
-    context["material_exchange_enabled"] = (
-        MaterialExchangeSettings.get_solo().is_enabled
-    )
+    context["material_exchange_enabled"] = MaterialExchangeSettings.get_solo().is_enabled
 
     return render(request, "indy_hub/material_exchange/config.html", context)
 
@@ -1080,9 +998,7 @@ def material_exchange_config(request, tokens):
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
 def material_exchange_toggle_active(request):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.toggle_active", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.toggle_active", request=request)
     """Toggle Buyback availability from settings page."""
 
     if request.method != "POST":
@@ -1114,9 +1030,7 @@ def material_exchange_toggle_active(request):
         # Third Party
         from django_celery_beat.models import PeriodicTask
 
-        PeriodicTask.objects.filter(name="indy-hub-material-exchange-cycle").update(
-            enabled=desired_active
-        )
+        PeriodicTask.objects.filter(name="indy-hub-material-exchange-cycle").update(enabled=desired_active)
     except Exception:
         # Beat not installed or table missing; ignore
         pass
@@ -1130,13 +1044,9 @@ def material_exchange_toggle_active(request):
 
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
-@tokens_required(
-    scopes="esi-assets.read_corporation_assets.v1 esi-corporations.read_divisions.v1"
-)
+@tokens_required(scopes="esi-assets.read_corporation_assets.v1 esi-corporations.read_divisions.v1")
 def material_exchange_get_structures(request, tokens, corp_id):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.get_structures", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.get_structures", request=request)
     """
     AJAX endpoint to get structures for a given corporation.
     Returns JSON list of structures.
@@ -1145,16 +1055,11 @@ def material_exchange_get_structures(request, tokens, corp_id):
     from django.http import JsonResponse
 
     structures, assets_scope_missing = _get_corp_structures(request.user, corp_id)
-    hangar_divisions, division_scope_missing = _get_corp_hangar_divisions(
-        request.user, corp_id
-    )
+    hangar_divisions, division_scope_missing = _get_corp_hangar_divisions(request.user, corp_id)
 
     return JsonResponse(
         {
-            "structures": [
-                {"id": s["id"], "name": s["name"], "flags": s.get("flags", [])}
-                for s in structures
-            ],
+            "structures": [{"id": s["id"], "name": s["name"], "flags": s.get("flags", [])} for s in structures],
             "hangar_divisions": hangar_divisions,
             "division_scope_missing": division_scope_missing,
             "assets_scope_missing": assets_scope_missing,
@@ -1174,9 +1079,7 @@ def _find_director_character(user, corp_id):
     # AA Example App
     from indy_hub.services.esi_client import shared_client
 
-    logger.warning(
-        "Looking for DIRECTOR character in corp %s for user %s", corp_id, user.username
-    )
+    logger.warning("Looking for DIRECTOR character in corp %s for user %s", corp_id, user.username)
 
     # Get ALL character tokens for the user first
     try:
@@ -1207,9 +1110,7 @@ def _find_director_character(user, corp_id):
             [t.character_id for t in scoped_tokens_list],
         )
     except Exception as exc:
-        logger.warning(
-            "Failed to filter tokens by scope for user %s: %s", user.username, exc
-        )
+        logger.warning("Failed to filter tokens by scope for user %s: %s", user.username, exc)
         scoped_tokens_list = []
 
     def _coerce_list(value: object) -> list[str]:
@@ -1220,9 +1121,7 @@ def _find_director_character(user, corp_id):
     def _load_roles(character_id: int) -> list[str]:
         snapshot = CharacterRoles.objects.filter(character_id=character_id).first()
         snapshot_stale = bool(
-            snapshot
-            and (timezone.now() - snapshot.last_updated)
-            >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS)
+            snapshot and (timezone.now() - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS)
         )
         if snapshot and not snapshot_stale:
             return [str(role).upper() for role in (snapshot.roles or []) if role]
@@ -1363,9 +1262,7 @@ def _find_director_character(user, corp_id):
             )
 
             corp_roles = _load_roles(character_id)
-            logger.warning(
-                "Character %s roles (second pass): %s", character_id, corp_roles
-            )
+            logger.warning("Character %s roles (second pass): %s", character_id, corp_roles)
 
             if "DIRECTOR" in corp_roles:
                 logger.warning(
@@ -1398,13 +1295,9 @@ def _find_director_character(user, corp_id):
 
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
-@tokens_required(
-    scopes="esi-characters.read_corporation_roles.v1 esi-assets.read_corporation_assets.v1"
-)
+@tokens_required(scopes="esi-characters.read_corporation_roles.v1 esi-assets.read_corporation_assets.v1")
 def material_exchange_refresh_corp_assets(request, tokens):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.refresh_corp_assets", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.refresh_corp_assets", request=request)
     """
     AJAX endpoint to refresh corporation assets and structures.
     Triggers background task to fetch latest ESI data.
@@ -1416,17 +1309,13 @@ def material_exchange_refresh_corp_assets(request, tokens):
     from django.http import JsonResponse
 
     if request.method != "POST":
-        return JsonResponse(
-            {"success": False, "error": "Method not allowed"}, status=405
-        )
+        return JsonResponse({"success": False, "error": "Method not allowed"}, status=405)
 
     try:
         data = json.loads(request.body)
         corp_id = int(data.get("corporation_id"))
     except (json.JSONDecodeError, ValueError, TypeError):
-        return JsonResponse(
-            {"success": False, "error": "Invalid corporation_id"}, status=400
-        )
+        return JsonResponse({"success": False, "error": "Invalid corporation_id"}, status=400)
 
     try:
         # Find a DIRECTOR character for this corporation
@@ -1454,9 +1343,7 @@ def material_exchange_refresh_corp_assets(request, tokens):
             }
         )
     except Exception as exc:
-        logger.exception(
-            "Failed to trigger asset refresh for corp %s: %s", corp_id, exc
-        )
+        logger.exception("Failed to trigger asset refresh for corp %s: %s", corp_id, exc)
         return JsonResponse(
             {"success": False, "error": f"Failed to refresh assets: {str(exc)}"},
             status=500,
@@ -1466,9 +1353,7 @@ def material_exchange_refresh_corp_assets(request, tokens):
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
 def material_exchange_check_refresh_status(request, task_id):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.check_refresh_status", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.check_refresh_status", request=request)
     """
     AJAX endpoint to check the status of a refresh task.
     Returns the task status: pending, success, or failure, plus progress info.
@@ -1513,13 +1398,7 @@ def material_exchange_check_refresh_status(request, task_id):
                         "current": progress_data.get("current", 0),
                         "total": progress_data.get("total", 0),
                         "percent": (
-                            int(
-                                (
-                                    progress_data.get("current", 0)
-                                    / progress_data.get("total", 1)
-                                )
-                                * 100
-                            )
+                            int((progress_data.get("current", 0) / progress_data.get("total", 1)) * 100)
                             if progress_data.get("total", 0) > 0
                             else 0
                         ),
@@ -1559,8 +1438,7 @@ def material_exchange_check_refresh_status(request, task_id):
             return JsonResponse(
                 {
                     "status": "pending",
-                    "progress": progress_info
-                    or {"percent": 0, "status": "Initializing..."},
+                    "progress": progress_info or {"percent": 0, "status": "Initializing..."},
                 }
             )
         elif state == "SUCCESS":
@@ -1583,8 +1461,7 @@ def material_exchange_check_refresh_status(request, task_id):
             return JsonResponse(
                 {
                     "status": "pending",
-                    "progress": progress_info
-                    or {"percent": 0, "status": "Processing..."},
+                    "progress": progress_info or {"percent": 0, "status": "Processing..."},
                 }
             )
         elif state is None:
@@ -1604,8 +1481,7 @@ def material_exchange_check_refresh_status(request, task_id):
             return JsonResponse(
                 {
                     "status": "pending",
-                    "progress": progress_info
-                    or {"percent": 0, "status": "In progress..."},
+                    "progress": progress_info or {"percent": 0, "status": "In progress..."},
                 }
             )
     except Exception as exc:
@@ -1720,15 +1596,13 @@ def _get_corp_structures(user, corp_id):
     loc_ids_set: set[int] = set()
     structure_flags: dict[int, set[str]] = {}
 
-    for loc_id in assets_qs.filter(
-        location_flag__in=resolvable_structure_flags
-    ).values_list("location_id", flat=True):
+    for loc_id in assets_qs.filter(location_flag__in=resolvable_structure_flags).values_list("location_id", flat=True):
         if loc_id:
             loc_ids_set.add(int(loc_id))
 
-    for office_folder_item_id, flag in assets_qs.filter(
-        location_flag__startswith="CorpSAG"
-    ).values_list("location_id", "location_flag"):
+    for office_folder_item_id, flag in assets_qs.filter(location_flag__startswith="CorpSAG").values_list(
+        "location_id", "location_flag"
+    ):
         if not office_folder_item_id:
             continue
         structure_id = office_folder_map.get(int(office_folder_item_id))
@@ -1766,9 +1640,7 @@ def _get_corp_structures(user, corp_id):
             schedule_async=True,
         )
     except Exception as exc:
-        logger.warning(
-            "Failed to resolve structure names for corporation %s: %s", corp_id, exc
-        )
+        logger.warning("Failed to resolve structure names for corporation %s: %s", corp_id, exc)
         structure_names = {}
 
     structures: list[dict] = []
@@ -1794,9 +1666,7 @@ def _get_corp_structures(user, corp_id):
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
 def material_exchange_request_assets_token(request):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.request_assets_token", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.request_assets_token", request=request)
     """Request ESI token with corp assets scope, then redirect back to config."""
     return sso_redirect(
         request,
@@ -1841,9 +1711,9 @@ def _get_industry_market_group_ids() -> set[int]:
 
         ids = {
             int(group_id)
-            for group_id in ItemType.objects.exclude(
-                market_group_id_raw__isnull=True
-            ).values_list("market_group_id_raw", flat=True)
+            for group_id in ItemType.objects.exclude(market_group_id_raw__isnull=True).values_list(
+                "market_group_id_raw", flat=True
+            )
             if group_id is not None
         }
     except Exception:
@@ -1896,9 +1766,7 @@ def _build_market_group_index() -> dict[int, dict[str, str | int | None]]:
         return {}
 
 
-def _get_market_group_path_ids(
-    group_id: int, all_groups: dict[int, dict[str, str | int | None]]
-) -> list[int]:
+def _get_market_group_path_ids(group_id: int, all_groups: dict[int, dict[str, str | int | None]]) -> list[int]:
     """Return path of IDs from root to the group (inclusive)."""
 
     path: list[int] = []
@@ -1941,9 +1809,7 @@ def _build_market_group_path_label(
     return separator.join(labels)
 
 
-def _normalize_market_group_ids_for_choice_depth(
-    raw_group_ids, *, depth_from_root: int
-) -> list[int]:
+def _normalize_market_group_ids_for_choice_depth(raw_group_ids, *, depth_from_root: int) -> list[int]:
     """Normalize market group ids to the configured UI grouping depth."""
 
     normalized: set[int] = set()
@@ -1979,10 +1845,7 @@ def _get_industry_market_group_choice_ids(
 ) -> set[int]:
     """Return grouped market group IDs at the given depth for all item types."""
 
-    cache_key = (
-        "indy_hub:material_exchange:market_group_choice_ids:v3:"
-        f"depth:{depth_from_root}"
-    )
+    cache_key = "indy_hub:material_exchange:market_group_choice_ids:v3:" f"depth:{depth_from_root}"
     cached = cache.get(cache_key)
     if cached is not None:
         try:
@@ -2017,10 +1880,7 @@ def _get_industry_market_group_choices(
 ) -> list[dict[str, str | int]]:
     """Return sorted market group choices (id + label) for all item types."""
 
-    cache_key = (
-        "indy_hub:material_exchange:market_group_choices:v3:"
-        f"depth:{depth_from_root}"
-    )
+    cache_key = "indy_hub:material_exchange:market_group_choices:v3:" f"depth:{depth_from_root}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -2049,10 +1909,7 @@ def _get_industry_market_group_search_index(
 ) -> dict[int, dict[str, object]]:
     """Return market group labels and item names for search."""
 
-    cache_key = (
-        "indy_hub:material_exchange:market_group_search_index:v3:"
-        f"depth:{depth_from_root}"
-    )
+    cache_key = "indy_hub:material_exchange:market_group_search_index:v3:" f"depth:{depth_from_root}"
     cached = cache.get(cache_key)
     if cached is not None:
         try:
@@ -2167,9 +2024,7 @@ def _get_market_group_search_index_for_ids(
         }
     cache.set(cache_key, serialized, 3600)
 
-    return {
-        int(group_id): payload for group_id, payload in serialized.items()
-    }
+    return {int(group_id): payload for group_id, payload in serialized.items()}
 
 
 def _handle_config_save(request, existing_config):
@@ -2185,27 +2040,15 @@ def _handle_config_save(request, existing_config):
     buy_markup_base = request.POST.get("buy_markup_base", "buy")
     allowed_market_groups_buy_raw = request.POST.getlist("allowed_market_groups_buy")
     allowed_market_groups_sell_raw = request.POST.getlist("allowed_market_groups_sell")
-    allowed_market_groups_buy_json_raw = (
-        request.POST.get("allowed_market_groups_buy_json", "") or ""
-    ).strip()
-    allowed_market_groups_sell_json_raw = (
-        request.POST.get("allowed_market_groups_sell_json", "") or ""
-    ).strip()
+    allowed_market_groups_buy_json_raw = (request.POST.get("allowed_market_groups_buy_json", "") or "").strip()
+    allowed_market_groups_sell_json_raw = (request.POST.get("allowed_market_groups_sell_json", "") or "").strip()
     allowed_market_groups_sell_by_structure_raw = (
         request.POST.get("allowed_market_groups_sell_by_structure_json", "") or ""
     ).strip()
-    sell_market_group_profiles_raw = (
-        request.POST.get("sell_market_group_profiles_json", "") or ""
-    ).strip()
-    buy_market_group_profiles_raw = (
-        request.POST.get("buy_market_group_profiles_json", "") or ""
-    ).strip()
-    item_price_overrides_raw = (
-        request.POST.get("item_price_overrides_json", "") or ""
-    ).strip()
-    market_group_price_overrides_raw = (
-        request.POST.get("market_group_price_overrides_json", "") or ""
-    ).strip()
+    sell_market_group_profiles_raw = (request.POST.get("sell_market_group_profiles_json", "") or "").strip()
+    buy_market_group_profiles_raw = (request.POST.get("buy_market_group_profiles_json", "") or "").strip()
+    item_price_overrides_raw = (request.POST.get("item_price_overrides_json", "") or "").strip()
+    market_group_price_overrides_raw = (request.POST.get("market_group_price_overrides_json", "") or "").strip()
     container_sell_markup_percent_override_raw = (
         request.POST.get("container_sell_markup_percent_override", "") or ""
     ).strip()
@@ -2215,78 +2058,40 @@ def _handle_config_save(request, existing_config):
     container_buy_markup_percent_override_raw = (
         request.POST.get("container_buy_markup_percent_override", "") or ""
     ).strip()
-    container_buy_markup_base_override_raw = (
-        request.POST.get("container_buy_markup_base_override", "") or ""
-    ).strip()
-    container_sell_price_override_raw = (
-        request.POST.get("container_sell_price_override", "") or ""
-    ).strip()
-    container_buy_price_override_raw = (
-        request.POST.get("container_buy_price_override", "") or ""
-    ).strip()
-    capital_default_price_dread_raw = (
-        request.POST.get("capital_default_price_dread", "") or ""
-    ).strip()
-    capital_default_price_carrier_raw = (
-        request.POST.get("capital_default_price_carrier", "") or ""
-    ).strip()
-    capital_default_price_fax_raw = (
-        request.POST.get("capital_default_price_fax", "") or ""
-    ).strip()
-    capital_default_eta_min_days_dread_raw = (
-        request.POST.get("capital_default_eta_min_days_dread", "") or ""
-    ).strip()
-    capital_default_eta_max_days_dread_raw = (
-        request.POST.get("capital_default_eta_max_days_dread", "") or ""
-    ).strip()
+    container_buy_markup_base_override_raw = (request.POST.get("container_buy_markup_base_override", "") or "").strip()
+    container_sell_price_override_raw = (request.POST.get("container_sell_price_override", "") or "").strip()
+    container_buy_price_override_raw = (request.POST.get("container_buy_price_override", "") or "").strip()
+    capital_default_price_dread_raw = (request.POST.get("capital_default_price_dread", "") or "").strip()
+    capital_default_price_carrier_raw = (request.POST.get("capital_default_price_carrier", "") or "").strip()
+    capital_default_price_fax_raw = (request.POST.get("capital_default_price_fax", "") or "").strip()
+    capital_default_eta_min_days_dread_raw = (request.POST.get("capital_default_eta_min_days_dread", "") or "").strip()
+    capital_default_eta_max_days_dread_raw = (request.POST.get("capital_default_eta_max_days_dread", "") or "").strip()
     capital_default_eta_min_days_carrier_raw = (
         request.POST.get("capital_default_eta_min_days_carrier", "") or ""
     ).strip()
     capital_default_eta_max_days_carrier_raw = (
         request.POST.get("capital_default_eta_max_days_carrier", "") or ""
     ).strip()
-    capital_default_eta_min_days_fax_raw = (
-        request.POST.get("capital_default_eta_min_days_fax", "") or ""
-    ).strip()
-    capital_default_eta_max_days_fax_raw = (
-        request.POST.get("capital_default_eta_max_days_fax", "") or ""
-    ).strip()
-    capital_default_lead_time_days_raw = (
-        request.POST.get("capital_default_lead_time_days", "") or ""
-    ).strip()
+    capital_default_eta_min_days_fax_raw = (request.POST.get("capital_default_eta_min_days_fax", "") or "").strip()
+    capital_default_eta_max_days_fax_raw = (request.POST.get("capital_default_eta_max_days_fax", "") or "").strip()
+    capital_default_lead_time_days_raw = (request.POST.get("capital_default_lead_time_days", "") or "").strip()
     capital_auto_cancel_preapproved_state_names_raw = (
         request.POST.get("capital_auto_cancel_preapproved_state_names", "") or ""
     ).strip()
-    capital_auto_cancel_eligible_statuses_raw = request.POST.getlist(
-        "capital_auto_cancel_eligible_statuses"
-    )
-    capital_auto_cancel_delay_value_raw = (
-        request.POST.get("capital_auto_cancel_delay_value", "") or ""
-    ).strip()
-    capital_auto_cancel_delay_unit_raw = (
-        request.POST.get("capital_auto_cancel_delay_unit", "") or ""
-    ).strip()
-    capital_disabled_ship_type_ids_raw = (
-        request.POST.get("capital_disabled_ship_type_ids", "") or ""
-    ).strip()
-    capital_custom_ship_options_raw = (
-        request.POST.get("capital_custom_ship_options", "") or ""
-    ).strip()
-    capital_disabled_ship_groups_raw = (
-        request.POST.get("capital_disabled_ship_groups", "") or ""
-    ).strip()
+    capital_auto_cancel_eligible_statuses_raw = request.POST.getlist("capital_auto_cancel_eligible_statuses")
+    capital_auto_cancel_delay_value_raw = (request.POST.get("capital_auto_cancel_delay_value", "") or "").strip()
+    capital_auto_cancel_delay_unit_raw = (request.POST.get("capital_auto_cancel_delay_unit", "") or "").strip()
+    capital_disabled_ship_type_ids_raw = (request.POST.get("capital_disabled_ship_type_ids", "") or "").strip()
+    capital_custom_ship_options_raw = (request.POST.get("capital_custom_ship_options", "") or "").strip()
+    capital_disabled_ship_groups_raw = (request.POST.get("capital_disabled_ship_groups", "") or "").strip()
     capital_ship_estimated_price_overrides_raw = (
         request.POST.get("capital_ship_estimated_price_overrides", "") or ""
     ).strip()
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
-    notify_admins_on_sell_anomaly = (
-        request.POST.get("notify_admins_on_sell_anomaly") == "on"
-    )
-    capital_auto_cancel_on_state_change = (
-        request.POST.get("capital_auto_cancel_on_state_change") == "on"
-    )
+    notify_admins_on_sell_anomaly = request.POST.get("notify_admins_on_sell_anomaly") == "on"
+    capital_auto_cancel_on_state_change = request.POST.get("capital_auto_cancel_on_state_change") == "on"
     buy_enabled = request.POST.get("buy_enabled") == "on"
     allow_fitted_ships = request.POST.get("allow_fitted_ships") == "on"
     location_match_mode = request.POST.get("location_match_mode") or "name_or_id"
@@ -2323,9 +2128,8 @@ def _handle_config_save(request, existing_config):
         "capital_disabled_ship_groups",
         "capital_ship_estimated_price_overrides",
     }
-    capital_fields_submitted = (
-        bool(capital_field_names.intersection(set(request.POST.keys())))
-        or bool(request.POST.getlist("capital_auto_cancel_eligible_statuses"))
+    capital_fields_submitted = bool(capital_field_names.intersection(set(request.POST.keys()))) or bool(
+        request.POST.getlist("capital_auto_cancel_eligible_statuses")
     )
 
     def _parse_decimal(raw_value: str, fallback: str) -> Decimal:
@@ -2362,9 +2166,7 @@ def _handle_config_save(request, existing_config):
             raise ValueError("Override prices must be positive numbers or empty.")
         return parsed.quantize(Decimal("0.01"))
 
-    def _parse_optional_markup_percent(
-        raw_value, *, minimum: Decimal, maximum: Decimal, label: str
-    ) -> Decimal | None:
+    def _parse_optional_markup_percent(raw_value, *, minimum: Decimal, maximum: Decimal, label: str) -> Decimal | None:
         if raw_value is None:
             return None
         normalized = str(raw_value).strip().replace(",", ".")
@@ -2372,9 +2174,7 @@ def _handle_config_save(request, existing_config):
             return None
         parsed = Decimal(normalized).quantize(Decimal("0.01"))
         if parsed < minimum or parsed > maximum:
-            raise ValueError(
-                f"{label} must be between {minimum} and {maximum}."
-            )
+            raise ValueError(f"{label} must be between {minimum} and {maximum}.")
         return parsed
 
     def _parse_optional_markup_base(raw_value, *, fallback: str) -> str:
@@ -2430,10 +2230,7 @@ def _handle_config_save(request, existing_config):
     def _normalize_ship_class(raw_value: str) -> str:
         normalized = str(raw_value or "").strip().lower()
         normalized = normalized.replace("-", "_").replace(" ", "_")
-        normalized = "".join(
-            char if (char.isalnum() or char == "_") else "_"
-            for char in normalized
-        ).strip("_")
+        normalized = "".join(char if (char.isalnum() or char == "_") else "_" for char in normalized).strip("_")
         return normalized
 
     def _parse_capital_custom_ship_options(raw_value: str) -> list[dict[str, object]]:
@@ -2442,9 +2239,7 @@ def _handle_config_save(request, existing_config):
         try:
             payload = json.loads(raw_value)
         except json.JSONDecodeError:
-            raise ValueError(
-                "Custom capital ship options must be valid JSON (list of objects)."
-            )
+            raise ValueError("Custom capital ship options must be valid JSON (list of objects).")
         if not isinstance(payload, list):
             raise ValueError("Custom capital ship options must be a JSON list.")
 
@@ -2465,9 +2260,7 @@ def _handle_config_save(request, existing_config):
 
             ship_class = _normalize_ship_class(row.get("ship_class") or "")
             if not ship_class:
-                raise ValueError(
-                    f"Custom capital ship type {type_id} is missing ship_class."
-                )
+                raise ValueError(f"Custom capital ship type {type_id} is missing ship_class.")
 
             ship_class_label = str(row.get("ship_class_label") or "").strip()
             if not ship_class_label:
@@ -2511,13 +2304,9 @@ def _handle_config_save(request, existing_config):
         try:
             payload = json.loads(raw_value)
         except json.JSONDecodeError:
-            raise ValueError(
-                "Capital ship estimated price overrides must be valid JSON (list of objects)."
-            )
+            raise ValueError("Capital ship estimated price overrides must be valid JSON (list of objects).")
         if not isinstance(payload, list):
-            raise ValueError(
-                "Capital ship estimated price overrides must be a JSON list."
-            )
+            raise ValueError("Capital ship estimated price overrides must be a JSON list.")
 
         parsed_by_type: dict[int, str] = {}
         for row in payload:
@@ -2526,13 +2315,9 @@ def _handle_config_save(request, existing_config):
             try:
                 type_id = int(row.get("type_id") or 0)
             except (TypeError, ValueError):
-                raise ValueError(
-                    "Each ship estimated-price entry needs a valid integer type_id."
-                )
+                raise ValueError("Each ship estimated-price entry needs a valid integer type_id.")
             if type_id <= 0:
-                raise ValueError(
-                    "Ship estimated-price type_id values must be positive integers."
-                )
+                raise ValueError("Ship estimated-price type_id values must be positive integers.")
             parsed_price = _parse_optional_price(row.get("price_isk"))
             if parsed_price is None:
                 continue
@@ -2590,13 +2375,9 @@ def _handle_config_save(request, existing_config):
             return {}
 
         return {
-            "sell_markup_percent_override": _decimal_for_json(
-                sell_markup_percent_override
-            ),
+            "sell_markup_percent_override": _decimal_for_json(sell_markup_percent_override),
             "sell_markup_base_override": sell_markup_base_override,
-            "buy_markup_percent_override": _decimal_for_json(
-                buy_markup_percent_override
-            ),
+            "buy_markup_percent_override": _decimal_for_json(buy_markup_percent_override),
             "buy_markup_base_override": buy_markup_base_override,
             "sell_price_override": _decimal_for_json(sell_price_override),
             "buy_price_override": _decimal_for_json(buy_price_override),
@@ -2658,13 +2439,8 @@ def _handle_config_save(request, existing_config):
             sell_price_override = _parse_optional_price(row.get("sell_price_override"))
             buy_price_override = _parse_optional_price(row.get("buy_price_override"))
 
-            has_markup_override = (
-                sell_markup_percent_override is not None
-                or buy_markup_percent_override is not None
-            )
-            has_legacy_override = (
-                sell_price_override is not None or buy_price_override is not None
-            )
+            has_markup_override = sell_markup_percent_override is not None or buy_markup_percent_override is not None
+            has_legacy_override = sell_price_override is not None or buy_price_override is not None
 
             if not has_markup_override and not has_legacy_override:
                 continue
@@ -2764,13 +2540,8 @@ def _handle_config_save(request, existing_config):
             sell_price_override = _parse_optional_price(row.get("sell_price_override"))
             buy_price_override = _parse_optional_price(row.get("buy_price_override"))
 
-            has_markup_override = (
-                sell_markup_percent_override is not None
-                or buy_markup_percent_override is not None
-            )
-            has_fixed_override = (
-                sell_price_override is not None or buy_price_override is not None
-            )
+            has_markup_override = sell_markup_percent_override is not None or buy_markup_percent_override is not None
+            has_fixed_override = sell_price_override is not None or buy_price_override is not None
             if not has_markup_override and not has_fixed_override:
                 continue
 
@@ -2782,13 +2553,9 @@ def _handle_config_save(request, existing_config):
                     or _build_market_group_path_label(int(market_group_id), all_groups)
                 ).strip()
                 or f"Group {int(market_group_id)}",
-                "sell_markup_percent_override": _decimal_for_json(
-                    sell_markup_percent_override
-                ),
+                "sell_markup_percent_override": _decimal_for_json(sell_markup_percent_override),
                 "sell_markup_base_override": sell_markup_base_override,
-                "buy_markup_percent_override": _decimal_for_json(
-                    buy_markup_percent_override
-                ),
+                "buy_markup_percent_override": _decimal_for_json(buy_markup_percent_override),
                 "buy_markup_base_override": buy_markup_base_override,
                 "sell_price_override": _decimal_for_json(sell_price_override),
                 "buy_price_override": _decimal_for_json(buy_price_override),
@@ -2835,15 +2602,9 @@ def _handle_config_save(request, existing_config):
         )
         container_price_overrides = _parse_container_price_overrides()
         if capital_fields_submitted:
-            capital_default_price_dread = _parse_optional_price(
-                capital_default_price_dread_raw
-            )
-            capital_default_price_carrier = _parse_optional_price(
-                capital_default_price_carrier_raw
-            )
-            capital_default_price_fax = _parse_optional_price(
-                capital_default_price_fax_raw
-            )
+            capital_default_price_dread = _parse_optional_price(capital_default_price_dread_raw)
+            capital_default_price_carrier = _parse_optional_price(capital_default_price_carrier_raw)
+            capital_default_price_fax = _parse_optional_price(capital_default_price_fax_raw)
             capital_default_eta_min_days_dread = _parse_positive_int(
                 capital_default_eta_min_days_dread_raw,
                 label="Dread ETA min days",
@@ -2888,10 +2649,7 @@ def _handle_config_save(request, existing_config):
             )
             if capital_default_eta_max_days_dread < capital_default_eta_min_days_dread:
                 raise ValueError("Dread ETA max days must be >= min days.")
-            if (
-                capital_default_eta_max_days_carrier
-                < capital_default_eta_min_days_carrier
-            ):
+            if capital_default_eta_max_days_carrier < capital_default_eta_min_days_carrier:
                 raise ValueError("Carrier ETA max days must be >= min days.")
             if capital_default_eta_max_days_fax < capital_default_eta_min_days_fax:
                 raise ValueError("FAX ETA max days must be >= min days.")
@@ -2910,10 +2668,7 @@ def _handle_config_save(request, existing_config):
                     continue
                 if status_value not in capital_auto_cancel_eligible_statuses:
                     capital_auto_cancel_eligible_statuses.append(status_value)
-            if (
-                capital_auto_cancel_on_state_change
-                and not capital_auto_cancel_eligible_statuses
-            ):
+            if capital_auto_cancel_on_state_change and not capital_auto_cancel_eligible_statuses:
                 capital_auto_cancel_eligible_statuses = [
                     CapitalShipOrder.Status.WAITING,
                     CapitalShipOrder.Status.GATHERING_MATERIALS,
@@ -2939,49 +2694,28 @@ def _handle_config_save(request, existing_config):
                 MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
                 MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
             }
-            capital_auto_cancel_delay_unit = str(
-                capital_auto_cancel_delay_unit_raw
-                or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
-            ).strip().lower()
+            capital_auto_cancel_delay_unit = (
+                str(capital_auto_cancel_delay_unit_raw or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS)
+                .strip()
+                .lower()
+            )
             if capital_auto_cancel_delay_unit not in valid_delay_units:
-                capital_auto_cancel_delay_unit = (
-                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
-                )
-            capital_disabled_ship_type_ids = _parse_type_id_list(
-                capital_disabled_ship_type_ids_raw
-            )
-            capital_custom_ship_options = _parse_capital_custom_ship_options(
-                capital_custom_ship_options_raw
-            )
+                capital_auto_cancel_delay_unit = MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
+            capital_disabled_ship_type_ids = _parse_type_id_list(capital_disabled_ship_type_ids_raw)
+            capital_custom_ship_options = _parse_capital_custom_ship_options(capital_custom_ship_options_raw)
             if capital_disabled_ship_type_ids:
                 disabled_set = set(capital_disabled_ship_type_ids)
                 capital_custom_ship_options = [
-                    row
-                    for row in capital_custom_ship_options
-                    if int(row.get("type_id") or 0) not in disabled_set
+                    row for row in capital_custom_ship_options if int(row.get("type_id") or 0) not in disabled_set
                 ]
-            capital_disabled_ship_groups = _parse_ship_group_key_list(
-                capital_disabled_ship_groups_raw
-            )
-            capital_ship_estimated_price_overrides = (
-                _parse_capital_ship_estimated_price_overrides(
-                    capital_ship_estimated_price_overrides_raw
-                )
+            capital_disabled_ship_groups = _parse_ship_group_key_list(capital_disabled_ship_groups_raw)
+            capital_ship_estimated_price_overrides = _parse_capital_ship_estimated_price_overrides(
+                capital_ship_estimated_price_overrides_raw
             )
         else:
-            capital_default_price_dread = (
-                existing_config.capital_default_price_dread
-                if existing_config
-                else None
-            )
-            capital_default_price_carrier = (
-                existing_config.capital_default_price_carrier
-                if existing_config
-                else None
-            )
-            capital_default_price_fax = (
-                existing_config.capital_default_price_fax if existing_config else None
-            )
+            capital_default_price_dread = existing_config.capital_default_price_dread if existing_config else None
+            capital_default_price_carrier = existing_config.capital_default_price_carrier if existing_config else None
+            capital_default_price_fax = existing_config.capital_default_price_fax if existing_config else None
             capital_default_eta_min_days_dread = int(
                 getattr(existing_config, "capital_default_eta_min_days_dread", 14) or 14
             )
@@ -2989,12 +2723,10 @@ def _handle_config_save(request, existing_config):
                 getattr(existing_config, "capital_default_eta_max_days_dread", 28) or 28
             )
             capital_default_eta_min_days_carrier = int(
-                getattr(existing_config, "capital_default_eta_min_days_carrier", 14)
-                or 14
+                getattr(existing_config, "capital_default_eta_min_days_carrier", 14) or 14
             )
             capital_default_eta_max_days_carrier = int(
-                getattr(existing_config, "capital_default_eta_max_days_carrier", 28)
-                or 28
+                getattr(existing_config, "capital_default_eta_max_days_carrier", 28) or 28
             )
             capital_default_eta_min_days_fax = int(
                 getattr(existing_config, "capital_default_eta_min_days_fax", 14) or 14
@@ -3002,19 +2734,13 @@ def _handle_config_save(request, existing_config):
             capital_default_eta_max_days_fax = int(
                 getattr(existing_config, "capital_default_eta_max_days_fax", 28) or 28
             )
-            capital_default_lead_time_days = int(
-                getattr(existing_config, "capital_default_lead_time_days", 0) or 0
-            )
+            capital_default_lead_time_days = int(getattr(existing_config, "capital_default_lead_time_days", 0) or 0)
             capital_auto_cancel_on_state_change = bool(
                 getattr(existing_config, "capital_auto_cancel_on_state_change", False)
             )
             if existing_config:
-                capital_auto_cancel_preapproved_state_names = (
-                    existing_config.get_capital_preapproved_state_names()
-                )
-                capital_auto_cancel_eligible_statuses = (
-                    existing_config.get_capital_auto_cancel_eligible_statuses()
-                )
+                capital_auto_cancel_preapproved_state_names = existing_config.get_capital_preapproved_state_names()
+                capital_auto_cancel_eligible_statuses = existing_config.get_capital_auto_cancel_eligible_statuses()
             else:
                 capital_auto_cancel_preapproved_state_names = [
                     "Pre-Approved",
@@ -3027,50 +2753,38 @@ def _handle_config_save(request, existing_config):
                     CapitalShipOrder.Status.CONTRACT_CREATED,
                     CapitalShipOrder.Status.ANOMALY,
                 ]
-            capital_auto_cancel_delay_value = int(
-                getattr(existing_config, "capital_auto_cancel_delay_value", 0) or 0
-            )
-            capital_auto_cancel_delay_unit = str(
-                getattr(
-                    existing_config,
-                    "capital_auto_cancel_delay_unit",
-                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+            capital_auto_cancel_delay_value = int(getattr(existing_config, "capital_auto_cancel_delay_value", 0) or 0)
+            capital_auto_cancel_delay_unit = (
+                str(
+                    getattr(
+                        existing_config,
+                        "capital_auto_cancel_delay_unit",
+                        MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
+                    )
+                    or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
                 )
-                or MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
-            ).strip().lower()
+                .strip()
+                .lower()
+            )
             if capital_auto_cancel_delay_unit not in {
                 MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS,
                 MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_DAYS,
             }:
-                capital_auto_cancel_delay_unit = (
-                    MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
-                )
+                capital_auto_cancel_delay_unit = MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_HOURS
             capital_disabled_ship_type_ids = (
-                existing_config.get_capital_disabled_ship_type_ids()
-                if existing_config
-                else []
+                existing_config.get_capital_disabled_ship_type_ids() if existing_config else []
             )
-            capital_custom_ship_options = (
-                existing_config.get_capital_custom_ship_options()
-                if existing_config
-                else []
-            )
+            capital_custom_ship_options = existing_config.get_capital_custom_ship_options() if existing_config else []
             capital_disabled_ship_groups = (
-                existing_config.get_capital_disabled_ship_groups()
-                if existing_config
-                else []
+                existing_config.get_capital_disabled_ship_groups() if existing_config else []
             )
             capital_ship_estimated_price_overrides = []
             if existing_config:
-                for type_id, price_value in (
-                    existing_config.get_capital_ship_estimated_price_map().items()
-                ):
+                for type_id, price_value in existing_config.get_capital_ship_estimated_price_map().items():
                     price_json = _decimal_for_json(price_value)
                     if price_json is None:
                         continue
-                    capital_ship_estimated_price_overrides.append(
-                        {"type_id": int(type_id), "price_isk": price_json}
-                    )
+                    capital_ship_estimated_price_overrides.append({"type_id": int(type_id), "price_isk": price_json})
 
         def _parse_group_ids(raw_list: list[str]) -> list[int]:
             parsed: set[int] = set()
@@ -3094,9 +2808,7 @@ def _handle_config_save(request, existing_config):
                         break
             return sorted(parsed)
 
-        def _parse_market_group_profiles(
-            raw_value: str, *, allow_all_supported: bool
-        ) -> list[dict[str, object]]:
+        def _parse_market_group_profiles(raw_value: str, *, allow_all_supported: bool) -> list[dict[str, object]]:
             if not raw_value:
                 return []
             try:
@@ -3117,16 +2829,9 @@ def _handle_config_save(request, existing_config):
                     continue
 
                 profile_key = profile_name.casefold()
-                allow_all = (
-                    bool(row.get("allow_all")) if allow_all_supported else False
-                )
+                allow_all = bool(row.get("allow_all")) if allow_all_supported else False
                 market_group_ids = _parse_group_ids(
-                    [
-                        str(group_id)
-                        for group_id in (
-                            row.get("market_group_ids") or row.get("group_ids") or []
-                        )
-                    ]
+                    [str(group_id) for group_id in (row.get("market_group_ids") or row.get("group_ids") or [])]
                 )
                 parsed_by_name[profile_key] = {
                     "name": profile_name[:80],
@@ -3231,17 +2936,13 @@ def _handle_config_save(request, existing_config):
                 allowed_market_groups_sell_by_structure[sid_key] = None
     elif allowed_market_groups_sell:
         for sid in sell_structure_ids:
-            allowed_market_groups_sell_by_structure[str(int(sid))] = list(
-                allowed_market_groups_sell
-            )
+            allowed_market_groups_sell_by_structure[str(int(sid))] = list(allowed_market_groups_sell)
 
     structure_flags_by_id: dict[int, set[str]] = {}
     allowed_structure_ids: set[int] = set()
     corp_structure_names_by_id: dict[int, str] = {}
     try:
-        corp_structures, assets_scope_missing = _get_corp_structures(
-            request.user, corporation_id
-        )
+        corp_structures, assets_scope_missing = _get_corp_structures(request.user, corporation_id)
         for entry in corp_structures or []:
             try:
                 sid = int(entry.get("id"))
@@ -3290,8 +2991,7 @@ def _handle_config_save(request, existing_config):
                 invalid_hangar.append(int(sid))
         if invalid_hangar:
             invalid_hangar_names = [
-                corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}"
-                for sid in invalid_hangar
+                corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}" for sid in invalid_hangar
             ]
             messages.warning(
                 request,
@@ -3303,8 +3003,7 @@ def _handle_config_save(request, existing_config):
             )
         if unknown_hangar:
             unknown_hangar_names = [
-                corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}"
-                for sid in unknown_hangar
+                corp_structure_names_by_id.get(int(sid), "") or f"Structure {sid}" for sid in unknown_hangar
             ]
             messages.warning(
                 request,
@@ -3320,14 +3019,8 @@ def _handle_config_save(request, existing_config):
         all_structure_ids = list({*sell_structure_ids, *buy_structure_ids})
         if corporation_id and all_structure_ids:
             try:
-                token_for_names = _get_token_for_corp(
-                    request.user, corporation_id, "esi-universe.read_structures.v1"
-                )
-                character_id_for_names = (
-                    getattr(token_for_names, "character_id", None)
-                    if token_for_names
-                    else None
-                )
+                token_for_names = _get_token_for_corp(request.user, corporation_id, "esi-universe.read_structures.v1")
+                character_id_for_names = getattr(token_for_names, "character_id", None) if token_for_names else None
                 resolved_names = resolve_structure_names(
                     [int(sid) for sid in all_structure_ids],
                     character_id_for_names,
@@ -3365,9 +3058,7 @@ def _handle_config_save(request, existing_config):
             existing_config.buy_markup_percent = buy_markup_percent
             existing_config.buy_markup_base = buy_markup_base
             existing_config.enforce_jita_price_bounds = enforce_jita_price_bounds
-            existing_config.notify_admins_on_sell_anomaly = (
-                notify_admins_on_sell_anomaly
-            )
+            existing_config.notify_admins_on_sell_anomaly = notify_admins_on_sell_anomaly
             existing_config.sell_structure_ids = sell_structure_ids
             existing_config.sell_structure_names = sell_structure_names
             existing_config.buy_structure_ids = buy_structure_ids
@@ -3376,63 +3067,27 @@ def _handle_config_save(request, existing_config):
             existing_config.allow_fitted_ships = allow_fitted_ships
             existing_config.location_match_mode = location_match_mode
             existing_config.capital_default_price_dread = capital_default_price_dread
-            existing_config.capital_default_price_carrier = (
-                capital_default_price_carrier
-            )
+            existing_config.capital_default_price_carrier = capital_default_price_carrier
             existing_config.capital_default_price_fax = capital_default_price_fax
-            existing_config.capital_default_eta_min_days_dread = (
-                capital_default_eta_min_days_dread
-            )
-            existing_config.capital_default_eta_max_days_dread = (
-                capital_default_eta_max_days_dread
-            )
-            existing_config.capital_default_eta_min_days_carrier = (
-                capital_default_eta_min_days_carrier
-            )
-            existing_config.capital_default_eta_max_days_carrier = (
-                capital_default_eta_max_days_carrier
-            )
-            existing_config.capital_default_eta_min_days_fax = (
-                capital_default_eta_min_days_fax
-            )
-            existing_config.capital_default_eta_max_days_fax = (
-                capital_default_eta_max_days_fax
-            )
-            existing_config.capital_default_lead_time_days = (
-                capital_default_lead_time_days
-            )
-            existing_config.capital_auto_cancel_on_state_change = (
-                capital_auto_cancel_on_state_change
-            )
-            existing_config.capital_auto_cancel_preapproved_state_names = (
-                capital_auto_cancel_preapproved_state_names
-            )
-            existing_config.capital_auto_cancel_eligible_statuses = (
-                capital_auto_cancel_eligible_statuses
-            )
-            existing_config.capital_auto_cancel_delay_value = (
-                capital_auto_cancel_delay_value
-            )
-            existing_config.capital_auto_cancel_delay_unit = (
-                capital_auto_cancel_delay_unit
-            )
-            existing_config.capital_disabled_ship_type_ids = (
-                capital_disabled_ship_type_ids
-            )
-            existing_config.capital_custom_ship_options = (
-                capital_custom_ship_options
-            )
-            existing_config.capital_disabled_ship_groups = (
-                capital_disabled_ship_groups
-            )
-            existing_config.capital_ship_estimated_price_overrides = (
-                capital_ship_estimated_price_overrides
-            )
+            existing_config.capital_default_eta_min_days_dread = capital_default_eta_min_days_dread
+            existing_config.capital_default_eta_max_days_dread = capital_default_eta_max_days_dread
+            existing_config.capital_default_eta_min_days_carrier = capital_default_eta_min_days_carrier
+            existing_config.capital_default_eta_max_days_carrier = capital_default_eta_max_days_carrier
+            existing_config.capital_default_eta_min_days_fax = capital_default_eta_min_days_fax
+            existing_config.capital_default_eta_max_days_fax = capital_default_eta_max_days_fax
+            existing_config.capital_default_lead_time_days = capital_default_lead_time_days
+            existing_config.capital_auto_cancel_on_state_change = capital_auto_cancel_on_state_change
+            existing_config.capital_auto_cancel_preapproved_state_names = capital_auto_cancel_preapproved_state_names
+            existing_config.capital_auto_cancel_eligible_statuses = capital_auto_cancel_eligible_statuses
+            existing_config.capital_auto_cancel_delay_value = capital_auto_cancel_delay_value
+            existing_config.capital_auto_cancel_delay_unit = capital_auto_cancel_delay_unit
+            existing_config.capital_disabled_ship_type_ids = capital_disabled_ship_type_ids
+            existing_config.capital_custom_ship_options = capital_custom_ship_options
+            existing_config.capital_disabled_ship_groups = capital_disabled_ship_groups
+            existing_config.capital_ship_estimated_price_overrides = capital_ship_estimated_price_overrides
             existing_config.allowed_market_groups_buy = allowed_market_groups_buy
             existing_config.allowed_market_groups_sell = allowed_market_groups_sell
-            existing_config.allowed_market_groups_sell_by_structure = (
-                allowed_market_groups_sell_by_structure
-            )
+            existing_config.allowed_market_groups_sell_by_structure = allowed_market_groups_sell_by_structure
             existing_config.sell_market_group_profiles = sell_market_group_profiles
             existing_config.buy_market_group_profiles = buy_market_group_profiles
             existing_config.market_group_price_overrides = market_group_price_overrides
@@ -3440,9 +3095,7 @@ def _handle_config_save(request, existing_config):
             existing_config.is_active = is_active
             existing_config.save()
             target_config = existing_config
-            messages.success(
-                request, _("Buyback configuration updated successfully.")
-            )
+            messages.success(request, _("Buyback configuration updated successfully."))
         else:
             target_config = MaterialExchangeConfig.objects.create(
                 corporation_id=corporation_id,
@@ -3490,13 +3143,9 @@ def _handle_config_save(request, existing_config):
                 container_price_overrides=container_price_overrides,
                 is_active=is_active,
             )
-            messages.success(
-                request, _("Buyback configuration created successfully.")
-            )
+            messages.success(request, _("Buyback configuration created successfully."))
 
-        desired_type_ids = {
-            int(row["type_id"]) for row in item_price_overrides if row.get("type_id")
-        }
+        desired_type_ids = {int(row["type_id"]) for row in item_price_overrides if row.get("type_id")}
         MaterialExchangeItemPriceOverride.objects.filter(config=target_config).exclude(
             type_id__in=desired_type_ids
         ).delete()
@@ -3510,13 +3159,9 @@ def _handle_config_save(request, existing_config):
                 type_id=type_id,
                 defaults={
                     "type_name": type_name,
-                    "sell_markup_percent_override": row.get(
-                        "sell_markup_percent_override"
-                    ),
+                    "sell_markup_percent_override": row.get("sell_markup_percent_override"),
                     "sell_markup_base_override": row.get("sell_markup_base_override"),
-                    "buy_markup_percent_override": row.get(
-                        "buy_markup_percent_override"
-                    ),
+                    "buy_markup_percent_override": row.get("buy_markup_percent_override"),
                     "buy_markup_base_override": row.get("buy_markup_base_override"),
                     "sell_price_override": row.get("sell_price_override"),
                     "buy_price_override": row.get("buy_price_override"),
@@ -3530,9 +3175,7 @@ def _handle_config_save(request, existing_config):
 @indy_hub_permission_required("can_manage_material_hub")
 @tokens_required(scopes="esi-characters.read_corporation_roles.v1")
 def material_exchange_debug_tokens(request, corp_id, tokens):
-    emit_view_analytics_event(
-        view_name="material_exchange_config.debug_tokens", request=request
-    )
+    emit_view_analytics_event(view_name="material_exchange_config.debug_tokens", request=request)
     """Debug endpoint: list user's tokens and scopes relevant to a corporation.
 
     Query params:
@@ -3565,9 +3208,9 @@ def material_exchange_debug_tokens(request, corp_id, tokens):
             pass
         try:
             character_resource = esi.client.Character
-            operation = getattr(
-                character_resource, "get_characters_character_id", None
-            ) or getattr(character_resource, "GetCharactersCharacterId")
+            operation = getattr(character_resource, "get_characters_character_id", None) or getattr(
+                character_resource, "GetCharactersCharacterId"
+            )
             result_obj = operation(character_id=char_id)
             char_info = result_obj.results()
             if isinstance(char_info, dict):
@@ -3612,7 +3255,4 @@ def material_exchange_debug_tokens(request, corp_id, tokens):
             }
         )
 
-    return JsonResponse(
-        {"corp_id": int(corp_id), "scope_filter": scope or None, "tokens": results}
-    )
-
+    return JsonResponse({"corp_id": int(corp_id), "scope_filter": scope or None, "tokens": results})

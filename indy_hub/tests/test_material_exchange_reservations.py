@@ -1,10 +1,10 @@
+# Standard Library
+from datetime import timedelta
+
 # Django
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.utils import timezone
-
-# Standard Library
-from datetime import timedelta
 
 # AA Example App
 from indy_hub.models import (
@@ -258,9 +258,7 @@ class MaterialExchangeReservationTests(TestCase):
         )
 
         completed_at = timezone.now()
-        MaterialExchangeSellOrder.objects.filter(pk=completed_order.pk).update(
-            updated_at=completed_at
-        )
+        MaterialExchangeSellOrder.objects.filter(pk=completed_order.pk).update(updated_at=completed_at)
 
         # No post-completion asset sync yet -> still reserved.
         reserved_without_sync = _get_reserved_sell_quantities(
@@ -325,9 +323,9 @@ class MaterialExchangeReservationTests(TestCase):
         )
 
         terminal_at = timezone.now()
-        MaterialExchangeSellOrder.objects.filter(
-            pk__in=[cancelled_order.pk, rejected_order.pk]
-        ).update(updated_at=terminal_at)
+        MaterialExchangeSellOrder.objects.filter(pk__in=[cancelled_order.pk, rejected_order.pk]).update(
+            updated_at=terminal_at
+        )
 
         # No post-terminal asset sync yet -> still reserved.
         reserved_without_sync = _get_reserved_sell_quantities(

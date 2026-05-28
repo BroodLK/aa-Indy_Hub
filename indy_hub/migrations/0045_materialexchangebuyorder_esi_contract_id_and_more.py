@@ -14,9 +14,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="materialexchangebuyorder",
             name="esi_contract_id",
-            field=models.BigIntegerField(
-                blank=True, help_text="ESI contract ID for this buy order", null=True
-            ),
+            field=models.BigIntegerField(blank=True, help_text="ESI contract ID for this buy order", null=True),
         ),
         migrations.AddField(
             model_name="materialexchangebuyorder",
@@ -29,16 +27,12 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="materialexchangebuyorder",
             name="esi_validation_checked_at",
-            field=models.DateTimeField(
-                blank=True, help_text="Last time ESI contract was validated", null=True
-            ),
+            field=models.DateTimeField(blank=True, help_text="Last time ESI contract was validated", null=True),
         ),
         migrations.AddField(
             model_name="materialexchangesellorder",
             name="esi_contract_id",
-            field=models.BigIntegerField(
-                blank=True, help_text="ESI contract ID for this sell order", null=True
-            ),
+            field=models.BigIntegerField(blank=True, help_text="ESI contract ID for this sell order", null=True),
         ),
         migrations.AddField(
             model_name="materialexchangesellorder",
@@ -51,8 +45,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="materialexchangesellorder",
             name="esi_validation_checked_at",
-            field=models.DateTimeField(
-                blank=True, help_text="Last time ESI contract was validated", null=True
-            ),
+            field=models.DateTimeField(blank=True, help_text="Last time ESI contract was validated", null=True),
         ),
     ]

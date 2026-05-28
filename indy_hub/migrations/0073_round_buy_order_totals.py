@@ -17,11 +17,7 @@ def populate_rounded_totals(apps, schema_editor):
     BuyItem = apps.get_model("indy_hub", "MaterialExchangeBuyOrderItem")
 
     for order in BuyOrder.objects.all():
-        total = (
-            BuyItem.objects.filter(order_id=order.id).aggregate(
-                total=Sum("total_price")
-            )
-        ).get("total")
+        total = (BuyItem.objects.filter(order_id=order.id).aggregate(total=Sum("total_price"))).get("total")
         if total is None:
             rounded = Decimal("0")
         else:

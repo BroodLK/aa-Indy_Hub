@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+# Standard Library
 from math import floor, isfinite
 from typing import Optional
 
+# Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
@@ -98,15 +100,17 @@ def _allocate_line_items_to_contracts(
     def append_item_to_contract(contract: dict, item: dict, quantity: int) -> None:
         if quantity <= 0:
             return
-        contract["items"].append({
-            "type_id": item["type_id"],
-            "type_name": item["type_name"],
-            "quantity": quantity,
-            "unit_volume_m3": item["unit_volume_m3"],
-            "unit_collateral_isk": item["unit_collateral_isk"],
-            "total_volume_m3": item["unit_volume_m3"] * quantity,
-            "total_collateral_isk": item["unit_collateral_isk"] * quantity,
-        })
+        contract["items"].append(
+            {
+                "type_id": item["type_id"],
+                "type_name": item["type_name"],
+                "quantity": quantity,
+                "unit_volume_m3": item["unit_volume_m3"],
+                "unit_collateral_isk": item["unit_collateral_isk"],
+                "total_volume_m3": item["unit_volume_m3"] * quantity,
+                "total_collateral_isk": item["unit_collateral_isk"] * quantity,
+            }
+        )
         contract["volume_m3"] += item["unit_volume_m3"] * quantity
         contract["collateral_isk"] += item["unit_collateral_isk"] * quantity
 
@@ -115,13 +119,9 @@ def _allocate_line_items_to_contracts(
         if remaining_quantity <= 0:
             continue
 
-        single_unit_exceeds_volume = (
-            max_volume_m3 is not None
-            and item["unit_volume_m3"] > max_volume_m3 + 1e-9
-        )
+        single_unit_exceeds_volume = max_volume_m3 is not None and item["unit_volume_m3"] > max_volume_m3 + 1e-9
         single_unit_exceeds_collateral = (
-            max_collateral_isk is not None
-            and item["unit_collateral_isk"] > max_collateral_isk + 1e-9
+            max_collateral_isk is not None and item["unit_collateral_isk"] > max_collateral_isk + 1e-9
         )
         if single_unit_exceeds_volume or single_unit_exceeds_collateral:
             limits = []
@@ -142,9 +142,7 @@ def _allocate_line_items_to_contracts(
                 None if max_volume_m3 is None else max(0.0, max_volume_m3 - contract["volume_m3"])
             )
             remaining_collateral_capacity = (
-                None
-                if max_collateral_isk is None
-                else max(0.0, max_collateral_isk - contract["collateral_isk"])
+                None if max_collateral_isk is None else max(0.0, max_collateral_isk - contract["collateral_isk"])
             )
 
             max_units_by_volume = _get_max_units_for_constraint(
@@ -198,6 +196,7 @@ def calculate_import_fees(
         Returns None if no route exists from Jita 4-4 to destination.
     """
     try:
+        # Third Party
         from freight.models import Pricing
     except ImportError:
         logger.warning("aa-freight not installed, cannot calculate import fees")
@@ -239,13 +238,7 @@ def calculate_import_fees(
 
     max_volume_m3 = _get_positive_limit(pricing, "volume_max", "max_volume")
     max_collateral_isk = _get_positive_limit(pricing, "collateral_max", "max_collateral")
-    normalized_items = [
-        item for item in (
-            _normalize_line_item(raw_item)
-            for raw_item in (line_items or [])
-        )
-        if item
-    ]
+    normalized_items = [item for item in (_normalize_line_item(raw_item) for raw_item in (line_items or [])) if item]
 
     if normalized_items:
         contracts, allocation_issues = _allocate_line_items_to_contracts(
@@ -285,16 +278,16 @@ def calculate_import_fees(
             unique_issues.append(issue_text)
 
     return {
-        'freight_cost': float(total_freight_cost),
-        'route_name': pricing.name,
-        'pricing_id': pricing.pk,
-        'issues': unique_issues,
-        'contract_count': len(contracts),
-        'contracts': contracts,
-        'max_volume_m3': max_volume_m3,
-        'max_collateral_isk': max_collateral_isk,
-        'total_volume_m3': max(0.0, float(total_volume_m3 or 0.0)),
-        'total_collateral_isk': max(0.0, float(total_collateral_isk or 0.0)),
+        "freight_cost": float(total_freight_cost),
+        "route_name": pricing.name,
+        "pricing_id": pricing.pk,
+        "issues": unique_issues,
+        "contract_count": len(contracts),
+        "contracts": contracts,
+        "max_volume_m3": max_volume_m3,
+        "max_collateral_isk": max_collateral_isk,
+        "total_volume_m3": max(0.0, float(total_volume_m3 or 0.0)),
+        "total_collateral_isk": max(0.0, float(total_collateral_isk or 0.0)),
     }
 
 
@@ -306,6 +299,7 @@ def get_available_routes() -> list[dict]:
         List of dicts with route metadata for each active pricing entry.
     """
     try:
+        # Third Party
         from freight.models import Pricing
     except ImportError:
         logger.warning("aa-freight not installed, cannot get routes")
@@ -315,22 +309,24 @@ def get_available_routes() -> list[dict]:
 
     for pricing in Pricing.objects.filter(
         is_active=True,
-    ).select_related('start_location', 'end_location'):
+    ).select_related("start_location", "end_location"):
         start_name = str(getattr(pricing.start_location, "name", "") or "")
         end_name = str(getattr(pricing.end_location, "name", "") or "")
         direction = "<->" if getattr(pricing, "is_bidirectional", False) else "->"
-        routes.append({
-            'pricing_id': pricing.pk,
-            'route_name': pricing.name,
-            'start_location_id': pricing.start_location_id,
-            'start_location_name': start_name,
-            'end_location_id': pricing.end_location_id,
-            'end_location_name': end_name,
-            'destination_id': pricing.end_location_id,
-            'destination_name': end_name,
-            'is_bidirectional': bool(getattr(pricing, "is_bidirectional", False)),
-            'route_label': f"{start_name} {direction} {end_name}".strip(),
-        })
+        routes.append(
+            {
+                "pricing_id": pricing.pk,
+                "route_name": pricing.name,
+                "start_location_id": pricing.start_location_id,
+                "start_location_name": start_name,
+                "end_location_id": pricing.end_location_id,
+                "end_location_name": end_name,
+                "destination_id": pricing.end_location_id,
+                "destination_name": end_name,
+                "is_bidirectional": bool(getattr(pricing, "is_bidirectional", False)),
+                "route_label": f"{start_name} {direction} {end_name}".strip(),
+            }
+        )
 
     routes.sort(
         key=lambda route: (

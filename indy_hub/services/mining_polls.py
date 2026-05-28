@@ -35,9 +35,7 @@ def build_display_options(
     return display_options
 
 
-def create_main_poll_run(
-    config: WeeklyMiningPollConfig, *, scheduled_at=None
-) -> WeeklyMiningPollRun:
+def create_main_poll_run(config: WeeklyMiningPollConfig, *, scheduled_at=None) -> WeeklyMiningPollRun:
     scheduled_at = scheduled_at or timezone.now()
     options = list(config.options)
     run = WeeklyMiningPollRun.objects.create(
@@ -78,9 +76,7 @@ def create_tiebreaker_poll_run(
         duration_hours=TIEBREAKER_DURATION_HOURS,
         discord_channel_id=config.channel_id,
         ping_role_id=config.ping_role_id,
-        question_text=config.build_question_text(
-            tiebreak_round=parent_run.tiebreak_round + 1
-        ),
+        question_text=config.build_question_text(tiebreak_round=parent_run.tiebreak_round + 1),
         option_labels=list(tied_options),
         display_option_labels=list(tied_options),
         previous_winner_option=config.current_winner_option,
@@ -102,14 +98,8 @@ def finalize_poll_run(
 ) -> dict[str, int | str | None]:
     finalized_at = finalized_at or timezone.now()
     with transaction.atomic():
-        run = (
-            WeeklyMiningPollRun.objects.select_for_update()
-            .select_related("config")
-            .get(pk=run_id)
-        )
-        config = (
-            WeeklyMiningPollConfig.objects.select_for_update().get(pk=run.config_id)
-        )
+        run = WeeklyMiningPollRun.objects.select_for_update().select_related("config").get(pk=run_id)
+        config = WeeklyMiningPollConfig.objects.select_for_update().get(pk=run.config_id)
 
         normalized_counts: list[int] = []
         for option in run.option_labels or []:
@@ -140,9 +130,7 @@ def finalize_poll_run(
 
         highest_vote_count = max(normalized_counts)
         tied_options = [
-            option
-            for option, count in zip(run.option_labels, normalized_counts)
-            if count == highest_vote_count
+            option for option, count in zip(run.option_labels, normalized_counts) if count == highest_vote_count
         ]
 
         if len(tied_options) == 1:
@@ -249,9 +237,7 @@ def mark_run_failed(run: WeeklyMiningPollRun, reason: str) -> None:
     run.save(update_fields=["status", "failure_reason", "updated_at"])
 
 
-def delay_resolution(
-    run: WeeklyMiningPollRun, *, delay_minutes: int = 5, reason: str = ""
-) -> None:
+def delay_resolution(run: WeeklyMiningPollRun, *, delay_minutes: int = 5, reason: str = "") -> None:
     run.resolution_attempts += 1
     if run.resolution_attempts >= MAX_RESOLUTION_ATTEMPTS:
         run.status = WeeklyMiningPollRun.Status.FAILED

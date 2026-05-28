@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 # Standard Library
+import inspect
 from datetime import datetime, timezone
 from decimal import Decimal
-import inspect
+
+# Django
+from django.core.cache import cache
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 from esi.exceptions import HTTPNotModified
 
-# Django
-from django.core.cache import cache
-
+# AA Example App
 # Local
 from indy_hub.services.cache_utils import get_or_set_cache_with_lock
 from indy_hub.services.esi_client import shared_client
@@ -118,15 +119,9 @@ def _coerce_openapi_value(value, *, _depth: int = 0):
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
-        return {
-            str(key): _coerce_openapi_value(item, _depth=_depth + 1)
-            for key, item in value.items()
-        }
+        return {str(key): _coerce_openapi_value(item, _depth=_depth + 1) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [
-            _coerce_openapi_value(item, _depth=_depth + 1)
-            for item in value
-        ]
+        return [_coerce_openapi_value(item, _depth=_depth + 1) for item in value]
 
     for attr in ("model_dump", "dict", "to_dict"):
         converter = getattr(value, attr, None)
@@ -219,27 +214,18 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
 
     if signature is not None:
         params = signature.parameters
-        accepts_var_kwargs = any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in params.values()
-        )
+        accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in params.values())
         if not accepts_var_kwargs:
             filtered_attempts: list[dict] = []
             for attempt_kwargs in attempts:
-                filtered = {
-                    key: value
-                    for key, value in attempt_kwargs.items()
-                    if key in params
-                }
+                filtered = {key: value for key, value in attempt_kwargs.items() if key in params}
                 filtered_attempts.append(filtered)
             attempts.extend(filtered_attempts)
 
     deduped_attempts: list[dict] = []
     seen_signatures: set[tuple[tuple[str, str], ...]] = set()
     for attempt_kwargs in attempts:
-        marker = tuple(
-            sorted((str(key), repr(value)) for key, value in attempt_kwargs.items())
-        )
+        marker = tuple(sorted((str(key), repr(value)) for key, value in attempt_kwargs.items()))
         if marker in seen_signatures:
             continue
         seen_signatures.add(marker)
@@ -260,9 +246,7 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
                 last_error = exc
                 continue
             if "ResponseDecodingError" in type(exc).__name__:
-                raise PublicContractsError(
-                    f"{type(exc).__name__}: {exc}"
-                ) from exc
+                raise PublicContractsError(f"{type(exc).__name__}: {exc}") from exc
             status_code = getattr(exc, "status_code", None)
             if status_code == 404:
                 return None
@@ -318,14 +302,10 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
             raise PublicContractsError(
                 f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}: {last_error}"
             ) from last_error
-        raise PublicContractsError(
-            f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}"
-        )
+        raise PublicContractsError(f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}")
 
     if last_error is not None:
-        raise PublicContractsError(
-            f"{type(last_error).__name__}: {last_error}"
-        ) from last_error
+        raise PublicContractsError(f"{type(last_error).__name__}: {last_error}") from last_error
 
     raise PublicContractsError("OpenAPI operation call failed without an explicit exception")
 
@@ -336,8 +316,7 @@ def _fetch_public_contract_page_cached(
     page: int,
 ) -> list[dict]:
     cache_key = (
-        f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:"
-        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v5"
+        f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:" f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v5"
     )
 
     def _loader() -> list[dict]:
@@ -375,10 +354,7 @@ def _fetch_public_contract_items_cached(
     get_public_contract_items,
     contract_id: int,
 ) -> list[dict]:
-    cache_key = (
-        f"indy_hub:esi:contracts:public_items:"
-        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v5"
-    )
+    cache_key = f"indy_hub:esi:contracts:public_items:" f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v5"
 
     def _loader() -> list[dict]:
         try:
@@ -450,9 +426,7 @@ def _row_value(row: dict, *keys: str):
 def _is_jita_contract(contract: dict) -> bool:
     start_location_id = int(_row_value(contract, "start_location_id") or 0)
     end_location_id = int(_row_value(contract, "end_location_id") or 0)
-    return _is_jita_location_id(start_location_id) or _is_jita_location_id(
-        end_location_id
-    )
+    return _is_jita_location_id(start_location_id) or _is_jita_location_id(end_location_id)
 
 
 def _is_jita_location_id(location_id: int) -> bool:
@@ -608,9 +582,7 @@ def fetch_jita_public_bpc_contracts(
                     stats["scanned"] += 1
 
                     # ESI public contracts commonly uses "type", while some wrappers expose "contract_type".
-                    contract_type = str(
-                        _row_value(contract, "contract_type", "type") or ""
-                    ).strip().lower()
+                    contract_type = str(_row_value(contract, "contract_type", "type") or "").strip().lower()
                     if contract_type and contract_type != "item_exchange":
                         stats["type_filtered"] += 1
                         continue
@@ -620,9 +592,7 @@ def fetch_jita_public_bpc_contracts(
                     if status and status != "outstanding":
                         stats["status_filtered"] += 1
                         continue
-                    expires_at_dt = _parse_esi_datetime(
-                        _row_value(contract, "date_expired")
-                    )
+                    expires_at_dt = _parse_esi_datetime(_row_value(contract, "date_expired"))
                     if expires_at_dt is not None and expires_at_dt <= now_utc:
                         stats["expired_filtered"] += 1
                         continue
@@ -633,10 +603,7 @@ def fetch_jita_public_bpc_contracts(
                     if require_title_hint and normalized_name:
                         title = _normalize_title(_row_value(contract, "title"))
                         short_name = normalized_name.replace(" blueprint", "").strip()
-                        if (
-                            not title
-                            or (normalized_name not in title and (not short_name or short_name not in title))
-                        ):
+                        if not title or (normalized_name not in title and (not short_name or short_name not in title)):
                             stats["title_filtered"] += 1
                             continue
 

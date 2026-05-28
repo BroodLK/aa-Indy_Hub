@@ -59,9 +59,9 @@ from ..notifications import (
     notify_user,
     send_discord_webhook_with_message_id,
 )
+from ..services.craft_materials import calculate_job_material_quantity
 from ..services.esi_client import ESITokenError, ESIUnmodifiedError, shared_client
 from ..services.freight_fees import get_available_routes
-from ..services.craft_materials import calculate_job_material_quantity
 from ..services.industry_environment import resolve_craft_system_context
 from ..services.simulations import summarize_simulations
 from ..tasks.industry import (
@@ -227,8 +227,7 @@ CRAFT_RIG_DOMAIN_LABELS: dict[str, str] = {
 }
 
 CRAFT_MATERIAL_RIG_BONUS_BY_KEY: dict[str, float] = {
-    str(rig.get("key")): float(rig.get("material_bonus") or 0.0)
-    for rig in CRAFT_MATERIAL_RIG_CATALOG
+    str(rig.get("key")): float(rig.get("material_bonus") or 0.0) for rig in CRAFT_MATERIAL_RIG_CATALOG
 }
 
 try:
@@ -344,17 +343,11 @@ def _update_skill_snapshot(
         return active_level, trained_level
 
     mass_active, mass_trained = _extract_levels(SKILL_TYPE_IDS["mass_production"])
-    adv_mass_active, adv_mass_trained = _extract_levels(
-        SKILL_TYPE_IDS["advanced_mass_production"]
-    )
+    adv_mass_active, adv_mass_trained = _extract_levels(SKILL_TYPE_IDS["advanced_mass_production"])
     lab_active, lab_trained = _extract_levels(SKILL_TYPE_IDS["laboratory_operation"])
-    adv_lab_active, adv_lab_trained = _extract_levels(
-        SKILL_TYPE_IDS["advanced_laboratory_operation"]
-    )
+    adv_lab_active, adv_lab_trained = _extract_levels(SKILL_TYPE_IDS["advanced_laboratory_operation"])
     react_active, react_trained = _extract_levels(SKILL_TYPE_IDS["mass_reactions"])
-    adv_react_active, adv_react_trained = _extract_levels(
-        SKILL_TYPE_IDS["advanced_mass_reactions"]
-    )
+    adv_react_active, adv_react_trained = _extract_levels(SKILL_TYPE_IDS["advanced_mass_reactions"])
 
     return IndustrySkillSnapshot.objects.update_or_create(
         owner_user=user,
@@ -383,17 +376,9 @@ def _skill_snapshot_stale(snapshot: IndustrySkillSnapshot | None) -> bool:
     return timezone.now() - snapshot.last_updated > SKILL_CACHE_TTL
 
 
-def _build_slot_overview_rows(
-    user: User, *, refresh_skills: bool = True
-) -> list[dict[str, object]]:
-    ownerships = CharacterOwnership.objects.filter(user=user).select_related(
-        "character"
-    )
-    character_ids = [
-        ownership.character.character_id
-        for ownership in ownerships
-        if ownership.character
-    ]
+def _build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list[dict[str, object]]:
+    ownerships = CharacterOwnership.objects.filter(user=user).select_related("character")
+    character_ids = [ownership.character.character_id for ownership in ownerships if ownership.character]
     now = timezone.now()
 
     snapshots = {
@@ -422,8 +407,7 @@ def _build_slot_overview_rows(
         .annotate(total=Count("id"))
     )
     used_counts: dict[int, dict[str, int]] = {
-        char_id: {"manufacturing": 0, "research": 0, "reactions": 0}
-        for char_id in character_ids
+        char_id: {"manufacturing": 0, "research": 0, "reactions": 0} for char_id in character_ids
     }
     for row in active_job_rows:
         char_id = int(row.get("character_id") or 0)
@@ -438,16 +422,12 @@ def _build_slot_overview_rows(
         elif activity_id in REACTION_ACTIVITY_IDS:
             used_counts[char_id]["reactions"] += total
 
-    def _slots_payload(
-        total_value: int | None, used_value: int
-    ) -> dict[str, int | None]:
+    def _slots_payload(total_value: int | None, used_value: int) -> dict[str, int | None]:
         if total_value is None:
             return {"total": None, "available": None, "used": None, "percent_used": 0}
         used_clamped = min(max(used_value, 0), total_value)
         available = max(total_value - used_clamped, 0)
-        percent_used = (
-            int(round((used_clamped / total_value) * 100)) if total_value else 0
-        )
+        percent_used = int(round((used_clamped / total_value) * 100)) if total_value else 0
         return {
             "total": total_value,
             "available": available,
@@ -515,18 +495,14 @@ def _build_slot_overview_rows(
             "research": snapshot.research_slots if snapshot else None,
             "reactions": snapshot.reaction_slots if snapshot else None,
         }
-        used = used_counts.get(
-            character_id, {"manufacturing": 0, "research": 0, "reactions": 0}
-        )
+        used = used_counts.get(character_id, {"manufacturing": 0, "research": 0, "reactions": 0})
 
         character_rows.append(
             {
                 "character_id": character_id,
                 "name": get_character_name(character_id),
                 "skills_missing": skills_missing,
-                "manufacturing": _slots_payload(
-                    totals["manufacturing"], used["manufacturing"]
-                ),
+                "manufacturing": _slots_payload(totals["manufacturing"], used["manufacturing"]),
                 "research": _slots_payload(totals["research"], used["research"]),
                 "reactions": _slots_payload(totals["reactions"], used["reactions"]),
             }
@@ -572,12 +548,7 @@ def _has_required_scopes(user, scopes: list[str]) -> bool:
         # Alliance Auth
         from esi.models import Token
 
-        return (
-            Token.objects.filter(user=user)
-            .require_scopes(scopes)
-            .require_valid()
-            .exists()
-        )
+        return Token.objects.filter(user=user).require_scopes(scopes).require_valid().exists()
     except Exception:
         return False
 
@@ -630,18 +601,14 @@ def _resolve_user_identity(user: User | None) -> UserIdentity:
 
     if not main_character:
         try:
-            profile = UserProfile.objects.select_related("main_character").get(
-                user=user
-            )
+            profile = UserProfile.objects.select_related("main_character").get(user=user)
         except UserProfile.DoesNotExist:
             profile = None
         else:
             main_character = getattr(profile, "main_character", None)
 
     if not main_character:
-        ownership_qs = CharacterOwnership.objects.filter(user=user).select_related(
-            "character"
-        )
+        ownership_qs = CharacterOwnership.objects.filter(user=user).select_related("character")
         try:
             CharacterOwnership._meta.get_field("is_main")
         except FieldDoesNotExist:
@@ -655,20 +622,14 @@ def _resolve_user_identity(user: User | None) -> UserIdentity:
         character_id = getattr(main_character, "character_id", None)
         corporation_id = getattr(main_character, "corporation_id", None)
         character_name = (
-            get_character_name(character_id)
-            or getattr(main_character, "character_name", None)
-            or username
+            get_character_name(character_id) or getattr(main_character, "character_name", None) or username
         )
         corporation_name = (
-            get_corporation_name(corporation_id)
-            or getattr(main_character, "corporation_name", None)
-            or ""
+            get_corporation_name(corporation_id) or getattr(main_character, "corporation_name", None) or ""
         )
         if corporation_id:
             corp_attr_ticker = getattr(main_character, "corporation_ticker", "")
-            corporation_ticker = corp_attr_ticker or get_corporation_ticker(
-                corporation_id
-            )
+            corporation_ticker = corp_attr_ticker or get_corporation_ticker(corporation_id)
         else:
             corporation_ticker = ""
 
@@ -708,9 +669,7 @@ def _eligible_owner_details_for_request(
     )
 
     character_owned_blueprints = list(
-        matching_blueprints.filter(owner_kind=Blueprint.OwnerKind.CHARACTER).values(
-            "owner_user_id", "character_id"
-        )
+        matching_blueprints.filter(owner_kind=Blueprint.OwnerKind.CHARACTER).values("owner_user_id", "character_id")
     )
 
     character_owner_ids: set[int] = set()
@@ -785,13 +744,11 @@ def _eligible_owner_details_for_request(
         for setting_obj in corporate_settings:
             settings_by_corp[setting_obj.corporation_id].append(setting_obj)
 
-        corp_memberships = CharacterOwnership.objects.filter(
-            character__corporation_id__in=corporation_ids
-        ).values("user_id", "character__corporation_id", "character__character_id")
-
-        corp_user_chars: dict[int, dict[int, set[int]]] = defaultdict(
-            lambda: defaultdict(set)
+        corp_memberships = CharacterOwnership.objects.filter(character__corporation_id__in=corporation_ids).values(
+            "user_id", "character__corporation_id", "character__character_id"
         )
+
+        corp_user_chars: dict[int, dict[int, set[int]]] = defaultdict(lambda: defaultdict(set))
         corp_member_user_ids: set[int] = set()
         for membership in corp_memberships:
             corp_id = membership.get("character__corporation_id")
@@ -802,9 +759,7 @@ def _eligible_owner_details_for_request(
                 corp_member_user_ids.add(user_id)
 
         if corp_member_user_ids:
-            corp_manager_ids = explicit_corp_manager_ids.intersection(
-                corp_member_user_ids
-            )
+            corp_manager_ids = explicit_corp_manager_ids.intersection(corp_member_user_ids)
 
             for corp_id, users in corp_user_chars.items():
                 corp_settings = settings_by_corp.get(corp_id)
@@ -819,19 +774,14 @@ def _eligible_owner_details_for_request(
                         continue
                     if any(
                         not setting_obj.restricts_characters
-                        or any(
-                            setting_obj.is_character_authorized(char_id)
-                            for char_id in char_ids
-                        )
+                        or any(setting_obj.is_character_authorized(char_id) for char_id in char_ids)
                         for setting_obj in corp_settings
                     ):
                         additional_corp_manager_ids.add(user_id)
                         corporate_members_by_corp[corp_id].add(user_id)
                         user_to_corp[user_id] = corp_id
 
-    owner_ids: set[int] = (
-        set(character_owner_ids) | corporate_owner_ids | additional_corp_manager_ids
-    )
+    owner_ids: set[int] = set(character_owner_ids) | corporate_owner_ids | additional_corp_manager_ids
 
     owner_ids.discard(req.requested_by_id)
     character_owner_ids.discard(req.requested_by_id)
@@ -893,9 +843,7 @@ def _build_blueprint_copy_request_notification_content(
 
     if corp_labels:
         formatted_corps = ", ".join(sorted(corp_labels, key=str.lower))
-        corporate_source_line = _("Corporate source: %(corporations)s") % {
-            "corporations": formatted_corps
-        }
+        corporate_source_line = _("Corporate source: %(corporations)s") % {"corporations": formatted_corps}
 
     return notification_title, notification_body, corporate_source_line
 
@@ -910,8 +858,8 @@ def _strike_discord_webhook_messages_for_request(
     if not webhook_messages.exists():
         return
 
-    notification_title, notification_body, corporate_source_line = (
-        _build_blueprint_copy_request_notification_content(req)
+    notification_title, notification_body, corporate_source_line = _build_blueprint_copy_request_notification_content(
+        req
     )
     provider_body = notification_body
     if corporate_source_line:
@@ -957,9 +905,7 @@ def _notify_blueprint_copy_request_providers(
     if not eligible_owner_ids:
         return
 
-    default_title, default_body, corporate_source_line = (
-        _build_blueprint_copy_request_notification_content(req)
-    )
+    default_title, default_body, corporate_source_line = _build_blueprint_copy_request_notification_content(req)
 
     resolved_title = notification_title or default_title
     resolved_body = notification_body or default_body
@@ -1039,9 +985,7 @@ def _notify_blueprint_copy_request_providers(
             base_url=base_url,
         )
         if accept_link:
-            quick_actions.append(
-                _("Accept: %(link)s") % {"link": f"[{link_cta}]({accept_link})"}
-            )
+            quick_actions.append(_("Accept: %(link)s") % {"link": f"[{link_cta}]({accept_link})"})
 
         conditional_link = build_action_link(
             action="conditional",
@@ -1050,10 +994,7 @@ def _notify_blueprint_copy_request_providers(
             base_url=base_url,
         )
         if conditional_link:
-            quick_actions.append(
-                _("Send conditions: %(link)s")
-                % {"link": f"[{link_cta}]({conditional_link})"}
-            )
+            quick_actions.append(_("Send conditions: %(link)s") % {"link": f"[{link_cta}]({conditional_link})"})
 
         reject_link = build_action_link(
             action="reject",
@@ -1062,15 +1003,10 @@ def _notify_blueprint_copy_request_providers(
             base_url=base_url,
         )
         if reject_link:
-            quick_actions.append(
-                _("Decline: %(link)s") % {"link": f"[{link_cta}]({reject_link})"}
-            )
+            quick_actions.append(_("Decline: %(link)s") % {"link": f"[{link_cta}]({reject_link})"})
 
         if quick_actions:
-            provider_body = (
-                f"{provider_body}\n\n"
-                f"{_('Quick actions:')}\n" + "\n".join(quick_actions)
-            )
+            provider_body = f"{provider_body}\n\n" f"{_('Quick actions:')}\n" + "\n".join(quick_actions)
 
         notify_user(
             owner,
@@ -1107,11 +1043,7 @@ def _finalize_request_if_all_rejected(req: BlueprintCopyRequest) -> bool:
 
     details = _eligible_owner_details_for_request(req)
     eligible_owner_ids = details.owner_ids
-    offers_by_owner = dict(
-        req.offers.filter(owner_id__in=eligible_owner_ids).values_list(
-            "owner_id", "status"
-        )
-    )
+    offers_by_owner = dict(req.offers.filter(owner_id__in=eligible_owner_ids).values_list("owner_id", "status"))
 
     if eligible_owner_ids:
         outstanding: list[int | tuple[str, int]] = []
@@ -1128,18 +1060,14 @@ def _finalize_request_if_all_rejected(req: BlueprintCopyRequest) -> bool:
                 outstanding.append(("corporation", corp_id))
                 continue
 
-            has_active_status = any(
-                status not in (None, "rejected") for status in member_statuses
-            )
+            has_active_status = any(status not in (None, "rejected") for status in member_statuses)
             has_rejection = any(status == "rejected" for status in member_statuses)
             if has_active_status:
                 outstanding.append(("corporation", corp_id))
             elif not has_rejection:
                 outstanding.append(("corporation", corp_id))
 
-        remaining_owner_ids = (
-            eligible_owner_ids - details.character_owner_ids - all_corp_member_ids
-        )
+        remaining_owner_ids = eligible_owner_ids - details.character_owner_ids - all_corp_member_ids
         for owner_id in remaining_owner_ids:
             if offers_by_owner.get(owner_id) != "rejected":
                 outstanding.append(owner_id)
@@ -1152,9 +1080,7 @@ def _finalize_request_if_all_rejected(req: BlueprintCopyRequest) -> bool:
     notify_user(
         req.requested_by,
         _("Blueprint Copy Request Unavailable"),
-        _(
-            "All available builders declined your request for %(type)s (ME%(me)d, TE%(te)d)."
-        )
+        _("All available builders declined your request for %(type)s (ME%(me)d, TE%(te)d).")
         % {
             "type": get_type_name(req.type_id),
             "me": req.material_efficiency,
@@ -1198,9 +1124,7 @@ def _chat_preview_messages(chat: BlueprintCopyChat, *, limit: int = 3) -> list[d
         preview.append(
             {
                 "role": message.sender_role,
-                "role_label": role_labels.get(
-                    message.sender_role, message.sender_role.title()
-                ),
+                "role_label": role_labels.get(message.sender_role, message.sender_role.title()),
                 "content": message.content,
                 "created_display": created_local.strftime("%Y-%m-%d %H:%M"),
             }
@@ -1309,11 +1233,7 @@ def _finalize_conditional_offer(offer: BlueprintCopyOffer) -> None:
 
 
 def _mark_offer_buyer_accept(offer: BlueprintCopyOffer) -> bool:
-    if (
-        offer.status == "accepted"
-        and offer.accepted_by_buyer
-        and offer.accepted_by_seller
-    ):
+    if offer.status == "accepted" and offer.accepted_by_buyer and offer.accepted_by_seller:
         return True
 
     if not offer.accepted_by_buyer:
@@ -1327,11 +1247,7 @@ def _mark_offer_buyer_accept(offer: BlueprintCopyOffer) -> bool:
 
 
 def _mark_offer_seller_accept(offer: BlueprintCopyOffer) -> bool:
-    if (
-        offer.status == "accepted"
-        and offer.accepted_by_buyer
-        and offer.accepted_by_seller
-    ):
+    if offer.status == "accepted" and offer.accepted_by_buyer and offer.accepted_by_seller:
         return True
 
     if not offer.accepted_by_seller:
@@ -1358,11 +1274,7 @@ def personnal_bp_list(request, scope="character"):
 
     is_corporation_scope = scope == "corporation"
     has_corporate_perm = request.user.has_perm("indy_hub.can_manage_corp_bp_requests")
-    required_scopes = (
-        list(CORP_BLUEPRINT_SCOPE_SET)
-        if is_corporation_scope
-        else [BLUEPRINT_SCOPE, STRUCTURE_SCOPE]
-    )
+    required_scopes = list(CORP_BLUEPRINT_SCOPE_SET) if is_corporation_scope else [BLUEPRINT_SCOPE, STRUCTURE_SCOPE]
     if not _has_required_scopes(request.user, required_scopes):
         messages.warning(
             request,
@@ -1372,9 +1284,7 @@ def personnal_bp_list(request, scope="character"):
         # Check if we need to sync data
         force_update = request.GET.get("refresh") == "1"
         if force_update:
-            logger.info(
-                f"User {request.user.username} requested blueprint refresh; enqueuing Celery task"
-            )
+            logger.info(f"User {request.user.username} requested blueprint refresh; enqueuing Celery task")
             if is_corporation_scope and not has_corporate_perm:
                 logger.info(
                     "Ignoring manual corporate blueprint refresh for %s due to missing permission",
@@ -1391,24 +1301,18 @@ def personnal_bp_list(request, scope="character"):
                 if scheduled:
                     messages.success(
                         request,
-                        _(
-                            "Blueprint refresh scheduled. Updated data will appear shortly."
-                        ),
+                        _("Blueprint refresh scheduled. Updated data will appear shortly."),
                     )
                 elif remaining is None:
                     messages.warning(
                         request,
-                        _(
-                            "Blueprint refresh skipped: user inactive or missing online scope."
-                        ),
+                        _("Blueprint refresh skipped: user inactive or missing online scope."),
                     )
                 else:
                     wait_minutes = max(1, ceil(remaining.total_seconds() / 60))
                     messages.warning(
                         request,
-                        _(
-                            "Blueprint data was refreshed recently. Please try again in %(minutes)s minute(s)."
-                        )
+                        _("Blueprint data was refreshed recently. Please try again in %(minutes)s minute(s).")
                         % {"minutes": wait_minutes},
                     )
     except Exception as e:
@@ -1448,19 +1352,13 @@ def personnal_bp_list(request, scope="character"):
         # Fetch allowed type IDs for the selected activities
         id_list = ",".join(str(i) for i in filter_ids)
         with connection.cursor() as cursor:
-            cursor.execute(
-                f"""
+            cursor.execute(f"""
                 SELECT DISTINCT eve_type_id
                 FROM indy_hub_sdeindustryactivityproduct
                 WHERE activity_id IN ({id_list})
-                """
-            )
+                """)
             allowed_type_ids = [row[0] for row in cursor.fetchall()]
-        owner_kind_filter = (
-            Blueprint.OwnerKind.CORPORATION
-            if is_corporation_scope
-            else Blueprint.OwnerKind.CHARACTER
-        )
+        owner_kind_filter = Blueprint.OwnerKind.CORPORATION if is_corporation_scope else Blueprint.OwnerKind.CHARACTER
         if is_corporation_scope:
             # Corporation blueprints should be visible to all corporation managers
             # within the same corporation as the requesting user, regardless of
@@ -1496,15 +1394,11 @@ def personnal_bp_list(request, scope="character"):
             for corp_id, corp_name in owner_pairs:
                 if not corp_id:
                     continue
-                display_name = (
-                    corp_name or get_corporation_name(corp_id) or str(corp_id)
-                )
+                display_name = corp_name or get_corporation_name(corp_id) or str(corp_id)
                 owner_options.append((corp_id, display_name))
         else:
             owner_ids = (
-                base_blueprints_qs.exclude(character_id__isnull=True)
-                .values_list("character_id", flat=True)
-                .distinct()
+                base_blueprints_qs.exclude(character_id__isnull=True).values_list("character_id", flat=True).distinct()
             )
             owner_options = []
             for cid in owner_ids:
@@ -1515,25 +1409,15 @@ def personnal_bp_list(request, scope="character"):
 
         blueprints_qs = base_blueprints_qs.filter(type_id__in=allowed_type_ids)
         if search:
-            blueprints_qs = blueprints_qs.filter(
-                Q(type_name__icontains=search) | Q(type_id__icontains=search)
-            )
+            blueprints_qs = blueprints_qs.filter(Q(type_name__icontains=search) | Q(type_id__icontains=search))
         if efficiency_filter == "perfect":
-            blueprints_qs = blueprints_qs.filter(
-                material_efficiency__gte=10, time_efficiency__gte=20
-            )
+            blueprints_qs = blueprints_qs.filter(material_efficiency__gte=10, time_efficiency__gte=20)
         elif efficiency_filter == "researched":
-            blueprints_qs = blueprints_qs.filter(
-                Q(material_efficiency__gt=0) | Q(time_efficiency__gt=0)
-            )
+            blueprints_qs = blueprints_qs.filter(Q(material_efficiency__gt=0) | Q(time_efficiency__gt=0))
         elif efficiency_filter == "unresearched":
-            blueprints_qs = blueprints_qs.filter(
-                material_efficiency=0, time_efficiency=0
-            )
+            blueprints_qs = blueprints_qs.filter(material_efficiency=0, time_efficiency=0)
         if type_filter == "original":
-            blueprints_qs = blueprints_qs.filter(
-                bp_type__in=[Blueprint.BPType.ORIGINAL, Blueprint.BPType.REACTION]
-            )
+            blueprints_qs = blueprints_qs.filter(bp_type__in=[Blueprint.BPType.ORIGINAL, Blueprint.BPType.REACTION])
         elif type_filter == "copy":
             blueprints_qs = blueprints_qs.filter(bp_type=Blueprint.BPType.COPY)
         if owner_filter:
@@ -1544,9 +1428,7 @@ def personnal_bp_list(request, scope="character"):
                 else:
                     blueprints_qs = blueprints_qs.filter(character_id=owner_id)
             except (TypeError, ValueError):
-                logger.warning(
-                    "[BLUEPRINTS FILTER] Invalid owner filter: %s", owner_filter
-                )
+                logger.warning("[BLUEPRINTS FILTER] Invalid owner filter: %s", owner_filter)
         blueprints_qs = blueprints_qs.order_by("type_name")
         # Group identical items by type, ME, TE; compute normalized quantities & runs
         bp_items = []
@@ -1601,11 +1483,12 @@ def personnal_bp_list(request, scope="character"):
             # Use cached structure/station names populated by ESI tasks.
             if not ids:
                 return
+            # AA Example App
             from indy_hub.models import CachedStructureName
 
-            for structure_id, name in CachedStructureName.objects.filter(
-                structure_id__in=ids
-            ).values_list("structure_id", "name"):
+            for structure_id, name in CachedStructureName.objects.filter(structure_id__in=ids).values_list(
+                "structure_id", "name"
+            ):
                 if structure_id and name:
                     location_map[int(structure_id)] = str(name)
 
@@ -1640,9 +1523,7 @@ def personnal_bp_list(request, scope="character"):
 
         # Assign location paths to blueprints
         for bp in bp_items:
-            effective_location_id = container_root_map.get(
-                bp.location_id, bp.location_id
-            )
+            effective_location_id = container_root_map.get(bp.location_id, bp.location_id)
             resolved_name = location_map.get(effective_location_id)
 
             # IMPORTANT: the template prefers bp.location_name over bp.location_path.
@@ -1659,9 +1540,7 @@ def personnal_bp_list(request, scope="character"):
 
         owner_map = {owner_id: name for owner_id, name in owner_options}
         owner_field = "corporation_id" if is_corporation_scope else "character_id"
-        owner_icon = (
-            "fas fa-building" if is_corporation_scope else "fas fa-user-astronaut"
-        )
+        owner_icon = "fas fa-building" if is_corporation_scope else "fas fa-user-astronaut"
 
         for bp in bp_items:
             owner_id_value = getattr(bp, owner_field)
@@ -1700,12 +1579,8 @@ def personnal_bp_list(request, scope="character"):
                 "total_count": total_blueprints,
                 "original_count": originals_count,
                 "copy_count": copies_count,
-                "perfect_me_count": blueprints_qs.filter(
-                    material_efficiency__gte=10
-                ).count(),
-                "perfect_te_count": blueprints_qs.filter(
-                    time_efficiency__gte=20
-                ).count(),
+                "perfect_me_count": blueprints_qs.filter(material_efficiency__gte=10).count(),
+                "perfect_te_count": blueprints_qs.filter(time_efficiency__gte=20).count(),
                 "owner_count": len(owner_options),
             },
             "current_filters": {
@@ -1725,11 +1600,7 @@ def personnal_bp_list(request, scope="character"):
             "scope": scope,
             "is_corporation_scope": is_corporation_scope,
             "owner_label": _("Corporation") if is_corporation_scope else _("Character"),
-            "scope_title": (
-                _("Corporation Blueprints")
-                if is_corporation_scope
-                else _("My Blueprints")
-            ),
+            "scope_title": (_("Corporation Blueprints") if is_corporation_scope else _("My Blueprints")),
             "scope_description": (
                 _("Review blueprints imported from corporation hangars.")
                 if is_corporation_scope
@@ -1880,11 +1751,7 @@ def personnal_job_list(request, scope="character"):
 
     is_corporation_scope = scope == "corporation"
     has_corporate_perm = request.user.has_perm("indy_hub.can_manage_corp_bp_requests")
-    required_scopes = (
-        list(CORP_JOBS_SCOPE_SET)
-        if is_corporation_scope
-        else [JOBS_SCOPE, STRUCTURE_SCOPE]
-    )
+    required_scopes = list(CORP_JOBS_SCOPE_SET) if is_corporation_scope else [JOBS_SCOPE, STRUCTURE_SCOPE]
     if not _has_required_scopes(request.user, required_scopes):
         messages.warning(
             request,
@@ -1893,9 +1760,7 @@ def personnal_job_list(request, scope="character"):
     try:
         force_update = request.GET.get("refresh") == "1"
         if force_update:
-            logger.info(
-                f"User {request.user.username} requested jobs refresh; enqueuing Celery task"
-            )
+            logger.info(f"User {request.user.username} requested jobs refresh; enqueuing Celery task")
             if is_corporation_scope and not has_corporate_perm:
                 logger.info(
                     "Ignoring manual corporate jobs refresh for %s due to missing permission",
@@ -1912,24 +1777,18 @@ def personnal_job_list(request, scope="character"):
                 if scheduled:
                     messages.success(
                         request,
-                        _(
-                            "Industry jobs refresh scheduled. Updated data will appear shortly."
-                        ),
+                        _("Industry jobs refresh scheduled. Updated data will appear shortly."),
                     )
                 elif remaining is None:
                     messages.warning(
                         request,
-                        _(
-                            "Industry jobs refresh skipped: user inactive or missing online scope."
-                        ),
+                        _("Industry jobs refresh skipped: user inactive or missing online scope."),
                     )
                 else:
                     wait_minutes = max(1, ceil(remaining.total_seconds() / 60))
                     messages.warning(
                         request,
-                        _(
-                            "Industry data was refreshed recently. Please try again in %(minutes)s minute(s)."
-                        )
+                        _("Industry data was refreshed recently. Please try again in %(minutes)s minute(s).")
                         % {"minutes": wait_minutes},
                     )
     except Exception as e:
@@ -1956,11 +1815,7 @@ def personnal_job_list(request, scope="character"):
     page = int(request.GET.get("page", 1))
     per_page = request.GET.get("per_page")
 
-    owner_kind_filter = (
-        Blueprint.OwnerKind.CORPORATION
-        if is_corporation_scope
-        else Blueprint.OwnerKind.CHARACTER
-    )
+    owner_kind_filter = Blueprint.OwnerKind.CORPORATION if is_corporation_scope else Blueprint.OwnerKind.CHARACTER
 
     user_corp_ids: list[int] = []
     if is_corporation_scope:
@@ -2016,11 +1871,7 @@ def personnal_job_list(request, scope="character"):
             display_name = corp_name or get_corporation_name(corp_id) or str(corp_id)
             owner_options.append((corp_id, display_name))
     else:
-        owner_ids = (
-            base_jobs_qs.exclude(character_id__isnull=True)
-            .values_list("character_id", flat=True)
-            .distinct()
-        )
+        owner_ids = base_jobs_qs.exclude(character_id__isnull=True).values_list("character_id", flat=True).distinct()
         owner_options = []
         for cid in owner_ids:
             if not cid:
@@ -2038,15 +1889,9 @@ def personnal_job_list(request, scope="character"):
         if search:
             job_id_q = Q(job_id__icontains=search) if search.isdigit() else Q()
             owner_name_matches = [
-                owner_id
-                for owner_id, name in owner_map.items()
-                if name and search.lower() in name.lower()
+                owner_id for owner_id, name in owner_map.items() if name and search.lower() in name.lower()
             ]
-            owner_name_q = (
-                Q(**{f"{owner_field}__in": owner_name_matches})
-                if owner_name_matches
-                else Q()
-            )
+            owner_name_q = Q(**{f"{owner_field}__in": owner_name_matches}) if owner_name_matches else Q()
             jobs_qs = jobs_qs.filter(
                 Q(blueprint_type_name__icontains=search)
                 | Q(product_type_name__icontains=search)
@@ -2062,11 +1907,7 @@ def personnal_job_list(request, scope="character"):
                 jobs_qs = jobs_qs.filter(end_date__lte=now)
         if activity_filter:
             try:
-                activity_ids = {
-                    int(part.strip())
-                    for part in str(activity_filter).split(",")
-                    if part.strip()
-                }
+                activity_ids = {int(part.strip()) for part in str(activity_filter).split(",") if part.strip()}
                 if activity_ids:
                     jobs_qs = jobs_qs.filter(activity_id__in=activity_ids)
             except (TypeError, ValueError):
@@ -2079,9 +1920,7 @@ def personnal_job_list(request, scope="character"):
                 owner_filter_int = int(owner_filter.strip())
                 jobs_qs = jobs_qs.filter(**{owner_field: owner_filter_int})
             except (ValueError, TypeError):
-                logger.warning(
-                    "[JOBS FILTER] Invalid owner filter value: '%s'", owner_filter
-                )
+                logger.warning("[JOBS FILTER] Invalid owner filter value: '%s'", owner_filter)
         if sort_order == "desc":
             sort_by = f"-{sort_by}"
         jobs_qs = jobs_qs.order_by(sort_by)
@@ -2111,18 +1950,14 @@ def personnal_job_list(request, scope="character"):
             "waiting_on_you": {
                 "label": _("Confirm agreement"),
                 "badge": "bg-warning text-dark",
-                "hint": _(
-                    "The buyer already accepted your terms. Confirm in chat to lock in the agreement."
-                ),
+                "hint": _("The buyer already accepted your terms. Confirm in chat to lock in the agreement."),
             },
             8: "Invention",
             9: "Reactions",
         }
         # Include only activities from base jobs (unfiltered) for filter options
         present_ids = base_jobs_qs.values_list("activity_id", flat=True).distinct()
-        activities = [
-            (str(aid), activity_labels.get(aid, str(aid))) for aid in present_ids
-        ]
+        activities = [(str(aid), activity_labels.get(aid, str(aid))) for aid in present_ids]
         # Removed update status tracking since unified settings don't track this
         jobs_on_page = list(jobs_page.object_list)
         blueprint_ids = [job.blueprint_id for job in jobs_on_page if job.blueprint_id]
@@ -2177,9 +2012,7 @@ def personnal_job_list(request, scope="character"):
                 "key": "copying",
                 "activity_ids": {5},
                 "title": _("Copying"),
-                "subtitle": _(
-                    "Generate blueprint copies ready for production or invention."
-                ),
+                "subtitle": _("Generate blueprint copies ready for production or invention."),
                 "icon": "fas fa-copy",
                 "chip": _("COPY"),
                 "badge_variant": "bg-info text-white",
@@ -2188,9 +2021,7 @@ def personnal_job_list(request, scope="character"):
                 "key": "invention",
                 "activity_ids": {8},
                 "title": _("Invention"),
-                "subtitle": _(
-                    "Transform tech I copies into advanced tech II blueprints."
-                ),
+                "subtitle": _("Transform tech I copies into advanced tech II blueprints."),
                 "icon": "fas fa-bolt",
                 "chip": "INV",
                 "badge_variant": "bg-dark text-white",
@@ -2199,9 +2030,7 @@ def personnal_job_list(request, scope="character"):
                 "key": "reactions",
                 "activity_ids": {9, 11},
                 "title": _("Reactions"),
-                "subtitle": _(
-                    "Process raw materials through biochemical and polymer reactions."
-                ),
+                "subtitle": _("Process raw materials through biochemical and polymer reactions."),
                 "icon": "fas fa-vials",
                 "chip": _("REACTION"),
                 "badge_variant": "bg-danger text-white",
@@ -2210,9 +2039,7 @@ def personnal_job_list(request, scope="character"):
                 "key": "other",
                 "activity_ids": set(),
                 "title": _("Other Activities"),
-                "subtitle": _(
-                    "Specialised jobs that fall outside the main categories."
-                ),
+                "subtitle": _("Specialised jobs that fall outside the main categories."),
                 "icon": "fas fa-tools",
                 "chip": _("Other"),
                 "badge_variant": "bg-secondary text-white",
@@ -2343,9 +2170,7 @@ def personnal_job_list(request, scope="character"):
             "scope": scope,
             "is_corporation_scope": is_corporation_scope,
             "owner_label": _("Corporation") if is_corporation_scope else _("Character"),
-            "scope_title": (
-                _("Corporation Jobs") if is_corporation_scope else _("Industry Jobs")
-            ),
+            "scope_title": (_("Corporation Jobs") if is_corporation_scope else _("Industry Jobs")),
             "scope_description": (
                 _("Monitor industry jobs running on behalf of your corporations.")
                 if is_corporation_scope
@@ -2367,9 +2192,7 @@ def personnal_job_list(request, scope="character"):
                 can_manage_corp=has_corporate_perm,
             )
         )
-        context["current_dashboard"] = (
-            "corporation" if is_corporation_scope else "personal"
-        )
+        context["current_dashboard"] = "corporation" if is_corporation_scope else "personal"
         context["back_to_overview_url"] = reverse("indy_hub:index")
         # progress_percent and display_eta now available via model properties in template
         return render(request, "indy_hub/industry/Personnal_Job_list.html", context)
@@ -2392,9 +2215,7 @@ def collect_blueprints_with_level(blueprint_configs):
         if bc.get("level") is not None:
             return bc["level"]
         # Retrieve children (materials) or an empty list when none are defined
-        children = (
-            [m["type_id"] for m in bc.get("materials", [])] if "materials" in bc else []
-        )
+        children = [m["type_id"] for m in bc.get("materials", [])] if "materials" in bc else []
         # Compute the level recursively
         level = 1 + max((get_level(child_id) for child_id in children), default=0)
         bc["level"] = level
@@ -2502,15 +2323,9 @@ def craft_bp(request, type_id):
         include_structures=False,
     )
     resolved_system_payload_raw = (
-        resolved_system_context.get("system")
-        if isinstance(resolved_system_context, dict)
-        else None
+        resolved_system_context.get("system") if isinstance(resolved_system_context, dict) else None
     )
-    resolved_system_payload = (
-        resolved_system_payload_raw
-        if isinstance(resolved_system_payload_raw, dict)
-        else {}
-    )
+    resolved_system_payload = resolved_system_payload_raw if isinstance(resolved_system_payload_raw, dict) else {}
     if resolved_system_payload:
         build_system = str(resolved_system_payload.get("system_name") or build_system)
         build_system_id = _parse_optional_int(resolved_system_payload.get("system_id"))
@@ -2527,9 +2342,7 @@ def craft_bp(request, type_id):
     if build_structure_type not in CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE:
         build_structure_type = "none"
     build_structure_id = _parse_optional_int(request.GET.get("build_structure_id"))
-    build_structure_material_bonus = CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE.get(
-        build_structure_type, 0.0
-    )
+    build_structure_material_bonus = CRAFT_STRUCTURE_MATERIAL_BONUS_BY_TYPE.get(build_structure_type, 0.0)
 
     selected_rig_keys: list[str] = []
     raw_rig_keys = str(request.GET.get("build_rigs", "") or "")
@@ -2563,15 +2376,9 @@ def craft_bp(request, type_id):
             )
 
     # Global summary: highest single selected rig bonus.
-    build_rig_material_bonus = (
-        max(selected_rig_bonus_by_domain.values())
-        if selected_rig_bonus_by_domain
-        else 0.0
-    )
+    build_rig_material_bonus = max(selected_rig_bonus_by_domain.values()) if selected_rig_bonus_by_domain else 0.0
 
-    effective_material_bonus = 1.0 - (
-        (1.0 - build_structure_material_bonus) * (1.0 - build_rig_material_bonus)
-    )
+    effective_material_bonus = 1.0 - ((1.0 - build_structure_material_bonus) * (1.0 - build_rig_material_bonus))
     build_rig_catalog = [
         {
             **rig,
@@ -2584,8 +2391,7 @@ def craft_bp(request, type_id):
         for rig in CRAFT_MATERIAL_RIG_CATALOG
     ]
     build_rig_bonus_by_domain_pct = {
-        domain: round(value * 100.0, 3)
-        for domain, value in selected_rig_bonus_by_domain.items()
+        domain: round(value * 100.0, 3) for domain, value in selected_rig_bonus_by_domain.items()
     }
 
     build_environment = {
@@ -2605,57 +2411,37 @@ def craft_bp(request, type_id):
         "effective_material_bonus_pct": round(effective_material_bonus * 100.0, 3),
     }
 
-    default_fee_security = str(
-        resolved_system_payload.get("security_class") or "HIGH_SEC"
-    )
-    fee_security = str(
-        request.GET.get("industry_fee_security", default_fee_security)
-        or default_fee_security
-    )
+    default_fee_security = str(resolved_system_payload.get("security_class") or "HIGH_SEC")
+    fee_security = str(request.GET.get("industry_fee_security", default_fee_security) or default_fee_security)
     fee_security = fee_security.strip().upper()
     if fee_security not in {"HIGH_SEC", "LOW_SEC", "NULL_SEC", "WORMHOLE"}:
-        fee_security = default_fee_security if default_fee_security in {
-            "HIGH_SEC",
-            "LOW_SEC",
-            "NULL_SEC",
-            "WORMHOLE",
-        } else "HIGH_SEC"
+        fee_security = (
+            default_fee_security
+            if default_fee_security
+            in {
+                "HIGH_SEC",
+                "LOW_SEC",
+                "NULL_SEC",
+                "WORMHOLE",
+            }
+            else "HIGH_SEC"
+        )
 
-    manufacturing_cost_from_query = _parse_optional_float(
-        request.GET.get("industry_fee_manufacturing_cost")
-    )
-    resolved_manufacturing_cost = _parse_optional_float(
-        resolved_system_payload.get("manufacturing_cost_index")
-    )
-    resolved_invention_cost = _parse_optional_float(
-        resolved_system_payload.get("invention_cost_index")
-    )
-    resolved_copying_cost = _parse_optional_float(
-        resolved_system_payload.get("copying_cost_index")
-    )
-    resolved_reaction_cost = _parse_optional_float(
-        resolved_system_payload.get("reaction_cost_index")
-    )
-    invention_cost_from_query = _parse_optional_float(
-        request.GET.get("industry_fee_invention_cost")
-    )
-    copying_cost_from_query = _parse_optional_float(
-        request.GET.get("industry_fee_copying_cost")
-    )
-    reaction_cost_from_query = _parse_optional_float(
-        request.GET.get("industry_fee_reaction_cost")
-    )
+    manufacturing_cost_from_query = _parse_optional_float(request.GET.get("industry_fee_manufacturing_cost"))
+    resolved_manufacturing_cost = _parse_optional_float(resolved_system_payload.get("manufacturing_cost_index"))
+    resolved_invention_cost = _parse_optional_float(resolved_system_payload.get("invention_cost_index"))
+    resolved_copying_cost = _parse_optional_float(resolved_system_payload.get("copying_cost_index"))
+    resolved_reaction_cost = _parse_optional_float(resolved_system_payload.get("reaction_cost_index"))
+    invention_cost_from_query = _parse_optional_float(request.GET.get("industry_fee_invention_cost"))
+    copying_cost_from_query = _parse_optional_float(request.GET.get("industry_fee_copying_cost"))
+    reaction_cost_from_query = _parse_optional_float(request.GET.get("industry_fee_reaction_cost"))
     fee_manufacturing_cost = (
         manufacturing_cost_from_query
         if manufacturing_cost_from_query is not None
         else (
             resolved_manufacturing_cost
             if resolved_manufacturing_cost is not None
-            else (
-                float(build_system_index) / 100.0
-                if float(build_system_index or 0) > 0
-                else None
-            )
+            else (float(build_system_index) / 100.0 if float(build_system_index or 0) > 0 else None)
         )
     )
     fee_system_id = _parse_optional_int(request.GET.get("industry_fee_system_id"))
@@ -2667,33 +2453,19 @@ def craft_bp(request, type_id):
             request.GET.get("industry_fee_enabled", "0"),
             default=False,
         ),
-        "structure_type_id": _parse_optional_int(
-            request.GET.get("industry_fee_structure_type_id")
-        ),
+        "structure_type_id": _parse_optional_int(request.GET.get("industry_fee_structure_type_id")),
         "security": fee_security,
         "system_id": fee_system_id,
         "manufacturing_cost": fee_manufacturing_cost,
         "invention_cost": (
-            invention_cost_from_query
-            if invention_cost_from_query is not None
-            else resolved_invention_cost
+            invention_cost_from_query if invention_cost_from_query is not None else resolved_invention_cost
         ),
-        "copying_cost": (
-            copying_cost_from_query
-            if copying_cost_from_query is not None
-            else resolved_copying_cost
-        ),
+        "copying_cost": (copying_cost_from_query if copying_cost_from_query is not None else resolved_copying_cost),
         "reaction_cost": (
-            reaction_cost_from_query
-            if reaction_cost_from_query is not None
-            else resolved_reaction_cost
+            reaction_cost_from_query if reaction_cost_from_query is not None else resolved_reaction_cost
         ),
-        "facility_tax": _parse_optional_float(
-            request.GET.get("industry_fee_facility_tax")
-        ),
-        "system_cost_bonus": _parse_optional_float(
-            request.GET.get("industry_fee_system_cost_bonus")
-        ),
+        "facility_tax": _parse_optional_float(request.GET.get("industry_fee_facility_tax")),
+        "system_cost_bonus": _parse_optional_float(request.GET.get("industry_fee_system_cost_bonus")),
         "rig_ids": _parse_positive_int_list(request.GET.get("industry_fee_rig_ids", "")),
         "alpha": _parse_bool(request.GET.get("industry_fee_alpha", "0"), default=False),
         "extra_params": re.sub(
@@ -2735,9 +2507,7 @@ def craft_bp(request, type_id):
 
     logger.debug(f"Total ME/TE configs from URL: {len(me_te_configs)} blueprints")
 
-    active_tab = request.GET.get(
-        "active_tab", "materials"
-    )  # Active tab from query parameters, defaults to Materials
+    active_tab = request.GET.get("active_tab", "materials")  # Active tab from query parameters, defaults to Materials
 
     next_url = request.GET.get("next")
     if next_url and url_has_allowed_host_and_scheme(
@@ -2757,9 +2527,7 @@ def craft_bp(request, type_id):
     if buy_list:
         try:
             # Parse comma-separated list of type_ids to buy instead of craft
-            buy_decisions = {
-                int(tid.strip()) for tid in buy_list.split(",") if tid.strip().isdigit()
-            }
+            buy_decisions = {int(tid.strip()) for tid in buy_list.split(",") if tid.strip().isdigit()}
             logger.info(f"Buy decisions parsed: {buy_decisions}")  # Debug log
         except ValueError:
             buy_decisions = set()
@@ -2783,9 +2551,7 @@ def craft_bp(request, type_id):
             )
             product_row = cursor.fetchone()
             product_type_id = product_row[0] if product_row else None
-            output_qty_per_run = (
-                product_row[1] if product_row and len(product_row) > 1 else 1
-            )
+            output_qty_per_run = product_row[1] if product_row and len(product_row) > 1 else 1
             final_product_qty = output_qty_per_run * num_runs
 
         item_type_cache: dict[int, ItemType | None] = {}
@@ -2794,9 +2560,7 @@ def craft_bp(request, type_id):
         product_domains_cache: dict[int, set[str]] = {}
         blueprint_rig_bonus_cache: dict[int, float] = {}
 
-        market_groups = (
-            SdeMarketGroup.objects.all().values("id", "name", "parent_id")
-        )
+        market_groups = SdeMarketGroup.objects.all().values("id", "name", "parent_id")
         market_group_by_id = {
             int(row["id"]): {
                 "name": str(row.get("name") or ""),
@@ -2813,11 +2577,7 @@ def craft_bp(request, type_id):
                 return item_type_cache[type_id_int]
             item_type = None
             if ItemType is not None:
-                item_type = (
-                    ItemType.objects.filter(id=type_id_int)
-                    .select_related("group", "group__category")
-                    .first()
-                )
+                item_type = ItemType.objects.filter(id=type_id_int).select_related("group", "group__category").first()
             item_type_cache[type_id_int] = item_type
             return item_type
 
@@ -2877,11 +2637,7 @@ def craft_bp(request, type_id):
                 product_domains_cache[product_type_id_int] = {"equipment"}
                 return {"equipment"}
 
-            group_name = (
-                str(getattr(getattr(item_type, "group", None), "name", "") or "")
-                .strip()
-                .lower()
-            )
+            group_name = str(getattr(getattr(item_type, "group", None), "name", "") or "").strip().lower()
             category_name = (
                 str(
                     getattr(
@@ -2894,29 +2650,16 @@ def craft_bp(request, type_id):
                 .strip()
                 .lower()
             )
-            market_path = _get_market_group_path_names(
-                getattr(item_type, "market_group_id_raw", None)
-            )
-            path_text = " > ".join(
-                [str(segment or "").strip().lower() for segment in market_path]
-            )
+            market_path = _get_market_group_path_names(getattr(item_type, "market_group_id_raw", None))
+            path_text = " > ".join([str(segment or "").strip().lower() for segment in market_path])
 
             is_structure = category_name == "structure" or "structures" in path_text
             is_ship = category_name == "ship" or "ships" in path_text
-            is_capital_ship = _is_capital_ship_domain(
-                path_text, group_name, category_name
-            )
+            is_capital_ship = _is_capital_ship_domain(path_text, group_name, category_name)
             is_capital_component = (
-                "capital components" in path_text
-                or "advanced capital construction components" in path_text
+                "capital components" in path_text or "advanced capital construction components" in path_text
             )
-            is_component = (
-                not is_capital_component
-                and (
-                    "components" in path_text
-                    or "component" in group_name
-                )
-            )
+            is_component = not is_capital_component and ("components" in path_text or "component" in group_name)
 
             domains: set[str] = set()
             if is_structure:
@@ -2971,9 +2714,7 @@ def craft_bp(request, type_id):
             return bonus
 
         # --- Build materials tree ---
-        logger.debug(
-            f"About to build materials tree with me_te_configs: {me_te_configs}"
-        )
+        logger.debug(f"About to build materials tree with me_te_configs: {me_te_configs}")
 
         def get_materials_tree(
             bp_id,
@@ -3094,9 +2835,7 @@ def craft_bp(request, type_id):
                 )
                 return []
 
-        materials_tree = get_materials_tree(
-            type_id, num_runs, me, me_te_map=me_te_configs
-        )
+        materials_tree = get_materials_tree(type_id, num_runs, me, me_te_map=me_te_configs)
         logger.warning(
             f"AFTER get_materials_tree: materials_tree has {len(materials_tree)} top-level materials, me={me}, te={te}"
         )
@@ -3126,15 +2865,11 @@ def craft_bp(request, type_id):
                         )
                         bp_row = cursor.fetchone()
                         if bp_row:
-                            excluded.add(
-                                bp_row[0]
-                            )  # Exclude the blueprint that produces this item
+                            excluded.add(bp_row[0])  # Exclude the blueprint that produces this item
 
                     # Recursively exclude every downstream blueprint
                     if mat.get("sub_materials"):
-                        collect_all_descendant_blueprints(
-                            mat["sub_materials"], excluded
-                        )
+                        collect_all_descendant_blueprints(mat["sub_materials"], excluded)
                 elif mat.get("sub_materials"):
                     # Continue scanning child materials
                     collect_buy_exclusions(mat["sub_materials"], buy_set, excluded)
@@ -3234,9 +2969,7 @@ def craft_bp(request, type_id):
                     sub_bp_row = cursor.fetchone()
                     if sub_bp_row:
                         sub_bp_id = sub_bp_row[0]
-                        extract_all_blueprint_type_ids(
-                            sub_bp_id, acc, depth + 1, max_depth
-                        )
+                        extract_all_blueprint_type_ids(sub_bp_id, acc, depth + 1, max_depth)
             return acc
 
         all_bp_ids = extract_all_blueprint_type_ids(type_id)
@@ -3285,9 +3018,7 @@ def craft_bp(request, type_id):
         else:
             blueprint_configs = []
 
-        logger.warning(
-            f"AFTER get blueprint_configs: Loaded {len(blueprint_configs)} blueprints, me={me}, te={te}"
-        )
+        logger.warning(f"AFTER get blueprint_configs: Loaded {len(blueprint_configs)} blueprints, me={me}, te={te}")
 
         # --- Inject the material structure into each blueprint_config ---
         config_map = {bc["type_id"]: bc for bc in blueprint_configs}
@@ -3357,9 +3088,7 @@ def craft_bp(request, type_id):
                         entry["original"] = {"me": bp_me, "te": bp_te}
                     else:
                         cur = entry["original"]
-                        if bp_me > cur["me"] or (
-                            bp_me == cur["me"] and bp_te > cur["te"]
-                        ):
+                        if bp_me > cur["me"] or (bp_me == cur["me"] and bp_te > cur["te"]):
                             entry["original"] = {"me": bp_me, "te": bp_te}
                 else:
                     # Sum all runs across COPY blueprints
@@ -3369,18 +3098,16 @@ def craft_bp(request, type_id):
                         entry["best_copy"] = {"me": bp_me, "te": bp_te}
                     else:
                         cur = entry["best_copy"]
-                        if bp_me > cur["me"] or (
-                            bp_me == cur["me"] and bp_te > cur["te"]
-                        ):
+                        if bp_me > cur["me"] or (bp_me == cur["me"] and bp_te > cur["te"]):
                             entry["best_copy"] = {"me": bp_me, "te": bp_te}
 
             # --- Load available blueprints from sharing system ---
             # Determine viewer affiliations
             viewer_corp_ids: set[int] = set()
             viewer_alliance_ids: set[int] = set()
-            viewer_characters = EveCharacter.objects.filter(
-                character_ownership__user=request.user
-            ).values("corporation_id", "alliance_id")
+            viewer_characters = EveCharacter.objects.filter(character_ownership__user=request.user).values(
+                "corporation_id", "alliance_id"
+            )
             for char in viewer_characters:
                 corp_id = char.get("corporation_id")
                 if corp_id is not None:
@@ -3395,20 +3122,16 @@ def craft_bp(request, type_id):
                 allow_copy_requests=True,
             ).exclude(copy_sharing_scope=CharacterSettings.SCOPE_NONE)
 
-            corporation_settings = CorporationSharingSetting.objects.filter(
-                allow_copy_requests=True
-            ).exclude(share_scope=CharacterSettings.SCOPE_NONE)
+            corporation_settings = CorporationSharingSetting.objects.filter(allow_copy_requests=True).exclude(
+                share_scope=CharacterSettings.SCOPE_NONE
+            )
 
             # Determine which users are accessible based on scope
-            owner_user_ids = {
-                s.user_id for s in list(character_settings) + list(corporation_settings)
-            }
+            owner_user_ids = {s.user_id for s in list(character_settings) + list(corporation_settings)}
             owner_affiliations: dict[int, dict[str, set[int]]] = {}
 
             if owner_user_ids:
-                owner_characters = EveCharacter.objects.filter(
-                    character_ownership__user_id__in=owner_user_ids
-                ).values(
+                owner_characters = EveCharacter.objects.filter(character_ownership__user_id__in=owner_user_ids).values(
                     "character_ownership__user_id", "corporation_id", "alliance_id"
                 )
 
@@ -3416,9 +3139,7 @@ def craft_bp(request, type_id):
                     user_id = char["character_ownership__user_id"]
                     corp_id = char.get("corporation_id")
                     alliance_id = char.get("alliance_id")
-                    data = owner_affiliations.setdefault(
-                        user_id, {"corp_ids": set(), "alliance_ids": set()}
-                    )
+                    data = owner_affiliations.setdefault(user_id, {"corp_ids": set(), "alliance_ids": set()})
                     if corp_id:
                         data["corp_ids"].add(corp_id)
                     if alliance_id:
@@ -3427,9 +3148,7 @@ def craft_bp(request, type_id):
             # Filter allowed users based on scope
             allowed_user_ids: set[int] = set()
             for setting in character_settings:
-                affiliations = owner_affiliations.get(
-                    setting.user_id, {"corp_ids": set(), "alliance_ids": set()}
-                )
+                affiliations = owner_affiliations.get(setting.user_id, {"corp_ids": set(), "alliance_ids": set()})
                 if setting.copy_sharing_scope == CharacterSettings.SCOPE_CORPORATION:
                     if viewer_corp_ids & affiliations["corp_ids"]:
                         allowed_user_ids.add(setting.user_id)
@@ -3442,9 +3161,7 @@ def craft_bp(request, type_id):
                     allowed_user_ids.add(setting.user_id)
 
             for setting in corporation_settings:
-                affiliations = owner_affiliations.get(
-                    setting.user_id, {"corp_ids": set(), "alliance_ids": set()}
-                )
+                affiliations = owner_affiliations.get(setting.user_id, {"corp_ids": set(), "alliance_ids": set()})
                 if setting.share_scope == CharacterSettings.SCOPE_CORPORATION:
                     if viewer_corp_ids & affiliations["corp_ids"]:
                         allowed_user_ids.add(setting.user_id)
@@ -3457,9 +3174,7 @@ def craft_bp(request, type_id):
                     allowed_user_ids.add(setting.user_id)
 
             # Get all blueprint type_ids we need to check
-            all_bp_type_ids = {
-                bc.get("type_id") for bc in blueprint_configs if bc.get("type_id")
-            }
+            all_bp_type_ids = {bc.get("type_id") for bc in blueprint_configs if bc.get("type_id")}
 
             # Load available blueprints from sharing system
             available_shared_bps = (
@@ -3517,9 +3232,7 @@ def craft_bp(request, type_id):
                         bc["user_time_efficiency"] = best_copy["te"]
 
                         # Even if the user owns a copy, allow requesting additional copies via sharing
-                        bc["shared_copies_available"] = shared_bp_map.get(
-                            bp_type_id, []
-                        )
+                        bc["shared_copies_available"] = shared_bp_map.get(bp_type_id, [])
 
                         # Set default ME/TE from owned blueprints
                         # (Will be overridden by URL params later if present)
@@ -3532,9 +3245,7 @@ def craft_bp(request, type_id):
                         bc["runs_available"] = None
                         bc["user_material_efficiency"] = None
                         bc["user_time_efficiency"] = None
-                        bc["shared_copies_available"] = shared_bp_map.get(
-                            bp_type_id, []
-                        )
+                        bc["shared_copies_available"] = shared_bp_map.get(bp_type_id, [])
                 else:
                     # User doesn't own this blueprint
                     bc["user_owns"] = False
@@ -3557,9 +3268,7 @@ def craft_bp(request, type_id):
                 bc["user_owns"] = False
                 bc["shared_copies_available"] = []
 
-        logger.warning(
-            f"AFTER ENRICHMENT: Enriched {len(blueprint_configs)} blueprints, me={me}, te={te}"
-        )
+        logger.warning(f"AFTER ENRICHMENT: Enriched {len(blueprint_configs)} blueprints, me={me}, te={te}")
 
         # --- Apply ME/TE values from query parameters (AFTER enrichment) ---
         # This ensures URL parameters always take priority over user's owned blueprints
@@ -3578,14 +3287,10 @@ def craft_bp(request, type_id):
             if bp_type_id in me_te_configs:
                 if "me" in me_te_configs[bp_type_id]:
                     bc["material_efficiency"] = me_te_configs[bp_type_id]["me"]
-                    logger.debug(
-                        f"Applied URL ME for BP {bp_type_id}: {me_te_configs[bp_type_id]['me']}"
-                    )
+                    logger.debug(f"Applied URL ME for BP {bp_type_id}: {me_te_configs[bp_type_id]['me']}")
                 if "te" in me_te_configs[bp_type_id]:
                     bc["time_efficiency"] = me_te_configs[bp_type_id]["te"]
-                    logger.debug(
-                        f"Applied URL TE for BP {bp_type_id}: {me_te_configs[bp_type_id]['te']}"
-                    )
+                    logger.debug(f"Applied URL TE for BP {bp_type_id}: {me_te_configs[bp_type_id]['te']}")
                 applied_count += 1
 
         logger.debug(f"Applied ME/TE to {applied_count} blueprints from URL params")
@@ -3600,17 +3305,11 @@ def craft_bp(request, type_id):
             # Exclude blueprints whose items are marked for purchase
             if (
                 bc["type_id"] is not None
-                and (
-                    (bc.get("materials") and len(bc["materials"]) > 0)
-                    or bc.get("quantity", 0) > 0
-                )
-                and bc.get("activity_id")
-                not in [9, 11]  # Exclude Composite Reaction Formulas
+                and ((bc.get("materials") and len(bc["materials"]) > 0) or bc.get("quantity", 0) > 0)
+                and bc.get("activity_id") not in [9, 11]  # Exclude Composite Reaction Formulas
                 and bc["type_id"] not in blueprint_exclusions
             ):  # Exclude blueprints flagged for purchase
-                grouping.setdefault(
-                    bc["group_id"], {"group_name": bc["group_name"], "levels": {}}
-                )
+                grouping.setdefault(bc["group_id"], {"group_name": bc["group_name"], "levels": {}})
                 lvl = bc["level"]
                 grouping[bc["group_id"]]["levels"].setdefault(lvl, []).append(bc)
 
@@ -3625,14 +3324,9 @@ def craft_bp(request, type_id):
                 blueprints_utiles = [
                     bc
                     for bc in info["levels"][lvl]
-                    if (
-                        (bc.get("materials") and len(bc["materials"]) > 0)
-                        or bc.get("quantity", 0) > 0
-                    )
-                    and bc.get("activity_id")
-                    not in [9, 11]  # Exclude Composite Reaction Formulas
-                    and bc["type_id"]
-                    not in blueprint_exclusions  # Exclude blueprints flagged for purchase
+                    if ((bc.get("materials") and len(bc["materials"]) > 0) or bc.get("quantity", 0) > 0)
+                    and bc.get("activity_id") not in [9, 11]  # Exclude Composite Reaction Formulas
+                    and bc["type_id"] not in blueprint_exclusions  # Exclude blueprints flagged for purchase
                 ]
                 # Sort blueprints alphabetically by type_name
                 blueprints_utiles.sort(key=lambda x: x.get("type_name", "").lower())
@@ -3673,9 +3367,7 @@ def craft_bp(request, type_id):
                     if sub_bp_row:
                         # Accumulate the requested quantity
                         craftables[mat["type_id"]]["type_name"] = mat["type_name"]
-                        craftables[mat["type_id"]]["total_needed"] += ceil(
-                            mat["quantity"]
-                        )
+                        craftables[mat["type_id"]]["total_needed"] += ceil(mat["quantity"])
                         # Retrieve the quantity produced per cycle
                         cursor.execute(
                             """
@@ -3693,9 +3385,7 @@ def craft_bp(request, type_id):
                         if "sub_materials" in mat:
                             collect_craftables(mat["sub_materials"], craftables)
 
-        craftables = defaultdict(
-            lambda: {"type_name": "", "total_needed": 0, "produced_per_cycle": 1}
-        )
+        craftables = defaultdict(lambda: {"type_name": "", "total_needed": 0, "produced_per_cycle": 1})
         collect_craftables(materials_tree, craftables)
         # Calcul cycles, total_produced, surplus
         for v in craftables.values():
@@ -3753,19 +3443,15 @@ def craft_bp(request, type_id):
         eve_types = []
         market_group_lookup: dict[int, dict[str, object]] = {}
         if ItemType is not None:
-            eve_types = list(
-                ItemType.objects.filter(id__in=all_type_ids).select_related("group")
-            )
+            eve_types = list(ItemType.objects.filter(id__in=all_type_ids).select_related("group"))
             try:
                 market_group_ids = {
-                    int(et.market_group_id_raw)
-                    for et in eve_types
-                    if getattr(et, "market_group_id_raw", None)
+                    int(et.market_group_id_raw) for et in eve_types if getattr(et, "market_group_id_raw", None)
                 }
                 if market_group_ids:
-                    market_groups = SdeMarketGroup.objects.filter(
-                        id__in=market_group_ids
-                    ).values("id", "name", "parent_id")
+                    market_groups = SdeMarketGroup.objects.filter(id__in=market_group_ids).values(
+                        "id", "name", "parent_id"
+                    )
                     market_group_lookup = {
                         int(g["id"]): {
                             "id": int(g["id"]),
@@ -3774,15 +3460,9 @@ def craft_bp(request, type_id):
                         }
                         for g in market_groups
                     }
-                    parent_ids = {
-                        int(g["parent_id"])
-                        for g in market_groups
-                        if g.get("parent_id")
-                    }
+                    parent_ids = {int(g["parent_id"]) for g in market_groups if g.get("parent_id")}
                     if parent_ids:
-                        parents = SdeMarketGroup.objects.filter(
-                            id__in=parent_ids
-                        ).values("id", "name", "parent_id")
+                        parents = SdeMarketGroup.objects.filter(id__in=parent_ids).values("id", "name", "parent_id")
                         for parent in parents:
                             pid = int(parent["id"])
                             if pid not in market_group_lookup:
@@ -3891,9 +3571,7 @@ def craft_bp(request, type_id):
             "materials_tree": _to_serializable(materials_tree),
             "craft_cycles_summary": _to_serializable(dict(craftables)),
             "blueprint_configs_grouped": (
-                _to_serializable(blueprint_configs_grouped)
-                if blueprint_configs_grouped
-                else []
+                _to_serializable(blueprint_configs_grouped) if blueprint_configs_grouped else []
             ),
             "market_group_map": _to_serializable(market_group_map),
             "type_volumes": _to_serializable(type_volume_map),
@@ -3911,18 +3589,14 @@ def craft_bp(request, type_id):
                 "craft_build_environment": reverse("indy_hub:craft_build_environment"),
                 "craft_bpc_contracts": reverse("indy_hub:craft_bpc_contracts"),
                 "craft_industry_fees": reverse("indy_hub:craft_industry_fees"),
-                "craft_bp_payload": reverse(
-                    "indy_hub:craft_bp_payload", args=[type_id]
-                ),
+                "craft_bp_payload": reverse("indy_hub:craft_bp_payload", args=[type_id]),
             },
         }
 
         # Build craft header controls HTML
         next_input = ""
         if request.GET.get("next"):
-            next_input = (
-                f'<input type="hidden" name="next" value="{request.GET.get("next")}">'
-            )
+            next_input = f'<input type="hidden" name="next" value="{request.GET.get("next")}">'
         sim_input = ""
         sim_id = _parse_optional_int(request.GET.get("sim"))
         if sim_id is not None:
@@ -3934,9 +3608,7 @@ def craft_bp(request, type_id):
             str(request.GET.get("draft", "") or "").strip(),
         )[:64]
         if draft_value:
-            draft_input = (
-                f'<input type="hidden" name="draft" value="{draft_value}">'
-            )
+            draft_input = f'<input type="hidden" name="draft" value="{draft_value}">'
 
         craft_controls_html = (
             '<form id="blueprint-control-form" class="d-flex flex-wrap align-items-center gap-2" method="get" action="">'
@@ -4007,9 +3679,7 @@ def craft_bp(request, type_id):
                         "is_owned": bc.get("user_owns", False),
                         "is_copy": bc.get("is_copy", False),
                         "runs_available": bc.get("runs_available", 0),
-                        "shared_copies_available": bool(
-                            bc.get("shared_copies_available", [])
-                        ),
+                        "shared_copies_available": bool(bc.get("shared_copies_available", [])),
                     }
                     for bc in blueprint_configs
                 ]
@@ -4056,9 +3726,7 @@ def craft_bp(request, type_id):
 
     except Exception as e:
         # Error handling: render the page with a message and default values
-        logger.error(
-            f"EXCEPTION IN craft_bp: {type(e).__name__}: {str(e)}", exc_info=True
-        )
+        logger.error(f"EXCEPTION IN craft_bp: {type(e).__name__}: {str(e)}", exc_info=True)
         bp_name = get_type_name(type_id)
         messages.error(request, f"Error crafting blueprint: {e}")
         return render(
@@ -4094,9 +3762,7 @@ def craft_bp(request, type_id):
                 "build_rig_catalog": [
                     {
                         **rig,
-                        "material_bonus_pct": round(
-                            float(rig.get("material_bonus") or 0.0) * 100.0, 3
-                        ),
+                        "material_bonus_pct": round(float(rig.get("material_bonus") or 0.0) * 100.0, 3),
                         "domains_label": ", ".join(
                             CRAFT_RIG_DOMAIN_LABELS.get(
                                 str(domain),
@@ -4173,9 +3839,7 @@ def bp_copy_request_create(request):
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
 def bp_copy_request_page(request):
-    emit_view_analytics_event(
-        view_name="industry.bp_copy_request_page", request=request
-    )
+    emit_view_analytics_event(view_name="industry.bp_copy_request_page", request=request)
     # Alliance Auth
     from allianceauth.eveonline.models import EveCharacter
 
@@ -4192,9 +3856,9 @@ def bp_copy_request_page(request):
     # Determine viewer affiliations (corporation / alliance)
     viewer_corp_ids: set[int] = set()
     viewer_alliance_ids: set[int] = set()
-    viewer_characters = EveCharacter.objects.filter(
-        character_ownership__user=request.user
-    ).values("corporation_id", "alliance_id")
+    viewer_characters = EveCharacter.objects.filter(character_ownership__user=request.user).values(
+        "corporation_id", "alliance_id"
+    )
     for char in viewer_characters:
         corp_id = char.get("corporation_id")
         if corp_id is not None:
@@ -4217,17 +3881,13 @@ def bp_copy_request_page(request):
         .only("user_id", "corporation_id", "share_scope")
     )
 
-    owner_user_ids = {
-        setting.user_id for setting in character_settings + corporation_settings
-    }
+    owner_user_ids = {setting.user_id for setting in character_settings + corporation_settings}
 
     owner_affiliations: dict[int, dict[str, set[int]]] = {}
     corp_alliance_map: dict[int, set[int]] = defaultdict(set)
 
     if owner_user_ids:
-        owner_characters = EveCharacter.objects.filter(
-            character_ownership__user_id__in=owner_user_ids
-        ).values(
+        owner_characters = EveCharacter.objects.filter(character_ownership__user_id__in=owner_user_ids).values(
             "character_ownership__user_id",
             "corporation_id",
             "alliance_id",
@@ -4237,9 +3897,7 @@ def bp_copy_request_page(request):
             corp_id = char.get("corporation_id")
             alliance_id = char.get("alliance_id")
 
-            data = owner_affiliations.setdefault(
-                user_id, {"corp_ids": set(), "alliance_ids": set()}
-            )
+            data = owner_affiliations.setdefault(user_id, {"corp_ids": set(), "alliance_ids": set()})
             if corp_id is not None:
                 data["corp_ids"].add(corp_id)
                 if alliance_id:
@@ -4256,9 +3914,9 @@ def bp_copy_request_page(request):
         # Alliance Auth
         from allianceauth.eveonline.models import EveCorporationInfo
 
-        corp_records = EveCorporationInfo.objects.filter(
-            corporation_id__in=missing_corp_ids
-        ).values("corporation_id", "alliance_id")
+        corp_records = EveCorporationInfo.objects.filter(corporation_id__in=missing_corp_ids).values(
+            "corporation_id", "alliance_id"
+        )
         for record in corp_records:
             corp_id = record.get("corporation_id")
             alliance_id = record.get("alliance_id")
@@ -4267,9 +3925,7 @@ def bp_copy_request_page(request):
 
     allowed_character_user_ids: set[int] = set()
     for setting in character_settings:
-        affiliations = owner_affiliations.get(
-            setting.user_id, {"corp_ids": set(), "alliance_ids": set()}
-        )
+        affiliations = owner_affiliations.get(setting.user_id, {"corp_ids": set(), "alliance_ids": set()})
         corp_ids = affiliations["corp_ids"]
         alliance_ids = affiliations["alliance_ids"]
 
@@ -4294,9 +3950,7 @@ def bp_copy_request_page(request):
             allowed = corp_id in viewer_corp_ids
         elif setting.share_scope == CharacterSettings.SCOPE_ALLIANCE:
             alliance_ids = corp_alliance_map.get(corp_id, set())
-            allowed = (corp_id in viewer_corp_ids) or bool(
-                viewer_alliance_ids & alliance_ids
-            )
+            allowed = (corp_id in viewer_corp_ids) or bool(viewer_alliance_ids & alliance_ids)
         elif setting.share_scope == CharacterSettings.SCOPE_EVERYONE:
             allowed = viewer_can_request_copies
 
@@ -4324,9 +3978,7 @@ def bp_copy_request_page(request):
     combined_blueprint_filter: Q | None = None
     for condition in blueprint_filters:
         combined_blueprint_filter = (
-            condition
-            if combined_blueprint_filter is None
-            else combined_blueprint_filter | condition
+            condition if combined_blueprint_filter is None else combined_blueprint_filter | condition
         )
 
     if combined_blueprint_filter is None:
@@ -4354,9 +4006,7 @@ def bp_copy_request_page(request):
             }
         )
     if search:
-        bp_list = [
-            bp for bp in bp_list if search.lower() in bp["display_name"].lower()
-        ]
+        bp_list = [bp for bp in bp_list if search.lower() in bp["display_name"].lower()]
     if min_me.isdigit():
         min_me_val = int(min_me)
         bp_list = [bp for bp in bp_list if bp["material_efficiency"] >= min_me_val]
@@ -4368,9 +4018,7 @@ def bp_copy_request_page(request):
     te_options = list(range(0, 21, 2))  # 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20
     paginator = Paginator(bp_list, per_page)
     page_obj = paginator.get_page(page)
-    page_range = paginator.get_elided_page_range(
-        number=page_obj.number, on_each_side=5, on_ends=1
-    )
+    page_range = paginator.get_elided_page_range(number=page_obj.number, on_each_side=5, on_ends=1)
     if request.method == "POST":
         return bp_copy_request_create(request)
     context = {
@@ -4387,18 +4035,14 @@ def bp_copy_request_page(request):
     }
     context.update(build_nav_context(request.user, active_tab="blueprint_sharing"))
 
-    return render(
-        request, "indy_hub/blueprint_sharing/bp_copy_request_page.html", context
-    )
+    return render(request, "indy_hub/blueprint_sharing/bp_copy_request_page.html", context)
 
 
 @indy_hub_access_required
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
 def bp_copy_fulfill_requests(request):
-    emit_view_analytics_event(
-        view_name="industry.bp_copy_fulfill_requests", request=request
-    )
+    emit_view_analytics_event(view_name="industry.bp_copy_fulfill_requests", request=request)
     """List requests for blueprints the user owns and allows copy requests for."""
     from ..models import CharacterSettings
 
@@ -4450,8 +4094,7 @@ def bp_copy_fulfill_requests(request):
                 if not viewer_chars:
                     continue
                 if setting_obj.restricts_characters and not any(
-                    setting_obj.is_character_authorized(char_id)
-                    for char_id in viewer_chars
+                    setting_obj.is_character_authorized(char_id) for char_id in viewer_chars
                 ):
                     continue
                 accessible_corporation_ids.add(corp_id)
@@ -4463,9 +4106,7 @@ def bp_copy_fulfill_requests(request):
         except (TypeError, ValueError):
             requested_chat_id = None
         if requested_chat_id:
-            exists = BlueprintCopyChat.objects.filter(
-                id=requested_chat_id, seller=request.user
-            ).exists()
+            exists = BlueprintCopyChat.objects.filter(id=requested_chat_id, seller=request.user).exists()
             if exists:
                 auto_open_chat_id = str(requested_chat_id)
     nav_context = build_nav_context(request.user, active_tab="blueprint_sharing")
@@ -4479,9 +4120,7 @@ def bp_copy_fulfill_requests(request):
         if auto_open_chat_id:
             context["auto_open_chat_id"] = auto_open_chat_id
         context["include_self_requests"] = include_self_requests
-        return render(
-            request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context
-        )
+        return render(request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context)
 
     accessible_blueprints: list[Blueprint] = []
 
@@ -4514,9 +4153,7 @@ def bp_copy_fulfill_requests(request):
         "awaiting_response": {
             "label": _("Awaiting response"),
             "badge": "bg-warning text-dark",
-            "hint": _(
-                "No offer sent yet. Accept, reject, or propose conditions to help your corpmate."
-            ),
+            "hint": _("No offer sent yet. Accept, reject, or propose conditions to help your corpmate."),
         },
         "waiting_on_buyer": {
             "label": _("Waiting on buyer"),
@@ -4526,23 +4163,17 @@ def bp_copy_fulfill_requests(request):
         "waiting_on_you": {
             "label": _("Confirm agreement"),
             "badge": "bg-warning text-dark",
-            "hint": _(
-                "The buyer already accepted your terms. Confirm in chat to lock in the agreement."
-            ),
+            "hint": _("The buyer already accepted your terms. Confirm in chat to lock in the agreement."),
         },
         "ready_to_deliver": {
             "label": _("Ready to deliver"),
             "badge": "bg-success text-white",
-            "hint": _(
-                "Buyer accepted your offer. Deliver the copies and mark the request as complete."
-            ),
+            "hint": _("Buyer accepted your offer. Deliver the copies and mark the request as complete."),
         },
         "offer_rejected": {
             "label": _("Offer rejected"),
             "badge": "bg-danger text-white",
-            "hint": _(
-                "Your previous offer was declined. Consider sending an updated proposal."
-            ),
+            "hint": _("Your previous offer was declined. Consider sending an updated proposal."),
         },
         "self_request": {
             "label": _("Your tracked request"),
@@ -4569,9 +4200,7 @@ def bp_copy_fulfill_requests(request):
             "active_filter": active_filter,
         }
         context.update(nav_context)
-        return render(
-            request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context
-        )
+        return render(request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context)
 
     q = Q()
     has_filters = False
@@ -4592,9 +4221,7 @@ def bp_copy_fulfill_requests(request):
             "active_filter": active_filter,
         }
         context.update(nav_context)
-        return render(
-            request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context
-        )
+        return render(request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context)
 
     def _init_occupancy():
         return {"count": 0, "soonest_end": None}
@@ -4708,9 +4335,7 @@ def bp_copy_fulfill_requests(request):
         base_qs = BlueprintCopyRequest.objects.filter(q)
         if include_self_requests:
             # Also include user's own requests even if they don't match blueprints
-            base_qs = BlueprintCopyRequest.objects.filter(
-                q | Q(requested_by=request.user)
-            )
+            base_qs = BlueprintCopyRequest.objects.filter(q | Q(requested_by=request.user))
     else:
         base_qs = BlueprintCopyRequest.objects.filter(requested_by=request.user)
 
@@ -4740,9 +4365,7 @@ def bp_copy_fulfill_requests(request):
             continue
 
         offers = list(req.offers.all())
-        my_offer = next(
-            (offer for offer in offers if offer.owner_id == request.user.id), None
-        )
+        my_offer = next((offer for offer in offers if offer.owner_id == request.user.id), None)
         offers_by_owner = {offer.owner_id: offer.status for offer in offers}
         eligible_details = _eligible_owner_details_for_request(req)
         requester_identity = _identity_for(req.requested_by)
@@ -4756,10 +4379,7 @@ def bp_copy_fulfill_requests(request):
         if req.fulfilled and (req.delivered or not my_offer):
             # Already delivered or fulfilled by someone else
             # But allow the fulfiller (no offer record) or own requests when enabled.
-            if not (
-                (is_self_request_preliminary and include_self_requests)
-                or req.fulfilled_by_id == request.user.id
-            ):
+            if not ((is_self_request_preliminary and include_self_requests) or req.fulfilled_by_id == request.user.id):
                 continue
 
         if my_offer and my_offer.status == "rejected":
@@ -4798,9 +4418,7 @@ def bp_copy_fulfill_requests(request):
                     continue
                 if corp_id is not None:
                     seen_corporations.add(corp_id)
-                display_name = blueprint.corporation_name or (
-                    str(corp_id) if corp_id is not None else ""
-                )
+                display_name = blueprint.corporation_name or (str(corp_id) if corp_id is not None else "")
                 if display_name:
                     corporate_names.append(display_name)
 
@@ -4876,9 +4494,7 @@ def bp_copy_fulfill_requests(request):
 
         eligible_character_entries.sort(key=lambda item: item["name"].lower())
         eligible_corporation_entries.sort(key=lambda item: item["name"].lower())
-        eligible_total = len(eligible_character_entries) + len(
-            eligible_corporation_entries
-        )
+        eligible_total = len(eligible_character_entries) + len(eligible_corporation_entries)
 
         if corporate_count == 0:
             if (
@@ -4895,9 +4511,7 @@ def bp_copy_fulfill_requests(request):
             continue
 
         displayed_personal_count = personal_count if show_personal_sources else 0
-        displayed_personal_names = (
-            personal_source_names if show_personal_sources else []
-        )
+        displayed_personal_names = personal_source_names if show_personal_sources else []
 
         total_sources = corporate_count + displayed_personal_count
         if total_sources == 0:
@@ -4917,9 +4531,7 @@ def bp_copy_fulfill_requests(request):
 
         corp_active_jobs = min(corporate_count, corp_info["count"]) if corp_info else 0
         personal_active_jobs = (
-            min(displayed_personal_count, personal_info["count"])
-            if personal_info and displayed_personal_count
-            else 0
+            min(displayed_personal_count, personal_info["count"]) if personal_info and displayed_personal_count else 0
         )
         owned_blueprints = total_sources
         total_active_jobs = corp_active_jobs + personal_active_jobs
@@ -4932,19 +4544,12 @@ def bp_copy_fulfill_requests(request):
             busy_candidates.append(corp_info["soonest_end"])
         busy_until = min(busy_candidates) if busy_candidates else None
         busy_overdue = bool(busy_until and busy_until < timezone.now())
-        all_copies_busy = (
-            owned_blueprints > 0 and available_blueprints == 0 and total_active_jobs > 0
-        )
+        all_copies_busy = owned_blueprints > 0 and available_blueprints == 0 and total_active_jobs > 0
 
         user_corp_id = eligible_details.user_to_corporation.get(request.user.id)
         if user_corp_id is not None and personal_count == 0 and not is_self_request:
-            corp_members = eligible_details.corporate_members_by_corp.get(
-                user_corp_id, set()
-            )
-            if any(
-                offers_by_owner.get(member_id) == "rejected"
-                for member_id in corp_members
-            ):
+            corp_members = eligible_details.corporate_members_by_corp.get(user_corp_id, set())
+            if any(offers_by_owner.get(member_id) == "rejected" for member_id in corp_members):
                 # Another authorised manager already declined on behalf of the corporation
                 if not (is_self_request_preliminary and include_self_requests):
                     continue
@@ -5014,9 +4619,7 @@ def bp_copy_fulfill_requests(request):
                     "has_unread": _chat_has_unread(chat, "seller"),
                     "last_message_at": chat.last_message_at,
                     "last_message_display": (
-                        timezone.localtime(chat.last_message_at).strftime(
-                            "%Y-%m-%d %H:%M"
-                        )
+                        timezone.localtime(chat.last_message_at).strftime("%Y-%m-%d %H:%M")
                         if chat.last_message_at
                         else ""
                     ),
@@ -5061,20 +4664,13 @@ def bp_copy_fulfill_requests(request):
                 "status_class": status_info["badge"],
                 "status_hint": status_hint,
                 "my_offer_status": getattr(my_offer, "status", None),
-                "my_offer_status_label": offer_status_labels.get(
-                    getattr(my_offer, "status", None), ""
-                ),
+                "my_offer_status_label": offer_status_labels.get(getattr(my_offer, "status", None), ""),
                 "my_offer_message": getattr(my_offer, "message", ""),
-                "my_offer_accepted_by_buyer": getattr(
-                    my_offer, "accepted_by_buyer", False
-                ),
-                "my_offer_accepted_by_seller": getattr(
-                    my_offer, "accepted_by_seller", False
-                ),
+                "my_offer_accepted_by_buyer": getattr(my_offer, "accepted_by_buyer", False),
+                "my_offer_accepted_by_seller": getattr(my_offer, "accepted_by_seller", False),
                 "show_offer_actions": show_offer_actions,
                 "conditional_collapse_id": f"cond-{req.id}",
-                "can_mark_delivered": can_mark_delivered
-                and req.requested_by_id != request.user.id,
+                "can_mark_delivered": can_mark_delivered and req.requested_by_id != request.user.id,
                 "owned_blueprints": owned_blueprints,
                 "available_blueprints": available_blueprints,
                 "active_copy_jobs": total_active_jobs,
@@ -5082,9 +4678,7 @@ def bp_copy_fulfill_requests(request):
                 "busy_until": busy_until,
                 "busy_overdue": busy_overdue,
                 "chat": offer_chat_payload,
-                "chat_preview": (
-                    offer_chat_payload.get("preview", []) if offer_chat_payload else []
-                ),
+                "chat_preview": (offer_chat_payload.get("preview", []) if offer_chat_payload else []),
                 "handshake": handshake_state,
                 "is_corporate": is_corporate_source,
                 "corporation_names": corporate_names,
@@ -5124,9 +4718,7 @@ def bp_copy_fulfill_requests(request):
         context["auto_open_chat_id"] = auto_open_chat_id
     context.update(nav_context)
 
-    return render(
-        request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context
-    )
+    return render(request, "indy_hub/blueprint_sharing/bp_copy_fulfill_requests.html", context)
 
 
 @indy_hub_access_required
@@ -5181,17 +4773,13 @@ def bp_copy_history(request):
     metrics = {
         "total": BlueprintCopyRequest.objects.count(),
         "open": BlueprintCopyRequest.objects.filter(fulfilled=False).count(),
-        "fulfilled": BlueprintCopyRequest.objects.filter(
-            fulfilled=True, delivered=False
-        ).count(),
+        "fulfilled": BlueprintCopyRequest.objects.filter(fulfilled=True, delivered=False).count(),
         "delivered": BlueprintCopyRequest.objects.filter(delivered=True).count(),
     }
 
     paginator = Paginator(qs, per_page_val)
     page_obj = paginator.get_page(page)
-    page_range = paginator.get_elided_page_range(
-        number=page_obj.number, on_each_side=3, on_ends=1
-    )
+    page_range = paginator.get_elided_page_range(number=page_obj.number, on_each_side=3, on_ends=1)
 
     rows = []
     for req in page_obj:
@@ -5200,20 +4788,14 @@ def bp_copy_history(request):
             (
                 offer
                 for offer in offers
-                if offer.status == "accepted"
-                and offer.accepted_by_buyer
-                and offer.accepted_by_seller
+                if offer.status == "accepted" and offer.accepted_by_buyer and offer.accepted_by_seller
             ),
             None,
         )
         if accepted_offer is None:
-            accepted_offer = next(
-                (offer for offer in offers if offer.status == "accepted"), None
-            )
+            accepted_offer = next((offer for offer in offers if offer.status == "accepted"), None)
 
-        acceptor = req.fulfilled_by or (
-            accepted_offer.owner if accepted_offer else None
-        )
+        acceptor = req.fulfilled_by or (accepted_offer.owner if accepted_offer else None)
         rows.append(
             {
                 "id": req.id,
@@ -5231,11 +4813,7 @@ def bp_copy_history(request):
                 "delivered": req.delivered,
                 "delivered_at": req.delivered_at,
                 "acceptor": acceptor,
-                "source_scope": (
-                    getattr(accepted_offer, "source_scope", None)
-                    if accepted_offer
-                    else None
-                ),
+                "source_scope": (getattr(accepted_offer, "source_scope", None) if accepted_offer else None),
             }
         )
 
@@ -5275,9 +4853,7 @@ def _process_offer_action(
     offer, _created = BlueprintCopyOffer.objects.get_or_create(request=req, owner=owner)
     if normalized_scope:
         offer.source_scope = normalized_scope
-    my_requests_url = request_obj.build_absolute_uri(
-        reverse("indy_hub:bp_copy_my_requests")
-    )
+    my_requests_url = request_obj.build_absolute_uri(reverse("indy_hub:bp_copy_my_requests"))
 
     if action == "accept":
         offer.status = "accepted"
@@ -5352,9 +4928,7 @@ def _process_offer_action(
         notify_user(
             req.requested_by,
             "Blueprint Copy Request - Conditional Offer",
-            _(
-                "You received a new conditional offer message for %(type)s (ME%(me)s, TE%(te)s)."
-            )
+            _("You received a new conditional offer message for %(type)s (ME%(me)s, TE%(te)s).")
             % {
                 "type": get_type_name(req.type_id),
                 "me": req.material_efficiency,
@@ -5433,11 +5007,7 @@ def bp_offer_copy_request(request, request_id):
     redirect_url = reverse("indy_hub:bp_copy_fulfill_requests")
     if handled:
         if action == "conditional":
-            offer = (
-                BlueprintCopyOffer.objects.filter(request=req, owner=request.user)
-                .select_related("chat")
-                .first()
-            )
+            offer = BlueprintCopyOffer.objects.filter(request=req, owner=request.user).select_related("chat").first()
             if offer:
                 try:
                     chat_id = offer.chat.id
@@ -5484,11 +5054,7 @@ def bp_discord_action(request):
         messages.error(request, _("Incomplete action token."))
         return redirect(redirect_url)
 
-    req = (
-        BlueprintCopyRequest.objects.filter(id=request_id, fulfilled=False)
-        .select_related("requested_by")
-        .first()
-    )
+    req = BlueprintCopyRequest.objects.filter(id=request_id, fulfilled=False).select_related("requested_by").first()
     if not req:
         messages.warning(
             request,
@@ -5503,12 +5069,8 @@ def bp_discord_action(request):
         )
         return redirect(redirect_url)
 
-    existing_offer = BlueprintCopyOffer.objects.filter(
-        request=req, owner=request.user
-    ).first()
-    if not existing_offer and request.user.id not in _eligible_owner_ids_for_request(
-        req
-    ):
+    existing_offer = BlueprintCopyOffer.objects.filter(request=req, owner=request.user).first()
+    if not existing_offer and request.user.id not in _eligible_owner_ids_for_request(req):
         messages.error(
             request,
             _("You are no longer eligible to fulfil this copy request."),
@@ -5526,11 +5088,7 @@ def bp_discord_action(request):
             source_scope=source_scope,
         )
         if handled:
-            offer = (
-                BlueprintCopyOffer.objects.filter(request=req, owner=request.user)
-                .select_related("chat")
-                .first()
-            )
+            offer = BlueprintCopyOffer.objects.filter(request=req, owner=request.user).select_related("chat").first()
             if offer:
                 try:
                     chat_id = offer.chat.id
@@ -5565,11 +5123,7 @@ def bp_buyer_accept_offer(request, offer_id):
         messages.error(request, _("Only the requester can accept this offer."))
         return redirect("indy_hub:bp_copy_request_page")
 
-    if (
-        offer.accepted_by_buyer
-        and offer.accepted_by_seller
-        and offer.status == "accepted"
-    ):
+    if offer.accepted_by_buyer and offer.accepted_by_seller and offer.status == "accepted":
         messages.info(request, _("This offer has already been confirmed."))
         return redirect("indy_hub:bp_copy_request_page")
 
@@ -5582,9 +5136,7 @@ def bp_buyer_accept_offer(request, offer_id):
         messages.success(request, _("Offer accepted. Seller notified."))
         return redirect("indy_hub:bp_copy_request_page")
 
-    fulfill_queue_url = request.build_absolute_uri(
-        reverse("indy_hub:bp_copy_fulfill_requests")
-    )
+    fulfill_queue_url = request.build_absolute_uri(reverse("indy_hub:bp_copy_fulfill_requests"))
     notify_user(
         offer.owner,
         _("Conditional offer accepted"),
@@ -5720,9 +5272,7 @@ def bp_cancel_copy_request(request, request_id):
         delivered=False,
     )
     offers = req.offers.all()
-    fulfill_queue_url = request.build_absolute_uri(
-        reverse("indy_hub:bp_copy_fulfill_requests")
-    )
+    fulfill_queue_url = request.build_absolute_uri(reverse("indy_hub:bp_copy_fulfill_requests"))
     _close_request_chats(req, BlueprintCopyChat.CloseReason.REQUEST_WITHDRAWN)
     for offer in offers:
         notify_user(
@@ -5758,26 +5308,16 @@ def bp_cancel_copy_request(request, request_id):
 @login_required
 def bp_mark_copy_delivered(request, request_id):
     """Mark a fulfilled blueprint copy request as delivered (provider action)."""
-    req = get_object_or_404(
-        BlueprintCopyRequest, id=request_id, fulfilled=True, delivered=False
-    )
+    req = get_object_or_404(BlueprintCopyRequest, id=request_id, fulfilled=True, delivered=False)
 
     offer = (
-        req.offers.filter(owner=request.user, status__in=["accepted", "conditional"])
-        .select_related("request")
-        .first()
+        req.offers.filter(owner=request.user, status__in=["accepted", "conditional"]).select_related("request").first()
     )
     if not offer and req.fulfilled_by_id != request.user.id:
-        messages.error(
-            request, _("You do not have an accepted offer for this request.")
-        )
+        messages.error(request, _("You do not have an accepted offer for this request."))
         return redirect("indy_hub:bp_copy_fulfill_requests")
 
-    if (
-        offer
-        and offer.status == "conditional"
-        and not (offer.accepted_by_buyer and offer.accepted_by_seller)
-    ):
+    if offer and offer.status == "conditional" and not (offer.accepted_by_buyer and offer.accepted_by_seller):
         messages.error(
             request,
             _("You must finalize the conditional offer before marking delivered."),
@@ -5787,9 +5327,7 @@ def bp_mark_copy_delivered(request, request_id):
     req.delivered = True
     req.delivered_at = timezone.now()
     req.save()
-    my_requests_url = request.build_absolute_uri(
-        reverse("indy_hub:bp_copy_my_requests")
-    )
+    my_requests_url = request.build_absolute_uri(reverse("indy_hub:bp_copy_my_requests"))
     notify_user(
         req.requested_by,
         "Blueprint Copy Request Delivered",
@@ -5858,9 +5396,7 @@ def bp_update_copy_request(request, request_id):
         % notification_context
     )
 
-    fulfill_queue_url = request.build_absolute_uri(
-        reverse("indy_hub:bp_copy_fulfill_requests")
-    )
+    fulfill_queue_url = request.build_absolute_uri(reverse("indy_hub:bp_copy_fulfill_requests"))
     fulfill_label = _("Review copy requests")
 
     sent_to: set[int] = set()
@@ -5904,9 +5440,7 @@ def bp_copy_my_requests(request):
         except (TypeError, ValueError):
             requested_chat_id = None
         if requested_chat_id:
-            exists = BlueprintCopyChat.objects.filter(
-                id=requested_chat_id, buyer=request.user
-            ).exists()
+            exists = BlueprintCopyChat.objects.filter(id=requested_chat_id, buyer=request.user).exists()
             if exists:
                 auto_open_chat_id = str(requested_chat_id)
 
@@ -5919,16 +5453,12 @@ def bp_copy_my_requests(request):
         "action_required": {
             "label": _("Your action needed"),
             "badge": "bg-info text-white",
-            "hint": _(
-                "Review conditional offers and accept the one that suits you best."
-            ),
+            "hint": _("Review conditional offers and accept the one that suits you best."),
         },
         "awaiting_delivery": {
             "label": _("In progress"),
             "badge": "bg-success text-white",
-            "hint": _(
-                "A builder accepted. Coordinate delivery and watch for the completion notice."
-            ),
+            "hint": _("A builder accepted. Coordinate delivery and watch for the completion notice."),
         },
         "waiting_on_builder": {
             "label": _("Waiting on builder"),
@@ -5938,9 +5468,7 @@ def bp_copy_my_requests(request):
         "waiting_on_you": {
             "label": _("Confirm agreement"),
             "badge": "bg-warning text-dark",
-            "hint": _(
-                "The builder accepted your terms. Confirm in chat to finalise the agreement."
-            ),
+            "hint": _("The builder accepted your terms. Confirm in chat to finalise the agreement."),
         },
         "delivered": {
             "label": _("Delivered"),
@@ -5961,13 +5489,9 @@ def bp_copy_my_requests(request):
     history_requests: list[dict[str, Any]] = []
     for req in qs:
         offers = list(req.offers.all())
-        accepted_offer_obj = next(
-            (offer for offer in offers if offer.status == "accepted"), None
-        )
+        accepted_offer_obj = next((offer for offer in offers if offer.status == "accepted"), None)
 
-        conditional_offers = [
-            offer for offer in offers if offer.status == "conditional"
-        ]
+        conditional_offers = [offer for offer in offers if offer.status == "conditional"]
         cond_offer_data = []
         cond_accepted = None
         cond_waiting_builder = None
@@ -5991,9 +5515,7 @@ def bp_copy_my_requests(request):
                     "has_unread": _chat_has_unread(chat, "buyer"),
                     "last_message_at": chat.last_message_at,
                     "last_message_display": (
-                        timezone.localtime(chat.last_message_at).strftime(
-                            "%Y-%m-%d %H:%M"
-                        )
+                        timezone.localtime(chat.last_message_at).strftime("%Y-%m-%d %H:%M")
                         if chat.last_message_at
                         else ""
                     ),
@@ -6157,16 +5679,12 @@ def bp_copy_my_requests(request):
         active_filter = "all"
     context["active_filter"] = active_filter
     if active_filter != "all":
-        context["my_requests"] = [
-            req for req in active_requests if req.get("status_key") == active_filter
-        ]
+        context["my_requests"] = [req for req in active_requests if req.get("status_key") == active_filter]
     if auto_open_chat_id:
         context["auto_open_chat_id"] = auto_open_chat_id
     context.update(build_nav_context(request.user, active_tab="blueprint_sharing"))
 
-    return render(
-        request, "indy_hub/blueprint_sharing/bp_copy_my_requests.html", context
-    )
+    return render(request, "indy_hub/blueprint_sharing/bp_copy_my_requests.html", context)
 
 
 @indy_hub_access_required
@@ -6227,9 +5745,7 @@ def bp_chat_history(request, chat_id: int):
                 status_tone = "warning"
                 state = "waiting_on_seller"
             elif not accepted_by_buyer and accepted_by_seller:
-                status_label = _(
-                    "The builder confirmed. Accept to finalise the agreement."
-                )
+                status_label = _("The builder confirmed. Accept to finalise the agreement.")
                 status_tone = "info"
                 state = "waiting_on_you"
             else:
@@ -6291,9 +5807,7 @@ def bp_chat_history(request, chat_id: int):
         now = timezone.now()
         chat.buyer_last_seen_at = now
         chat.seller_last_seen_at = now
-        chat.save(
-            update_fields=["buyer_last_seen_at", "seller_last_seen_at", "updated_at"]
-        )
+        chat.save(update_fields=["buyer_last_seen_at", "seller_last_seen_at", "updated_at"])
     else:
         chat.mark_seen(viewer_role, force=True)
     return JsonResponse(data)
@@ -6311,9 +5825,7 @@ def bp_chat_send(request, chat_id: int):
     if base_role not in {"buyer", "seller"}:
         return JsonResponse({"error": _("Unauthorized")}, status=403)
     if not chat.is_open:
-        return JsonResponse(
-            {"error": _("This chat is closed."), "closed": True}, status=409
-        )
+        return JsonResponse({"error": _("This chat is closed."), "closed": True}, status=409)
 
     payload = {}
     if request.content_type == "application/json":
@@ -6352,24 +5864,16 @@ def bp_chat_send(request, chat_id: int):
             detail = exc.messages[0]
         else:
             detail = str(exc)
-        return JsonResponse(
-            {"error": _("Invalid message."), "details": detail}, status=400
-        )
+        return JsonResponse({"error": _("Invalid message."), "details": detail}, status=400)
     msg.save()
     chat.register_message(sender_role=viewer_role)
 
-    logger.debug(
-        "bp_chat_send chat=%s user=%s role=%s", chat.id, request.user.id, viewer_role
-    )
+    logger.debug("bp_chat_send chat=%s user=%s role=%s", chat.id, request.user.id, viewer_role)
 
     other_user = chat.seller if viewer_role == "buyer" else chat.buyer
     if getattr(other_user, "id", None):
         link = request.build_absolute_uri(
-            reverse(
-                "indy_hub:bp_copy_my_requests"
-                if viewer_role == "seller"
-                else "indy_hub:bp_copy_fulfill_requests"
-            )
+            reverse("indy_hub:bp_copy_my_requests" if viewer_role == "seller" else "indy_hub:bp_copy_fulfill_requests")
         )
         notify_user(
             other_user,
@@ -6412,9 +5916,7 @@ def bp_chat_decide(request, chat_id: int):
         return JsonResponse({"error": _("Unauthorized")}, status=403)
 
     if not chat.is_open or chat.offer.status != "conditional":
-        return JsonResponse(
-            {"error": _("This conversation is already closed.")}, status=409
-        )
+        return JsonResponse({"error": _("This conversation is already closed.")}, status=409)
 
     try:
         payload = json.loads(request.body.decode("utf-8"))
@@ -6444,9 +5946,7 @@ def bp_chat_decide(request, chat_id: int):
             if finalized:
                 return JsonResponse({"status": "accepted"})
 
-            fulfill_queue_url = build_site_url(
-                reverse("indy_hub:bp_copy_fulfill_requests")
-            )
+            fulfill_queue_url = build_site_url(reverse("indy_hub:bp_copy_fulfill_requests"))
             notify_user(
                 chat.seller,
                 _("Conditional offer accepted"),
@@ -6479,9 +5979,7 @@ def bp_chat_decide(request, chat_id: int):
         notify_user(
             chat.buyer,
             _("Builder confirmed your terms"),
-            _(
-                "%(builder)s confirmed the agreement for %(type)s (ME%(me)s, TE%(te)s). Accept in chat to finalise."
-            )
+            _("%(builder)s confirmed the agreement for %(type)s (ME%(me)s, TE%(te)s). Accept in chat to finalise.")
             % {
                 "builder": offer.owner.username,
                 "type": get_type_name(req.type_id),
@@ -6521,9 +6019,7 @@ def bp_chat_decide(request, chat_id: int):
         notify_user(
             recipient,
             _("Conditional offer declined"),
-            _(
-                "%(actor)s declined the conditional offer for %(type)s (ME%(me)s, TE%(te)s)."
-            )
+            _("%(actor)s declined the conditional offer for %(type)s (ME%(me)s, TE%(te)s).")
             % {
                 "actor": request.user.username,
                 "type": get_type_name(req.type_id),
@@ -6533,9 +6029,7 @@ def bp_chat_decide(request, chat_id: int):
             "warning",
             link=build_site_url(
                 reverse(
-                    "indy_hub:bp_copy_fulfill_requests"
-                    if viewer_role == "buyer"
-                    else "indy_hub:bp_copy_my_requests"
+                    "indy_hub:bp_copy_fulfill_requests" if viewer_role == "buyer" else "indy_hub:bp_copy_my_requests"
                 )
             ),
             link_label=_("Open details"),
@@ -6564,9 +6058,7 @@ def bp_chat_decide(request, chat_id: int):
 @indy_hub_access_required
 @login_required
 def production_simulations_list(request):
-    emit_view_analytics_event(
-        view_name="industry.production_simulations_list", request=request
-    )
+    emit_view_analytics_event(view_name="industry.production_simulations_list", request=request)
     """
     Display the list of production simulations saved by the user.
     Return JSON when api=1 is included in the query string.
@@ -6630,9 +6122,7 @@ def production_simulations_list(request):
     if ItemType is not None and type_ids:
         item_types = ItemType.objects.filter(id__in=type_ids).select_related("group")
         for item_type in item_types:
-            market_group_map[item_type.id] = (
-                item_type.group.name if getattr(item_type, "group", None) else "Other"
-            )
+            market_group_map[item_type.id] = item_type.group.name if getattr(item_type, "group", None) else "Other"
     context = {
         "simulations": page_obj,
         "total_simulations": total_simulations,
@@ -6640,9 +6130,7 @@ def production_simulations_list(request):
         "stats": stats,
     }
     context.update(build_nav_context(request.user, active_tab="industry"))
-    return render(
-        request, "indy_hub/industry/production_simulations_list.html", context
-    )
+    return render(request, "indy_hub/industry/production_simulations_list.html", context)
 
 
 @indy_hub_access_required
@@ -6651,9 +6139,7 @@ def delete_production_simulation(request, simulation_id):
     """
     Delete a production simulation and its related configurations.
     """
-    simulation = get_object_or_404(
-        ProductionSimulation, id=simulation_id, user=request.user
-    )
+    simulation = get_object_or_404(ProductionSimulation, id=simulation_id, user=request.user)
 
     if request.method == "POST":
         blueprint_type_id = simulation.blueprint_type_id
@@ -6676,9 +6162,7 @@ def delete_production_simulation(request, simulation_id):
         # Delete the simulation itself
         simulation.delete()
 
-        messages.success(
-            request, f'Simulation "{simulation_name}" deleted successfully.'
-        )
+        messages.success(request, f'Simulation "{simulation_name}" deleted successfully.')
         return redirect("indy_hub:production_simulations_list")
 
     context = {
@@ -6694,9 +6178,7 @@ def edit_simulation_name(request, simulation_id):
     """
     Allow editing the custom name of a simulation.
     """
-    simulation = get_object_or_404(
-        ProductionSimulation, id=simulation_id, user=request.user
-    )
+    simulation = get_object_or_404(ProductionSimulation, id=simulation_id, user=request.user)
 
     if request.method == "POST":
         new_name = request.POST.get("simulation_name", "").strip()
@@ -6725,4 +6207,3 @@ def industry_slot_overview(request):
     }
     context.update(build_nav_context(request.user, active_tab="industry"))
     return render(request, "indy_hub/industry/slot_overview.html", context)
-

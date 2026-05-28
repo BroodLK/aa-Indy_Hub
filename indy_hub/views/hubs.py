@@ -44,14 +44,9 @@ def settings_hub(request):
 
     # Buyback counters
     context["material_exchange_config_total"] = MaterialExchangeConfig.objects.count()
-    context["material_exchange_enabled"] = (
-        MaterialExchangeSettings.get_solo().is_enabled
-    )
+    context["material_exchange_enabled"] = MaterialExchangeSettings.get_solo().is_enabled
     context["material_exchange_config_active"] = (
-        1
-        if context["material_exchange_enabled"]
-        and context["material_exchange_config_total"]
-        else 0
+        1 if context["material_exchange_enabled"] and context["material_exchange_config_total"] else 0
     )
 
     logger.debug(
@@ -80,4 +75,3 @@ def test_darkly_theme(request):
     emit_view_analytics_event(view_name="test_darkly_theme", request=request)
     logger.debug("Darkly theme test page accessed (user_id=%s)", request.user.id)
     return render(request, "indy_hub/test_darkly_theme.html")
-

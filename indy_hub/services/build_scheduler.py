@@ -7,11 +7,13 @@ for minimal completion time.
 
 from __future__ import annotations
 
+# Standard Library
 import math
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Dict, List, Optional, Set, Tuple
 
+# Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
@@ -137,35 +139,20 @@ class BuildSchedule:
         jobs_by_id = {job.job_id: job for job in self.jobs}
         critical_path_job_ids = list(self.critical_path)
         critical_path_item_ids = list(
-            dict.fromkeys(
-                jobs_by_id[job_id].item_type_id
-                for job_id in critical_path_job_ids
-                if job_id in jobs_by_id
-            )
+            dict.fromkeys(jobs_by_id[job_id].item_type_id for job_id in critical_path_job_ids if job_id in jobs_by_id)
         )
 
         return {
             "total_sequential_time_seconds": self.total_sequential_time_seconds,
             "total_parallel_time_seconds": self.total_parallel_time_seconds,
-            "total_sequential_time_formatted": format_time_duration(
-                self.total_sequential_time_seconds
-            ),
-            "total_parallel_time_formatted": format_time_duration(
-                self.total_parallel_time_seconds
-            ),
-            "time_saved_seconds": (
-                self.total_sequential_time_seconds - self.total_parallel_time_seconds
-            ),
+            "total_sequential_time_formatted": format_time_duration(self.total_sequential_time_seconds),
+            "total_parallel_time_formatted": format_time_duration(self.total_parallel_time_seconds),
+            "time_saved_seconds": (self.total_sequential_time_seconds - self.total_parallel_time_seconds),
             "time_saved_formatted": format_time_duration(
                 self.total_sequential_time_seconds - self.total_parallel_time_seconds
             ),
             "efficiency_percent": round(
-                (
-                    1
-                    - self.total_parallel_time_seconds
-                    / max(self.total_sequential_time_seconds, 1)
-                )
-                * 100,
+                (1 - self.total_parallel_time_seconds / max(self.total_sequential_time_seconds, 1)) * 100,
                 1,
             ),
             "jobs": [
@@ -200,17 +187,11 @@ class BuildSchedule:
                     "slot_name": slot.slot_name or slot.character_name,
                     "jobs_count": len(slot.jobs),
                     "utilization_percent": round(
-                        (
-                            slot.available_at_seconds
-                            / max(self.total_parallel_time_seconds, 1)
-                        )
-                        * 100,
+                        (slot.available_at_seconds / max(self.total_parallel_time_seconds, 1)) * 100,
                         1,
                     ),
                     "completion_time_seconds": slot.available_at_seconds,
-                    "completion_time_formatted": format_time_duration(
-                        slot.available_at_seconds
-                    ),
+                    "completion_time_formatted": format_time_duration(slot.available_at_seconds),
                 }
                 for slot in self.slots
             ],
@@ -237,8 +218,7 @@ class BuildSchedule:
                 self.component_target_time_seconds is None
                 or (
                     self.component_completion_time_seconds is not None
-                    and self.component_completion_time_seconds
-                    <= self.component_target_time_seconds
+                    and self.component_completion_time_seconds <= self.component_target_time_seconds
                 )
             ),
         }
@@ -290,13 +270,7 @@ def calculate_manufacturing_time(
     advanced_industry_reduction = skill_advanced_industry * 0.03
     skill_modifier = 1.0 - industry_reduction - advanced_industry_reduction
 
-    adjusted = (
-        base_time_seconds
-        * te_modifier
-        * structure_modifier
-        * rig_modifier
-        * skill_modifier
-    )
+    adjusted = base_time_seconds * te_modifier * structure_modifier * rig_modifier * skill_modifier
     return max(1, math.ceil(adjusted))
 
 
@@ -305,6 +279,7 @@ def detect_blueprint_activity_type(blueprint_type_id: int) -> int:
     Detect whether a blueprint is for manufacturing (1) or reactions (11).
     """
     try:
+        # AA Example App
         from indy_hub.models import SdeIndustryActivityProduct
 
         has_reaction = SdeIndustryActivityProduct.objects.filter(
@@ -335,6 +310,7 @@ def get_base_manufacturing_time(
     Get base manufacturing/reaction time for a blueprint from eve_sde.
     """
     try:
+        # Alliance Auth (External Libs)
         import eve_sde.models as sde_models
     except ImportError:
         logger.warning("eve_sde not available for time lookup")
@@ -380,6 +356,7 @@ def get_blueprint_skill_requirements(
         activity_id = detect_blueprint_activity_type(blueprint_type_id)
 
     try:
+        # Third Party
         from eveuniverse.models import EveIndustryActivitySkill
     except ImportError:
         logger.warning("eveuniverse not available for blueprint skill lookup")
@@ -439,6 +416,7 @@ def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
 
     Returns a mapping of item_type_id -> dependent item_type_ids.
     """
+    # AA Example App
     from indy_hub.models import SdeIndustryActivityMaterial
 
     dependencies: Dict[int, List[int]] = {}
@@ -459,9 +437,7 @@ def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
         ).values_list("material_eve_type_id", flat=True)
 
         dependencies[item_type_id] = [
-            material_type_id
-            for material_type_id in materials
-            if material_type_id in producing_items
+            material_type_id for material_type_id in materials if material_type_id in producing_items
         ]
 
     return dependencies
@@ -477,10 +453,7 @@ def split_runs_evenly(total_runs: int, chunk_count: int) -> List[int]:
     active_chunks = min(normalized_runs, normalized_chunks)
     base_runs = normalized_runs // active_chunks
     remainder = normalized_runs % active_chunks
-    return [
-        base_runs + (1 if index < remainder else 0)
-        for index in range(active_chunks)
-    ]
+    return [base_runs + (1 if index < remainder else 0) for index in range(active_chunks)]
 
 
 def split_jobs_evenly_across_slots(
@@ -542,9 +515,7 @@ def split_jobs_evenly_across_slots(
             dict.fromkeys(
                 dependency_job.job_id
                 for dependency_item_type_id in original_job.dependencies
-                for dependency_job in jobs_by_item_type.get(
-                    dependency_item_type_id, []
-                )
+                for dependency_job in jobs_by_item_type.get(dependency_item_type_id, [])
             )
         )
         for split_job in jobs_by_item_type.get(original_job.item_type_id, []):
@@ -576,9 +547,7 @@ def component_completion_time_seconds(
     if not final_product_item_type_id:
         return max((job.end_time_seconds for job in jobs), default=0)
 
-    component_jobs = [
-        job for job in jobs if job.item_type_id != final_product_item_type_id
-    ]
+    component_jobs = [job for job in jobs if job.item_type_id != final_product_item_type_id]
     if not component_jobs:
         return 0
 
@@ -587,9 +556,7 @@ def component_completion_time_seconds(
 
 def _slot_capability_score(slot: IndustrySlot, jobs: List[ManufacturingJob]) -> Tuple[int, int]:
     """Score how broadly a slot can satisfy the selected job set."""
-    eligible_jobs = [
-        job for job in jobs if slot.meets_skill_requirements(job.required_skills)
-    ]
+    eligible_jobs = [job for job in jobs if slot.meets_skill_requirements(job.required_skills)]
     eligible_count = len(eligible_jobs)
     distinct_skills = len(
         {
@@ -612,9 +579,7 @@ def select_slot_subset(
     if normalized_limit <= 0:
         return []
 
-    slot_scores = {
-        slot.slot_id: _slot_capability_score(slot, jobs) for slot in slots
-    }
+    slot_scores = {slot.slot_id: _slot_capability_score(slot, jobs) for slot in slots}
     ranked_slots = sorted(
         slots,
         key=lambda slot: (
@@ -623,9 +588,7 @@ def select_slot_subset(
             slot.slot_id,
         ),
     )
-    selected_ids = {
-        slot.slot_id for slot in ranked_slots[:normalized_limit]
-    }
+    selected_ids = {slot.slot_id for slot in ranked_slots[:normalized_limit]}
     return [clone_slot(slot) for slot in slots if slot.slot_id in selected_ids]
 
 
@@ -710,13 +673,11 @@ def calculate_schedule_for_mode(
             best_fallback = schedule
             if (
                 schedule.component_completion_time_seconds is not None
-                and schedule.component_completion_time_seconds
-                <= component_target_time_seconds
+                and schedule.component_completion_time_seconds <= component_target_time_seconds
             ):
                 schedule.recommendations.insert(
                     0,
-                    "Components can be ready in "
-                    + format_time_duration(schedule.component_completion_time_seconds),
+                    "Components can be ready in " + format_time_duration(schedule.component_completion_time_seconds),
                 )
                 return schedule
 
@@ -759,9 +720,7 @@ def schedule_jobs_critical_path(
             total_parallel_time_seconds=0,
         )
 
-    dep_map: Dict[int, Set[int]] = {
-        job.job_id: set(job.dependencies) for job in jobs
-    }
+    dep_map: Dict[int, Set[int]] = {job.job_id: set(job.dependencies) for job in jobs}
     job_map: Dict[int, ManufacturingJob] = {job.job_id: job for job in jobs}
     reverse_dep_map: Dict[int, Set[int]] = {job.job_id: set() for job in jobs}
     for job in jobs:
@@ -769,9 +728,7 @@ def schedule_jobs_critical_path(
             if dep_id in reverse_dep_map:
                 reverse_dep_map[dep_id].add(job.job_id)
 
-    preferred_job_ids = {
-        job.job_id for job in jobs if job.item_type_id == preferred_item_type_id
-    }
+    preferred_job_ids = {job.job_id for job in jobs if job.item_type_id == preferred_item_type_id}
     generic_tail_cache: Dict[int, int] = {}
     preferred_tail_cache: Dict[int, int] = {}
     reaches_preferred_cache: Dict[int, bool] = {}
@@ -795,9 +752,7 @@ def schedule_jobs_critical_path(
             reaches_preferred_cache[job_id] = True
             return True
 
-        reaches = any(
-            reaches_preferred(child_id) for child_id in reverse_dep_map.get(job_id, set())
-        )
+        reaches = any(reaches_preferred(child_id) for child_id in reverse_dep_map.get(job_id, set()))
         reaches_preferred_cache[job_id] = reaches
         return reaches
 
@@ -820,12 +775,8 @@ def schedule_jobs_critical_path(
         preferred_tail_cache[job_id] = tail_seconds
         return tail_seconds
 
-    preferred_priority = {
-        job.job_id: calc_preferred_tail(job.job_id) for job in jobs
-    }
-    generic_priority = {
-        job.job_id: calc_generic_tail(job.job_id) for job in jobs
-    }
+    preferred_priority = {job.job_id: calc_preferred_tail(job.job_id) for job in jobs}
+    generic_priority = {job.job_id: calc_generic_tail(job.job_id) for job in jobs}
 
     scheduled_jobs: List[ManufacturingJob] = []
     completed_job_times: Dict[int, int] = {}
@@ -844,9 +795,7 @@ def schedule_jobs_critical_path(
 
         for job_id in list(unscheduled_job_ids):
             deps = dep_map.get(job_id, set())
-            unresolved_deps = {
-                dep_id for dep_id in deps if dep_id in job_map and dep_id not in completed_job_times
-            }
+            unresolved_deps = {dep_id for dep_id in deps if dep_id in job_map and dep_id not in completed_job_times}
             if unresolved_deps:
                 blocked_job_ids.add(job_id)
                 continue
@@ -856,9 +805,7 @@ def schedule_jobs_critical_path(
                 (completed_job_times.get(dep_id, 0) for dep_id in deps if dep_id in job_map),
                 default=0,
             )
-            eligible_slots = [
-                slot for slot in slots if slot.meets_skill_requirements(job.required_skills)
-            ]
+            eligible_slots = [slot for slot in slots if slot.meets_skill_requirements(job.required_skills)]
             if not eligible_slots:
                 requirements_text = format_skill_requirements(job.required_skills)
                 if requirements_text:
@@ -866,9 +813,7 @@ def schedule_jobs_critical_path(
                         f"No selected characters meet the skill requirements for "
                         f"{job.item_name}: {requirements_text}."
                     )
-                raise ValueError(
-                    f"No eligible industry slots are available for {job.item_name}."
-                )
+                raise ValueError(f"No eligible industry slots are available for {job.item_name}.")
 
             best_slot = min(
                 eligible_slots,
@@ -896,11 +841,7 @@ def schedule_jobs_critical_path(
 
         if best_choice_key is None or best_choice_slot is None or best_choice_job is None:
             blocked_job_names = ", ".join(
-                sorted(
-                    job_map[job_id].item_name
-                    for job_id in blocked_job_ids
-                    if job_id in job_map
-                )
+                sorted(job_map[job_id].item_name for job_id in blocked_job_ids if job_id in job_map)
             )
             raise ValueError(
                 "Unable to resolve build dependencies while scheduling"
@@ -995,27 +936,19 @@ def generate_recommendations(
 
         if utilization_pct < 50:
             recommendations.append(
-                f"Low slot utilization ({utilization_pct:.0f}%). "
-                "Consider using fewer slots or adding more jobs."
+                f"Low slot utilization ({utilization_pct:.0f}%). " "Consider using fewer slots or adding more jobs."
             )
 
         idle_slots = [slot for slot in slots if len(slot.jobs) == 0]
         if idle_slots:
-            recommendations.append(
-                f"{len(idle_slots)} slot(s) have no jobs assigned. Consider removing unused slots."
-            )
+            recommendations.append(f"{len(idle_slots)} slot(s) have no jobs assigned. Consider removing unused slots.")
 
     if critical_path and len(critical_path) > 1:
         critical_items = list(
-            dict.fromkeys(
-                job_map[job_id].item_name
-                for job_id in critical_path
-                if job_id in job_map
-            )
+            dict.fromkeys(job_map[job_id].item_name for job_id in critical_path if job_id in job_map)
         )
         recommendations.append(
-            f"Critical path: {' -> '.join(critical_items)}. "
-            "Optimizing these items will reduce total time."
+            f"Critical path: {' -> '.join(critical_items)}. " "Optimizing these items will reduce total time."
         )
 
     if jobs:

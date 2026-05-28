@@ -16,9 +16,7 @@ def _run_mysql_statements(schema_editor, statements: list[str]) -> None:
                 cursor.execute(stmt)
 
 
-def _build_add_column_statements(
-    table: str, column: str, column_definition: str
-) -> list[str]:
+def _build_add_column_statements(table: str, column: str, column_definition: str) -> list[str]:
     return [
         (
             "SET @col_exists := ("
@@ -28,9 +26,7 @@ def _build_add_column_statements(
             f"AND COLUMN_NAME = '{column}'"
             ")"
         ),
-        (
-            f"SET @ddl := IF(@col_exists = 0, \"ALTER TABLE `{table}` ADD COLUMN {column_definition}\", 'DO 0')"
-        ),
+        (f"SET @ddl := IF(@col_exists = 0, \"ALTER TABLE `{table}` ADD COLUMN {column_definition}\", 'DO 0')"),
         "SET @col_exists := NULL",
         "PREPARE stmt FROM @ddl",
         "EXECUTE stmt",
@@ -48,9 +44,7 @@ def _build_drop_column_statements(table: str, column: str) -> list[str]:
             f"AND COLUMN_NAME = '{column}'"
             ")"
         ),
-        (
-            f"SET @ddl := IF(@col_exists = 1, \"ALTER TABLE `{table}` DROP COLUMN `{column}`\", 'DO 0')"
-        ),
+        (f"SET @ddl := IF(@col_exists = 1, \"ALTER TABLE `{table}` DROP COLUMN `{column}`\", 'DO 0')"),
         "SET @col_exists := NULL",
         "PREPARE stmt FROM @ddl",
         "EXECUTE stmt",

@@ -65,9 +65,7 @@ class Migration(migrations.Migration):
                 ("updated_at", models.DateTimeField(auto_now=True)),
                 (
                     "user",
-                    models.ForeignKey(
-                        on_delete=models.CASCADE, to=settings.AUTH_USER_MODEL
-                    ),
+                    models.ForeignKey(on_delete=models.CASCADE, to=settings.AUTH_USER_MODEL),
                 ),
             ],
             options={
@@ -76,9 +74,7 @@ class Migration(migrations.Migration):
             },
         ),
         # Transfer existing preferences
-        migrations.RunPython(
-            migrate_preferences, reverse_code=migrations.RunPython.noop
-        ),
+        migrations.RunPython(migrate_preferences, reverse_code=migrations.RunPython.noop),
         # Remove old models
         migrations.DeleteModel(name="CharacterUpdateTracker"),
         migrations.DeleteModel(name="BlueprintCopyShareSetting"),

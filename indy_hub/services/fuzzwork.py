@@ -33,10 +33,7 @@ def fetch_fuzzwork_aggregates(
         return {}
 
     type_ids_str = ",".join(unique_ids)
-    url = (
-        "https://market.fuzzwork.co.uk/aggregates/"
-        f"?station={int(station_id)}&types={type_ids_str}"
-    )
+    url = "https://market.fuzzwork.co.uk/aggregates/" f"?station={int(station_id)}&types={type_ids_str}"
 
     try:
         response = requests.get(url, timeout=timeout)

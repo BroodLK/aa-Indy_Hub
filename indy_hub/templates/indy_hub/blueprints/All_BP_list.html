@@ -2,18 +2,20 @@
 {% load i18n %}
 {% load static %}
 
-{% block page_title %}{% trans "Blueprint List" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Blueprint List" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-{% trans "Blueprint" as blueprint_label %}
-{% trans "Unknown Blueprint" as unknown_blueprint_label %}
-<div class="container-fluid py-4">
-    <div class="page-header mb-4">
+    {% trans "Blueprint" as blueprint_label %}
+    {% trans "Unknown Blueprint" as unknown_blueprint_label %}
+    <div class="container-fluid py-4">
+        <div class="page-header mb-4">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
                 <div>
                     <h2 class="h3 mb-1">
@@ -35,39 +37,45 @@
         <div class="filter-section mb-4">
             <form method="get">
                 <div class="row g-3 align-items-end">
-                <div class="col-lg-4">
-                    <label class="form-label text-muted fw-bold">{% trans 'Search' %}</label>
-                    <input type="text" name="search" value="{% if request.GET.applied %}{{ filters.search }}{% endif %}" class="form-control"
-                        placeholder="{% trans 'Blueprint name or type ID' %}">
-                </div>
-                <div class="col-lg-3">
-                    <label class="form-label text-muted fw-bold">{% trans 'Activity' %}</label>
-                    <select name="activity_id" class="form-select">
-                        {% for id, name in activity_options %}
-                        <option value="{{ id }}"
-                            {% if request.GET.applied and filters.activity_id|stringformat:'s' == id|stringformat:'s' %}selected{% endif %}>
-                            {{ name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-lg-3">
-                    <label class="form-label text-muted fw-bold">{% trans 'Market Group' %}</label>
-                    <select name="market_group_id" class="form-select">
-                        <option value="">{% trans 'All Groups' %}</option>
-                        {% for mgid, mgname in market_group_options %}
-                        <option value="{{ mgid }}"
-                            {% if request.GET.applied and filters.market_group_id|stringformat:'s' == mgid|stringformat:'s' %}selected{% endif %}>
-                            {{ mgname }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-lg-2 d-flex align-items-end">
-                    <button type="submit" class="btn btn-primary" name="applied" value="1">
-                        <i class="fas fa-filter me-1"></i>{% trans 'Apply Filters' %}
-                    </button>
-                    <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-outline-secondary ms-2">
-                        <i class="fas fa-undo-alt me-1"></i>{% trans 'Reset Filters' %}
-                    </a>                    </div>
+                    <div class="col-lg-4">
+                        <label class="form-label text-muted fw-bold">{% trans 'Search' %}</label>
+                        <input type="text"
+                               name="search"
+                               value="{% if request.GET.applied %}{{ filters.search }}{% endif %}"
+                               class="form-control"
+                               placeholder="{% trans 'Blueprint name or type ID' %}">
+                    </div>
+                    <div class="col-lg-3">
+                        <label class="form-label text-muted fw-bold">{% trans 'Activity' %}</label>
+                        <select name="activity_id" class="form-select">
+                            {% for id, name in activity_options %}
+                                <option value="{{ id }}"
+                                        {% if request.GET.applied and filters.activity_id|stringformat:'s' == id|stringformat:'s' %}selected{% endif %}>
+                                    {{ name }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-lg-3">
+                        <label class="form-label text-muted fw-bold">{% trans 'Market Group' %}</label>
+                        <select name="market_group_id" class="form-select">
+                            <option value="">{% trans 'All Groups' %}</option>
+                            {% for mgid, mgname in market_group_options %}
+                                <option value="{{ mgid }}"
+                                        {% if request.GET.applied and filters.market_group_id|stringformat:'s' == mgid|stringformat:'s' %}selected{% endif %}>
+                                    {{ mgname }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-lg-2 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary" name="applied" value="1">
+                            <i class="fas fa-filter me-1"></i>{% trans 'Apply Filters' %}
+                        </button>
+                        <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-outline-secondary ms-2">
+                            <i class="fas fa-undo-alt me-1"></i>{% trans 'Reset Filters' %}
+                        </a>
+                    </div>
                 </div>
             </form>
         </div>
@@ -75,22 +83,24 @@
         <div class="blueprint-list-group w-100">
             <div class="blueprint-list" id="blueprintsContainer">
                 {% for bp in blueprints %}
-                <div class="blueprint-list-item d-flex flex-wrap align-items-center gap-3">
-                    <div class="blueprint-icon flex-shrink-0 me-3">
-                        <img src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
-                            alt="{{ bp.type_name|default:blueprint_label }}" loading="lazy"
-                            onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ bp.type_id }}/icon?size=64'" />
-                        <span class="fallback"><i class="fas fa-industry"></i></span>
-                    </div>
-                    <div class="flex-grow-1 min-width-0 blueprint-list-content">
-                        <div class="blueprint-meta mb-0">
-                            <h5 class="blueprint-title mb-0">{{ bp.type_name|default:unknown_blueprint_label }}</h5>
-                            <a href="{% url 'indy_hub:craft_bp' bp.type_id %}?next={{ request.get_full_path|urlencode }}" class="btn btn-outline-info btn-sm">
-                                <i class="fas fa-tools me-1"></i>{% trans "View Craft" %}
-                            </a>
+                    <div class="blueprint-list-item d-flex flex-wrap align-items-center gap-3">
+                        <div class="blueprint-icon flex-shrink-0 me-3">
+                            <img src="https://images.evetech.net/types/{{ bp.type_id }}/bp?size=64"
+                                 alt="{{ bp.type_name|default:blueprint_label }}"
+                                 loading="lazy"
+                                 onerror="this.onerror=null;this.src='https://images.evetech.net/types/{{ bp.type_id }}/icon?size=64'" />
+                            <span class="fallback"><i class="fas fa-industry"></i></span>
+                        </div>
+                        <div class="flex-grow-1 min-width-0 blueprint-list-content">
+                            <div class="blueprint-meta mb-0">
+                                <h5 class="blueprint-title mb-0">{{ bp.type_name|default:unknown_blueprint_label }}</h5>
+                                <a href="{% url 'indy_hub:craft_bp' bp.type_id %}?next={{ request.get_full_path|urlencode }}"
+                                   class="btn btn-outline-info btn-sm">
+                                    <i class="fas fa-tools me-1"></i>{% trans "View Craft" %}
+                                </a>
+                            </div>
                         </div>
                     </div>
-                </div>
                 {% endfor %}
             </div>
         </div>
@@ -100,7 +110,9 @@
                 <label for="perPage" class="form-label mb-0 text-muted small">{% trans "Per page" %}</label>
                 <select name="per_page" id="perPage" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
                     {% for n in per_page_options %}
-                    <option value="{{ n }}" {% if filters.per_page|stringformat:'s' == n|stringformat:'s' %}selected{% endif %}>{{ n }}</option>
+                        <option value="{{ n }}" {% if filters.per_page|stringformat:'s' == n|stringformat:'s' %}selected{% endif %}>
+                            {{ n }}
+                        </option>
                     {% endfor %}
                 </select>
                 <input type="hidden" name="search" value="{{ filters.search }}">
@@ -108,45 +120,51 @@
                 <input type="hidden" name="market_group_id" value="{{ filters.market_group_id }}">
             </form>
             {% if blueprints.has_other_pages %}
-            <nav aria-label="{% trans 'Blueprint pagination' %}">
-                <ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">
-                    {% if blueprints.has_previous %}
-                    <li class="page-item">
-                        <a class="page-link"
-                            href="?page={{ blueprints.previous_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
-                            aria-label="{% trans 'Previous' %}">
-                            <span aria-hidden="true">&laquo;</span>
-                        </a>
-                    </li>
-                    {% endif %}
-                    {% for num in blueprints.paginator.page_range %}
-                    {% if num == blueprints.number %}
-                    <li class="page-item active"><span class="page-link">{{ num }}</span></li>
-                    {% elif num >= blueprints.number|add:'-2' and num <= blueprints.number|add:'2' %}
-                    <li class="page-item"><a class="page-link"
-                            href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1">{{ num }}</a>
-                    </li>
-                    {% elif num == 1 or num == blueprints.paginator.num_pages %}
-                    <li class="page-item"><a class="page-link"
-                            href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1">{{ num }}</a>
-                    </li>
-                    {% if num < blueprints.number|add:'-2' or num > blueprints.number|add:'2' %}
-                    <li class="page-item disabled"><span class="page-link">…</span></li>
-                    {% endif %}
-                    {% endif %}
-                    {% endfor %}
-                    {% if blueprints.has_next %}
-                    <li class="page-item">
-                        <a class="page-link"
-                            href="?page={{ blueprints.next_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
-                            aria-label="{% trans 'Next' %}">
-                            <span aria-hidden="true">&raquo;</span>
-                        </a>
-                    </li>
-                    {% endif %}
-                </ul>
-            </nav>
+                <nav aria-label="{% trans 'Blueprint pagination' %}">
+                    <ul class="pagination pagination-sm justify-content-center mb-0 flex-wrap">
+                        {% if blueprints.has_previous %}
+                            <li class="page-item">
+                                <a class="page-link"
+                                   href="?page={{ blueprints.previous_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
+                                   aria-label="{% trans 'Previous' %}">
+                                    <span aria-hidden="true">&laquo;</span>
+                                </a>
+                            </li>
+                        {% endif %}
+                        {% for num in blueprints.paginator.page_range %}
+                            {% if num == blueprints.number %}
+                                <li class="page-item active">
+                                    <span class="page-link">{{ num }}</span>
+                                </li>
+                            {% elif num >= blueprints.number|add:'-2' and num <= blueprints.number|add:'2' %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                       href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1">{{ num }}</a>
+                                </li>
+                            {% elif num == 1 or num == blueprints.paginator.num_pages %}
+                                <li class="page-item">
+                                    <a class="page-link"
+                                       href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1">{{ num }}</a>
+                                </li>
+                                {% if num < blueprints.number|add:'-2' or num > blueprints.number|add:'2' %}
+                                    <li class="page-item disabled">
+                                        <span class="page-link">…</span>
+                                    </li>
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                        {% if blueprints.has_next %}
+                            <li class="page-item">
+                                <a class="page-link"
+                                   href="?page={{ blueprints.next_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
+                                   aria-label="{% trans 'Next' %}">
+                                    <span aria-hidden="true">&raquo;</span>
+                                </a>
+                            </li>
+                        {% endif %}
+                    </ul>
+                </nav>
             {% endif %}
         </div>
-</div>
+    </div>
 {% endblock content %}

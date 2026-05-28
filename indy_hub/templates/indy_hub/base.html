@@ -3,8 +3,8 @@
 {% load static %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/dark-mode-adaptive.css' %}">
-<style>
+    <link rel="stylesheet" href="{% static 'indy_hub/css/dark-mode-adaptive.css' %}">
+    <style>
     /* Active state for Indy Hub nav brand */
     .nav-link.me-auto.active {
         color: var(--bs-primary) !important;
@@ -12,7 +12,7 @@
         border-bottom: 3px solid var(--bs-primary);
         padding-bottom: calc(0.375rem - 3px) !important;
     }
-</style>
+    </style>
 {% endblock extra_css %}
 
 {% block extra_javascript %}
@@ -68,44 +68,68 @@
         {% if blueprints_nav_url %}
             {% translate "Blueprints" as blueprints_tab_title %}
             <div class="nav-item dropdown">
-                <a class="nav-link {{ blueprints_nav_class }} dropdown-toggle" href="#" id="blueprintsDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <a class="nav-link {{ blueprints_nav_class }} dropdown-toggle"
+                   href="#"
+                   id="blueprintsDropdown"
+                   role="button"
+                   data-bs-toggle="dropdown"
+                   aria-expanded="false">
                     <i class="fa-solid fa-copy me-2"></i>
                     <span class="d-none d-lg-inline">{{ blueprints_tab_title }}</span>
                 </a>
                 <ul class="dropdown-menu" aria-labelledby="blueprintsDropdown">
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:personnal_bp_list' %}">
-                        <i class="fas fa-user me-2"></i>{% trans "My Blueprints" %}
-                    </a></li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:personnal_bp_list' %}">
+                            <i class="fas fa-user me-2"></i>{% trans "My Blueprints" %}
+                        </a>
+                    </li>
                     {% if can_manage_corp_bp_requests %}
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:corporation_bp_list' %}">
-                        <i class="fas fa-building me-2"></i>{% trans "Corporation Blueprints" %}
-                    </a></li>
+                        <li>
+                            <a class="dropdown-item" href="{% url 'indy_hub:corporation_bp_list' %}">
+                                <i class="fas fa-building me-2"></i>{% trans "Corporation Blueprints" %}
+                            </a>
+                        </li>
                     {% endif %}
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:all_bp_list' %}">
-                        <i class="fas fa-list-check me-2"></i>{% trans "All Buildable" %}
-                    </a></li>
+                    <li>
+                        <hr class="dropdown-divider">
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:all_bp_list' %}">
+                            <i class="fas fa-list-check me-2"></i>{% trans "All Buildable" %}
+                        </a>
+                    </li>
                 </ul>
             </div>
         {% endif %}
         {% if blueprint_sharing_nav_url %}
             {% translate "Blueprint Sharing" as blueprint_sharing_tab_title %}
             <div class="nav-item dropdown">
-                <a class="nav-link {{ blueprint_sharing_nav_class }} dropdown-toggle" href="#" id="blueprintSharingDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <a class="nav-link {{ blueprint_sharing_nav_class }} dropdown-toggle"
+                   href="#"
+                   id="blueprintSharingDropdown"
+                   role="button"
+                   data-bs-toggle="dropdown"
+                   aria-expanded="false">
                     <i class="fa-solid fa-share-nodes me-2"></i>
                     <span class="d-none d-lg-inline">{{ blueprint_sharing_tab_title }}</span>
                 </a>
                 <ul class="dropdown-menu" aria-labelledby="blueprintSharingDropdown">
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:bp_copy_request_page' %}">
-                        <i class="fas fa-copy me-2"></i>{% trans "Request a Copy" %}
-                    </a></li>
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:bp_copy_my_requests' %}">
-                        <i class="fas fa-list me-2"></i>{% trans "My Requests" %}
-                    </a></li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:bp_copy_request_page' %}">
+                            <i class="fas fa-copy me-2"></i>{% trans "Request a Copy" %}
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:bp_copy_my_requests' %}">
+                            <i class="fas fa-list me-2"></i>{% trans "My Requests" %}
+                        </a>
+                    </li>
                     {% if can_access_indy_hub %}
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:bp_copy_fulfill_requests' %}">
-                        <i class="fas fa-handshake me-2"></i>{% trans "Fulfill Requests" %}
-                    </a></li>
+                        <li>
+                            <a class="dropdown-item" href="{% url 'indy_hub:bp_copy_fulfill_requests' %}">
+                                <i class="fas fa-handshake me-2"></i>{% trans "Fulfill Requests" %}
+                            </a>
+                        </li>
                     {% endif %}
                 </ul>
             </div>
@@ -113,20 +137,31 @@
         {% if reprocessing_nav_url %}
             {% translate "Reprocessing Services" as reprocessing_tab_title %}
             <div class="nav-item dropdown">
-                <a class="nav-link {{ reprocessing_nav_class }} dropdown-toggle" href="#" id="reprocessingServicesDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <a class="nav-link {{ reprocessing_nav_class }} dropdown-toggle"
+                   href="#"
+                   id="reprocessingServicesDropdown"
+                   role="button"
+                   data-bs-toggle="dropdown"
+                   aria-expanded="false">
                     <i class="fa-solid fa-recycle me-2"></i>
                     <span class="d-none d-lg-inline">{{ reprocessing_tab_title }}</span>
                 </a>
                 <ul class="dropdown-menu" aria-labelledby="reprocessingServicesDropdown">
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:reprocessing_become' %}">
-                        <i class="fas fa-user-gear me-2"></i>{% trans "Become a Reprocessor" %}
-                    </a></li>
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:reprocessing_browse' %}">
-                        <i class="fas fa-list me-2"></i>{% trans "Browse Available Reprocessors" %}
-                    </a></li>
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:reprocessing_my_requests' %}">
-                        <i class="fas fa-folder-open me-2"></i>{% trans "Browse My Requests" %}
-                    </a></li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:reprocessing_become' %}">
+                            <i class="fas fa-user-gear me-2"></i>{% trans "Become a Reprocessor" %}
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:reprocessing_browse' %}">
+                            <i class="fas fa-list me-2"></i>{% trans "Browse Available Reprocessors" %}
+                        </a>
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:reprocessing_my_requests' %}">
+                            <i class="fas fa-folder-open me-2"></i>{% trans "Browse My Requests" %}
+                        </a>
+                    </li>
                 </ul>
             </div>
         {% endif %}
@@ -137,23 +172,36 @@
         {% if industry_nav_url %}
             {% translate "Industry" as industry_tab_title %}
             <div class="nav-item dropdown">
-                <a class="nav-link {{ industry_nav_class }} dropdown-toggle" href="#" id="industryDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <a class="nav-link {{ industry_nav_class }} dropdown-toggle"
+                   href="#"
+                   id="industryDropdown"
+                   role="button"
+                   data-bs-toggle="dropdown"
+                   aria-expanded="false">
                     <i class="fa-solid fa-industry me-2"></i>
                     <span class="d-none d-lg-inline">{{ industry_tab_title }}</span>
                 </a>
                 <ul class="dropdown-menu" aria-labelledby="industryDropdown">
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:personnal_job_list' %}">
-                        <i class="fas fa-user me-2"></i>{% trans "My Jobs" %}
-                    </a></li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:personnal_job_list' %}">
+                            <i class="fas fa-user me-2"></i>{% trans "My Jobs" %}
+                        </a>
+                    </li>
                     {% if can_manage_corp_bp_requests %}
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:corporation_job_list' %}">
-                        <i class="fas fa-building me-2"></i>{% trans "Corporation Jobs" %}
-                    </a></li>
+                        <li>
+                            <a class="dropdown-item" href="{% url 'indy_hub:corporation_job_list' %}">
+                                <i class="fas fa-building me-2"></i>{% trans "Corporation Jobs" %}
+                            </a>
+                        </li>
                     {% endif %}
-                    <li><hr class="dropdown-divider"></li>
-                    <li><a class="dropdown-item" href="{% url 'indy_hub:production_simulations_list' %}">
-                        <i class="fas fa-flask me-2"></i>{% trans "Production Simulations" %}
-                    </a></li>
+                    <li>
+                        <hr class="dropdown-divider">
+                    </li>
+                    <li>
+                        <a class="dropdown-item" href="{% url 'indy_hub:production_simulations_list' %}">
+                            <i class="fas fa-flask me-2"></i>{% trans "Production Simulations" %}
+                        </a>
+                    </li>
                 </ul>
             </div>
         {% endif %}

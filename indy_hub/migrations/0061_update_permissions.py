@@ -95,9 +95,7 @@ def update_corp_permission_description(apps, schema_editor):
 
     try:
         blueprint_ct = ContentType.objects.get(app_label="indy_hub", model="blueprint")
-        permission = Permission.objects.get(
-            content_type=blueprint_ct, codename="can_manage_corp_bp_requests"
-        )
+        permission = Permission.objects.get(content_type=blueprint_ct, codename="can_manage_corp_bp_requests")
         permission.name = "Can manage corporation indy"
         permission.save()
     except (Permission.DoesNotExist, ContentType.DoesNotExist):
@@ -111,9 +109,7 @@ def update_material_permission_description(apps, schema_editor):
 
     try:
         blueprint_ct = ContentType.objects.get(app_label="indy_hub", model="blueprint")
-        permission = Permission.objects.get(
-            content_type=blueprint_ct, codename="can_manage_material_hub"
-        )
+        permission = Permission.objects.get(content_type=blueprint_ct, codename="can_manage_material_hub")
         permission.name = "Can manage Mat Exchange"
         permission.save()
     except (Permission.DoesNotExist, ContentType.DoesNotExist):
@@ -248,11 +244,7 @@ class Migration(migrations.Migration):
         # Remove old custom permissions (step 2)
         migrations.RunPython(remove_old_custom_permissions, migrations.RunPython.noop),
         # Update corp permission description (step 3)
-        migrations.RunPython(
-            update_corp_permission_description, migrations.RunPython.noop
-        ),
+        migrations.RunPython(update_corp_permission_description, migrations.RunPython.noop),
         # Update material permission description (step 4)
-        migrations.RunPython(
-            update_material_permission_description, migrations.RunPython.noop
-        ),
+        migrations.RunPython(update_material_permission_description, migrations.RunPython.noop),
     ]

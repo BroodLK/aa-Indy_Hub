@@ -1,9 +1,12 @@
+# Standard Library
 import json
 
+# Django
 from django.contrib.auth.models import Permission, User
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
+# AA Example App
 from indy_hub.models import CustomPrice, ProductionSimulation
 from indy_hub.views.api import load_production_config, save_production_config
 
@@ -65,7 +68,7 @@ class ProductionConfigUiStateTests(TestCase):
                     "actualCostDirty": True,
                 },
                 "industryFees": {
-                    "signature": "{\"cfg\":{\"enabled\":true}}",
+                    "signature": '{"cfg":{"enabled":true}}',
                     "loaded": True,
                     "totalJobCost": 543210.0,
                     "jobs": [
@@ -206,9 +209,7 @@ class ProductionConfigUiStateTests(TestCase):
         self.assertTrue(body["success"])
 
         simulation = ProductionSimulation.objects.get(id=body["simulation_id"])
-        saved_prices = list(
-            CustomPrice.objects.filter(simulation=simulation).order_by("is_sale_price")
-        )
+        saved_prices = list(CustomPrice.objects.filter(simulation=simulation).order_by("is_sale_price"))
         self.assertEqual(len(saved_prices), 2)
         self.assertEqual(saved_prices[0].item_type_id, 57518)
         self.assertFalse(saved_prices[0].is_sale_price)

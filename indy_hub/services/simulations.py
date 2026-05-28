@@ -63,15 +63,11 @@ def summarize_simulations(
         total_profit = Decimal(total_profit)
 
     stats["average_profit"] = (
-        (total_profit / total_simulations)
-        if total_simulations and total_profit
-        else Decimal("0")
+        (total_profit / total_simulations) if total_simulations and total_profit else Decimal("0")
     )
 
     latest_update = (
-        simulations.order_by("-updated_at").values_list("updated_at", flat=True).first()
-        if total_simulations
-        else None
+        simulations.order_by("-updated_at").values_list("updated_at", flat=True).first() if total_simulations else None
     )
     stats["latest_update"] = latest_update
 

@@ -13,14 +13,10 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddIndex(
             model_name="notificationwebhook",
-            index=models.Index(
-                fields=["webhook_type"], name="indy_hub_webhook_type_idx"
-            ),
+            index=models.Index(fields=["webhook_type"], name="indy_hub_webhook_type_idx"),
         ),
         migrations.AddIndex(
             model_name="notificationwebhook",
-            index=models.Index(
-                fields=["is_active"], name="indy_hub_webhook_active_idx"
-            ),
+            index=models.Index(fields=["is_active"], name="indy_hub_webhook_active_idx"),
         ),
     ]

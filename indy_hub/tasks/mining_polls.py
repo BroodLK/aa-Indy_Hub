@@ -1,10 +1,11 @@
 """Celery tasks for recurring Discord mining upgrade polls."""
 
-# Django
-from django.utils import timezone
-
+# Third Party
 # Celery
 from celery import shared_task
+
+# Django
+from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger

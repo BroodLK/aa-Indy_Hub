@@ -97,9 +97,7 @@ class Migration(migrations.Migration):
                 ("type_name", models.CharField(blank=True, max_length=255)),
                 (
                     "quantity",
-                    models.BigIntegerField(
-                        validators=[django.core.validators.MinValueValidator(1)]
-                    ),
+                    models.BigIntegerField(validators=[django.core.validators.MinValueValidator(1)]),
                 ),
                 (
                     "unit_price",
@@ -112,9 +110,7 @@ class Migration(migrations.Migration):
                 ("total_price", models.DecimalField(decimal_places=2, max_digits=20)),
                 (
                     "esi_contract_id",
-                    models.BigIntegerField(
-                        blank=True, help_text="ESI contract ID for this item", null=True
-                    ),
+                    models.BigIntegerField(blank=True, help_text="ESI contract ID for this item", null=True),
                 ),
                 (
                     "esi_contract_validated",
@@ -147,12 +143,8 @@ class Migration(migrations.Migration):
                 "verbose_name_plural": "Material Exchange Sell Order Items",
                 "ordering": ["created_at"],
                 "indexes": [
-                    models.Index(
-                        fields=["type_id"], name="indy_hub_ma_type_id_9b6b82_idx"
-                    ),
-                    models.Index(
-                        fields=["order"], name="indy_hub_ma_order_i_158d3b_idx"
-                    ),
+                    models.Index(fields=["type_id"], name="indy_hub_ma_type_id_9b6b82_idx"),
+                    models.Index(fields=["order"], name="indy_hub_ma_order_i_158d3b_idx"),
                 ],
             },
         ),
@@ -172,9 +164,7 @@ class Migration(migrations.Migration):
                 ("type_name", models.CharField(blank=True, max_length=255)),
                 (
                     "quantity",
-                    models.BigIntegerField(
-                        validators=[django.core.validators.MinValueValidator(1)]
-                    ),
+                    models.BigIntegerField(validators=[django.core.validators.MinValueValidator(1)]),
                 ),
                 (
                     "unit_price",
@@ -188,9 +178,7 @@ class Migration(migrations.Migration):
                 ("stock_available_at_creation", models.BigIntegerField(default=0)),
                 (
                     "esi_contract_id",
-                    models.BigIntegerField(
-                        blank=True, help_text="ESI contract ID for this item", null=True
-                    ),
+                    models.BigIntegerField(blank=True, help_text="ESI contract ID for this item", null=True),
                 ),
                 (
                     "esi_contract_validated",
@@ -223,12 +211,8 @@ class Migration(migrations.Migration):
                 "verbose_name_plural": "Material Exchange Buy Order Items",
                 "ordering": ["created_at"],
                 "indexes": [
-                    models.Index(
-                        fields=["type_id"], name="indy_hub_ma_type_id_5e57fb_idx"
-                    ),
-                    models.Index(
-                        fields=["order"], name="indy_hub_ma_order_i_5ccb01_idx"
-                    ),
+                    models.Index(fields=["type_id"], name="indy_hub_ma_type_id_5e57fb_idx"),
+                    models.Index(fields=["order"], name="indy_hub_ma_order_i_5ccb01_idx"),
                 ],
             },
         ),

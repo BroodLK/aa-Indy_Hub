@@ -15,10 +15,7 @@ def _add_field_if_missing(
     table_name = model._meta.db_table
     with schema_editor.connection.cursor() as cursor:
         existing_columns = {
-            col.name
-            for col in schema_editor.connection.introspection.get_table_description(
-                cursor, table_name
-            )
+            col.name for col in schema_editor.connection.introspection.get_table_description(cursor, table_name)
         }
     if field_name in existing_columns:
         return

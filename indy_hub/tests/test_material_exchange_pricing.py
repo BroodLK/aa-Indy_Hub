@@ -20,8 +20,8 @@ from indy_hub.views.material_exchange import (
     _compute_effective_sell_unit_price,
     _format_buy_stock_type_name,
     _get_item_price_override_maps,
-    _parse_submitted_sell_item_quantities,
     _parse_submitted_quantities,
+    _parse_submitted_sell_item_quantities,
 )
 
 

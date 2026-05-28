@@ -36,15 +36,11 @@ class Migration(migrations.Migration):
         # Add new indexes for common query patterns
         migrations.AddIndex(
             model_name="materialexchangestock",
-            index=models.Index(
-                fields=["config", "quantity"], name="mes_config_qty_idx"
-            ),
+            index=models.Index(fields=["config", "quantity"], name="mes_config_qty_idx"),
         ),
         migrations.AddIndex(
             model_name="materialexchangestock",
-            index=models.Index(
-                fields=["config", "updated_at"], name="mes_config_upd_idx"
-            ),
+            index=models.Index(fields=["config", "updated_at"], name="mes_config_upd_idx"),
         ),
         migrations.AddIndex(
             model_name="materialexchangestock",

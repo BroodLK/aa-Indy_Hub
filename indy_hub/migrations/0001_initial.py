@@ -40,9 +40,7 @@ class Migration(migrations.Migration):
                 ("runs", models.IntegerField()),
                 (
                     "cost",
-                    models.DecimalField(
-                        blank=True, decimal_places=2, max_digits=20, null=True
-                    ),
+                    models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
                 ),
                 ("licensed_runs", models.IntegerField(blank=True, null=True)),
                 ("probability", models.FloatField(blank=True, null=True)),

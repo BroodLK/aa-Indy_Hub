@@ -6,9 +6,6 @@ from __future__ import annotations
 import time
 from collections.abc import Iterable, Mapping
 
-# Third Party
-from esi.exceptions import ESIBucketLimitException, ESIErrorLimitException, HTTPError
-
 # Django
 from django.apps import apps
 from django.conf import settings
@@ -17,6 +14,7 @@ from django.core.exceptions import AppRegistryNotReady
 # Alliance Auth
 from allianceauth.eveonline.models import EveCharacter, EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
+from esi.exceptions import ESIBucketLimitException, ESIErrorLimitException, HTTPError
 from esi.models import Token
 
 from ..services.esi_client import (
@@ -106,9 +104,7 @@ def _rate_limited_public_results(
             )
             return payload, response
         except (ESIErrorLimitException, ESIBucketLimitException) as exc:
-            sleep_for = getattr(exc, "reset", None) or shared_client.backoff_factor * (
-                2 ** (attempt - 1)
-            )
+            sleep_for = getattr(exc, "reset", None) or shared_client.backoff_factor * (2 ** (attempt - 1))
             _schedule_structure_rate_limit_pause(sleep_for)
             if attempt >= max_attempts:
                 break
@@ -236,6 +232,7 @@ def get_type_name(type_id: int | None) -> str:
 
     # Final fallback: use raw SQL
     try:
+        # Django
         from django.db import connection
 
         with connection.cursor() as cursor:
@@ -268,9 +265,7 @@ def get_corporation_name(corporation_id: int | None) -> str:
         return _CORP_NAME_CACHE[corp_id]
 
     try:
-        corp = EveCorporationInfo.objects.only("corporation_name").get(
-            corporation_id=corp_id
-        )
+        corp = EveCorporationInfo.objects.only("corporation_name").get(corporation_id=corp_id)
         name = corp.corporation_name
     except AppRegistryNotReady:
         logger.debug("Corporation %s not available (app registry not ready)", corp_id)
@@ -304,9 +299,7 @@ def get_corporation_ticker(corporation_id: int | None) -> str:
     try:
         corp_id = int(corporation_id)
     except (TypeError, ValueError):
-        logger.debug(
-            "Unable to coerce corporation id %s for ticker lookup", corporation_id
-        )
+        logger.debug("Unable to coerce corporation id %s for ticker lookup", corporation_id)
         return ""
 
     if corp_id in _CORP_TICKER_CACHE:
@@ -315,14 +308,10 @@ def get_corporation_ticker(corporation_id: int | None) -> str:
     ticker = ""
 
     try:
-        corp = EveCorporationInfo.objects.only("corporation_ticker").get(
-            corporation_id=corp_id
-        )
+        corp = EveCorporationInfo.objects.only("corporation_ticker").get(corporation_id=corp_id)
         ticker = getattr(corp, "corporation_ticker", "") or ""
     except AppRegistryNotReady:
-        logger.debug(
-            "Corporation %s ticker not available (app registry not ready)", corp_id
-        )
+        logger.debug("Corporation %s ticker not available (app registry not ready)", corp_id)
     except EveCorporationInfo.DoesNotExist:
         record = (
             EveCharacter.objects.filter(corporation_id=corp_id)
@@ -346,11 +335,7 @@ def get_character_name(character_id: int | None) -> str:
         return _CHAR_NAME_CACHE[character_id]
 
     try:
-        value = (
-            EveCharacter.objects.only("character_name")
-            .get(character_id=character_id)
-            .character_name
-        )
+        value = EveCharacter.objects.only("character_name").get(character_id=character_id).character_name
     except EveCharacter.DoesNotExist:
         logger.debug(
             "EveCharacter %s introuvable, retour de l'identifiant brut",
@@ -398,9 +383,7 @@ def get_blueprint_product_type_id(blueprint_type_id: int | None) -> int | None:
 
     if SdeIndustryActivityProduct is not None:
         try:
-            qs = SdeIndustryActivityProduct.objects.filter(
-                eve_type_id=blueprint_type_id
-            )
+            qs = SdeIndustryActivityProduct.objects.filter(eve_type_id=blueprint_type_id)
             if qs.exists():
                 product = qs.filter(activity_id=1).first() or qs.first()
                 if product:
@@ -634,9 +617,7 @@ def resolve_location_name(
         _wait_for_structure_rate_limit_window()
 
         try:
-            return shared_client.fetch_structure_name(
-                structure_id, candidate_character_id
-            )
+            return shared_client.fetch_structure_name(structure_id, candidate_character_id)
         except ESIForbiddenError:
             _mark_structure_character_forbidden(candidate_character_id)
             logger.info(
@@ -661,9 +642,7 @@ def resolve_location_name(
                 _invalidate_structure_scope_token_cache()
             return None
         except ESIRateLimitError as exc:
-            pause = exc.retry_after or shared_client.backoff_factor * (
-                2 ** max(len(attempted_characters) - 1, 0)
-            )
+            pause = exc.retry_after or shared_client.backoff_factor * (2 ** max(len(attempted_characters) - 1, 0))
             _schedule_structure_rate_limit_pause(pause)
             logger.warning(
                 "ESI rate limit reached while fetching structure %s via %s (remaining=%s). Pausing for %.1fs",
@@ -700,9 +679,7 @@ def resolve_location_name(
                     continue
                 if remaining_attempts <= 0:
                     break
-                result = try_structure_lookup(
-                    fallback_character_id, invalidate_fallback=True
-                )
+                result = try_structure_lookup(fallback_character_id, invalidate_fallback=True)
                 if result:
                     name = result
                     break

@@ -220,14 +220,10 @@ def populate_location_names(
     )
 
     if not targets:
-        active_logger.info(
-            "No locations require updates for Blueprint/IndustryJob records"
-        )
+        active_logger.info("No locations require updates for Blueprint/IndustryJob records")
         return {"blueprints": 0, "jobs": 0, "locations": 0}
 
-    active_logger.info(
-        "Resolving location names for %s unique location IDs", len(targets)
-    )
+    active_logger.info("Resolving location names for %s unique location IDs", len(targets))
 
     blueprint_updates: list[Blueprint] = []
     job_updates: list[IndustryJob] = []
@@ -261,9 +257,7 @@ def populate_location_names(
         for blueprint_id, current_name in target.blueprints:
             if current_name == resolved_name:
                 continue
-            blueprint_updates.append(
-                Blueprint(id=blueprint_id, location_name=resolved_name)
-            )
+            blueprint_updates.append(Blueprint(id=blueprint_id, location_name=resolved_name))
 
         for job_id, current_name in target.jobs:
             if current_name == resolved_name:
@@ -286,20 +280,12 @@ def populate_location_names(
 
     with transaction.atomic():
         if blueprint_updates:
-            Blueprint.objects.bulk_update(
-                blueprint_updates, ["location_name"], batch_size=chunk_size
-            )
-            active_logger.info(
-                "Updated location names for %s blueprint records", blueprint_count
-            )
+            Blueprint.objects.bulk_update(blueprint_updates, ["location_name"], batch_size=chunk_size)
+            active_logger.info("Updated location names for %s blueprint records", blueprint_count)
 
         if job_updates:
-            IndustryJob.objects.bulk_update(
-                job_updates, ["location_name"], batch_size=chunk_size
-            )
-            active_logger.info(
-                "Updated location names for %s industry job records", job_count
-            )
+            IndustryJob.objects.bulk_update(job_updates, ["location_name"], batch_size=chunk_size)
+            active_logger.info("Updated location names for %s industry job records", job_count)
 
     return {
         "blueprints": blueprint_count,
@@ -320,9 +306,7 @@ def _resolve_location_name_for_target(
     name: str | None = None
 
     for character_id in characters:
-        owner_for_character = target.character_owners.get(
-            character_id, primary_owner_id
-        )
+        owner_for_character = target.character_owners.get(character_id, primary_owner_id)
         try:
             name = resolve_location_name(
                 location_id,

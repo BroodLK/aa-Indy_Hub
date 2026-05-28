@@ -14,57 +14,45 @@ def add_order_reference_columns(apps, schema_editor):
         # Handle MySQL and SQLite differently
         if vendor == "mysql":
             # Check and add to sell orders
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_NAME = 'indy_hub_materialexchangesellorder'
                 AND COLUMN_NAME = 'order_reference'
-            """
-            )
+            """)
             if not cursor.fetchone():
-                cursor.execute(
-                    """
+                cursor.execute("""
                     ALTER TABLE indy_hub_materialexchangesellorder
                     ADD COLUMN order_reference VARCHAR(50) DEFAULT '' NOT NULL
-                """
-                )
+                """)
 
             # Check and add to buy orders
-            cursor.execute(
-                """
+            cursor.execute("""
                 SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
                 WHERE TABLE_NAME = 'indy_hub_materialexchangebuyorder'
                 AND COLUMN_NAME = 'order_reference'
-            """
-            )
+            """)
             if not cursor.fetchone():
-                cursor.execute(
-                    """
+                cursor.execute("""
                     ALTER TABLE indy_hub_materialexchangebuyorder
                     ADD COLUMN order_reference VARCHAR(50) DEFAULT '' NOT NULL
-                """
-                )
+                """)
         elif vendor == "sqlite":
             # SQLite doesn't have INFORMATION_SCHEMA, use pragma instead
             cursor.execute("PRAGMA table_info(indy_hub_materialexchangesellorder)")
             columns = [row[1] for row in cursor.fetchall()]
             if "order_reference" not in columns:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     ALTER TABLE indy_hub_materialexchangesellorder
                     ADD COLUMN order_reference VARCHAR(50) DEFAULT ''
-                """
-                )
+                """)
 
             cursor.execute("PRAGMA table_info(indy_hub_materialexchangebuyorder)")
             columns = [row[1] for row in cursor.fetchall()]
             if "order_reference" not in columns:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     ALTER TABLE indy_hub_materialexchangebuyorder
                     ADD COLUMN order_reference VARCHAR(50) DEFAULT ''
-                """
-                )
+                """)
 
 
 def reverse_add_order_reference_columns(apps, schema_editor):

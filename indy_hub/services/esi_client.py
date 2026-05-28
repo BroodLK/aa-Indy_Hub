@@ -217,9 +217,7 @@ class ESIClient:
 
         return result_obj.results(**call_kwargs)
 
-    def fetch_character_blueprints(
-        self, character_id: int, *, force_refresh: bool = False
-    ) -> list[dict]:
+    def fetch_character_blueprints(self, character_id: int, *, force_refresh: bool = False) -> list[dict]:
         """Return the list of blueprints for a character."""
         return self._fetch_paginated(
             character_id=character_id,
@@ -231,9 +229,7 @@ class ESIClient:
             force_refresh=force_refresh,
         )
 
-    def fetch_character_industry_jobs(
-        self, character_id: int, *, force_refresh: bool = False
-    ) -> list[dict]:
+    def fetch_character_industry_jobs(self, character_id: int, *, force_refresh: bool = False) -> list[dict]:
         """Return the list of industry jobs for a character."""
         return self._fetch_paginated(
             character_id=character_id,
@@ -288,12 +284,8 @@ class ESIClient:
         force_refresh: bool = False,
     ) -> dict:
         """Return the corporation roles assigned to a character."""
-        token_obj = self._get_token(
-            character_id, "esi-characters.read_corporation_roles.v1"
-        )
-        operation_fn = self._resolve_operation(
-            "Character", "get_characters_character_id_roles"
-        )
+        token_obj = self._get_token(character_id, "esi-characters.read_corporation_roles.v1")
+        operation_fn = self._resolve_operation("Character", "get_characters_character_id_roles")
         request_kwargs = {}
         if force_refresh:
             request_kwargs["If-None-Match"] = ""
@@ -310,18 +302,14 @@ class ESIClient:
         )
         if isinstance(payload, list):
             if not payload:
-                raise ESIClientError(
-                    "ESI /characters/{character_id}/roles returned an empty payload"
-                )
+                raise ESIClientError("ESI /characters/{character_id}/roles returned an empty payload")
             payload = payload[0]
         if isinstance(payload, dict):
             return payload
         coerced = self._coerce_mapping(payload)
         if isinstance(coerced, dict):
             return coerced
-        raise ESIClientError(
-            "ESI /characters/{character_id}/roles returned an unexpected payload"
-        )
+        raise ESIClientError("ESI /characters/{character_id}/roles returned an unexpected payload")
 
     def fetch_character_online_status(self, character_id: int) -> dict:
         """Return the online status for a character."""
@@ -344,9 +332,7 @@ class ESIClient:
                     None,
                 ) or getattr(character_resource, "GetCharactersCharacterIdOnline", None)
         if not operation_fn:
-            raise ESIClientError(
-                "ESI operation Location.get_characters_character_id_online is not available"
-            )
+            raise ESIClientError("ESI operation Location.get_characters_character_id_online is not available")
         payload = self._call_authed(
             token_obj,
             character_id=character_id,
@@ -360,9 +346,7 @@ class ESIClient:
         )
         if isinstance(payload, list):
             if not payload:
-                raise ESIClientError(
-                    "ESI /characters/{character_id}/online returned an empty payload"
-                )
+                raise ESIClientError("ESI /characters/{character_id}/online returned an empty payload")
             payload = payload[0]
         if isinstance(payload, dict):
             return payload
@@ -377,13 +361,9 @@ class ESIClient:
             }
             if attr_payload:
                 return attr_payload
-        raise ESIClientError(
-            "ESI /characters/{character_id}/online returned an unexpected payload"
-        )
+        raise ESIClientError("ESI /characters/{character_id}/online returned an unexpected payload")
 
-    def fetch_structure_name(
-        self, structure_id: int, character_id: int | None = None
-    ) -> str | None:
+    def fetch_structure_name(self, structure_id: int, character_id: int | None = None) -> str | None:
         """Attempt to resolve a structure name via the authenticated endpoint."""
         if not structure_id:
             return None
@@ -393,9 +373,7 @@ class ESIClient:
 
         token_obj = None
         try:
-            token_obj = self._get_token(
-                int(character_id), "esi-universe.read_structures.v1"
-            )
+            token_obj = self._get_token(int(character_id), "esi-universe.read_structures.v1")
         except ESITokenError:
             logger.debug(
                 "No valid universe.read_structures token for character %s",
@@ -404,9 +382,7 @@ class ESIClient:
             return None
 
         try:
-            operation_fn = self._resolve_operation(
-                "Universe", "get_universe_structures_structure_id"
-            )
+            operation_fn = self._resolve_operation("Universe", "get_universe_structures_structure_id")
             # Use etag by default to benefit from caching
             payload = self._call_authed(
                 token_obj,
@@ -464,16 +440,12 @@ class ESIClient:
         try:
             token_obj.valid_access_token()
         except Exception as exc:
-            raise ESITokenError(
-                f"No valid token for character {character_id} and scope {scope}"
-            ) from exc
+            raise ESITokenError(f"No valid token for character {character_id} and scope {scope}") from exc
 
         try:
             operation_fn = self._resolve_operation(resource, operation)
         except AttributeError as exc:
-            raise ESIClientError(
-                f"ESI operation {resource}.{operation} is not available"
-            ) from exc
+            raise ESIClientError(f"ESI operation {resource}.{operation} is not available") from exc
 
         try:
             result_obj = operation_fn(**params, token=token_obj)
@@ -532,16 +504,12 @@ class ESIClient:
             )
             raise
         except TokenError as exc:
-            raise ESITokenError(
-                f"No valid token for character {character_id} and scope {scope}"
-            ) from exc
+            raise ESITokenError(f"No valid token for character {character_id} and scope {scope}") from exc
         except Exception as exc:
             raise ESIClientError(f"ESI request failed for {endpoint}: {exc}") from exc
 
         if not isinstance(payload, list):
-            raise ESIClientError(
-                f"ESI {endpoint} returned an unexpected payload type: {type(payload)}"
-            )
+            raise ESIClientError(f"ESI {endpoint} returned an unexpected payload type: {type(payload)}")
         return [self._coerce_mapping(item) for item in payload]
 
     @staticmethod
@@ -568,9 +536,7 @@ class ESIClient:
             .first()
         )
         if not token:
-            raise ESITokenError(
-                f"No valid token for character {character_id} and scope {scope}"
-            )
+            raise ESITokenError(f"No valid token for character {character_id} and scope {scope}")
         return token
 
     def _get_access_token(self, character_id: int, scope: str) -> str:
@@ -578,9 +544,7 @@ class ESIClient:
         try:
             return token.valid_access_token()
         except Exception as exc:  # pragma: no cover - Alliance Auth handles details
-            raise ESITokenError(
-                f"No valid token for character {character_id} and scope {scope}"
-            ) from exc
+            raise ESITokenError(f"No valid token for character {character_id} and scope {scope}") from exc
 
     def fetch_corporation_contracts(
         self,
@@ -756,13 +720,9 @@ class ESIClient:
 
         token_obj = self._get_token(character_id, "esi-assets.read_assets.v1")
         try:
-            operation_fn = self._resolve_operation(
-                "Assets", "post_characters_character_id_assets_names"
-            )
+            operation_fn = self._resolve_operation("Assets", "post_characters_character_id_assets_names")
         except AttributeError:
-            logger.debug(
-                "ESI operation Assets.post_characters_character_id_assets_names is not available"
-            )
+            logger.debug("ESI operation Assets.post_characters_character_id_assets_names is not available")
             return {}
 
         request_kwargs = {}
@@ -844,13 +804,9 @@ class ESIClient:
 
         token_obj = self._get_token(character_id, "esi-assets.read_corporation_assets.v1")
         try:
-            operation_fn = self._resolve_operation(
-                "Assets", "post_corporations_corporation_id_assets_names"
-            )
+            operation_fn = self._resolve_operation("Assets", "post_corporations_corporation_id_assets_names")
         except AttributeError:
-            logger.debug(
-                "ESI operation Assets.post_corporations_corporation_id_assets_names is not available"
-            )
+            logger.debug("ESI operation Assets.post_corporations_corporation_id_assets_names is not available")
             return {}
 
         request_kwargs = {}
@@ -988,9 +944,7 @@ class ESIClient:
         try:
             token_obj.valid_access_token()
         except Exception as exc:
-            raise ESITokenError(
-                f"No valid token for character {character_id} and scope {scope}"
-            ) from exc
+            raise ESITokenError(f"No valid token for character {character_id} and scope {scope}") from exc
         try:
             if results_kwargs is None:
                 results_kwargs = {}
@@ -1047,9 +1001,7 @@ class ESIClient:
             )
             raise
         except TokenError as exc:
-            raise ESITokenError(
-                f"No valid token for character {character_id} and scope {scope}"
-            ) from exc
+            raise ESITokenError(f"No valid token for character {character_id} and scope {scope}") from exc
         except Exception as exc:
             raise ESIClientError(f"ESI request failed for {endpoint}: {exc}") from exc
 
@@ -1078,18 +1030,14 @@ class ESIClient:
         status_code = getattr(exc, "status_code", None)
         headers = _extract_headers(exc)
         if status_code == 420:
-            sleep_for, remaining = rate_limit_wait_seconds(
-                headers, self.backoff_factor
-            )
+            sleep_for, remaining = rate_limit_wait_seconds(headers, self.backoff_factor)
             raise ESIRateLimitError(
                 retry_after=sleep_for,
                 remaining=remaining,
             ) from exc
 
         if status_code == 429:
-            sleep_for, remaining = token_rate_limit_wait_seconds(
-                headers, self.backoff_factor
-            )
+            sleep_for, remaining = token_rate_limit_wait_seconds(headers, self.backoff_factor)
             raise ESIRateLimitError(
                 retry_after=sleep_for,
                 remaining=remaining,
@@ -1119,9 +1067,7 @@ class ESIClient:
             status_code=status_code,
         ) from exc
 
-    def _handle_forbidden_token(
-        self, token: Token, *, scope: str, endpoint: str
-    ) -> None:
+    def _handle_forbidden_token(self, token: Token, *, scope: str, endpoint: str) -> None:
         character_id = getattr(token, "character_id", None)
         user_repr = None
         try:

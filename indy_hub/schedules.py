@@ -79,4 +79,3 @@ INDY_HUB_BEAT_SCHEDULE = {
     },
     # Removed: indy-hub-refresh-production-items - now using indy_hub SDE industry tables
 }
-

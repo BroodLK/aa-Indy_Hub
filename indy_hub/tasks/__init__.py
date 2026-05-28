@@ -73,7 +73,6 @@ def setup_periodic_tasks():
         from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
         # AA Example App
-        from indy_hub.models import MaterialExchangeSettings
         from indy_hub.schedules import INDY_HUB_BEAT_SCHEDULE
     except ImportError:
         return  # django_celery_beat is not installed
@@ -121,9 +120,7 @@ def setup_periodic_tasks():
 
             if len(values) > 1:
                 step = values[1] - values[0]
-                if step > 0 and all(
-                    values[i] - values[i - 1] == step for i in range(1, len(values))
-                ):
+                if step > 0 and all(values[i] - values[i - 1] == step for i in range(1, len(values))):
                     if values[0] == 0:
                         return f"*/{step}"
                     return f"{values[0]}-{values[-1]}/{step}"
@@ -216,9 +213,7 @@ def setup_periodic_tasks():
 
     # Remove any stale IndyHub tasks not present in the current schedule.
     valid_names = set(INDY_HUB_BEAT_SCHEDULE.keys())
-    stale_qs = PeriodicTask.objects.filter(name__startswith="indy-hub-").exclude(
-        name__in=valid_names
-    )
+    stale_qs = PeriodicTask.objects.filter(name__startswith="indy-hub-").exclude(name__in=valid_names)
     stale_removed, _ = stale_qs.delete()
     if stale_removed:
         logger.info("Removed %s stale IndyHub periodic tasks", stale_removed)

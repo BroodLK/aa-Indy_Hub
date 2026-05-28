@@ -2,153 +2,157 @@
 {% load i18n %}
 {% load static %}
 
-{% block page_title %}{% trans "Welcome" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Welcome" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/components.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/index.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/components.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/index.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-4">
-    <section class="hero-section mb-4">
-        <div class="row g-4 align-items-center">
-            <div class="col-xl-8">
-                <span class="hero-badge text-uppercase">{% trans "Welcome" %}</span>
-                <h2 class="hero-title d-flex align-items-center">
-                    <span class="hero-icon me-3"><i class="fas fa-compass"></i></span>
-                    {% trans "Indy Hub" %}
-                </h2>
-                <p class="text-muted mb-0">
-                    {% trans "Quick tour of Indy Hub. You see this once; next time you'll land on the Overview." %}
-                </p>
+    <div class="container-fluid py-4">
+        <section class="hero-section mb-4">
+            <div class="row g-4 align-items-center">
+                <div class="col-xl-8">
+                    <span class="hero-badge text-uppercase">{% trans "Welcome" %}</span>
+                    <h2 class="hero-title d-flex align-items-center">
+                        <span class="hero-icon me-3"><i class="fas fa-compass"></i></span>
+                        {% trans "Indy Hub" %}
+                    </h2>
+                    <p class="text-muted mb-0">
+                        {% trans "Quick tour of Indy Hub. You see this once; next time you'll land on the Overview." %}
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <div class="row g-4">
+            <div class="col-12">
+                <section class="dashboard-section">
+                    <header class="section-heading">
+                        <div>
+                            <h3>{% trans "Module summary" %}</h3>
+                            <p class="text-muted small mb-0">
+                                {% trans "Everything for blueprints, jobs, sharing, and corp hub in one place." %}
+                            </p>
+                        </div>
+                    </header>
+
+                    <div class="card focus-card">
+                        <div class="card-body p-4">
+                            <h5 class="mb-3">{% trans "Where to start" %}</h5>
+                            <ol class="text-muted mb-4">
+                                <li class="mb-2">{% trans "Connect your characters in ESI." %}</li>
+                                <li class="mb-2">{% trans "Browse Blueprints and Industry to see your data." %}</li>
+                                <li>{% trans "Set your sharing and notification preferences." %}</li>
+                            </ol>
+
+                            <h5 class="mb-3">{% trans "Feature details" %}</h5>
+                            <div class="row row-cols-1 row-cols-md-2 g-3">
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #4c6fff;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-chart-simple text-primary me-2"></i>
+                                                <h6 class="mb-0">{% trans "Overview" %}</h6>
+                                                <span class="badge ms-2 rounded-pill bg-primary-subtle text-primary">{% trans "You're here" %}</span>
+                                            </div>
+                                            <p class="text-muted small mb-0">
+                                                {% trans "See what matters now: blueprint and job counts, unread alerts, next actions." %}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #3bb273;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-copy text-success me-2"></i>
+                                                <h6 class="mb-0">{% trans "Blueprints" %}</h6>
+                                            </div>
+                                            <p class="text-muted small mb-2">{% trans "Browse your BPO/BPCs and see which ones are busy." %}</p>
+                                            <p class="text-muted small mb-0">{% trans "Filter by type, check ME/TE, and jump to the prints you use most." %}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #f4a261;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-share-nodes text-warning me-2"></i>
+                                                <h6 class="mb-0">{% trans "Blueprint Sharing" %}</h6>
+                                            </div>
+                                            <p class="text-muted small mb-2">{% trans "Request a copy, follow the queue, and chat on each request." %}</p>
+                                            <p class="text-muted small mb-0">{% trans "Receive and deliver quickly with clear status updates." %}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #2ec4b6;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-industry text-info me-2"></i>
+                                                <h6 class="mb-0">{% trans "Industry" %}</h6>
+                                            </div>
+                                            <p class="text-muted small mb-2">{% trans "See your active and finished jobs at a glance." %}</p>
+                                            <p class="text-muted small mb-0">{% trans "Open a job's details and set the alerts that matter to you." %}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #ff7f50;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-boxes-stacked text-danger me-2"></i>
+                                                <h6 class="mb-0">{% trans "Buyback" %}</h6>
+                                            </div>
+                                            <p class="text-muted small mb-2">{% trans "Buy or sell at corp price, and track approval and delivery." %}</p>
+                                            <p class="text-muted small mb-0">{% trans "Clear statuses so you know what to prepare or pick up." %}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #7b61ff;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-key text-primary me-2"></i>
+                                                <h6 class="mb-0">{% trans "ESI" %}</h6>
+                                            </div>
+                                            <p class="text-muted small mb-2">{% trans "Connect your characters in a few clicks." %}</p>
+                                            <p class="text-muted small mb-0">{% trans "Come back here if a counter stays empty to re-enable access." %}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col">
+                                    <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #ffa600;">
+                                        <div class="card-body">
+                                            <div class="d-flex align-items-center mb-2">
+                                                <i class="fas fa-gear text-warning me-2"></i>
+                                                <h6 class="mb-0">{% trans "Settings" %}</h6>
+                                            </div>
+                                            <p class="text-muted small mb-2">{% trans "Choose who sees what and how you are notified." %}</p>
+                                            <p class="text-muted small mb-0">{% trans "Adjust sharing, alerts, and the buyback if you have access." %}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="d-flex justify-content-end mt-4">
+                                <a class="btn btn-primary" href="{% url 'indy_hub:index' %}">{% trans "Let's go" %}</a>
+                            </div>
+                            <p class="text-muted small mb-0 mt-3">{% trans "Need to see this again? Settings → Intro → Reset intro." %}</p>
+                        </div>
+                    </div>
+                </section>
             </div>
         </div>
-    </section>
-
-    <div class="row g-4">
-        <div class="col-12">
-            <section class="dashboard-section">
-                <header class="section-heading">
-                    <div>
-                        <h3>{% trans "Module summary" %}</h3>
-                        <p class="text-muted small mb-0">{% trans "Everything for blueprints, jobs, sharing, and corp hub in one place." %}</p>
-                    </div>
-                </header>
-
-                <div class="card focus-card">
-                    <div class="card-body p-4">
-                        <h5 class="mb-3">{% trans "Where to start" %}</h5>
-                        <ol class="text-muted mb-4">
-                            <li class="mb-2">{% trans "Connect your characters in ESI." %}</li>
-                            <li class="mb-2">{% trans "Browse Blueprints and Industry to see your data." %}</li>
-                            <li>{% trans "Set your sharing and notification preferences." %}</li>
-                        </ol>
-
-                        <h5 class="mb-3">{% trans "Feature details" %}</h5>
-                        <div class="row row-cols-1 row-cols-md-2 g-3">
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #4c6fff;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-chart-simple text-primary me-2"></i>
-                                            <h6 class="mb-0">{% trans "Overview" %}</h6>
-                                            <span class="badge ms-2 rounded-pill bg-primary-subtle text-primary">{% trans "You're here" %}</span>
-                                        </div>
-                                        <p class="text-muted small mb-0">{% trans "See what matters now: blueprint and job counts, unread alerts, next actions." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #3bb273;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-copy text-success me-2"></i>
-                                            <h6 class="mb-0">{% trans "Blueprints" %}</h6>
-                                        </div>
-                                        <p class="text-muted small mb-2">{% trans "Browse your BPO/BPCs and see which ones are busy." %}</p>
-                                        <p class="text-muted small mb-0">{% trans "Filter by type, check ME/TE, and jump to the prints you use most." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #f4a261;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-share-nodes text-warning me-2"></i>
-                                            <h6 class="mb-0">{% trans "Blueprint Sharing" %}</h6>
-                                        </div>
-                                        <p class="text-muted small mb-2">{% trans "Request a copy, follow the queue, and chat on each request." %}</p>
-                                        <p class="text-muted small mb-0">{% trans "Receive and deliver quickly with clear status updates." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #2ec4b6;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-industry text-info me-2"></i>
-                                            <h6 class="mb-0">{% trans "Industry" %}</h6>
-                                        </div>
-                                        <p class="text-muted small mb-2">{% trans "See your active and finished jobs at a glance." %}</p>
-                                        <p class="text-muted small mb-0">{% trans "Open a job's details and set the alerts that matter to you." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #ff7f50;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-boxes-stacked text-danger me-2"></i>
-                                            <h6 class="mb-0">{% trans "Buyback" %}</h6>
-                                        </div>
-                                        <p class="text-muted small mb-2">{% trans "Buy or sell at corp price, and track approval and delivery." %}</p>
-                                        <p class="text-muted small mb-0">{% trans "Clear statuses so you know what to prepare or pick up." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #7b61ff;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-key text-primary me-2"></i>
-                                            <h6 class="mb-0">{% trans "ESI" %}</h6>
-                                        </div>
-                                        <p class="text-muted small mb-2">{% trans "Connect your characters in a few clicks." %}</p>
-                                        <p class="text-muted small mb-0">{% trans "Come back here if a counter stays empty to re-enable access." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="col">
-                                <div class="card h-100 border-0 shadow-sm" style="border-top: 4px solid #ffa600;">
-                                    <div class="card-body">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <i class="fas fa-gear text-warning me-2"></i>
-                                            <h6 class="mb-0">{% trans "Settings" %}</h6>
-                                        </div>
-                                        <p class="text-muted small mb-2">{% trans "Choose who sees what and how you are notified." %}</p>
-                                        <p class="text-muted small mb-0">{% trans "Adjust sharing, alerts, and the buyback if you have access." %}</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="d-flex justify-content-end mt-4">
-                            <a class="btn btn-primary" href="{% url 'indy_hub:index' %}">{% trans "Let's go" %}</a>
-                        </div>
-                        <p class="text-muted small mb-0 mt-3">
-                            {% trans "Need to see this again? Settings → Intro → Reset intro." %}
-                        </p>
-                    </div>
-                </div>
-            </section>
-        </div>
     </div>
-</div>
 {% endblock content %}

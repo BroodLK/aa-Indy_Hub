@@ -56,9 +56,7 @@ class SellOrderDetailLocationTests(TestCase):
         )
 
         self.client.force_login(self.user)
-        response = self.client.get(
-            reverse("indy_hub:sell_order_detail", kwargs={"order_id": order.id})
-        )
+        response = self.client.get(reverse("indy_hub:sell_order_detail", kwargs={"order_id": order.id}))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Beta Hub")
@@ -73,9 +71,7 @@ class SellOrderDetailLocationTests(TestCase):
         )
 
         self.client.force_login(self.user)
-        response = self.client.get(
-            reverse("indy_hub:sell_order_detail", kwargs={"order_id": order.id})
-        )
+        response = self.client.get(reverse("indy_hub:sell_order_detail", kwargs={"order_id": order.id}))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Primary Trade Hub")

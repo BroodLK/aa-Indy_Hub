@@ -2836,7 +2836,6 @@ async function optimizeProfitabilityConfig() {
                 }
             } else {
                 // Fallback: prompt with the full JSON for manual copy.
-                // eslint-disable-next-line no-alert
                 window.prompt('Copy optimizer debug JSON:', json);
                 if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                     window.CraftBP.pushStatus(__('Optimizer debug JSON ready to copy (prompt opened)'), 'info');
@@ -2844,7 +2843,6 @@ async function optimizeProfitabilityConfig() {
             }
         } catch (err) {
             // Clipboard can be blocked by browser permissions; fall back to prompt.
-            // eslint-disable-next-line no-alert
             window.prompt('Copy optimizer debug JSON:', json);
             if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                 window.CraftBP.pushStatus(__('Clipboard blocked: debug JSON shown in prompt'), 'warning');
@@ -4266,7 +4264,6 @@ function initializeRunOptimizedTab() {
                         });
 
                         try {
-                            // eslint-disable-next-line no-console
                             console.log('[RunOptimized] dashboard vs maxRuns point JSON', JSON.stringify({
                                 maxRuns,
                                 dashboard: { marginPct: dashboardMargin, revenue: revenueTotal, cost: costTotal, surplusRevenue },
@@ -11840,12 +11837,6 @@ function renderSlots() {
     });
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
 function gatherSlotsDataForSchedule() {
     const rows = getBuildPlannerCharacterRows();
     if (rows.length > 0) {
@@ -12105,12 +12096,6 @@ function getJobColor(itemTypeId) {
 function darkenColor(hslColor) {
     // Darken HSL color for border
     return hslColor.replace(/50%\)$/, '35%)');
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
 }
 
 function truncateText(text, maxLength) {

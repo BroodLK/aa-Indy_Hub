@@ -14,6 +14,7 @@ from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
 
+# AA Example App
 # Local
 from indy_hub.services.asset_cache import get_corp_assets_cached
 from indy_hub.services.cache_utils import get_or_set_cache_with_lock
@@ -183,15 +184,9 @@ def _coerce_openapi_value(value, *, _depth: int = 0):
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
-        return {
-            str(key): _coerce_openapi_value(item, _depth=_depth + 1)
-            for key, item in value.items()
-        }
+        return {str(key): _coerce_openapi_value(item, _depth=_depth + 1) for key, item in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [
-            _coerce_openapi_value(item, _depth=_depth + 1)
-            for item in value
-        ]
+        return [_coerce_openapi_value(item, _depth=_depth + 1) for item in value]
 
     for attr in ("model_dump", "dict", "to_dict"):
         converter = getattr(value, attr, None)
@@ -244,9 +239,7 @@ def _fetch_esi_industry_system_rows() -> list[dict]:
                 logger.debug("Industry.get_industry_systems failed: %s", exc)
 
         if payload is None:
-            logger.debug(
-                "Unable to resolve Industry.get_industry_systems via OpenAPI; using empty payload"
-            )
+            logger.debug("Unable to resolve Industry.get_industry_systems via OpenAPI; using empty payload")
             payload = []
 
         rows = _normalize_openapi_rows(payload)
@@ -279,9 +272,7 @@ def _fetch_esi_industry_facility_rows() -> list[dict]:
                 logger.debug("Industry.get_industry_facilities failed: %s", exc)
 
         if payload is None:
-            logger.debug(
-                "Unable to resolve Industry.get_industry_facilities via OpenAPI; using empty payload"
-            )
+            logger.debug("Unable to resolve Industry.get_industry_facilities via OpenAPI; using empty payload")
             payload = []
 
         rows = _normalize_openapi_rows(payload)
@@ -322,11 +313,7 @@ def _get_system_cost_index_maps() -> dict[int, dict[str, float]]:
         if not isinstance(row, dict):
             continue
         try:
-            system_id = int(
-                row.get("solar_system_id")
-                or row.get("system_id")
-                or 0
-            )
+            system_id = int(row.get("solar_system_id") or row.get("system_id") or 0)
         except (TypeError, ValueError):
             continue
         if system_id <= 0:
@@ -360,9 +347,7 @@ def _get_industry_facility_tax_map() -> dict[int, float]:
     if isinstance(cached, dict):
         try:
             return {
-                int(facility_id): float(tax_value)
-                for facility_id, tax_value in cached.items()
-                if int(facility_id) > 0
+                int(facility_id): float(tax_value) for facility_id, tax_value in cached.items() if int(facility_id) > 0
             }
         except Exception:
             pass
@@ -461,11 +446,7 @@ def resolve_solar_system(
                 for field in ("name", "name_en", "name_en_us"):
                     try:
                         resolved_row = (
-                            model.objects.filter(
-                                **{f"{field}__{lookup}": query_text}
-                            )
-                            .order_by("name")
-                            .first()
+                            model.objects.filter(**{f"{field}__{lookup}": query_text}).order_by("name").first()
                         )
                     except Exception:
                         resolved_row = None
@@ -501,9 +482,9 @@ def _get_user_alliance_corporation_ids(user) -> list[int]:
 
     if alliance_ids:
         try:
-            alliance_corp_rows = EveCorporationInfo.objects.filter(
-                alliance_id__in=sorted(alliance_ids)
-            ).values_list("corporation_id", flat=True)
+            alliance_corp_rows = EveCorporationInfo.objects.filter(alliance_id__in=sorted(alliance_ids)).values_list(
+                "corporation_id", flat=True
+            )
             for corp_id in alliance_corp_rows:
                 try:
                     corp_id_int = int(corp_id or 0)
@@ -521,7 +502,7 @@ def _load_corptools_engineering_structures(
     corporation_ids: list[int],
 ) -> list[dict[str, object]]:
     try:
-        # AA Example App
+        # Third Party
         from corptools.models.audits import CorporationAudit
         from corptools.models.structures import Structure
     except Exception:
@@ -532,9 +513,9 @@ def _load_corptools_engineering_structures(
         return []
 
     try:
-        corp_audits = CorporationAudit.objects.filter(
-            corporation__corporation_id__in=corp_ids
-        ).select_related("corporation")
+        corp_audits = CorporationAudit.objects.filter(corporation__corporation_id__in=corp_ids).select_related(
+            "corporation"
+        )
         rows = (
             Structure.objects.filter(
                 corporation__in=corp_audits,
@@ -572,31 +553,22 @@ def _load_corptools_engineering_structures(
         owner_corporation_name = ""
         owner_corporation = getattr(row, "corporation", None)
         owner_corporation_eve = (
-            getattr(owner_corporation, "corporation", None)
-            if owner_corporation is not None
-            else None
+            getattr(owner_corporation, "corporation", None) if owner_corporation is not None else None
         )
         try:
-            owner_corporation_id = int(
-                getattr(owner_corporation_eve, "corporation_id", 0) or 0
-            ) or None
+            owner_corporation_id = int(getattr(owner_corporation_eve, "corporation_id", 0) or 0) or None
         except (TypeError, ValueError):
             owner_corporation_id = None
 
         if owner_corporation_id:
-            owner_corporation_name = str(
-                getattr(owner_corporation_eve, "corporation_name", "") or ""
-            ).strip()
+            owner_corporation_name = str(getattr(owner_corporation_eve, "corporation_name", "") or "").strip()
             if not owner_corporation_name:
-                owner_corporation_name = str(
-                    get_corporation_name(owner_corporation_id) or ""
-                )
+                owner_corporation_name = str(get_corporation_name(owner_corporation_id) or "")
 
         structures.append(
             {
                 "structure_id": structure_id,
-                "structure_name": str(getattr(row, "name", "") or "").strip()
-                or f"Structure {structure_id}",
+                "structure_name": str(getattr(row, "name", "") or "").strip() or f"Structure {structure_id}",
                 "structure_type_id": structure_type_id,
                 "structure_type_key": str(type_info["key"]),
                 "structure_type_name": str(type_info["label"]),
@@ -635,7 +607,7 @@ def _infer_engineering_rigs_from_corptools_assets(
     structure_ids: list[int],
 ) -> tuple[dict[int, list[str]], dict[int, list[int]]]:
     try:
-        # AA Example App
+        # Third Party
         from corptools.models.assets import CorpAsset
         from corptools.models.audits import CorporationAudit
     except Exception:
@@ -652,12 +624,8 @@ def _infer_engineering_rigs_from_corptools_assets(
     except Exception:
         return {}, {}
 
-    rig_keys_by_structure: dict[int, set[str]] = {
-        structure_id: set() for structure_id in structure_id_set
-    }
-    rig_type_ids_by_structure: dict[int, set[int]] = {
-        structure_id: set() for structure_id in structure_id_set
-    }
+    rig_keys_by_structure: dict[int, set[str]] = {structure_id: set() for structure_id in structure_id_set}
+    rig_type_ids_by_structure: dict[int, set[int]] = {structure_id: set() for structure_id in structure_id_set}
     type_name_by_id: dict[int, str] = {}
 
     frontier_root_by_location: dict[int, int] = {
@@ -715,11 +683,7 @@ def _infer_engineering_rigs_from_corptools_assets(
                 item_id_int = int(item_id or 0)
             except (TypeError, ValueError):
                 item_id_int = 0
-            if (
-                item_id_int > 0
-                and item_id_int not in visited_location_ids
-                and item_id_int not in next_frontier
-            ):
+            if item_id_int > 0 and item_id_int not in visited_location_ids and item_id_int not in next_frontier:
                 next_frontier[item_id_int] = structure_id
 
         frontier_root_by_location = next_frontier
@@ -746,12 +710,8 @@ def _infer_engineering_rigs_from_cached_assets(
     if not structure_id_set:
         return {}, {}
 
-    rig_keys_by_structure: dict[int, set[str]] = {
-        structure_id: set() for structure_id in structure_id_set
-    }
-    rig_type_ids_by_structure: dict[int, set[int]] = {
-        structure_id: set() for structure_id in structure_id_set
-    }
+    rig_keys_by_structure: dict[int, set[str]] = {structure_id: set() for structure_id in structure_id_set}
+    rig_type_ids_by_structure: dict[int, set[int]] = {structure_id: set() for structure_id in structure_id_set}
 
     type_name_by_id: dict[int, str] = {}
     for corp_id in corporation_ids:
@@ -810,11 +770,7 @@ def _infer_engineering_rigs_from_cached_assets(
                     item_id = int(asset.get("item_id") or 0)
                 except (TypeError, ValueError, AttributeError):
                     item_id = 0
-                if (
-                    item_id > 0
-                    and item_id not in visited_location_ids
-                    and item_id not in next_frontier
-                ):
+                if item_id > 0 and item_id not in visited_location_ids and item_id not in next_frontier:
                     next_frontier[item_id] = structure_id
 
             frontier_root_by_location = next_frontier
@@ -852,9 +808,7 @@ def _merge_rig_data(
             if sid <= 0:
                 continue
             rig_type_ids_by_structure.setdefault(sid, set()).update(
-                int(rig_type_id)
-                for rig_type_id in (rig_type_ids or [])
-                if int(rig_type_id) > 0
+                int(rig_type_id) for rig_type_id in (rig_type_ids or []) if int(rig_type_id) > 0
             )
 
     return (
@@ -888,9 +842,7 @@ def fetch_engineering_structures_for_user(
     else:
         structures = _load_corptools_engineering_structures(corp_ids)
         structure_ids = [
-            int(row.get("structure_id") or 0)
-            for row in structures
-            if int(row.get("structure_id") or 0) > 0
+            int(row.get("structure_id") or 0) for row in structures if int(row.get("structure_id") or 0) > 0
         ]
         rig_data_corptools = _infer_engineering_rigs_from_corptools_assets(
             corp_ids,
@@ -917,19 +869,11 @@ def fetch_engineering_structures_for_user(
             row["facility_tax"] = None
             continue
         tax_value = facility_tax_by_structure.get(structure_id)
-        row["facility_tax"] = (
-            float(tax_value)
-            if tax_value is not None
-            else None
-        )
+        row["facility_tax"] = float(tax_value) if tax_value is not None else None
 
     if system_id and int(system_id) > 0:
         sid = int(system_id)
-        structures = [
-            row
-            for row in structures
-            if int(row.get("location_id") or 0) == sid
-        ]
+        structures = [row for row in structures if int(row.get("location_id") or 0) == sid]
 
     structures.sort(
         key=lambda row: (

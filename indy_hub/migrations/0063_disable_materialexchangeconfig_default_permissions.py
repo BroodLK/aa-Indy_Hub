@@ -13,9 +13,7 @@ def remove_materialexchangeconfig_model_permissions(apps, schema_editor):
     ContentType = apps.get_model("contenttypes", "ContentType")
     Permission = apps.get_model("auth", "Permission")
 
-    ct = ContentType.objects.filter(
-        app_label="indy_hub", model="materialexchangeconfig"
-    ).first()
+    ct = ContentType.objects.filter(app_label="indy_hub", model="materialexchangeconfig").first()
     if not ct:
         return
 

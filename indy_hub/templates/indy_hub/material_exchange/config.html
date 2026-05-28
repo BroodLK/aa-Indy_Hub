@@ -2,924 +2,956 @@
 {% load i18n %}
 {% load static %}
 
-{% block page_title %}{% trans "Buyback Configuration" %}{% endblock page_title %}
+{% block page_title %}
+    {% trans "Buyback Configuration" %}
+{% endblock page_title %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/components.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
-<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_config.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/components.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
+    <link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_config.css' %}">
 {% endblock extra_css %}
 
 {% block content %}
-<div class="container-fluid py-2 me-config">
-    <div class="page-header mb-2">
-        <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
-            <div>
-                <h2 class="h3 mb-1">
-                    <i class="fas fa-exchange-alt me-2"></i>
-                    {% trans "Buyback" %}
-                </h2>
-                <p class="description mb-0">{% trans "Configure corp hangar locations and pricing rules." %}</p>
-            </div>
+    <div class="container-fluid py-2 me-config">
+        <div class="page-header mb-2">
+            <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+                <div>
+                    <h2 class="h3 mb-1">
+                        <i class="fas fa-exchange-alt me-2"></i>
+                        {% trans "Buyback" %}
+                    </h2>
+                    <p class="description mb-0">{% trans "Configure corp hangar locations and pricing rules." %}</p>
+                </div>
                 <div class="d-flex flex-column align-items-end gap-2 me-header-actions">
                     <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light me-header-btn me-header-btn--back">
-                    <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Hub" %}
-                </a>
-                <div class="d-flex flex-wrap gap-2">
-                        <a href="{% url 'indy_hub:material_exchange_request_all_scopes' %}" class="btn btn-success btn-sm me-header-btn me-header-btn--scopes">
-                        <i class="fas fa-plus-circle me-1"></i>
-                        {% trans "Add All Scopes" %}
+                        <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Hub" %}
                     </a>
-                        <a href="{% url 'indy_hub:token_management' %}" class="btn btn-outline-secondary btn-sm me-header-btn me-header-btn--tokens">
-                        <i class="fas fa-key me-1"></i>
-                        {% trans "Manage Tokens" %}
-                    </a>
+                    <div class="d-flex flex-wrap gap-2">
+                        <a href="{% url 'indy_hub:material_exchange_request_all_scopes' %}"
+                           class="btn btn-success btn-sm me-header-btn me-header-btn--scopes">
+                            <i class="fas fa-plus-circle me-1"></i>
+                            {% trans "Add All Scopes" %}
+                        </a>
+                        <a href="{% url 'indy_hub:token_management' %}"
+                           class="btn btn-outline-secondary btn-sm me-header-btn me-header-btn--tokens">
+                            <i class="fas fa-key me-1"></i>
+                            {% trans "Manage Tokens" %}
+                        </a>
+                    </div>
                 </div>
             </div>
+
+            {% if config %}
+                <p class="me-header-sync small mb-0">
+                    {% trans "Stock sync:" %}
+                    <strong>
+                        {% if config.last_stock_sync %}
+                            {{ config.last_stock_sync|date:"Y-m-d H:i:s" }}
+                        {% else %}
+                            {% trans "Never" %}
+                        {% endif %}
+                    </strong>
+                    <span class="text-muted">·</span>
+                    {% trans "Price sync:" %}
+                    <strong>
+                        {% if config.last_price_sync %}
+                            {{ config.last_price_sync|date:"Y-m-d H:i:s" }}
+                        {% else %}
+                            {% trans "Never" %}
+                        {% endif %}
+                    </strong>
+                </p>
+            {% endif %}
+            <i class="fas fa-exchange-alt header-bg"></i>
         </div>
+
+        {% if not available_corps %}
+            <section class="dashboard-section mb-3">
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    {% trans "No corporations found. Make sure you have ESI tokens authorized." %}
+                </div>
+            </section>
+        {% endif %}
+
+        {{ market_group_search_index|json_script:"marketGroupSearchIndex" }}
 
         {% if config %}
-            <p class="me-header-sync small mb-0">
-                {% trans "Stock sync:" %}
-                <strong>
-                    {% if config.last_stock_sync %}
-                        {{ config.last_stock_sync|date:"Y-m-d H:i:s" }}
-                    {% else %}
-                        {% trans "Never" %}
-                    {% endif %}
-                </strong>
-                <span class="text-muted">·</span>
-                {% trans "Price sync:" %}
-                <strong>
-                    {% if config.last_price_sync %}
-                        {{ config.last_price_sync|date:"Y-m-d H:i:s" }}
-                    {% else %}
-                        {% trans "Never" %}
-                    {% endif %}
-                </strong>
-            </p>
-        {% endif %}
-        <i class="fas fa-exchange-alt header-bg"></i>
-    </div>
-
-    {% if not available_corps %}
-    <section class="dashboard-section mb-3">
-        <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle me-2"></i>
-            {% trans "No corporations found. Make sure you have ESI tokens authorized." %}
-        </div>
-    </section>
-    {% endif %}
-
-    {{ market_group_search_index|json_script:"marketGroupSearchIndex" }}
-
-    {% if config %}
-    <section class="dashboard-section mb-3">
-        <div class="card focus-card me-current-bar">
-            <div class="card-body p-2">
-                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-                    <div class="me-current-content">
-                        <span class="text-muted">{% trans "Current:" %}</span>
-                        <strong>
-                            "{% if current_corp_ticker %}{{ current_corp_ticker }}{% else %}{{ config.corporation_id }}{% endif %}"
-                        </strong>
-                        <span class="text-muted">--</span>
-                        <strong>{{ config.structure_name|default:config.structure_id }}</strong>
-                        <span class="text-muted">--</span>
-                        <strong>"{{ current_hangar_name|default:config.hangar_division }}"</strong>
-                    </div>
-                    <div class="d-flex flex-wrap align-items-center gap-2">
-                        {% if config.is_active %}
-                            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
-                                {% trans "Config active" %}
-                            </span>
-                        {% else %}
-                            <span class="badge bg-warning text-dark">
-                                {% trans "Config inactive" %}
-                            </span>
-                        {% endif %}
-                        {% if config.enforce_jita_price_bounds %}
-                            <span class="badge bg-warning text-dark">
-                                <i class="fas fa-shield-alt me-1"></i>
-                                {% trans "Jita bounds" %}
-                            </span>
-                        {% endif %}
-                        {% if material_exchange_enabled %}
-                            <span class="badge bg-success">{% trans "Module enabled" %}</span>
-                        {% else %}
-                            <span class="badge bg-secondary">{% trans "Module disabled" %}</span>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-    {% endif %}
-
-    <section class="dashboard-section mb-3">
-        <header class="section-heading my-3">
-            <div>
-                <h3 class="section-title">{% trans "Hub Configuration" %}</h3>
-                <p class="text-muted small mb-0">{% trans "Quick setup" %}</p>
-            </div>
-        </header>
-        <div class="card focus-card">
-            <div class="card-body p-3">
-                <form method="post" id="configForm" onsubmit="return validateForm()">
-                    {% csrf_token %}
-
-                    <div class="d-flex flex-wrap align-items-center gap-2 mb-3 small text-muted me-steps-header bg-secondary">
-                        <span class="badge bg-secondary me-step-badge">1</span><span>{% trans "Corporation" %}</span>
-                        <i class="fas fa-arrow-right opacity-50"></i>
-                        <span class="badge bg-secondary me-step-badge">2</span><span>{% trans "Locations" %}</span>
-                        <i class="fas fa-arrow-right opacity-50"></i>
-                        <span class="badge bg-secondary me-step-badge">3</span><span>{% trans "Hangar" %}</span>
-                        <i class="fas fa-arrow-right opacity-50"></i>
-                        <span class="badge bg-secondary me-step-badge">4</span><span>{% trans "Pricing" %}</span>
-                        <i class="fas fa-arrow-right opacity-50"></i>
-                        <span class="badge bg-secondary me-step-badge">5</span><span>{% trans "Market Groups" %}</span>
-                        <i class="fas fa-arrow-right opacity-50"></i>
-                        <span class="badge bg-secondary me-step-badge">6</span><span>{% trans "Notifications" %}</span>
-                    </div>
-
-                    <div class="row g-2">
-
-                    <!-- Step 1: Corporation -->
-                    <div class="col-lg-4">
-                        <div class="card focus-card h-100 me-step-card">
-                            <div class="card-body p-2">
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span class="badge bg-secondary me-step-badge">1</span>
-                                <h5 class="fw-semibold mb-0">
-                                    <i class="fas fa-building me-1 text-muted"></i>{% trans "Corporation" %}
-                                    <button
-                                        type="button"
-                                        class="me-help-icon"
-                                        aria-label="Help: Corporation"
-                                        data-bs-toggle="popover"
-                                        data-bs-trigger="hover focus"
-                                        data-bs-placement="right"
-                                        title="Corporation"
-                                        data-bs-content="Select the corporation that will run the hub.">
-                                        <i class="fas fa-info-circle"></i>
-                                    </button>
-                                </h5>
+            <section class="dashboard-section mb-3">
+                <div class="card focus-card me-current-bar">
+                    <div class="card-body p-2">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                            <div class="me-current-content">
+                                <span class="text-muted">{% trans "Current:" %}</span>
+                                <strong>
+                                    "
+                                    {% if current_corp_ticker %}
+                                        {{ current_corp_ticker }}
+                                    {% else %}
+                                        {{ config.corporation_id }}
+                                    {% endif %}
+                                    "
+                                </strong>
+                                <span class="text-muted">--</span>
+                                <strong>{{ config.structure_name|default:config.structure_id }}</strong>
+                                <span class="text-muted">--</span>
+                                <strong>"{{ current_hangar_name|default:config.hangar_division }}"</strong>
                             </div>
-                            <label class="form-label fw-semibold">{% trans "Corporation" %} <span class="text-danger">*</span></label>
-                            <div class="input-group input-group-sm">
-                                <select name="corporation_id" class="form-select form-select-sm" required id="corpSelect">
-                                    <option value="">{% trans "Select a corporation..." %}</option>
-                                    {% for corp in available_corps %}
-                                    <option value="{{ corp.id }}" {% if config and config.corporation_id == corp.id %}selected{% endif %}>
-                                        [{{ corp.ticker }}] {{ corp.name }}
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                            </div>
-
-                            <div class="form-text">{% trans "Tip: use refresh after adding tokens." %}</div>
-
-                            <div id="refreshStatus" class="mt-2 refresh-status">
-                                <small class="text-info d-flex align-items-center gap-2">
-                                    <span class="spinner-border spinner-border-sm" id="refreshSpinner"></span>
-                                    <span id="refreshStatusText">{% trans "Refreshing assets..." %}</span>
-                                </small>
-                                <div class="progress mt-2 refresh-progress" id="progressBar">
-                                    <div id="progressBarFill" class="progress-bar progress-bar-striped progress-bar-animated refresh-progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-                                        <span id="progressText" class="text-dark fw-bold">0%</span>
-                                    </div>
-                                </div>
-                            </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Step 2: Structure -->
-                    <div class="col-lg-4">
-                        <div class="card focus-card h-100 me-step-card">
-                            <div class="card-body p-2">
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span class="badge bg-secondary me-step-badge">2</span>
-                                <h5 class="fw-semibold mb-0">
-                                    <i class="fas fa-warehouse me-1 text-muted"></i>{% trans "Locations" %}
-                                    <button
-                                        type="button"
-                                        class="me-help-icon"
-                                        aria-label="Help: Locations"
-                                        data-bs-toggle="popover"
-                                        data-bs-trigger="hover focus"
-                                        data-bs-placement="right"
-                                        title="Locations"
-                                        data-bs-content="Pick the structures used for selling to and buying from the hub.">
-                                        <i class="fas fa-info-circle"></i>
-                                    </button>
-                                </h5>
-                            </div>
-
-                            <label class="form-label fw-semibold">{% trans "Sell Locations" %} <span class="text-danger">*</span></label>
-                            <div class="input-group input-group-sm mb-2">
-                                <select name="sell_structure_ids" class="form-select form-select-sm" required id="sellStructureSelect" multiple size="6">
-                                    <option value="">{% trans "Select corporation first..." %}</option>
-                                    {% for structure in available_structures %}
-                                    <option value="{{ structure.id }}"
-                                            data-name="{{ structure.name }}"
-                                            data-flags="{{ structure.flags|join:',' }}">
-                                        {{ structure.name }}
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                                <button type="button" class="btn btn-outline-secondary btn-sm" id="refreshAssetsBtn" title="{% trans 'Refresh corporation assets and structures' %}" disabled>
-                                    <i class="fas fa-sync-alt"></i>
-                                </button>
-                            </div>
-
-                            <div class="form-check form-switch mb-2">
-                                <input
-                                    class="form-check-input"
-                                    type="checkbox"
-                                    name="buy_enabled"
-                                    id="buyEnabled"
-                                    {% if buy_enabled %}checked{% endif %}>
-                                <label class="form-check-label fw-semibold" for="buyEnabled">
-                                    {% trans "Enable buy orders" %}
-                                </label>
-                            </div>
-
-                            <div class="form-check form-switch mb-2">
-                                <input
-                                    class="form-check-input"
-                                    type="checkbox"
-                                    name="allow_fitted_ships"
-                                    id="allowFittedShips"
-                                    {% if allow_fitted_ships %}checked{% endif %}>
-                                <label class="form-check-label fw-semibold" for="allowFittedShips">
-                                    {% trans "Allow fitted ships in sell listings" %}
-                                </label>
-                                <div class="form-text">
-                                    {% trans "When disabled, fitted ships and their fitted/cargo contents are excluded from Sell to Hub." %}
-                                </div>
-                            </div>
-
-                            <label class="form-label fw-semibold">{% trans "Buy Locations" %}</label>
-                            <select name="buy_structure_ids" class="form-select form-select-sm mb-2" id="buyStructureSelect" multiple size="6">
-                                <option value="">{% trans "Select corporation first..." %}</option>
-                                {% for structure in available_structures %}
-                                <option value="{{ structure.id }}"
-                                        data-name="{{ structure.name }}"
-                                        data-flags="{{ structure.flags|join:',' }}">
-                                    {{ structure.name }}
-                                </option>
-                                {% endfor %}
-                            </select>
-
-                            <label class="form-label fw-semibold">{% trans "Location Match Mode" %}</label>
-                            <select name="location_match_mode" class="form-select form-select-sm">
-                                <option value="name_or_id" {% if location_match_mode == 'name_or_id' %}selected{% endif %}>
-                                    {% trans "Match by name or ID (recommended)" %}
-                                </option>
-                                <option value="strict_id" {% if location_match_mode == 'strict_id' %}selected{% endif %}>
-                                    {% trans "Match by ID only" %}
-                                </option>
-                            </select>
-
-                            <div id="assetsScopeInfo" class="mt-2">
-                                <div class="alert alert-warning py-2 mb-0 d-none" id="assetsScopeMissingNotice">
-                                    <small><i class="fas fa-warning me-1"></i>{% trans "Structures need esi-assets.read_corporation_assets.v1 for this corporation." %}</small>
-                                    <div class="mt-2 d-flex gap-2">
-                                        <button type="button" class="btn btn-sm btn-outline-primary" id="assetsScopeButton" onclick="requestAssetsToken()">
-                                            {% trans "Add token" %}
-                                        </button>
-                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="assetsScopeRefreshButton" onclick="requestTokensSync()">
-                                            {% trans "Refresh tokens" %}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Step 3: Hangar Division -->
-                    <div class="col-lg-4">
-                        <div class="card focus-card h-100 me-step-card">
-                            <div class="card-body p-2">
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span class="badge bg-secondary me-step-badge">3</span>
-                                <h5 class="fw-semibold mb-0">
-                                    <i class="fas fa-box-open me-1 text-muted"></i>{% trans "Hangar" %}
-                                    <button
-                                        type="button"
-                                        class="me-help-icon"
-                                        aria-label="Help: Hangar"
-                                        data-bs-toggle="popover"
-                                        data-bs-trigger="hover focus"
-                                        data-bs-placement="right"
-                                        title="Hangar"
-                                        data-bs-content="Choose the corporate hangar division used for hub stock.">
-                                        <i class="fas fa-info-circle"></i>
-                                    </button>
-                                </h5>
-                            </div>
-                            <label class="form-label fw-semibold">{% trans "Hangar Division" %} <span class="text-danger">*</span></label>
-                            <select name="hangar_division" class="form-select form-select-sm" required id="hangarSelect">
-                                {% for div_num, div_name in hangar_divisions.items %}
-                                <option value="{{ div_num }}" {% if config and config.hangar_division == div_num %}selected{% endif %}>
-                                    {{ div_name }}
-                                </option>
-                                {% endfor %}
-                            </select>
-                            <div id="divisionScopeInfo" class="mt-2">
-                                <div class="alert alert-warning py-2 mb-0 d-none" id="divisionScopeMissingNotice">
-                                    <small><i class="fas fa-warning me-1"></i>{% trans "Division names need esi-corporations.read_divisions.v1 for this corporation." %}</small>
-                                    <div class="mt-2 d-flex gap-2">
-                                        <button type="button" class="btn btn-sm btn-outline-primary" id="divisionScopeButton" onclick="requestDivisionsToken()">
-                                            {% trans "Add token" %}
-                                        </button>
-                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="divisionScopeRefreshButton" onclick="requestTokensSync()">
-                                            {% trans "Refresh tokens" %}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Step 4: Pricing Rules -->
-                    <div class="col-12">
-                        <div class="card focus-card">
-                            <div class="card-body p-2">
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span class="badge bg-secondary me-step-badge">4</span>
-                                <h5 class="fw-semibold mb-0">
-                                    <i class="fas fa-tags me-1 text-muted"></i>{% trans "Pricing" %}
-                                    <button
-                                        type="button"
-                                        class="me-help-icon"
-                                        aria-label="Help: Pricing"
-                                        data-bs-toggle="popover"
-                                        data-bs-trigger="hover focus"
-                                        data-bs-placement="right"
-                                        title="Pricing"
-                                        data-bs-content="Set how much members pay (BUY) and receive (SELL) compared to Jita prices.">
-                                        <i class="fas fa-info-circle"></i>
-                                    </button>
-                                </h5>
-                            </div>
-                            <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
-                                <div class="form-check mb-0">
-                                    <input
-                                        class="form-check-input"
-                                        type="checkbox"
-                                        name="enforce_jita_price_bounds"
-                                        id="enforceJitaPriceBounds"
-                                        {% if config and config.enforce_jita_price_bounds %}checked{% endif %}>
-                                    <label class="form-check-label fw-semibold" for="enforceJitaPriceBounds">
-                                        Enable Jita price bounds
-                                    </label>
-                                </div>
-                                <details class="me-details small text-muted">
-                                    <summary class="me-details-summary">What does it do?<span class="me-details-chevron"><i class="fas fa-chevron-down"></i></span></summary>
-                                    <div class="mt-1">
-                                        <ul class="mb-0 ps-3">
-                                            <li>Jita Sell + negative % will never go below Jita Buy (floor)</li>
-                                            <li>Jita Buy + positive % will never go above Jita Sell (cap)</li>
-                                        </ul>
-                                    </div>
-                                </details>
-                            </div>
-
-                            <div class="row g-2">
-                                <div class="col-md-6">
-                                    <div class="card focus-card h-100">
-                                        <div class="card-body p-2">
-                                            <div class="d-flex align-items-center mb-2">
-                                                <div class="bg-success bg-opacity-10 text-success p-2 rounded-2 me-2">
-                                                    <i class="fas fa-arrow-right"></i>
-                                                </div>
-                                                <h6 class="fw-semibold mb-0">{% trans "Sell Markup" %}</h6>
-                                            </div>
-                                            <p class="text-muted small mb-2">{% trans "Members SELL items to your hub" %}</p>
-                                            <label class="form-label fw-semibold">{% trans "Markup %" %}</label>
-                                            <div class="input-group input-group-sm mb-2">
-                                                <input
-                                                    type="number"
-                                                    name="sell_markup_percent"
-                                                    class="form-control form-control-sm"
-                                                    step="0.01"
-                                                    min="-100"
-                                                    max="100"
-                                                    inputmode="decimal"
-                                                    value="{{ config.sell_markup_percent|default_if_none:'0'|floatformat:'-2' }}">
-                                                <span class="input-group-text">%</span>
-                                            </div>
-                                            <div class="small text-muted mb-2">
-                                                {% trans "Impact: changes what members receive when selling to the hub." %}
-                                            </div>
-                                            <label class="form-label fw-semibold">{% trans "Base Price" %}</label>
-                                            <select name="sell_markup_base" class="form-select form-select-sm mb-2">
-                                                <option value="buy" {% if not config or config.sell_markup_base == 'buy' %}selected{% endif %}>
-                                                    {% trans "Jita Buy Price" %}
-                                                </option>
-                                                <option value="sell" {% if config and config.sell_markup_base == 'sell' %}selected{% endif %}>
-                                                    {% trans "Jita Sell Price" %}
-                                                </option>
-                                            </select>
-                                            <details class="me-details small text-muted me-example-details">
-                                                <summary class="me-details-summary">{% trans "Examples" %}<span class="me-details-chevron"><i class="fas fa-chevron-down"></i></span></summary>
-                                                <div class="mt-2 p-2 bg-body-secondary rounded-3 me-example-box">
-                                                    <ul class="mb-0 ps-3">
-                                                        <li>{% trans "0% on Jita Buy = members get exact Jita Buy price" %}</li>
-                                                        <li>{% trans "5% on Jita Buy = members get 5% less ISK per unit" %}</li>
-                                                    </ul>
-                                                </div>
-                                            </details>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="card focus-card h-100">
-                                        <div class="card-body p-2">
-                                            <div class="d-flex align-items-center mb-2">
-                                                <div class="bg-danger bg-opacity-10 text-danger p-2 rounded-2 me-2">
-                                                    <i class="fas fa-arrow-left"></i>
-                                                </div>
-                                                <h6 class="fw-semibold mb-0">{% trans "Buy Markup" %}</h6>
-                                            </div>
-                                            <p class="text-muted small mb-2">{% trans "Members BUY items from your hub" %}</p>
-                                            <label class="form-label fw-semibold">{% trans "Markup %" %}</label>
-                                            <div class="input-group input-group-sm mb-2">
-                                                <input
-                                                    type="number"
-                                                    name="buy_markup_percent"
-                                                    class="form-control form-control-sm"
-                                                    step="0.01"
-                                                    min="-100"
-                                                    max="1000"
-                                                    inputmode="decimal"
-                                                    value="{{ config.buy_markup_percent|default_if_none:'5'|floatformat:'-2' }}">
-                                                <span class="input-group-text">%</span>
-                                            </div>
-                                            <div class="small text-muted mb-2">
-                                                {% trans "Impact: changes what members pay when buying from the hub." %}
-                                            </div>
-                                            <label class="form-label fw-semibold">{% trans "Base Price" %}</label>
-                                            <select name="buy_markup_base" class="form-select form-select-sm mb-2">
-                                                <option value="buy" {% if not config or config.buy_markup_base == 'buy' %}selected{% endif %}>
-                                                    {% trans "Jita Buy Price" %}
-                                                </option>
-                                                <option value="sell" {% if config and config.buy_markup_base == 'sell' %}selected{% endif %}>
-                                                    {% trans "Jita Sell Price" %}
-                                                </option>
-                                            </select>
-                                            <details class="me-details small text-muted me-example-details">
-                                                <summary class="me-details-summary">{% trans "Examples" %}<span class="me-details-chevron"><i class="fas fa-chevron-down"></i></span></summary>
-                                                <div class="mt-2 p-2 bg-body-secondary rounded-3 me-example-box">
-                                                    <ul class="mb-0 ps-3">
-                                                        <li>{% trans "-5% on Jita Sell = members pay 5% less than Jita Sell" %}</li>
-                                                        <li>{% trans "5% on Jita Buy = members pay 5% more than Jita Buy" %}</li>
-                                                    </ul>
-                                                </div>
-                                            </details>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <hr class="my-3">
-
-                            <div>
-                                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                                    <h6 class="fw-semibold mb-0">
-                                        <i class="fas fa-list-check me-1 text-muted"></i>{% trans "Per-item price overrides" %}
-                                    </h6>
-                                    <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
-                                </div>
-                                <p class="small text-muted mb-2">
-                                    {% trans "Use per-item rules for specific items: either % of Jita, fixed ISK, or both (fixed ISK takes priority)." %}
-                                </p>
-                                <input type="hidden" name="item_price_overrides_json" id="itemPriceOverridesJson">
-                                <div class="row g-2 mb-2">
-                                    <div class="col-lg-8">
-                                        <label class="form-label fw-semibold mb-1" for="itemOverrideChoice">{% trans "Choose item from current stock/overrides" %}</label>
-                                        <div class="input-group input-group-sm">
-                                            <select class="form-select form-select-sm" id="itemOverrideChoice">
-                                                <option value="">{% trans "Select item..." %}</option>
-                                            </select>
-                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="addItemOverrideFromChoice">
-                                                <i class="fas fa-plus me-1"></i>{% trans "Add" %}
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="col-lg-4">
-                                        <label class="form-label fw-semibold mb-1" for="itemOverrideTypeIdManual">{% trans "Or add by Type ID" %}</label>
-                                        <div class="input-group input-group-sm">
-                                            <input type="number" class="form-control form-control-sm" id="itemOverrideTypeIdManual" min="1" step="1" placeholder="{% trans 'Type ID' %}">
-                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="addItemOverrideById">
-                                                <i class="fas fa-plus me-1"></i>{% trans "Add" %}
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="table-responsive">
-                                    <table class="table table-sm align-middle mb-0">
-                                        <thead>
-                                            <tr>
-                                                <th>{% trans "Item" %}</th>
-                                                <th class="text-end">{% trans "Sell Rule" %}</th>
-                                                <th class="text-end">{% trans "Buy Rule" %}</th>
-                                                <th class="text-end">{% trans "Action" %}</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="itemOverrideRows">
-                                            <tr id="itemOverrideEmpty">
-                                                <td colspan="4" class="text-muted small">{% trans "No item overrides configured." %}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div class="form-text mt-2">
-                                    {% trans "Each side supports both % of Jita (with base) and fixed ISK. Leave all fields blank to use global defaults." %}
-                                </div>
-                            </div>
-
-                            <hr class="my-3">
-
-                            <div>
-                                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                                    <h6 class="fw-semibold mb-0">
-                                        <i class="fas fa-layer-group me-1 text-muted"></i>{% trans "Per-market-group price overrides" %}
-                                    </h6>
-                                    <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
-                                </div>
-                                <p class="small text-muted mb-2">
-                                    {% trans "Apply pricing rules to whole market groups (item-specific overrides still win)." %}
-                                </p>
-                                <input type="hidden" name="market_group_price_overrides_json" id="marketGroupPriceOverridesJson">
-                                <div class="row g-2 mb-2">
-                                    <div class="col-lg-12">
-                                        <label class="form-label fw-semibold mb-1" for="marketGroupOverrideChoice">{% trans "Choose market group path" %}</label>
-                                        <div class="input-group input-group-sm">
-                                            <select class="form-select form-select-sm" id="marketGroupOverrideChoice">
-                                                <option value="">{% trans "Select market group..." %}</option>
-                                            </select>
-                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="addMarketGroupOverride">
-                                                <i class="fas fa-plus me-1"></i>{% trans "Add" %}
-                                            </button>
-                                        </div>
-                                        <div class="form-text">
-                                            {% trans "Paths are shown as Major -> Child -> Leaf (for example: Manufacture & Research -> Materials -> Atavum)." %}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="table-responsive">
-                                    <table class="table table-sm align-middle mb-0">
-                                        <thead>
-                                            <tr>
-                                                <th>{% trans "Market Group Path" %}</th>
-                                                <th class="text-end">{% trans "Sell Rule" %}</th>
-                                                <th class="text-end">{% trans "Buy Rule" %}</th>
-                                                <th class="text-end">{% trans "Action" %}</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="marketGroupOverrideRows">
-                                            <tr id="marketGroupOverrideEmpty">
-                                                <td colspan="4" class="text-muted small">{% trans "No market-group overrides configured." %}</td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <div class="form-text mt-2">
-                                    {% trans "Group-level rules are fallback rules used when no per-item override exists." %}
-                                </div>
-                            </div>
-
-                            <hr class="my-3">
-
-                            <div>
-                                <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-                                    <h6 class="fw-semibold mb-0">
-                                        <i class="fas fa-box-open me-1 text-muted"></i>{% trans "Items Inside Containers (Cans)" %}
-                                    </h6>
-                                    <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
-                                </div>
-                                <p class="small text-muted mb-2">
-                                    {% trans "Apply one fallback pricing rule to items that are inside containers. Item-specific overrides still win." %}
-                                </p>
-                                <div class="row g-2">
-                                    <div class="col-lg-6">
-                                        <label class="form-label fw-semibold mb-1">{% trans "SELL Rule (member sells to hub)" %}</label>
-                                        <div class="input-group input-group-sm mb-1">
-                                            <input
-                                                type="number"
-                                                name="container_sell_markup_percent_override"
-                                                class="form-control form-control-sm text-end"
-                                                min="-100"
-                                                max="100"
-                                                step="0.01"
-                                                inputmode="decimal"
-                                                value="{{ container_price_override.sell_markup_percent_override|default_if_none:'' }}"
-                                                placeholder="default">
-                                            <span class="input-group-text">%</span>
-                                        </div>
-                                        <select name="container_sell_markup_base_override" class="form-select form-select-sm mb-1">
-                                            <option value="buy" {% if container_price_override.sell_markup_base_override != 'sell' %}selected{% endif %}>Jita Buy</option>
-                                            <option value="sell" {% if container_price_override.sell_markup_base_override == 'sell' %}selected{% endif %}>Jita Sell</option>
-                                        </select>
-                                        <div class="input-group input-group-sm">
-                                            <input
-                                                type="number"
-                                                name="container_sell_price_override"
-                                                class="form-control form-control-sm text-end"
-                                                min="0"
-                                                step="0.01"
-                                                inputmode="decimal"
-                                                value="{{ container_price_override.sell_price_override|default_if_none:'' }}"
-                                                placeholder="Fixed ISK">
-                                            <span class="input-group-text">ISK</span>
-                                        </div>
-                                    </div>
-                                    <div class="col-lg-6">
-                                        <label class="form-label fw-semibold mb-1">{% trans "BUY Rule (member buys from hub)" %}</label>
-                                        <div class="input-group input-group-sm mb-1">
-                                            <input
-                                                type="number"
-                                                name="container_buy_markup_percent_override"
-                                                class="form-control form-control-sm text-end"
-                                                min="-100"
-                                                max="1000"
-                                                step="0.01"
-                                                inputmode="decimal"
-                                                value="{{ container_price_override.buy_markup_percent_override|default_if_none:'' }}"
-                                                placeholder="default">
-                                            <span class="input-group-text">%</span>
-                                        </div>
-                                        <select name="container_buy_markup_base_override" class="form-select form-select-sm mb-1">
-                                            <option value="buy" {% if container_price_override.buy_markup_base_override != 'sell' %}selected{% endif %}>Jita Buy</option>
-                                            <option value="sell" {% if container_price_override.buy_markup_base_override == 'sell' %}selected{% endif %}>Jita Sell</option>
-                                        </select>
-                                        <div class="input-group input-group-sm">
-                                            <input
-                                                type="number"
-                                                name="container_buy_price_override"
-                                                class="form-control form-control-sm text-end"
-                                                min="0"
-                                                step="0.01"
-                                                inputmode="decimal"
-                                                value="{{ container_price_override.buy_price_override|default_if_none:'' }}"
-                                                placeholder="Fixed ISK">
-                                            <span class="input-group-text">ISK</span>
-                                        </div>
-                                    </div>
-                                </div>
-
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Step 5: Market Groups -->
-                    <div class="col-12">
-                        <div class="card focus-card">
-                            <div class="card-body p-2">
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <span class="badge bg-secondary me-step-badge">5</span>
-                                    <h5 class="fw-semibold mb-0">
-                                        <i class="fas fa-layer-group me-1 text-muted"></i>{% trans "Market Groups" %}
-                                        <button
-                                            type="button"
-                                            class="me-help-icon"
-                                            aria-label="Help: Market Groups"
-                                            data-bs-toggle="popover"
-                                            data-bs-trigger="hover focus"
-                                            data-bs-placement="right"
-                                            title="Market Groups"
-                                            data-bs-content="Select what your hub will BUY from members and SELL to members.">
-                                            <i class="fas fa-info-circle"></i>
-                                        </button>
-                                    </h5>
-                                </div>
-                                <div class="mb-2">
-                                    <div class="me-market-toolbar">
-                                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-                                            <label class="form-label fw-semibold mb-0" for="marketGroupSearch">{% trans "Search everything" %}</label>
-                                            <div class="d-flex flex-wrap align-items-center gap-2">
-                                                <span class="me-market-mode-badge" id="marketGroupModeBadge">{% trans "Overview mode" %}</span>
-                                                <button type="button" class="btn btn-sm me-market-mode-btn" id="toggleGranularChoices">
-                                                    {% trans "Enable deep drill-down" %}
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div class="form-text me-market-toolbar-text">
-                                            {% trans "Overview mode selects a whole branch. Deep drill-down lets you stop at specific sub-branches like Manufacture & Research / Materials / Planetary Materials / Raw Planetary Materials." %}
-                                        </div>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        class="form-control form-control-sm"
-                                        id="marketGroupSearch"
-                                        placeholder="{% trans 'Type any market group or item name...' %}">
-                                    <div class="form-text">
-                                        {% trans "Tip: you can type an item name (e.g. Mexallon) to reveal its market group, then add that group or allow everything." %}
-                                    </div>
-                                </div>
-                                {% if not market_group_choices %}
-                                    <div class="alert alert-warning py-2 mb-0">
-                                        <small><i class="fas fa-exclamation-triangle me-1"></i>{% trans "No market groups found. Check that the SDE data is loaded." %}</small>
-                                    </div>
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                {% if config.is_active %}
+                                    <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+                                        {% trans "Config active" %}
+                                    </span>
                                 {% else %}
-                                    <div class="row g-3">
-                                        <div class="col-lg-6 me-dual-list-block">
-                                            <input
-                                                type="hidden"
-                                                name="allowed_market_groups_sell_by_structure_json"
-                                                id="allowedMarketGroupsSellByStructureJson">
-                                            <input type="hidden" name="allowed_market_groups_sell_json" id="allowedMarketGroupsSellJson">
-                                            <input type="hidden" name="allowed_market_groups_buy_json" id="allowedMarketGroupsBuyJson">
-                                            <input type="hidden" name="sell_market_group_profiles_json" id="sellMarketGroupProfilesJson">
-                                            <input type="hidden" name="buy_market_group_profiles_json" id="buyMarketGroupProfilesJson">
-                                            <div class="me-market-panel me-market-panel-sell">
-                                                <div class="me-market-panel-header">
-                                                    <label class="form-label fw-semibold mb-0"><span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span></label>
-                                                    <span class="me-market-selection-summary" id="sellMarketGroupSummary">{% trans "No location selected" %}</span>
-                                                </div>
-                                            <div class="mb-2">
-                                                <label class="form-label fw-semibold mb-1" for="sellMarketGroupStructureSelect">{% trans "Sell Location" %}</label>
-                                                <select class="form-select form-select-sm" id="sellMarketGroupStructureSelect"></select>
-                                                <div class="form-check mt-2">
-                                                    <input
-                                                        class="form-check-input"
-                                                        type="checkbox"
-                                                        id="sellMarketGroupsAllowAll">
-                                                    <label class="form-check-label" for="sellMarketGroupsAllowAll">
-                                                        {% trans "Accept all market groups for this location" %}
-                                                    </label>
-                                                </div>
-                                                <div class="form-text">
-                                                    {% trans "Disable 'all' to choose only specific accepted groups for this location." %}
-                                                </div>
-                                            </div>
-                                            <div class="me-market-profile-box">
-                                                <div class="me-market-profile-row">
-                                                    <div class="flex-grow-1">
-                                                        <label class="form-label fw-semibold mb-1" for="sellMarketGroupProfileSelect">{% trans "Saved Sell Profiles" %}</label>
-                                                        <select class="form-select form-select-sm" id="sellMarketGroupProfileSelect"></select>
-                                                    </div>
-                                                    <div class="d-flex flex-wrap gap-2 align-self-end">
-                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applySellMarketGroupProfile">{% trans "Apply to Location" %}</button>
-                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applySellMarketGroupProfileToAll">{% trans "Apply to All" %}</button>
-                                                        <button type="button" class="btn btn-outline-danger btn-sm" id="deleteSellMarketGroupProfile">{% trans "Delete" %}</button>
-                                                    </div>
-                                                </div>
-                                                <div class="me-market-profile-row">
-                                                    <div class="flex-grow-1">
-                                                        <label class="form-label fw-semibold mb-1" for="sellMarketGroupProfileName">{% trans "Save Active Sell Location as Profile" %}</label>
-                                                        <input
-                                                            type="text"
-                                                            class="form-control form-control-sm"
-                                                            id="sellMarketGroupProfileName"
-                                                            maxlength="80"
-                                                            placeholder="{% trans 'Profile name' %}">
-                                                    </div>
-                                                    <div class="me-market-profile-actions">
-                                                        <div class="form-check">
-                                                            <input class="form-check-input" type="checkbox" id="sellMarketGroupProfileDefault">
-                                                            <label class="form-check-label" for="sellMarketGroupProfileDefault">
-                                                                {% trans "Default for new sell locations" %}
-                                                            </label>
-                                                        </div>
-                                                        <button type="button" class="btn btn-primary btn-sm" id="saveSellMarketGroupProfile">{% trans "Save Profile" %}</button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div class="me-market-tree" id="sellMarketGroupTree"></div>
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-6 me-dual-list-block">
-                                            <div class="me-market-panel me-market-panel-buy">
-                                                <div class="me-market-panel-header">
-                                                    <label class="form-label fw-semibold mb-0"><span class="me-pill-success"><i class="fas fa-arrow-left"></i> {% trans "BUY - Market Groups" %}</span></label>
-                                                    <span class="me-market-selection-summary" id="buyMarketGroupSummary">{% trans "No groups selected" %}</span>
-                                                </div>
-                                                <div class="form-text mb-2">{% trans "Granular mode applies to both SELL and BUY trees." %}</div>
-                                                <div class="me-market-profile-box">
-                                                    <div class="me-market-profile-row">
-                                                        <div class="flex-grow-1">
-                                                            <label class="form-label fw-semibold mb-1" for="buyMarketGroupProfileSelect">{% trans "Saved Buy Profiles" %}</label>
-                                                            <select class="form-select form-select-sm" id="buyMarketGroupProfileSelect"></select>
-                                                        </div>
-                                                        <div class="d-flex flex-wrap gap-2 align-self-end">
-                                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="applyBuyMarketGroupProfile">{% trans "Apply" %}</button>
-                                                            <button type="button" class="btn btn-outline-danger btn-sm" id="deleteBuyMarketGroupProfile">{% trans "Delete" %}</button>
-                                                        </div>
-                                                    </div>
-                                                    <div class="me-market-profile-row">
-                                                        <div class="flex-grow-1">
-                                                            <label class="form-label fw-semibold mb-1" for="buyMarketGroupProfileName">{% trans "Save Current Buy Groups as Profile" %}</label>
-                                                            <input
-                                                                type="text"
-                                                                class="form-control form-control-sm"
-                                                                id="buyMarketGroupProfileName"
-                                                                maxlength="80"
-                                                                placeholder="{% trans 'Profile name' %}">
-                                                        </div>
-                                                        <div class="me-market-profile-actions">
-                                                            <div class="form-check">
-                                                                <input class="form-check-input" type="checkbox" id="buyMarketGroupProfileDefault">
-                                                                <label class="form-check-label" for="buyMarketGroupProfileDefault">
-                                                                    {% trans "Mark as default" %}
-                                                                </label>
-                                                            </div>
-                                                            <button type="button" class="btn btn-primary btn-sm" id="saveBuyMarketGroupProfile">{% trans "Save Profile" %}</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="me-market-tree" id="buyMarketGroupTree"></div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <span class="badge bg-warning text-dark">{% trans "Config inactive" %}</span>
+                                {% endif %}
+                                {% if config.enforce_jita_price_bounds %}
+                                    <span class="badge bg-warning text-dark">
+                                        <i class="fas fa-shield-alt me-1"></i>
+                                        {% trans "Jita bounds" %}
+                                    </span>
+                                {% endif %}
+                                {% if material_exchange_enabled %}
+                                    <span class="badge bg-success">{% trans "Module enabled" %}</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{% trans "Module disabled" %}</span>
                                 {% endif %}
                             </div>
                         </div>
                     </div>
+                </div>
+            </section>
+        {% endif %}
 
-                    <!-- Step 6: Notifications -->
-                    <div class="col-12">
-                        <div class="card focus-card">
-                            <div class="card-body p-2">
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <span class="badge bg-secondary me-step-badge">6</span>
-                                    <h5 class="fw-semibold mb-0">
-                                        <i class="fas fa-bell me-1 text-muted"></i>{% trans "Notifications" %}
-                                    </h5>
-                                </div>
-                                <div class="form-check mb-2">
-                                    <input
-                                        class="form-check-input"
-                                        type="checkbox"
-                                        name="notify_admins_on_sell_anomaly"
-                                        id="notifyAdminsOnSellAnomaly"
-                                        {% if not config or config.notify_admins_on_sell_anomaly %}checked{% endif %}>
-                                    <label class="form-check-label fw-semibold" for="notifyAdminsOnSellAnomaly">
-                                        {% trans "Alert Buyback admins on sell contract anomalies" %}
-                                    </label>
-                                </div>
-                                <div class="small text-muted">
-                                    {% trans "If disabled, users must submit fully compliant contracts. Admin anomaly review notifications will not be sent automatically." %}
-                                </div>
+        <section class="dashboard-section mb-3">
+            <header class="section-heading my-3">
+                <div>
+                    <h3 class="section-title">{% trans "Hub Configuration" %}</h3>
+                    <p class="text-muted small mb-0">{% trans "Quick setup" %}</p>
+                </div>
+            </header>
+            <div class="card focus-card">
+                <div class="card-body p-3">
+                    <form method="post" id="configForm" onsubmit="return validateForm()">
+                        {% csrf_token %}
 
-                                <hr class="my-3">
-                                <div class="alert alert-info mb-0">
-                                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
-                                        <div>
-                                            <strong>{% trans "Capital order settings moved" %}</strong>
-                                            <div class="small">{% trans "Use the dedicated Capital Order Settings page for ship groups, ship visibility, estimated prices, and auto-cancel policy." %}</div>
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-3 small text-muted me-steps-header bg-secondary">
+                            <span class="badge bg-secondary me-step-badge">1</span><span>{% trans "Corporation" %}</span>
+                            <i class="fas fa-arrow-right opacity-50"></i>
+                            <span class="badge bg-secondary me-step-badge">2</span><span>{% trans "Locations" %}</span>
+                            <i class="fas fa-arrow-right opacity-50"></i>
+                            <span class="badge bg-secondary me-step-badge">3</span><span>{% trans "Hangar" %}</span>
+                            <i class="fas fa-arrow-right opacity-50"></i>
+                            <span class="badge bg-secondary me-step-badge">4</span><span>{% trans "Pricing" %}</span>
+                            <i class="fas fa-arrow-right opacity-50"></i>
+                            <span class="badge bg-secondary me-step-badge">5</span><span>{% trans "Market Groups" %}</span>
+                            <i class="fas fa-arrow-right opacity-50"></i>
+                            <span class="badge bg-secondary me-step-badge">6</span><span>{% trans "Notifications" %}</span>
+                        </div>
+
+                        <div class="row g-2">
+
+                            <!-- Step 1: Corporation -->
+                            <div class="col-lg-4">
+                                <div class="card focus-card h-100 me-step-card">
+                                    <div class="card-body p-2">
+                                        <div class="d-flex align-items-center gap-2 mb-2">
+                                            <span class="badge bg-secondary me-step-badge">1</span>
+                                            <h5 class="fw-semibold mb-0">
+                                                <i class="fas fa-building me-1 text-muted"></i>{% trans "Corporation" %}
+                                                <button type="button"
+                                                        class="me-help-icon"
+                                                        aria-label="Help: Corporation"
+                                                        data-bs-toggle="popover"
+                                                        data-bs-trigger="hover focus"
+                                                        data-bs-placement="right"
+                                                        title="Corporation"
+                                                        data-bs-content="Select the corporation that will run the hub.">
+                                                    <i class="fas fa-info-circle"></i>
+                                                </button>
+                                            </h5>
                                         </div>
-                                        <a href="{% url 'indy_hub:capital_ship_orders_config' %}" class="btn btn-sm btn-outline-info">
-                                            <i class="fas fa-ship me-1"></i>{% trans "Open Capital Order Settings" %}
-                                        </a>
+                                        <label class="form-label fw-semibold">
+                                            {% trans "Corporation" %} <span class="text-danger">*</span>
+                                        </label>
+                                        <div class="input-group input-group-sm">
+                                            <select name="corporation_id" class="form-select form-select-sm" required id="corpSelect">
+                                                <option value="">{% trans "Select a corporation..." %}</option>
+                                                {% for corp in available_corps %}
+                                                    <option value="{{ corp.id }}" {% if config and config.corporation_id == corp.id %}selected{% endif %}>
+                                                        [{{ corp.ticker }}] {{ corp.name }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                        </div>
+
+                                        <div class="form-text">{% trans "Tip: use refresh after adding tokens." %}</div>
+
+                                        <div id="refreshStatus" class="mt-2 refresh-status">
+                                            <small class="text-info d-flex align-items-center gap-2">
+                                                <span class="spinner-border spinner-border-sm" id="refreshSpinner"></span>
+                                                <span id="refreshStatusText">{% trans "Refreshing assets..." %}</span>
+                                            </small>
+                                            <div class="progress mt-2 refresh-progress" id="progressBar">
+                                                <div id="progressBarFill"
+                                                     class="progress-bar progress-bar-striped progress-bar-animated refresh-progress-bar"
+                                                     role="progressbar"
+                                                     aria-valuenow="0"
+                                                     aria-valuemin="0"
+                                                     aria-valuemax="100">
+                                                    <span id="progressText" class="text-dark fw-bold">0%</span>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
 
-                    </div>
+                            <!-- Step 2: Structure -->
+                            <div class="col-lg-4">
+                                <div class="card focus-card h-100 me-step-card">
+                                    <div class="card-body p-2">
+                                        <div class="d-flex align-items-center gap-2 mb-2">
+                                            <span class="badge bg-secondary me-step-badge">2</span>
+                                            <h5 class="fw-semibold mb-0">
+                                                <i class="fas fa-warehouse me-1 text-muted"></i>{% trans "Locations" %}
+                                                <button type="button"
+                                                        class="me-help-icon"
+                                                        aria-label="Help: Locations"
+                                                        data-bs-toggle="popover"
+                                                        data-bs-trigger="hover focus"
+                                                        data-bs-placement="right"
+                                                        title="Locations"
+                                                        data-bs-content="Pick the structures used for selling to and buying from the hub.">
+                                                    <i class="fas fa-info-circle"></i>
+                                                </button>
+                                            </h5>
+                                        </div>
 
-                    <div class="d-flex flex-wrap gap-2 mt-2 justify-content-end">
-                    {% if config %}
-                    <button type="submit" class="btn btn-outline-danger btn-sm" name="delete_config" value="1" onclick="return confirm('{% trans "Delete this configuration?" %}');">
-                        <i class="fas fa-trash-alt me-2"></i>{% trans "Delete Configuration" %}
-                    </button>
-                    {% endif %}
-                    <button type="submit" class="btn btn-primary btn-sm" id="submitBtn">
-                        <i class="fas fa-save me-2"></i>{% trans "Save Configuration" %}
-                    </button>
-                    <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-secondary btn-sm">
-                        {% trans "Cancel" %}
-                    </a>
+                                        <label class="form-label fw-semibold">
+                                            {% trans "Sell Locations" %} <span class="text-danger">*</span>
+                                        </label>
+                                        <div class="input-group input-group-sm mb-2">
+                                            <select name="sell_structure_ids" class="form-select form-select-sm" required id="sellStructureSelect" multiple size="6">
+                                                <option value="">{% trans "Select corporation first..." %}</option>
+                                                {% for structure in available_structures %}
+                                                    <option value="{{ structure.id }}" data-name="{{ structure.name }}" data-flags="{{ structure.flags|join:',' }}">
+                                                        {{ structure.name }}
+                                                    </option>
+                                                {% endfor %}
+                                            </select>
+                                            <button type="button"
+                                                    class="btn btn-outline-secondary btn-sm"
+                                                    id="refreshAssetsBtn"
+                                                    title="{% trans 'Refresh corporation assets and structures' %}"
+                                                    disabled>
+                                                <i class="fas fa-sync-alt"></i>
+                                            </button>
+                                        </div>
+
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" name="buy_enabled" id="buyEnabled" {% if buy_enabled %}checked{% endif %}>
+                                            <label class="form-check-label fw-semibold" for="buyEnabled">{% trans "Enable buy orders" %}</label>
+                                        </div>
+
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input"
+                                                   type="checkbox"
+                                                   name="allow_fitted_ships"
+                                                   id="allowFittedShips"
+                                                   {% if allow_fitted_ships %}checked{% endif %}>
+                                            <label class="form-check-label fw-semibold" for="allowFittedShips">
+                                                {% trans "Allow fitted ships in sell listings" %}
+                                            </label>
+                                            <div class="form-text">
+                                                {% trans "When disabled, fitted ships and their fitted/cargo contents are excluded from Sell to Hub." %}
+                                            </div>
+                                        </div>
+
+                                        <label class="form-label fw-semibold">{% trans "Buy Locations" %}</label>
+                                        <select name="buy_structure_ids" class="form-select form-select-sm mb-2" id="buyStructureSelect" multiple size="6">
+                                            <option value="">{% trans "Select corporation first..." %}</option>
+                                            {% for structure in available_structures %}
+                                                <option value="{{ structure.id }}" data-name="{{ structure.name }}" data-flags="{{ structure.flags|join:',' }}">
+                                                    {{ structure.name }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+
+                                        <label class="form-label fw-semibold">{% trans "Location Match Mode" %}</label>
+                                        <select name="location_match_mode" class="form-select form-select-sm">
+                                            <option value="name_or_id" {% if location_match_mode == 'name_or_id' %}selected{% endif %}>
+                                                {% trans "Match by name or ID (recommended)" %}
+                                            </option>
+                                            <option value="strict_id" {% if location_match_mode == 'strict_id' %}selected{% endif %}>
+                                                {% trans "Match by ID only" %}
+                                            </option>
+                                        </select>
+
+                                        <div id="assetsScopeInfo" class="mt-2">
+                                            <div class="alert alert-warning py-2 mb-0 d-none" id="assetsScopeMissingNotice">
+                                                <small><i class="fas fa-warning me-1"></i>{% trans "Structures need esi-assets.read_corporation_assets.v1 for this corporation." %}</small>
+                                                <div class="mt-2 d-flex gap-2">
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" id="assetsScopeButton" onclick="requestAssetsToken()">
+                                                        {% trans "Add token" %}
+                                                    </button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="assetsScopeRefreshButton" onclick="requestTokensSync()">
+                                                        {% trans "Refresh tokens" %}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Step 3: Hangar Division -->
+                            <div class="col-lg-4">
+                                <div class="card focus-card h-100 me-step-card">
+                                    <div class="card-body p-2">
+                                        <div class="d-flex align-items-center gap-2 mb-2">
+                                            <span class="badge bg-secondary me-step-badge">3</span>
+                                            <h5 class="fw-semibold mb-0">
+                                                <i class="fas fa-box-open me-1 text-muted"></i>{% trans "Hangar" %}
+                                                <button type="button"
+                                                        class="me-help-icon"
+                                                        aria-label="Help: Hangar"
+                                                        data-bs-toggle="popover"
+                                                        data-bs-trigger="hover focus"
+                                                        data-bs-placement="right"
+                                                        title="Hangar"
+                                                        data-bs-content="Choose the corporate hangar division used for hub stock.">
+                                                    <i class="fas fa-info-circle"></i>
+                                                </button>
+                                            </h5>
+                                        </div>
+                                        <label class="form-label fw-semibold">
+                                            {% trans "Hangar Division" %} <span class="text-danger">*</span>
+                                        </label>
+                                        <select name="hangar_division" class="form-select form-select-sm" required id="hangarSelect">
+                                            {% for div_num, div_name in hangar_divisions.items %}
+                                                <option value="{{ div_num }}" {% if config and config.hangar_division == div_num %}selected{% endif %}>
+                                                    {{ div_name }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                        <div id="divisionScopeInfo" class="mt-2">
+                                            <div class="alert alert-warning py-2 mb-0 d-none" id="divisionScopeMissingNotice">
+                                                <small><i class="fas fa-warning me-1"></i>{% trans "Division names need esi-corporations.read_divisions.v1 for this corporation." %}</small>
+                                                <div class="mt-2 d-flex gap-2">
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" id="divisionScopeButton" onclick="requestDivisionsToken()">
+                                                        {% trans "Add token" %}
+                                                    </button>
+                                                    <button type="button" class="btn btn-sm btn-outline-secondary" id="divisionScopeRefreshButton" onclick="requestTokensSync()">
+                                                        {% trans "Refresh tokens" %}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Step 4: Pricing Rules -->
+                            <div class="col-12">
+                                <div class="card focus-card">
+                                    <div class="card-body p-2">
+                                        <div class="d-flex align-items-center gap-2 mb-2">
+                                            <span class="badge bg-secondary me-step-badge">4</span>
+                                            <h5 class="fw-semibold mb-0">
+                                                <i class="fas fa-tags me-1 text-muted"></i>{% trans "Pricing" %}
+                                                <button type="button"
+                                                        class="me-help-icon"
+                                                        aria-label="Help: Pricing"
+                                                        data-bs-toggle="popover"
+                                                        data-bs-trigger="hover focus"
+                                                        data-bs-placement="right"
+                                                        title="Pricing"
+                                                        data-bs-content="Set how much members pay (BUY) and receive (SELL) compared to Jita prices.">
+                                                    <i class="fas fa-info-circle"></i>
+                                                </button>
+                                            </h5>
+                                        </div>
+                                        <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
+                                            <div class="form-check mb-0">
+                                                <input class="form-check-input"
+                                                       type="checkbox"
+                                                       name="enforce_jita_price_bounds"
+                                                       id="enforceJitaPriceBounds"
+                                                       {% if config and config.enforce_jita_price_bounds %}checked{% endif %}>
+                                                <label class="form-check-label fw-semibold" for="enforceJitaPriceBounds">Enable Jita price bounds</label>
+                                            </div>
+                                            <details class="me-details small text-muted">
+                                                <summary class="me-details-summary">
+                                                    What does it do?<span class="me-details-chevron"><i class="fas fa-chevron-down"></i></span>
+                                                </summary>
+                                                <div class="mt-1">
+                                                    <ul class="mb-0 ps-3">
+                                                        <li>Jita Sell + negative % will never go below Jita Buy (floor)</li>
+                                                        <li>Jita Buy + positive % will never go above Jita Sell (cap)</li>
+                                                    </ul>
+                                                </div>
+                                            </details>
+                                        </div>
+
+                                        <div class="row g-2">
+                                            <div class="col-md-6">
+                                                <div class="card focus-card h-100">
+                                                    <div class="card-body p-2">
+                                                        <div class="d-flex align-items-center mb-2">
+                                                            <div class="bg-success bg-opacity-10 text-success p-2 rounded-2 me-2">
+                                                                <i class="fas fa-arrow-right"></i>
+                                                            </div>
+                                                            <h6 class="fw-semibold mb-0">{% trans "Sell Markup" %}</h6>
+                                                        </div>
+                                                        <p class="text-muted small mb-2">{% trans "Members SELL items to your hub" %}</p>
+                                                        <label class="form-label fw-semibold">{% trans "Markup %" %}</label>
+                                                        <div class="input-group input-group-sm mb-2">
+                                                            <input type="number"
+                                                                   name="sell_markup_percent"
+                                                                   class="form-control form-control-sm"
+                                                                   step="0.01"
+                                                                   min="-100"
+                                                                   max="100"
+                                                                   inputmode="decimal"
+                                                                   value="{{ config.sell_markup_percent|default_if_none:'0'|floatformat:'-2' }}">
+                                                            <span class="input-group-text">%</span>
+                                                        </div>
+                                                        <div class="small text-muted mb-2">{% trans "Impact: changes what members receive when selling to the hub." %}</div>
+                                                        <label class="form-label fw-semibold">{% trans "Base Price" %}</label>
+                                                        <select name="sell_markup_base" class="form-select form-select-sm mb-2">
+                                                            <option value="buy" {% if not config or config.sell_markup_base == 'buy' %}selected{% endif %}>
+                                                                {% trans "Jita Buy Price" %}
+                                                            </option>
+                                                            <option value="sell" {% if config and config.sell_markup_base == 'sell' %}selected{% endif %}>
+                                                                {% trans "Jita Sell Price" %}
+                                                            </option>
+                                                        </select>
+                                                        <details class="me-details small text-muted me-example-details">
+                                                            <summary class="me-details-summary">
+                                                                {% trans "Examples" %}<span class="me-details-chevron"><i class="fas fa-chevron-down"></i></span>
+                                                            </summary>
+                                                            <div class="mt-2 p-2 bg-body-secondary rounded-3 me-example-box">
+                                                                <ul class="mb-0 ps-3">
+                                                                    <li>{% trans "0% on Jita Buy = members get exact Jita Buy price" %}</li>
+                                                                    <li>{% trans "5% on Jita Buy = members get 5% less ISK per unit" %}</li>
+                                                                </ul>
+                                                            </div>
+                                                        </details>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="card focus-card h-100">
+                                                    <div class="card-body p-2">
+                                                        <div class="d-flex align-items-center mb-2">
+                                                            <div class="bg-danger bg-opacity-10 text-danger p-2 rounded-2 me-2">
+                                                                <i class="fas fa-arrow-left"></i>
+                                                            </div>
+                                                            <h6 class="fw-semibold mb-0">{% trans "Buy Markup" %}</h6>
+                                                        </div>
+                                                        <p class="text-muted small mb-2">{% trans "Members BUY items from your hub" %}</p>
+                                                        <label class="form-label fw-semibold">{% trans "Markup %" %}</label>
+                                                        <div class="input-group input-group-sm mb-2">
+                                                            <input type="number"
+                                                                   name="buy_markup_percent"
+                                                                   class="form-control form-control-sm"
+                                                                   step="0.01"
+                                                                   min="-100"
+                                                                   max="1000"
+                                                                   inputmode="decimal"
+                                                                   value="{{ config.buy_markup_percent|default_if_none:'5'|floatformat:'-2' }}">
+                                                            <span class="input-group-text">%</span>
+                                                        </div>
+                                                        <div class="small text-muted mb-2">{% trans "Impact: changes what members pay when buying from the hub." %}</div>
+                                                        <label class="form-label fw-semibold">{% trans "Base Price" %}</label>
+                                                        <select name="buy_markup_base" class="form-select form-select-sm mb-2">
+                                                            <option value="buy" {% if not config or config.buy_markup_base == 'buy' %}selected{% endif %}>
+                                                                {% trans "Jita Buy Price" %}
+                                                            </option>
+                                                            <option value="sell" {% if config and config.buy_markup_base == 'sell' %}selected{% endif %}>
+                                                                {% trans "Jita Sell Price" %}
+                                                            </option>
+                                                        </select>
+                                                        <details class="me-details small text-muted me-example-details">
+                                                            <summary class="me-details-summary">
+                                                                {% trans "Examples" %}<span class="me-details-chevron"><i class="fas fa-chevron-down"></i></span>
+                                                            </summary>
+                                                            <div class="mt-2 p-2 bg-body-secondary rounded-3 me-example-box">
+                                                                <ul class="mb-0 ps-3">
+                                                                    <li>{% trans "-5% on Jita Sell = members pay 5% less than Jita Sell" %}</li>
+                                                                    <li>{% trans "5% on Jita Buy = members pay 5% more than Jita Buy" %}</li>
+                                                                </ul>
+                                                            </div>
+                                                        </details>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <hr class="my-3">
+
+                                        <div>
+                                            <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                                <h6 class="fw-semibold mb-0">
+                                                    <i class="fas fa-list-check me-1 text-muted"></i>{% trans "Per-item price overrides" %}
+                                                </h6>
+                                                <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
+                                            </div>
+                                            <p class="small text-muted mb-2">
+                                                {% trans "Use per-item rules for specific items: either % of Jita, fixed ISK, or both (fixed ISK takes priority)." %}
+                                            </p>
+                                            <input type="hidden" name="item_price_overrides_json" id="itemPriceOverridesJson">
+                                            <div class="row g-2 mb-2">
+                                                <div class="col-lg-8">
+                                                    <label class="form-label fw-semibold mb-1" for="itemOverrideChoice">
+                                                        {% trans "Choose item from current stock/overrides" %}
+                                                    </label>
+                                                    <div class="input-group input-group-sm">
+                                                        <select class="form-select form-select-sm" id="itemOverrideChoice">
+                                                            <option value="">{% trans "Select item..." %}</option>
+                                                        </select>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="addItemOverrideFromChoice">
+                                                            <i class="fas fa-plus me-1"></i>{% trans "Add" %}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-4">
+                                                    <label class="form-label fw-semibold mb-1" for="itemOverrideTypeIdManual">{% trans "Or add by Type ID" %}</label>
+                                                    <div class="input-group input-group-sm">
+                                                        <input type="number"
+                                                               class="form-control form-control-sm"
+                                                               id="itemOverrideTypeIdManual"
+                                                               min="1"
+                                                               step="1"
+                                                               placeholder="{% trans 'Type ID' %}">
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="addItemOverrideById">
+                                                            <i class="fas fa-plus me-1"></i>{% trans "Add" %}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm align-middle mb-0">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>{% trans "Item" %}</th>
+                                                            <th class="text-end">{% trans "Sell Rule" %}</th>
+                                                            <th class="text-end">{% trans "Buy Rule" %}</th>
+                                                            <th class="text-end">{% trans "Action" %}</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody id="itemOverrideRows">
+                                                        <tr id="itemOverrideEmpty">
+                                                            <td colspan="4" class="text-muted small">{% trans "No item overrides configured." %}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <div class="form-text mt-2">
+                                                {% trans "Each side supports both % of Jita (with base) and fixed ISK. Leave all fields blank to use global defaults." %}
+                                            </div>
+                                        </div>
+
+                                        <hr class="my-3">
+
+                                        <div>
+                                            <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                                <h6 class="fw-semibold mb-0">
+                                                    <i class="fas fa-layer-group me-1 text-muted"></i>{% trans "Per-market-group price overrides" %}
+                                                </h6>
+                                                <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
+                                            </div>
+                                            <p class="small text-muted mb-2">
+                                                {% trans "Apply pricing rules to whole market groups (item-specific overrides still win)." %}
+                                            </p>
+                                            <input type="hidden" name="market_group_price_overrides_json" id="marketGroupPriceOverridesJson">
+                                            <div class="row g-2 mb-2">
+                                                <div class="col-lg-12">
+                                                    <label class="form-label fw-semibold mb-1" for="marketGroupOverrideChoice">
+                                                        {% trans "Choose market group path" %}
+                                                    </label>
+                                                    <div class="input-group input-group-sm">
+                                                        <select class="form-select form-select-sm" id="marketGroupOverrideChoice">
+                                                            <option value="">{% trans "Select market group..." %}</option>
+                                                        </select>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="addMarketGroupOverride">
+                                                            <i class="fas fa-plus me-1"></i>{% trans "Add" %}
+                                                        </button>
+                                                    </div>
+                                                    <div class="form-text">
+                                                        {% trans "Paths are shown as Major -> Child -> Leaf (for example: Manufacture & Research -> Materials -> Atavum)." %}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm align-middle mb-0">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>{% trans "Market Group Path" %}</th>
+                                                            <th class="text-end">{% trans "Sell Rule" %}</th>
+                                                            <th class="text-end">{% trans "Buy Rule" %}</th>
+                                                            <th class="text-end">{% trans "Action" %}</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody id="marketGroupOverrideRows">
+                                                        <tr id="marketGroupOverrideEmpty">
+                                                            <td colspan="4" class="text-muted small">{% trans "No market-group overrides configured." %}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <div class="form-text mt-2">
+                                                {% trans "Group-level rules are fallback rules used when no per-item override exists." %}
+                                            </div>
+                                        </div>
+
+                                        <hr class="my-3">
+
+                                        <div>
+                                            <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+                                                <h6 class="fw-semibold mb-0">
+                                                    <i class="fas fa-box-open me-1 text-muted"></i>{% trans "Items Inside Containers (Cans)" %}
+                                                </h6>
+                                                <span class="badge bg-secondary-subtle text-secondary-emphasis border">{% trans "Optional" %}</span>
+                                            </div>
+                                            <p class="small text-muted mb-2">
+                                                {% trans "Apply one fallback pricing rule to items that are inside containers. Item-specific overrides still win." %}
+                                            </p>
+                                            <div class="row g-2">
+                                                <div class="col-lg-6">
+                                                    <label class="form-label fw-semibold mb-1">{% trans "SELL Rule (member sells to hub)" %}</label>
+                                                    <div class="input-group input-group-sm mb-1">
+                                                        <input type="number"
+                                                               name="container_sell_markup_percent_override"
+                                                               class="form-control form-control-sm text-end"
+                                                               min="-100"
+                                                               max="100"
+                                                               step="0.01"
+                                                               inputmode="decimal"
+                                                               value="{{ container_price_override.sell_markup_percent_override|default_if_none:'' }}"
+                                                               placeholder="default">
+                                                        <span class="input-group-text">%</span>
+                                                    </div>
+                                                    <select name="container_sell_markup_base_override" class="form-select form-select-sm mb-1">
+                                                        <option value="buy" {% if container_price_override.sell_markup_base_override != 'sell' %}selected{% endif %}>
+                                                            Jita Buy
+                                                        </option>
+                                                        <option value="sell" {% if container_price_override.sell_markup_base_override == 'sell' %}selected{% endif %}>
+                                                            Jita Sell
+                                                        </option>
+                                                    </select>
+                                                    <div class="input-group input-group-sm">
+                                                        <input type="number"
+                                                               name="container_sell_price_override"
+                                                               class="form-control form-control-sm text-end"
+                                                               min="0"
+                                                               step="0.01"
+                                                               inputmode="decimal"
+                                                               value="{{ container_price_override.sell_price_override|default_if_none:'' }}"
+                                                               placeholder="Fixed ISK">
+                                                        <span class="input-group-text">ISK</span>
+                                                    </div>
+                                                </div>
+                                                <div class="col-lg-6">
+                                                    <label class="form-label fw-semibold mb-1">{% trans "BUY Rule (member buys from hub)" %}</label>
+                                                    <div class="input-group input-group-sm mb-1">
+                                                        <input type="number"
+                                                               name="container_buy_markup_percent_override"
+                                                               class="form-control form-control-sm text-end"
+                                                               min="-100"
+                                                               max="1000"
+                                                               step="0.01"
+                                                               inputmode="decimal"
+                                                               value="{{ container_price_override.buy_markup_percent_override|default_if_none:'' }}"
+                                                               placeholder="default">
+                                                        <span class="input-group-text">%</span>
+                                                    </div>
+                                                    <select name="container_buy_markup_base_override" class="form-select form-select-sm mb-1">
+                                                        <option value="buy" {% if container_price_override.buy_markup_base_override != 'sell' %}selected{% endif %}>
+                                                            Jita Buy
+                                                        </option>
+                                                        <option value="sell" {% if container_price_override.buy_markup_base_override == 'sell' %}selected{% endif %}>
+                                                            Jita Sell
+                                                        </option>
+                                                    </select>
+                                                    <div class="input-group input-group-sm">
+                                                        <input type="number"
+                                                               name="container_buy_price_override"
+                                                               class="form-control form-control-sm text-end"
+                                                               min="0"
+                                                               step="0.01"
+                                                               inputmode="decimal"
+                                                               value="{{ container_price_override.buy_price_override|default_if_none:'' }}"
+                                                               placeholder="Fixed ISK">
+                                                        <span class="input-group-text">ISK</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 5: Market Groups -->
+                                <div class="col-12">
+                                    <div class="card focus-card">
+                                        <div class="card-body p-2">
+                                            <div class="d-flex align-items-center gap-2 mb-2">
+                                                <span class="badge bg-secondary me-step-badge">5</span>
+                                                <h5 class="fw-semibold mb-0">
+                                                    <i class="fas fa-layer-group me-1 text-muted"></i>{% trans "Market Groups" %}
+                                                    <button type="button"
+                                                            class="me-help-icon"
+                                                            aria-label="Help: Market Groups"
+                                                            data-bs-toggle="popover"
+                                                            data-bs-trigger="hover focus"
+                                                            data-bs-placement="right"
+                                                            title="Market Groups"
+                                                            data-bs-content="Select what your hub will BUY from members and SELL to members.">
+                                                        <i class="fas fa-info-circle"></i>
+                                                    </button>
+                                                </h5>
+                                            </div>
+                                            <div class="mb-2">
+                                                <div class="me-market-toolbar">
+                                                    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                                        <label class="form-label fw-semibold mb-0" for="marketGroupSearch">{% trans "Search everything" %}</label>
+                                                        <div class="d-flex flex-wrap align-items-center gap-2">
+                                                            <span class="me-market-mode-badge" id="marketGroupModeBadge">{% trans "Overview mode" %}</span>
+                                                            <button type="button" class="btn btn-sm me-market-mode-btn" id="toggleGranularChoices">
+                                                                {% trans "Enable deep drill-down" %}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    <div class="form-text me-market-toolbar-text">
+                                                        {% trans "Overview mode selects a whole branch. Deep drill-down lets you stop at specific sub-branches like Manufacture & Research / Materials / Planetary Materials / Raw Planetary Materials." %}
+                                                    </div>
+                                                </div>
+                                                <input type="text"
+                                                       class="form-control form-control-sm"
+                                                       id="marketGroupSearch"
+                                                       placeholder="{% trans 'Type any market group or item name...' %}">
+                                                <div class="form-text">
+                                                    {% trans "Tip: you can type an item name (e.g. Mexallon) to reveal its market group, then add that group or allow everything." %}
+                                                </div>
+                                            </div>
+                                            {% if not market_group_choices %}
+                                                <div class="alert alert-warning py-2 mb-0">
+                                                    <small><i class="fas fa-exclamation-triangle me-1"></i>{% trans "No market groups found. Check that the SDE data is loaded." %}</small>
+                                                </div>
+                                            {% else %}
+                                                <div class="row g-3">
+                                                    <div class="col-lg-6 me-dual-list-block">
+                                                        <input type="hidden" name="allowed_market_groups_sell_by_structure_json" id="allowedMarketGroupsSellByStructureJson">
+                                                        <input type="hidden" name="allowed_market_groups_sell_json" id="allowedMarketGroupsSellJson">
+                                                        <input type="hidden" name="allowed_market_groups_buy_json" id="allowedMarketGroupsBuyJson">
+                                                        <input type="hidden" name="sell_market_group_profiles_json" id="sellMarketGroupProfilesJson">
+                                                        <input type="hidden" name="buy_market_group_profiles_json" id="buyMarketGroupProfilesJson">
+                                                        <div class="me-market-panel me-market-panel-sell">
+                                                            <div class="me-market-panel-header">
+                                                                <label class="form-label fw-semibold mb-0">
+                                                                    <span class="me-pill-info"><i class="fas fa-arrow-right"></i> {% trans "SELL - Market Groups by Location" %}</span>
+                                                                </label>
+                                                                <span class="me-market-selection-summary" id="sellMarketGroupSummary">{% trans "No location selected" %}</span>
+                                                            </div>
+                                                            <div class="mb-2">
+                                                                <label class="form-label fw-semibold mb-1" for="sellMarketGroupStructureSelect">{% trans "Sell Location" %}</label>
+                                                                <select class="form-select form-select-sm" id="sellMarketGroupStructureSelect"></select>
+                                                                <div class="form-check mt-2">
+                                                                    <input class="form-check-input" type="checkbox" id="sellMarketGroupsAllowAll">
+                                                                    <label class="form-check-label" for="sellMarketGroupsAllowAll">
+                                                                        {% trans "Accept all market groups for this location" %}
+                                                                    </label>
+                                                                </div>
+                                                                <div class="form-text">{% trans "Disable 'all' to choose only specific accepted groups for this location." %}</div>
+                                                            </div>
+                                                            <div class="me-market-profile-box">
+                                                                <div class="me-market-profile-row">
+                                                                    <div class="flex-grow-1">
+                                                                        <label class="form-label fw-semibold mb-1" for="sellMarketGroupProfileSelect">
+                                                                            {% trans "Saved Sell Profiles" %}
+                                                                        </label>
+                                                                        <select class="form-select form-select-sm" id="sellMarketGroupProfileSelect"></select>
+                                                                    </div>
+                                                                    <div class="d-flex flex-wrap gap-2 align-self-end">
+                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applySellMarketGroupProfile">
+                                                                            {% trans "Apply to Location" %}
+                                                                        </button>
+                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applySellMarketGroupProfileToAll">
+                                                                            {% trans "Apply to All" %}
+                                                                        </button>
+                                                                        <button type="button" class="btn btn-outline-danger btn-sm" id="deleteSellMarketGroupProfile">
+                                                                            {% trans "Delete" %}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                                <div class="me-market-profile-row">
+                                                                    <div class="flex-grow-1">
+                                                                        <label class="form-label fw-semibold mb-1" for="sellMarketGroupProfileName">
+                                                                            {% trans "Save Active Sell Location as Profile" %}
+                                                                        </label>
+                                                                        <input type="text"
+                                                                               class="form-control form-control-sm"
+                                                                               id="sellMarketGroupProfileName"
+                                                                               maxlength="80"
+                                                                               placeholder="{% trans 'Profile name' %}">
+                                                                    </div>
+                                                                    <div class="me-market-profile-actions">
+                                                                        <div class="form-check">
+                                                                            <input class="form-check-input" type="checkbox" id="sellMarketGroupProfileDefault">
+                                                                            <label class="form-check-label" for="sellMarketGroupProfileDefault">
+                                                                                {% trans "Default for new sell locations" %}
+                                                                            </label>
+                                                                        </div>
+                                                                        <button type="button" class="btn btn-primary btn-sm" id="saveSellMarketGroupProfile">
+                                                                            {% trans "Save Profile" %}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="me-market-tree" id="sellMarketGroupTree"></div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-lg-6 me-dual-list-block">
+                                                        <div class="me-market-panel me-market-panel-buy">
+                                                            <div class="me-market-panel-header">
+                                                                <label class="form-label fw-semibold mb-0">
+                                                                    <span class="me-pill-success"><i class="fas fa-arrow-left"></i> {% trans "BUY - Market Groups" %}</span>
+                                                                </label>
+                                                                <span class="me-market-selection-summary" id="buyMarketGroupSummary">{% trans "No groups selected" %}</span>
+                                                            </div>
+                                                            <div class="form-text mb-2">{% trans "Granular mode applies to both SELL and BUY trees." %}</div>
+                                                            <div class="me-market-profile-box">
+                                                                <div class="me-market-profile-row">
+                                                                    <div class="flex-grow-1">
+                                                                        <label class="form-label fw-semibold mb-1" for="buyMarketGroupProfileSelect">{% trans "Saved Buy Profiles" %}</label>
+                                                                        <select class="form-select form-select-sm" id="buyMarketGroupProfileSelect"></select>
+                                                                    </div>
+                                                                    <div class="d-flex flex-wrap gap-2 align-self-end">
+                                                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="applyBuyMarketGroupProfile">
+                                                                            {% trans "Apply" %}
+                                                                        </button>
+                                                                        <button type="button" class="btn btn-outline-danger btn-sm" id="deleteBuyMarketGroupProfile">
+                                                                            {% trans "Delete" %}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                                <div class="me-market-profile-row">
+                                                                    <div class="flex-grow-1">
+                                                                        <label class="form-label fw-semibold mb-1" for="buyMarketGroupProfileName">
+                                                                            {% trans "Save Current Buy Groups as Profile" %}
+                                                                        </label>
+                                                                        <input type="text"
+                                                                               class="form-control form-control-sm"
+                                                                               id="buyMarketGroupProfileName"
+                                                                               maxlength="80"
+                                                                               placeholder="{% trans 'Profile name' %}">
+                                                                    </div>
+                                                                    <div class="me-market-profile-actions">
+                                                                        <div class="form-check">
+                                                                            <input class="form-check-input" type="checkbox" id="buyMarketGroupProfileDefault">
+                                                                            <label class="form-check-label" for="buyMarketGroupProfileDefault">{% trans "Mark as default" %}</label>
+                                                                        </div>
+                                                                        <button type="button" class="btn btn-primary btn-sm" id="saveBuyMarketGroupProfile">
+                                                                            {% trans "Save Profile" %}
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            <div class="me-market-tree" id="buyMarketGroupTree"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Step 6: Notifications -->
+                                <div class="col-12">
+                                    <div class="card focus-card">
+                                        <div class="card-body p-2">
+                                            <div class="d-flex align-items-center gap-2 mb-2">
+                                                <span class="badge bg-secondary me-step-badge">6</span>
+                                                <h5 class="fw-semibold mb-0">
+                                                    <i class="fas fa-bell me-1 text-muted"></i>{% trans "Notifications" %}
+                                                </h5>
+                                            </div>
+                                            <div class="form-check mb-2">
+                                                <input class="form-check-input"
+                                                       type="checkbox"
+                                                       name="notify_admins_on_sell_anomaly"
+                                                       id="notifyAdminsOnSellAnomaly"
+                                                       {% if not config or config.notify_admins_on_sell_anomaly %}checked{% endif %}>
+                                                <label class="form-check-label fw-semibold" for="notifyAdminsOnSellAnomaly">
+                                                    {% trans "Alert Buyback admins on sell contract anomalies" %}
+                                                </label>
+                                            </div>
+                                            <div class="small text-muted">
+                                                {% trans "If disabled, users must submit fully compliant contracts. Admin anomaly review notifications will not be sent automatically." %}
+                                            </div>
+
+                                            <hr class="my-3">
+                                            <div class="alert alert-info mb-0">
+                                                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                                    <div>
+                                                        <strong>{% trans "Capital order settings moved" %}</strong>
+                                                        <div class="small">
+                                                            {% trans "Use the dedicated Capital Order Settings page for ship groups, ship visibility, estimated prices, and auto-cancel policy." %}
+                                                        </div>
+                                                    </div>
+                                                    <a href="{% url 'indy_hub:capital_ship_orders_config' %}" class="btn btn-sm btn-outline-info">
+                                                        <i class="fas fa-ship me-1"></i>{% trans "Open Capital Order Settings" %}
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+
+                            <div class="d-flex flex-wrap gap-2 mt-2 justify-content-end">
+                                {% if config %}
+                                    <button type="submit"
+                                            class="btn btn-outline-danger btn-sm"
+                                            name="delete_config"
+                                            value="1"
+                                            onclick="return confirm('{% trans "Delete this configuration?" %}');">
+                                        <i class="fas fa-trash-alt me-2"></i>{% trans "Delete Configuration" %}
+                                    </button>
+                                {% endif %}
+                                <button type="submit" class="btn btn-primary btn-sm" id="submitBtn">
+                                    <i class="fas fa-save me-2"></i>{% trans "Save Configuration" %}
+                                </button>
+                                <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-secondary btn-sm">
+                                    {% trans "Cancel" %}
+                                </a>
+                            </div>
+                        </form>
+                    </div>
                 </div>
-                </form>
+
             </div>
         </div>
 
-    </div>
-</div>
+        {{ hangar_divisions|json_script:"hangarDivisionsData" }}
+        {{ selected_sell_structures|json_script:"selectedSellStructures" }}
+        {{ selected_buy_structures|json_script:"selectedBuyStructures" }}
+        {{ selected_sell_market_groups_by_structure|json_script:"selectedSellMarketGroupsByStructure" }}
+        {{ selected_market_groups_buy|json_script:"selectedMarketGroupsBuy" }}
+        {{ market_group_tree|json_script:"marketGroupTreeData" }}
+        {{ item_price_overrides|json_script:"itemPriceOverridesData" }}
+        {{ item_override_type_choices|json_script:"itemOverrideTypeChoicesData" }}
+        {{ market_group_override_choices|json_script:"marketGroupOverrideChoicesData" }}
+        {{ market_group_price_overrides|json_script:"marketGroupPriceOverridesData" }}
+        {{ sell_market_group_profiles|json_script:"sellMarketGroupProfilesData" }}
+        {{ buy_market_group_profiles|json_script:"buyMarketGroupProfilesData" }}
 
-{{ hangar_divisions|json_script:"hangarDivisionsData" }}
-{{ selected_sell_structures|json_script:"selectedSellStructures" }}
-{{ selected_buy_structures|json_script:"selectedBuyStructures" }}
-{{ selected_sell_market_groups_by_structure|json_script:"selectedSellMarketGroupsByStructure" }}
-{{ selected_market_groups_buy|json_script:"selectedMarketGroupsBuy" }}
-{{ market_group_tree|json_script:"marketGroupTreeData" }}
-{{ item_price_overrides|json_script:"itemPriceOverridesData" }}
-{{ item_override_type_choices|json_script:"itemOverrideTypeChoicesData" }}
-{{ market_group_override_choices|json_script:"marketGroupOverrideChoicesData" }}
-{{ market_group_price_overrides|json_script:"marketGroupPriceOverridesData" }}
-{{ sell_market_group_profiles|json_script:"sellMarketGroupProfilesData" }}
-{{ buy_market_group_profiles|json_script:"buyMarketGroupProfilesData" }}
-
-<script>
+        <script>
 document.addEventListener('DOMContentLoaded', function() {
     const corpSelect = document.getElementById('corpSelect');
     const sellStructureSelect = document.getElementById('sellStructureSelect');
@@ -3132,5 +3164,5 @@ document.addEventListener('DOMContentLoaded', function() {
     refreshBtn.disabled = !corpSelect.value;
 });
 
-</script>
-{% endblock content %}
+        </script>
+    {% endblock content %}

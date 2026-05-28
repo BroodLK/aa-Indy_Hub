@@ -69,11 +69,7 @@ def _character_scope_coverage_queryset(*, scope_names: list[str], character_id_r
 
 
 def _has_scope_coverage(character: EveCharacter, scope_names: list[str]) -> bool:
-    owner_user_id = (
-        CharacterOwnership.objects.filter(character=character)
-        .values_list("user_id", flat=True)
-        .first()
-    )
+    owner_user_id = CharacterOwnership.objects.filter(character=character).values_list("user_id", flat=True).first()
     if not owner_user_id:
         return False
 
@@ -159,12 +155,8 @@ app_import = AppImport(
             field_label=_("Indy Hub"),
             add_character=_add_personal_character,
             scopes=PERSONAL_SCOPE_SET,
-            check_permissions=lambda user: user.has_perm(
-                "indy_hub.can_access_indy_hub"
-            ),
-            is_character_added=lambda character: _has_scope_coverage(
-                character, PERSONAL_SCOPE_SET
-            ),
+            check_permissions=lambda user: user.has_perm("indy_hub.can_access_indy_hub"),
+            is_character_added=lambda character: _has_scope_coverage(character, PERSONAL_SCOPE_SET),
             is_character_added_annotation=Exists(
                 _character_scope_coverage_queryset(
                     scope_names=PERSONAL_SCOPE_SET,
@@ -179,22 +171,16 @@ app_import = AppImport(
             field_label=_("Indy Hub Corporation Admin"),
             add_character=_add_corporation_character,
             scopes=CORPORATION_SCOPE_SET,
-            check_permissions=lambda user: user.has_perm(
-                "indy_hub.can_manage_corp_bp_requests"
-            )
+            check_permissions=lambda user: user.has_perm("indy_hub.can_manage_corp_bp_requests")
             and user.has_perm("indy_hub.can_access_indy_hub"),
-            is_character_added=lambda character: _has_scope_coverage(
-                character, CORPORATION_SCOPE_SET
-            ),
+            is_character_added=lambda character: _has_scope_coverage(character, CORPORATION_SCOPE_SET),
             is_character_added_annotation=Exists(
                 _character_scope_coverage_queryset(
                     scope_names=CORPORATION_SCOPE_SET,
                     character_id_ref=OuterRef("pk"),
                 )
             ),
-            get_users_with_perms=lambda: _users_with_permission(
-                "can_manage_corp_bp_requests"
-            ),
+            get_users_with_perms=lambda: _users_with_permission("can_manage_corp_bp_requests"),
             default_initial_selection=False,
         ),
         LoginImport(
@@ -203,22 +189,16 @@ app_import = AppImport(
             field_label=_("Indy Hub Material Exchange"),
             add_character=_add_material_exchange_character,
             scopes=MATERIAL_HUB_SCOPE_SET,
-            check_permissions=lambda user: user.has_perm(
-                "indy_hub.can_manage_material_hub"
-            )
+            check_permissions=lambda user: user.has_perm("indy_hub.can_manage_material_hub")
             and user.has_perm("indy_hub.can_access_indy_hub"),
-            is_character_added=lambda character: _has_scope_coverage(
-                character, MATERIAL_HUB_SCOPE_SET
-            ),
+            is_character_added=lambda character: _has_scope_coverage(character, MATERIAL_HUB_SCOPE_SET),
             is_character_added_annotation=Exists(
                 _character_scope_coverage_queryset(
                     scope_names=MATERIAL_HUB_SCOPE_SET,
                     character_id_ref=OuterRef("pk"),
                 )
             ),
-            get_users_with_perms=lambda: _users_with_permission(
-                "can_manage_material_hub"
-            ),
+            get_users_with_perms=lambda: _users_with_permission("can_manage_material_hub"),
             default_initial_selection=False,
         ),
     ],

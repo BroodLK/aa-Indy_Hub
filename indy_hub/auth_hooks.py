@@ -63,6 +63,7 @@ def register_urls():
     """
     return UrlHook(urls, "indy_hub", r"^indy_hub/")
 
+
 @hooks.register("charlink")
 def register_charlink_hook():
     """Register the optional CharLink integration module."""

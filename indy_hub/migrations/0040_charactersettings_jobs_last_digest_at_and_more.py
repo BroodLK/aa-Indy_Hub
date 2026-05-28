@@ -73,17 +73,11 @@ class Migration(migrations.Migration):
             ],
             options={
                 "default_permissions": (),
-                "indexes": [
-                    models.Index(
-                        fields=["user", "sent_at"], name="job_digest_user_sent_idx"
-                    )
-                ],
+                "indexes": [models.Index(fields=["user", "sent_at"], name="job_digest_user_sent_idx")],
             },
         ),
         migrations.AddConstraint(
             model_name="jobnotificationdigestentry",
-            constraint=models.UniqueConstraint(
-                fields=("user", "job_id"), name="job_digest_user_job_uq"
-            ),
+            constraint=models.UniqueConstraint(fields=("user", "job_id"), name="job_digest_user_job_uq"),
         ),
     ]

@@ -6,6 +6,7 @@ from celery import shared_task
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
+# AA Example App
 # Local
 from indy_hub.services.capital_price_estimates import sync_capital_ship_auto_estimates
 from indy_hub.services.public_contracts_store import sync_public_jita_contract_cache

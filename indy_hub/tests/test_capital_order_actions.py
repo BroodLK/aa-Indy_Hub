@@ -1,11 +1,14 @@
+# Django
 from django.contrib.auth.models import Permission, User
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+# Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
+# AA Example App
 from indy_hub.models import (
     CapitalShipOrder,
     CapitalShipOrderEvent,
@@ -40,12 +43,8 @@ class CapitalOrderActionsTests(TestCase):
 
     def setUp(self) -> None:
         self.manager = User.objects.create_user("capmanager_actions", password="secret123")
-        self.requester = User.objects.create_user(
-            "caprequester_actions", password="secret123"
-        )
-        self.other_manager = User.objects.create_user(
-            "capmanager_other_actions", password="secret123"
-        )
+        self.requester = User.objects.create_user("caprequester_actions", password="secret123")
+        self.other_manager = User.objects.create_user("capmanager_other_actions", password="secret123")
         assign_main_character(self.manager, character_id=2025101)
         assign_main_character(self.requester, character_id=2025102)
         assign_main_character(self.other_manager, character_id=2025103)
@@ -106,9 +105,7 @@ class CapitalOrderActionsTests(TestCase):
             reverse("indy_hub:capital_ship_order_cancel", args=[order.id]),
         )
 
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_cancel", args=[order.id]))
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
@@ -132,9 +129,7 @@ class CapitalOrderActionsTests(TestCase):
             reverse("indy_hub:capital_ship_order_uncancel", args=[order.id]),
         )
 
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_uncancel", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_uncancel", args=[order.id]))
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
@@ -143,17 +138,13 @@ class CapitalOrderActionsTests(TestCase):
         order = self._create_order(status=CapitalShipOrder.Status.WAITING)
 
         self._force_login(self.manager)
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_cancel", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_cancel", args=[order.id]))
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
 
         self._force_login(self.requester)
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_uncancel", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_uncancel", args=[order.id]))
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.CANCELLED)
@@ -178,9 +169,7 @@ class CapitalOrderActionsTests(TestCase):
         order.ensure_chat()
 
         self._force_login(self.manager)
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_set_gathering_materials", args=[order.id]))
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.GATHERING_MATERIALS)
@@ -204,9 +193,7 @@ class CapitalOrderActionsTests(TestCase):
             ]
         )
 
-        response = self.client.post(
-            reverse("indy_hub:capital_ship_order_release_claim", args=[order.id])
-        )
+        response = self.client.post(reverse("indy_hub:capital_ship_order_release_claim", args=[order.id]))
         self.assertEqual(response.status_code, 302)
         order.refresh_from_db()
         self.assertEqual(order.status, CapitalShipOrder.Status.WAITING)
@@ -222,7 +209,5 @@ class CapitalOrderActionsTests(TestCase):
         self.assertIsNone(order.definitive_eta_updated_by_id)
 
         self._force_login(self.other_manager)
-        response = self.client.get(
-            reverse("indy_hub:capital_ship_order_chat_history", args=[order.id])
-        )
+        response = self.client.get(reverse("indy_hub:capital_ship_order_chat_history", args=[order.id]))
         self.assertEqual(response.status_code, 200)

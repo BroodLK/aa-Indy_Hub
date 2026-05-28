@@ -56,8 +56,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="corporationsharingsetting",
-            index=models.Index(
-                fields=["user", "share_scope"], name="corp_sharing_user_scope_idx"
-            ),
+            index=models.Index(fields=["user", "share_scope"], name="corp_sharing_user_scope_idx"),
         ),
     ]

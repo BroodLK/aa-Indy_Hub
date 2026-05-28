@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 # Standard Library
-from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
-from functools import lru_cache
 import math
 import re
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from functools import lru_cache
 from typing import Iterable
 
 # Django
@@ -16,6 +16,7 @@ from django.utils import timezone
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
+# AA Example App
 # Local
 from indy_hub.services.esi_client import shared_client
 from indy_hub.services.fuzzwork import FuzzworkError, fetch_fuzzwork_prices
@@ -197,8 +198,9 @@ def _resolve_location_names(location_ids: list[int]) -> dict[int, str]:
 
 def _get_corptools_character_audit(character_id: int):
     try:
-        # AA Example App
+        # Third Party
         from corptools.models.audits import CharacterAudit
+
         # Django
         from django.db.models import Q
     except Exception:
@@ -206,10 +208,7 @@ def _get_corptools_character_audit(character_id: int):
     try:
         return (
             CharacterAudit.objects.select_related("character")
-            .filter(
-                Q(character__character_id=int(character_id))
-                | Q(character_id=int(character_id))
-            )
+            .filter(Q(character__character_id=int(character_id)) | Q(character_id=int(character_id)))
             .first()
         )
     except Exception:
@@ -221,7 +220,7 @@ def _fetch_corptools_skill_levels(character_id: int) -> dict[int, dict[str, int]
     if audit is None:
         return {}
     try:
-        # AA Example App
+        # Third Party
         from corptools.models.skills import Skill
     except Exception:
         return {}
@@ -254,17 +253,13 @@ def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]
     if audit is None:
         return []
     try:
-        # AA Example App
+        # Third Party
         from corptools.models.clones import Implant, JumpClone
     except Exception:
         return []
 
     try:
-        clones = list(
-            JumpClone.objects.filter(character=audit)
-            .select_related("location_name")
-            .order_by("id")
-        )
+        clones = list(JumpClone.objects.filter(character=audit).select_related("location_name").order_by("id"))
     except Exception:
         return []
     if not clones:
@@ -272,9 +267,7 @@ def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]
 
     implants_by_clone: dict[int, list[tuple[int, str]]] = {}
     try:
-        implants = list(
-            Implant.objects.filter(clone__in=clones).select_related("type_name")
-        )
+        implants = list(Implant.objects.filter(clone__in=clones).select_related("type_name"))
     except Exception:
         implants = []
     for implant in implants:
@@ -387,21 +380,13 @@ def build_reprocessing_skill_snapshot(
         if level <= 0:
             continue
         skill_name = str(get_type_name(skill_id) or "").lower()
-        if (
-            "processing" in skill_name
-            and "reprocessing" not in skill_name
-            and "efficiency" not in skill_name
-        ):
+        if "processing" in skill_name and "reprocessing" not in skill_name and "efficiency" not in skill_name:
             processing_level = max(processing_level, level)
 
     return {
         "reprocessing": _active(REPROCESSING_SKILL_TYPE_IDS["reprocessing"]),
-        "reprocessing_efficiency": _active(
-            REPROCESSING_SKILL_TYPE_IDS["reprocessing_efficiency"]
-        ),
-        "scrapmetal_processing": _active(
-            REPROCESSING_SKILL_TYPE_IDS["scrapmetal_processing"]
-        ),
+        "reprocessing_efficiency": _active(REPROCESSING_SKILL_TYPE_IDS["reprocessing_efficiency"]),
+        "scrapmetal_processing": _active(REPROCESSING_SKILL_TYPE_IDS["scrapmetal_processing"]),
         "processing": processing_level,
     }
 
@@ -653,7 +638,7 @@ def _iter_processing_skill_candidates(
     candidates = list(_get_processing_skill_candidates_from_sde())
     seen = {skill_id for skill_id, _skill_name in candidates}
 
-    for raw_skill_id in (skill_levels_by_id or {}):
+    for raw_skill_id in skill_levels_by_id or {}:
         try:
             skill_id = int(raw_skill_id)
         except (TypeError, ValueError):
@@ -702,10 +687,7 @@ def _infer_processing_skill_type_id_for_item(
             continue
 
         if not any(
-            text == subject
-            or text.endswith(f" {subject}")
-            or f" {subject} " in f" {text} "
-            for text in context_texts
+            text == subject or text.endswith(f" {subject}") or f" {subject} " in f" {text} " for text in context_texts
         ):
             continue
 
@@ -794,9 +776,7 @@ def build_reprocessing_estimate(
         if not output_map:
             unsupported_inputs.append({"type_id": source_type_id, "quantity": source_qty})
             continue
-        type_yield_percent = _to_decimal(
-            (yield_percent_by_type or {}).get(int(source_type_id), yield_percent)
-        )
+        type_yield_percent = _to_decimal((yield_percent_by_type or {}).get(int(source_type_id), yield_percent))
         type_yield_ratio = type_yield_percent / Decimal("100")
         if type_yield_ratio < Decimal("0"):
             type_yield_ratio = Decimal("0")
@@ -806,14 +786,10 @@ def build_reprocessing_estimate(
             continue
         for output_type_id, output_qty_per_unit in output_map.items():
             refined_quantity = (
-                _to_decimal(processable_portions)
-                * _to_decimal(output_qty_per_unit)
-                * type_yield_ratio
+                _to_decimal(processable_portions) * _to_decimal(output_qty_per_unit) * type_yield_ratio
             ).quantize(Decimal("1"), rounding=ROUND_FLOOR)
             refined_int = max(int(refined_quantity), 0)
-            expected_outputs[int(output_type_id)] = (
-                expected_outputs.get(int(output_type_id), 0) + refined_int
-            )
+            expected_outputs[int(output_type_id)] = expected_outputs.get(int(output_type_id), 0) + refined_int
 
     output_type_ids = sorted(expected_outputs.keys())
     try:
@@ -842,9 +818,9 @@ def build_reprocessing_estimate(
         )
 
     # EVE contracts effectively operate in whole ISK; floor to avoid false mismatches.
-    reward_isk = (
-        total_value * (_to_decimal(margin_percent) / Decimal("100"))
-    ).quantize(Decimal("1"), rounding=ROUND_FLOOR)
+    reward_isk = (total_value * (_to_decimal(margin_percent) / Decimal("100"))).quantize(
+        Decimal("1"), rounding=ROUND_FLOOR
+    )
 
     return {
         "outputs": output_rows,
@@ -900,13 +876,9 @@ def contract_items_match_with_tolerance(
         missing = sorted(expected_types - actual_types)
         extras = sorted(actual_types - expected_types)
         if missing:
-            errors.append(
-                "Missing types: " + ", ".join(get_type_name(type_id) for type_id in missing)
-            )
+            errors.append("Missing types: " + ", ".join(get_type_name(type_id) for type_id in missing))
         if extras:
-            errors.append(
-                "Unexpected types: " + ", ".join(get_type_name(type_id) for type_id in extras)
-            )
+            errors.append("Unexpected types: " + ", ".join(get_type_name(type_id) for type_id in extras))
         return False, errors
 
     tolerance_ratio = _to_decimal(tolerance_percent) / Decimal("100")
@@ -928,7 +900,9 @@ def contract_items_match_with_tolerance(
 
 def clear_compressed_ore_cache():
     """Clear all entries from the CompressedOreCache."""
+    # AA Example App
     from indy_hub.models import CompressedOreCache
+
     count = CompressedOreCache.objects.count()
     CompressedOreCache.objects.all().delete()
     logger.info(f"Cleared {count} entries from CompressedOreCache")
@@ -944,9 +918,8 @@ def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
     relation = "market_group"
     market_group_filter = models.Q()
     for _ in range(max_depth):
-        market_group_filter |= (
-            models.Q(**{f"{relation}__name__icontains": "compressed"})
-            & models.Q(**{f"{relation}__name__icontains": "ore"})
+        market_group_filter |= models.Q(**{f"{relation}__name__icontains": "compressed"}) & models.Q(
+            **{f"{relation}__name__icontains": "ore"}
         )
         relation = f"{relation}__parent_group"
     return market_group_filter
@@ -957,10 +930,7 @@ def _compressed_ore_type_filter() -> models.Q:
     return (
         models.Q(name__icontains="Compressed")
         & ~models.Q(name__icontains="Batch Compressed")
-        & (
-            models.Q(group__category_id=ASTEROID_CATEGORY_ID)
-            | _compressed_ore_market_group_filter()
-        )
+        & (models.Q(group__category_id=ASTEROID_CATEGORY_ID) | _compressed_ore_market_group_filter())
     )
 
 
@@ -972,12 +942,14 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     Returns:
         Tuple of (success, status_message)
     """
+    # AA Example App
     from indy_hub.models import CompressedOreCache
 
     # Clear existing cache to remove any bad data
     clear_compressed_ore_cache()
 
     try:
+        # Alliance Auth (External Libs)
         import eve_sde.models as sde_models
     except Exception as e:
         return False, f"EVE SDE not available: {e}"
@@ -1009,11 +981,9 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     # Market-group ancestry remains as a fallback because SDE layouts vary.
     try:
         compressed_ore_types = list(
-            item_type_model.objects.filter(
-                published=True
-            ).filter(
-                _compressed_ore_type_filter()
-            ).values_list("id", "name")
+            item_type_model.objects.filter(published=True)
+            .filter(_compressed_ore_type_filter())
+            .values_list("id", "name")
         )
     except Exception as e:
         return False, f"Failed to query compressed ores: {e}"
@@ -1026,13 +996,13 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
     # Get reprocessing data for all compressed ores
     # Only keep items that actually reprocess to minerals
     MINERAL_TYPE_IDS = {
-        34,     # Tritanium
-        35,     # Pyerite
-        36,     # Mexallon
-        37,     # Isogen
-        38,     # Nocxium
-        39,     # Zydrine
-        40,     # Megacyte
+        34,  # Tritanium
+        35,  # Pyerite
+        36,  # Mexallon
+        37,  # Isogen
+        38,  # Nocxium
+        39,  # Zydrine
+        40,  # Megacyte
         11399,  # Morphite
     }
     ore_count = 0
@@ -1048,7 +1018,7 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
                         "ore_name": ore_name,
                         "reprocessing_outputs": outputs,
                         "cache_version": CompressedOreCache.CACHE_VERSION,
-                    }
+                    },
                 )
                 ore_count += 1
             else:
@@ -1069,6 +1039,7 @@ def _update_compressed_ore_prices() -> tuple[bool, str]:
     Returns:
         Tuple of (success, status_message)
     """
+    # AA Example App
     from indy_hub.models import CompressedOreCache
 
     ore_type_ids = list(CompressedOreCache.objects.values_list("ore_type_id", flat=True))
@@ -1117,6 +1088,7 @@ def calculate_compressed_ore_for_minerals(
             - excess_minerals: Dict of excess minerals produced
             - prices_estimated: Boolean indicating if prices are estimated (not from Fuzzwork)
     """
+    # AA Example App
     from indy_hub.models import CompressedOreCache
 
     def update_progress(message: str):
@@ -1124,6 +1096,7 @@ def calculate_compressed_ore_for_minerals(
         if progress_callback:
             progress_callback(message)
         logger.info(message)
+
     if not mineral_requirements:
         return {
             "compressed_ores": [],
@@ -1266,9 +1239,7 @@ def calculate_compressed_ore_for_minerals(
             remaining_qty = remaining_minerals.get(mineral_id, 0)
             if remaining_qty <= 0 or produced_qty <= 0:
                 continue
-            portions_needed = (
-                Decimal(remaining_qty) / produced_qty
-            ).to_integral_value(rounding=ROUND_CEILING)
+            portions_needed = (Decimal(remaining_qty) / produced_qty).to_integral_value(rounding=ROUND_CEILING)
             if portions_needed > 0:
                 relevant_portion_counts.append(int(portions_needed))
 
@@ -1276,9 +1247,7 @@ def calculate_compressed_ore_for_minerals(
             break
 
         portions_to_add = max(1, min(relevant_portion_counts))
-        selected_ores[best_ore_id] = (
-            selected_ores.get(best_ore_id, 0) + (portion_size * portions_to_add)
-        )
+        selected_ores[best_ore_id] = selected_ores.get(best_ore_id, 0) + (portion_size * portions_to_add)
 
         # Update remaining minerals
         for mineral_id, refined_per_portion in best_refined_per_portion.items():
@@ -1324,14 +1293,16 @@ def calculate_compressed_ore_for_minerals(
         ore_total_cost = (_to_decimal(ore_qty) * ore_unit_price).quantize(Decimal("0.01"))
         total_cost += ore_total_cost
 
-        compressed_ore_list.append({
-            "type_id": ore_type_id,
-            "type_name": get_type_name(ore_type_id),
-            "quantity": ore_qty,
-            "unit_price": ore_unit_price,
-            "total_cost": ore_total_cost,
-            "mineral_yields": ore_mineral_yields[ore_type_id],
-        })
+        compressed_ore_list.append(
+            {
+                "type_id": ore_type_id,
+                "type_name": get_type_name(ore_type_id),
+                "quantity": ore_qty,
+                "unit_price": ore_unit_price,
+                "total_cost": ore_total_cost,
+                "mineral_yields": ore_mineral_yields[ore_type_id],
+            }
+        )
 
     # Sort by type name for consistent ordering
     compressed_ore_list.sort(key=lambda x: x["type_name"])

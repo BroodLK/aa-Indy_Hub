@@ -63,9 +63,7 @@ def update_character_roles_for_character(
     """Refresh stored corporation roles for a single character."""
     table_empty = not CharacterRoles.objects.exists()
     ownership = (
-        CharacterOwnership.objects.filter(
-            user_id=user_id, character__character_id=character_id
-        )
+        CharacterOwnership.objects.filter(user_id=user_id, character__character_id=character_id)
         .select_related("character", "user")
         .first()
     )
@@ -84,10 +82,7 @@ def update_character_roles_for_character(
 
     snapshot = CharacterRoles.objects.filter(character_id=character_id).first()
     now = timezone.now()
-    snapshot_stale = bool(
-        snapshot
-        and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS)
-    )
+    snapshot_stale = bool(snapshot and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS))
     if snapshot and not snapshot_stale:
         return {"status": "skipped", "reason": "fresh"}
     try:

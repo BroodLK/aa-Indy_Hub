@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # Third Party
-from esi.exceptions import HTTPServerError
 from celery import group, shared_task
 
 # Django
@@ -13,6 +12,7 @@ from django.utils import timezone
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 from allianceauth.services.tasks import QueueOnce
+from esi.exceptions import HTTPServerError
 
 # AA Example App
 from indy_hub.models import CachedStructureName

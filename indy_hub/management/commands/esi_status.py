@@ -81,22 +81,9 @@ class Command(BaseCommand):
         self.stdout.write(f"Character Errors: {status['character_errors']}")
 
         # Recommendations
-        if (
-            not status["type_circuit_breaker"]
-            or not status["character_circuit_breaker"]
-        ):
-            self.stdout.write(
-                self.style.WARNING(
-                    "\nWARNING: Circuit breakers are open! ESI calls are being blocked."
-                )
-            )
-            self.stdout.write(
-                "Use --reset-circuit-breakers to reset them if the issue is resolved."
-            )
+        if not status["type_circuit_breaker"] or not status["character_circuit_breaker"]:
+            self.stdout.write(self.style.WARNING("\nWARNING: Circuit breakers are open! ESI calls are being blocked."))
+            self.stdout.write("Use --reset-circuit-breakers to reset them if the issue is resolved.")
 
         if status["type_backoff"] or status["character_backoff"]:
-            self.stdout.write(
-                self.style.WARNING(
-                    "\nINFO: Backoff is active. ESI calls are being delayed."
-                )
-            )
+            self.stdout.write(self.style.WARNING("\nINFO: Backoff is active. ESI calls are being delayed."))

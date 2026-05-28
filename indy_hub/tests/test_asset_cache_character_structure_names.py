@@ -10,7 +10,11 @@ from django.test import TestCase
 from django.utils import timezone
 
 # AA Example App
-from indy_hub.models import CachedCharacterAsset, CachedCorporationAsset, CachedStructureName
+from indy_hub.models import (
+    CachedCharacterAsset,
+    CachedCorporationAsset,
+    CachedStructureName,
+)
 from indy_hub.services import asset_cache
 
 
@@ -70,7 +74,7 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
                 "quantity": 123,
                 "is_singleton": False,
                 "is_blueprint": False,
-            }
+            },
         ]
 
         def resolve_side_effect(structure_ids, character_id=None, user=None, **kwargs):
@@ -100,17 +104,11 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
                 side_effect=resolve_side_effect,
             ) as mocked_resolve,
         ):
-            refreshed_assets, scope_missing = asset_cache._refresh_character_assets(
-                user
-            )
+            refreshed_assets, scope_missing = asset_cache._refresh_character_assets(user)
 
         self.assertFalse(scope_missing)
         self.assertEqual(len(refreshed_assets), 3)
-        by_item_id = {
-            int(row["item_id"]): row
-            for row in refreshed_assets
-            if row.get("item_id") is not None
-        }
+        by_item_id = {int(row["item_id"]): row for row in refreshed_assets if row.get("item_id") is not None}
         self.assertEqual(
             by_item_id[container_item_id].get("set_name"),
             "Example Production Container",
@@ -118,16 +116,12 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
         self.assertEqual(by_item_id[non_container_item_id].get("set_name"), "")
 
         # Ensure assets got written with new fields.
-        container_row = CachedCharacterAsset.objects.get(
-            user=user, item_id=container_item_id
-        )
+        container_row = CachedCharacterAsset.objects.get(user=user, item_id=container_item_id)
         self.assertEqual(container_row.raw_location_id, structure_id)
         self.assertEqual(container_row.location_id, structure_id)
         self.assertEqual(container_row.set_name, "Example Production Container")
 
-        non_container_row = CachedCharacterAsset.objects.get(
-            user=user, item_id=non_container_item_id
-        )
+        non_container_row = CachedCharacterAsset.objects.get(user=user, item_id=non_container_item_id)
         self.assertEqual(non_container_row.set_name, "")
 
         mocked_fetch_names.assert_called_once()
@@ -137,9 +131,7 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
 
         # Ensure we attempted to resolve/cache the structure name.
         self.assertTrue(mocked_resolve.called)
-        self.assertTrue(
-            CachedStructureName.objects.filter(structure_id=structure_id).exists()
-        )
+        self.assertTrue(CachedStructureName.objects.filter(structure_id=structure_id).exists())
 
 
 class CorporationAssetRefreshNameTests(TestCase):
@@ -199,17 +191,11 @@ class CorporationAssetRefreshNameTests(TestCase):
             ) as mocked_fetch_names,
             patch.object(asset_cache, "_cache_corp_structure_names", return_value={}),
         ):
-            refreshed_assets, scope_missing = asset_cache._refresh_corp_assets(
-                corporation_id
-            )
+            refreshed_assets, scope_missing = asset_cache._refresh_corp_assets(corporation_id)
 
         self.assertFalse(scope_missing)
         self.assertEqual(len(refreshed_assets), 3)
-        by_item_id = {
-            int(row["item_id"]): row
-            for row in refreshed_assets
-            if row.get("item_id") is not None
-        }
+        by_item_id = {int(row["item_id"]): row for row in refreshed_assets if row.get("item_id") is not None}
         self.assertEqual(
             by_item_id[container_item_id].get("set_name"),
             "Corp Container Name",
@@ -362,11 +348,7 @@ class CorporationAssetRefreshNameTests(TestCase):
             )
 
         self.assertFalse(scope_missing)
-        by_item_id = {
-            int(row["item_id"]): row
-            for row in assets
-            if row.get("item_id") is not None
-        }
+        by_item_id = {int(row["item_id"]): row for row in assets if row.get("item_id") is not None}
         self.assertEqual(
             by_item_id[container_item_id].get("set_name"),
             "Backfilled Corp Container",
