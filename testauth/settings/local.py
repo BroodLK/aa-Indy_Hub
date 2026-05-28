@@ -8,9 +8,10 @@ Test settings
 # local.py settings
 # Every setting in base.py can be overloaded by redefining it here.
 
-from .base import *
-
+# Alliance Auth
 from allianceauth.utils import cache as allianceauth_cache
+
+from .base import *
 
 PACKAGE = "indy_hub"
 
