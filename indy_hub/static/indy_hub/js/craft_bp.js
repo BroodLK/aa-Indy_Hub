@@ -6721,7 +6721,7 @@ function syncManualFinancialStateFromDom() {
             return;
         }
 
-        const qtyElement = row.querySelector('[data-qty]');
+        const qtyElement = row.querySelector('.craft-financial-qty-cell') || row.querySelector('[data-qty]');
         const requiredQuantity = Math.max(
             0,
             Math.ceil(
@@ -6789,7 +6789,7 @@ function recalcFinancials() {
     };
 
     document.querySelectorAll('#financialItemsBody tr').forEach(tr => {
-        const qtyCell = tr.querySelector('[data-qty]');
+        const qtyCell = tr.querySelector('.craft-financial-qty-cell') || tr.querySelector('[data-qty]');
         if (!qtyCell) {
             return;
         }
@@ -7385,8 +7385,8 @@ function buildFinancialRow(item, pricesMap) {
                 </span>
             </div>
         </td>
-        <td class="text-end craft-financial-qty-cell">
-            <span class="badge ${qtyBadgeClass}" data-qty="${payableQty}" data-qty-pay="${payableQty}" data-qty-required="${requiredQty}" data-qty-owned="${ownedQty}">${formatInteger(payableQty)}</span>
+        <td class="text-end craft-financial-qty-cell" data-qty="${payableQty}" data-qty-pay="${payableQty}" data-qty-required="${requiredQty}" data-qty-owned="${ownedQty}">
+            <span class="badge ${qtyBadgeClass}">${formatInteger(payableQty)}</span>
             <div class="text-muted text-xs mt-1 financial-owned-note ${showOwnedNote ? '' : 'd-none'}">
                 ${escapeHtml(__('Owned'))}: ${formatInteger(ownedQty)} / ${escapeHtml(__('Need'))}: ${formatInteger(requiredQty)}
             </div>
@@ -7499,12 +7499,15 @@ function updateFinancialRow(row, item) {
         img.src = `https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32`;
     }
 
-    const qtyBadge = row.querySelector('span.badge[data-qty]');
+    const qtyCell = row.querySelector('.craft-financial-qty-cell') || row.querySelector('td[data-qty]');
+    const qtyBadge = qtyCell ? qtyCell.querySelector('span.badge') : null;
+    if (qtyCell) {
+        qtyCell.dataset.qty = String(payableQty);
+        qtyCell.dataset.qtyPay = String(payableQty);
+        qtyCell.dataset.qtyRequired = String(requiredQty);
+        qtyCell.dataset.qtyOwned = String(ownedQty);
+    }
     if (qtyBadge) {
-        qtyBadge.dataset.qty = String(payableQty);
-        qtyBadge.dataset.qtyPay = String(payableQty);
-        qtyBadge.dataset.qtyRequired = String(requiredQty);
-        qtyBadge.dataset.qtyOwned = String(ownedQty);
         qtyBadge.textContent = formatInteger(payableQty);
         qtyBadge.classList.remove('bg-primary', 'text-white', 'bg-warning', 'text-dark');
         if (isBpc) {
@@ -12810,7 +12813,7 @@ async function calculateImportFees() {
         if (row.id === 'finalProductRow') {
             return;
         }
-        const qtyCell = row.querySelector('[data-qty]');
+        const qtyCell = row.querySelector('.craft-financial-qty-cell') || row.querySelector('[data-qty]');
         const fuzzworkPriceInput = row.querySelector('.fuzzwork-price');
         const realPriceInput = row.querySelector('.real-price');
         const typeId = Number(row.dataset.typeId || 0);
