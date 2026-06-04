@@ -6983,6 +6983,7 @@ function recalcFinancials() {
     const marginText = marginValue.toFixed(1);
 
     const grandTotalIndustryFeeEl = document.querySelector('.grand-total-industry-fee');
+    const grandTotalShippingEl = document.querySelector('.grand-total-shipping');
     const grandTotalCostEl = document.querySelector('.grand-total-cost');
     const grandTotalRevEl = document.querySelector('.grand-total-rev');
     const profitEl = document.querySelector('.profit');
@@ -6991,6 +6992,11 @@ function recalcFinancials() {
 
     if (grandTotalIndustryFeeEl) {
         grandTotalIndustryFeeEl.textContent = formatPrice(industryFeeTotal);
+    }
+
+    if (grandTotalShippingEl) {
+        const hasSelectedRoute = Boolean(getSelectedImportFeesRoute());
+        grandTotalShippingEl.textContent = formatPrice(hasSelectedRoute ? shippingFeeTotal : 0);
     }
 
     if (grandTotalCostEl) {

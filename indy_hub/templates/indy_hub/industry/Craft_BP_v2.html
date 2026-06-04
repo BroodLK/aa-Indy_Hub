@@ -508,8 +508,12 @@
                                                     </span>
                                                 </div>
                                             </td>
-                                            <td class="text-end text-xs craft-financial-qty-cell">
-                                                <span class="badge bg-info text-white" data-qty="1">1</span>
+                                            <td class="text-end text-xs craft-financial-qty-cell"
+                                                data-qty="1"
+                                                data-qty-pay="1"
+                                                data-qty-required="1"
+                                                data-qty-owned="0">
+                                                <span class="badge bg-info text-white">1</span>
                                             </td>
                                             <td class="text-end">
                                                 <input type="text"
@@ -573,7 +577,11 @@
                                             <th class="text-end text-xs grand-total-industry-fee fw-semibold text-warning" colspan="2">0</th>
                                         </tr>
                                         <tr>
-                                            <th colspan="4" class="text-end text-xs">{% trans "Total Material Cost" %}</th>
+                                            <th colspan="4" class="text-end text-xs">{% trans "Shipping Fee" %}</th>
+                                            <th class="text-end text-xs grand-total-shipping fw-semibold text-info" colspan="2">0</th>
+                                        </tr>
+                                        <tr>
+                                            <th colspan="4" class="text-end text-xs">{% trans "Total Material + Shipping" %}</th>
                                             <th class="text-end text-xs grand-total-cost fw-semibold text-danger" colspan="2">0</th>
                                         </tr>
                                         <tr>
@@ -2571,6 +2579,7 @@ document.addEventListener('DOMContentLoaded', function() {
     async function copyShoppingListToClipboard() {
         const rows = Array.from(document.querySelectorAll('#needed-table tbody tr'));
         if (rows.length === 0) {
+            showToast('{% trans "Compute the shopping list first" %}', false);
             if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                 window.CraftBP.pushStatus('{% trans "Compute the shopping list first" %}', 'warning');
             }
@@ -2592,6 +2601,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         if (lines.length === 0) {
+            showToast('{% trans "No items available to copy" %}', false);
             if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                 window.CraftBP.pushStatus('{% trans "No items available to copy" %}', 'warning');
             }
@@ -2602,6 +2612,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
                 await navigator.clipboard.writeText(text);
+                showToast('{% trans "Shopping list copied to clipboard" %}');
                 if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                     window.CraftBP.pushStatus('{% trans "Shopping list copied to clipboard" %}', 'success');
                 }
@@ -2613,6 +2624,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // eslint-disable-next-line no-alert
         window.prompt('{% trans "Copy shopping list" %}', text);
+        showToast('{% trans "Shopping list ready to copy" %}');
         if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
             window.CraftBP.pushStatus('{% trans "Shopping list ready to copy (prompt opened)" %}', 'info');
         }
@@ -2646,6 +2658,7 @@ document.addEventListener('DOMContentLoaded', function() {
     async function copyOwnedMaterialsRemainderToClipboard() {
         const text = buildOwnedMaterialsRemainderText();
         if (!text) {
+            showToast('{% trans "No leftover owned materials to copy" %}', false);
             if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                 window.CraftBP.pushStatus('{% trans "No leftover owned materials to copy" %}', 'warning');
             }
@@ -2655,6 +2668,7 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
                 await navigator.clipboard.writeText(text);
+                showToast('{% trans "Leftover owned materials copied to clipboard" %}');
                 if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
                     window.CraftBP.pushStatus('{% trans "Leftover owned materials copied to clipboard" %}', 'success');
                 }
@@ -2666,6 +2680,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // eslint-disable-next-line no-alert
         window.prompt('{% trans "Copy leftover owned materials" %}', text);
+        showToast('{% trans "Leftover owned materials ready to copy" %}');
         if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
             window.CraftBP.pushStatus('{% trans "Leftover owned materials ready to copy (prompt opened)" %}', 'info');
         }
