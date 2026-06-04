@@ -674,7 +674,7 @@
                                         <i class="fas fa-file-csv me-1"></i>{% trans "Export" %}
                                     </button>
                                     <button id="exportOwnedRemainder" class="btn btn-outline-secondary btn-sm me-2">
-                                        <i class="fas fa-box-open me-1"></i>{% trans "Export Leftovers" %}
+                                        <i class="fas fa-box-open me-1"></i>{% trans "Copy Leftovers" %}
                                     </button>
                                     <button id="compute-needed" class="btn btn-outline-warning btn-sm">
                                         <i class="fas fa-calculator me-1"></i>{% trans "Compute" %}
@@ -2514,16 +2514,6 @@ document.addEventListener('DOMContentLoaded', function() {
         link.click();
     }
 
-    function downloadTextFile(text, filename, mimeType = 'text/plain;charset=utf-8;') {
-        const blob = new Blob([text], { type: mimeType });
-        const link = document.createElement('a');
-        const objectUrl = URL.createObjectURL(blob);
-        link.href = objectUrl;
-        link.download = filename;
-        link.click();
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    }
-
     function parseClipboardQuantity(rawValue) {
         if (rawValue === null || rawValue === undefined) {
             return null;
@@ -2653,6 +2643,34 @@ document.addEventListener('DOMContentLoaded', function() {
             .join('\n');
     }
 
+    async function copyOwnedMaterialsRemainderToClipboard() {
+        const text = buildOwnedMaterialsRemainderText();
+        if (!text) {
+            if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                window.CraftBP.pushStatus('{% trans "No leftover owned materials to copy" %}', 'warning');
+            }
+            return;
+        }
+
+        try {
+            if (navigator && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                await navigator.clipboard.writeText(text);
+                if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                    window.CraftBP.pushStatus('{% trans "Leftover owned materials copied to clipboard" %}', 'success');
+                }
+                return;
+            }
+        } catch (err) {
+            // fall through to prompt
+        }
+
+        // eslint-disable-next-line no-alert
+        window.prompt('{% trans "Copy leftover owned materials" %}', text);
+        if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+            window.CraftBP.pushStatus('{% trans "Leftover owned materials ready to copy (prompt opened)" %}', 'info');
+        }
+    }
+
     if (exportPurchaseBtn) {
         exportPurchaseBtn.addEventListener('click', function() {
             exportTableToCSV('#financialItemsBody', 'purchase_planner.csv');
@@ -2673,18 +2691,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (exportOwnedRemainderBtn) {
         exportOwnedRemainderBtn.addEventListener('click', function() {
-            const text = buildOwnedMaterialsRemainderText();
-            if (!text) {
-                if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
-                    window.CraftBP.pushStatus('{% trans "No leftover owned materials to export" %}', 'warning');
-                }
-                return;
-            }
-
-            downloadTextFile(text, 'owned_materials_leftover.tsv', 'text/tab-separated-values;charset=utf-8;');
-            if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
-                window.CraftBP.pushStatus('{% trans "Leftover owned materials exported" %}', 'success');
-            }
+            copyOwnedMaterialsRemainderToClipboard();
         });
     }
 
