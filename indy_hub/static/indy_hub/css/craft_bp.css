@@ -1501,6 +1501,17 @@ div[id="bpTabs"] {
     white-space: nowrap;
 }
 
+.craft-financial-table td.craft-financial-qty-cell {
+    white-space: normal;
+    overflow: visible;
+}
+
+.craft-financial-table .financial-owned-note {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+}
+
 /* Item column should truncate when space is tight */
 .craft-planner-item-flex {
     min-width: 0; /* critical for flex truncation */

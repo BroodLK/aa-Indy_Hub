@@ -7385,7 +7385,7 @@ function buildFinancialRow(item, pricesMap) {
                 </span>
             </div>
         </td>
-        <td class="text-end">
+        <td class="text-end craft-financial-qty-cell">
             <span class="badge ${qtyBadgeClass}" data-qty="${payableQty}" data-qty-pay="${payableQty}" data-qty-required="${requiredQty}" data-qty-owned="${ownedQty}">${formatInteger(payableQty)}</span>
             <div class="text-muted text-xs mt-1 financial-owned-note ${showOwnedNote ? '' : 'd-none'}">
                 ${escapeHtml(__('Owned'))}: ${formatInteger(ownedQty)} / ${escapeHtml(__('Need'))}: ${formatInteger(requiredQty)}
@@ -9770,6 +9770,15 @@ function updateFinancialTabFromState() {
         return;
     }
 
+    const finalizeFinancialRefresh = () => {
+        if (typeof recalcFinancials === 'function') {
+            recalcFinancials();
+        }
+        if (typeof scheduleImportFeesRecalculation === 'function') {
+            scheduleImportFeesRecalculation({ syncActual: false });
+        }
+    };
+
     syncManualFinancialStateFromDom();
 
     const finalRow = document.getElementById('finalProductRow');
@@ -9980,9 +9989,7 @@ function updateFinancialTabFromState() {
                 .map((typeId) => String(typeId))
         ));
         if (typeIds.length === 0) {
-            if (typeof recalcFinancials === 'function') {
-                recalcFinancials();
-            }
+            finalizeFinancialRefresh();
             return;
         }
         fetchAllPrices(typeIds).then(prices => {
@@ -10001,12 +10008,10 @@ function updateFinancialTabFromState() {
                 }
                 // Real Price stays at 0 by default; do not copy Fuzzwork
             });
-            if (typeof recalcFinancials === 'function') {
-                recalcFinancials();
-            }
+            finalizeFinancialRefresh();
         });
-    } else if (typeof recalcFinancials === 'function') {
-        recalcFinancials();
+    } else {
+        finalizeFinancialRefresh();
     }
 }
 

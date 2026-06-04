@@ -475,7 +475,7 @@
                                                         </span>
                                                     </div>
                                                 </td>
-                                                <td class="text-end text-xs" data-qty="{{ mat.quantity }}">
+                                                <td class="text-end text-xs craft-financial-qty-cell" data-qty="{{ mat.quantity }}">
                                                     <span class="badge bg-primary text-white">{{ mat.quantity|intcomma }}</span>
                                                 </td>
                                                 <td class="text-end">
@@ -508,7 +508,7 @@
                                                     </span>
                                                 </div>
                                             </td>
-                                            <td class="text-end text-xs">
+                                            <td class="text-end text-xs craft-financial-qty-cell">
                                                 <span class="badge bg-info text-white" data-qty="1">1</span>
                                             </td>
                                             <td class="text-end">
@@ -545,7 +545,7 @@
                                                     </span>
                                                 </div>
                                             </td>
-                                            <td class="text-end text-xs" data-qty="{{ final_product_qty|default:num_runs }}">
+                                            <td class="text-end text-xs craft-financial-qty-cell" data-qty="{{ final_product_qty|default:num_runs }}">
                                                 <span class="badge bg-success text-white">{{ final_product_qty|default:num_runs|intcomma }}</span>
                                             </td>
                                             <td class="text-end">
