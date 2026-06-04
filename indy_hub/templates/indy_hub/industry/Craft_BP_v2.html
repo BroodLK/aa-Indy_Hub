@@ -673,6 +673,9 @@
                                     <button id="exportShoppingCSV" class="btn btn-outline-success btn-sm me-2">
                                         <i class="fas fa-file-csv me-1"></i>{% trans "Export" %}
                                     </button>
+                                    <button id="exportOwnedRemainder" class="btn btn-outline-secondary btn-sm me-2">
+                                        <i class="fas fa-box-open me-1"></i>{% trans "Export Leftovers" %}
+                                    </button>
                                     <button id="compute-needed" class="btn btn-outline-warning btn-sm">
                                         <i class="fas fa-calculator me-1"></i>{% trans "Compute" %}
                                     </button>
@@ -2488,6 +2491,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // CSV Export functionality
     const exportPurchaseBtn = document.getElementById('exportPurchaseCSV');
     const exportShoppingBtn = document.getElementById('exportShoppingCSV');
+    const exportOwnedRemainderBtn = document.getElementById('exportOwnedRemainder');
     const copyShoppingClipboardBtn = document.getElementById('copyShoppingClipboard');
 
     function exportTableToCSV(tableId, filename) {
@@ -2508,6 +2512,16 @@ document.addEventListener('DOMContentLoaded', function() {
         link.href = URL.createObjectURL(blob);
         link.download = filename;
         link.click();
+    }
+
+    function downloadTextFile(text, filename, mimeType = 'text/plain;charset=utf-8;') {
+        const blob = new Blob([text], { type: mimeType });
+        const link = document.createElement('a');
+        const objectUrl = URL.createObjectURL(blob);
+        link.href = objectUrl;
+        link.download = filename;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     }
 
     function parseClipboardQuantity(rawValue) {
@@ -2614,6 +2628,32 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function buildOwnedMaterialsRemainderText() {
+        if (!window.CraftBP || typeof window.CraftBP.getOwnedMaterialsRemainderRows !== 'function') {
+            return '';
+        }
+
+        let rows = [];
+        try {
+            rows = window.CraftBP.getOwnedMaterialsRemainderRows() || [];
+        } catch (error) {
+            rows = [];
+        }
+
+        return rows
+            .map((row) => {
+                const name = String(row?.name || '').trim();
+                const quantity = formatClipboardQuantity(Number(row?.quantity) || 0);
+                if (!name || !quantity) {
+                    return '';
+                }
+                return `${name}\t${quantity}`;
+            })
+            .filter(Boolean)
+            .join('\n');
+    }
+    }
+
     if (exportPurchaseBtn) {
         exportPurchaseBtn.addEventListener('click', function() {
             exportTableToCSV('#financialItemsBody', 'purchase_planner.csv');
@@ -2629,6 +2669,23 @@ document.addEventListener('DOMContentLoaded', function() {
     if (exportShoppingBtn) {
         exportShoppingBtn.addEventListener('click', function() {
             exportTableToCSV('#needed-table', 'shopping_list.csv');
+        });
+    }
+
+    if (exportOwnedRemainderBtn) {
+        exportOwnedRemainderBtn.addEventListener('click', function() {
+            const text = buildOwnedMaterialsRemainderText();
+            if (!text) {
+                if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                    window.CraftBP.pushStatus('{% trans "No leftover owned materials to export" %}', 'warning');
+                }
+                return;
+            }
+
+            downloadTextFile(text, 'owned_materials_leftover.tsv', 'text/tab-separated-values;charset=utf-8;');
+            if (window.CraftBP && typeof window.CraftBP.pushStatus === 'function') {
+                window.CraftBP.pushStatus('{% trans "Leftover owned materials exported" %}', 'success');
+            }
         });
     }
 
