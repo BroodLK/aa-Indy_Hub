@@ -100,6 +100,7 @@ from indy_hub.utils.analytics import emit_analytics_event
 from indy_hub.utils.eve import get_type_name
 
 logger = get_extension_logger(__name__)
+_WORKFLOW_LOG_APP = "Indy_Hub"
 
 # Cache for structure names to avoid repeated ESI lookups
 _structure_name_cache: dict[int, str] = {}
@@ -207,6 +208,43 @@ def _build_contract_state_webhook_line(actor_name: str, state: str, *, relation:
     if normalized_relation not in {"from", "for"}:
         normalized_relation = "from"
     return f"Contract {normalized_relation} {actor_name} has {normalized_state}."
+
+
+def _workflow_log(section: str, message: str) -> str:
+    normalized_section = str(section or "").strip() or "General"
+    return f"{_WORKFLOW_LOG_APP}: {normalized_section}: {message}"
+
+
+def _cycle_log(message: str) -> str:
+    return _workflow_log("Material_Exchange_Cycle", message)
+
+
+def _contract_sync_log(message: str) -> str:
+    return _workflow_log("Contract_Sync", message)
+
+
+def _sell_validation_log(message: str) -> str:
+    return _workflow_log("Sell_Validation", message)
+
+
+def _buy_validation_log(message: str) -> str:
+    return _workflow_log("Buy_Validation", message)
+
+
+def _reprocessing_log(message: str) -> str:
+    return _workflow_log("Reprocessing", message)
+
+
+def _blueprint_copy_log(message: str) -> str:
+    return _workflow_log("Blueprint_Copy", message)
+
+
+def _completion_log(message: str) -> str:
+    return _workflow_log("Contract_Completion", message)
+
+
+def _capital_log(message: str) -> str:
+    return _workflow_log("Capital_Orders", message)
 
 
 def _build_contract_validation_webhook_message(
@@ -661,15 +699,20 @@ def sync_esi_contracts():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Buyback disabled; skipping contract sync.")
+            logger.info(_contract_sync_log("Buyback disabled; skipping corporation contract sync."))
             return
     except Exception:
         pass
 
-    configs = MaterialExchangeConfig.objects.all()
-    if not configs.exists():
-        logger.info("Buyback not configured; skipping contract sync.")
+    configs = list(MaterialExchangeConfig.objects.all())
+    if not configs:
+        logger.info(_contract_sync_log("No MaterialExchangeConfig rows found; skipping corporation contract sync."))
         return
+
+    logger.info(
+        _contract_sync_log("Starting corporation contract sync for %s configured corporation(s)."),
+        len(configs),
+    )
 
     for config in configs:
         try:
@@ -677,7 +720,7 @@ def sync_esi_contracts():
         except ESIRateLimitError as exc:
             delay = get_retry_after_seconds(exc)
             logger.warning(
-                "ESI rate limit reached during contract sync; retrying in %ss: %s",
+                _contract_sync_log("ESI rate limit reached during corporation contract sync; retrying in %ss: %s"),
                 delay,
                 exc,
             )
@@ -685,11 +728,16 @@ def sync_esi_contracts():
             return
         except Exception as exc:
             logger.error(
-                "Failed to sync contracts for corporation %s: %s",
+                _contract_sync_log("Failed to sync contracts for corporation %s: %s"),
                 config.corporation_id,
                 exc,
                 exc_info=True,
             )
+
+    logger.info(
+        _contract_sync_log("Completed corporation contract sync for %s configured corporation(s)."),
+        len(configs),
+    )
 
 
 def _reprocessing_request_detail_link(service_request: ReprocessingServiceRequest) -> str:
@@ -1017,6 +1065,7 @@ def sync_reprocessing_character_contracts() -> None:
         )
     )
     if not active_rows:
+        logger.debug(_reprocessing_log("Character contract sync skipped: no active reprocessing requests."))
         return
 
     active_references_upper = {
@@ -1037,7 +1086,17 @@ def sync_reprocessing_character_contracts() -> None:
         }
     )
     if not participant_character_ids:
+        logger.info(_reprocessing_log("Character contract sync skipped: no requester or processor character ids found."))
         return
+
+    logger.info(
+        _reprocessing_log(
+            "Starting character contract sync for %s active request(s), %s reference(s), %s character(s)."
+        ),
+        len(active_rows),
+        len(active_references_upper),
+        len(participant_character_ids),
+    )
 
     synced_contract_count = 0
     synced_item_count = 0
@@ -1049,21 +1108,21 @@ def sync_reprocessing_character_contracts() -> None:
             continue
         except ESIRateLimitError as exc:
             logger.warning(
-                "ESI rate limit during reprocessing character contract sync for %s: %s",
+                _reprocessing_log("ESI rate limit during character contract sync for %s: %s"),
                 character_id,
                 exc,
             )
             continue
         except (ESITokenError, ESIForbiddenError) as exc:
             logger.debug(
-                "Skipping reprocessing character contract sync for %s: %s",
+                _reprocessing_log("Skipping character contract sync for %s: %s"),
                 character_id,
                 exc,
             )
             continue
         except Exception as exc:
             logger.warning(
-                "Failed fetching character contracts for reprocessing character %s: %s",
+                _reprocessing_log("Failed fetching character contracts for %s: %s"),
                 character_id,
                 exc,
             )
@@ -1071,7 +1130,7 @@ def sync_reprocessing_character_contracts() -> None:
 
         if not isinstance(contracts, list):
             logger.warning(
-                "Unexpected payload type for character contracts (%s): %s",
+                _reprocessing_log("Unexpected payload type for character contracts (%s): %s"),
                 character_id,
                 type(contracts).__name__,
             )
@@ -1141,19 +1200,19 @@ def sync_reprocessing_character_contracts() -> None:
             except ESIClientError as exc:
                 if "404" in str(exc):
                     logger.debug(
-                        "No character contract items available for %s (404).",
+                        _reprocessing_log("No character contract items available for %s (404)."),
                         contract_id,
                     )
                 else:
                     logger.warning(
-                        "Failed fetching character contract items for %s: %s",
+                        _reprocessing_log("Failed fetching character contract items for %s: %s"),
                         contract_id,
                         exc,
                     )
                 continue
             except Exception as exc:
                 logger.warning(
-                    "Failed fetching character contract items for %s: %s",
+                    _reprocessing_log("Failed fetching character contract items for %s: %s"),
                     contract_id,
                     exc,
                 )
@@ -1161,7 +1220,7 @@ def sync_reprocessing_character_contracts() -> None:
 
             if not isinstance(contract_items, list):
                 logger.warning(
-                    "Unexpected payload type for character contract items (%s): %s",
+                    _reprocessing_log("Unexpected payload type for character contract items (%s): %s"),
                     contract_id,
                     type(contract_items).__name__,
                 )
@@ -1189,10 +1248,12 @@ def sync_reprocessing_character_contracts() -> None:
 
     if synced_contract_count or synced_item_count:
         logger.info(
-            "Reprocessing character contract sync completed: %s contracts, %s items.",
+            _reprocessing_log("Character contract sync completed: %s contracts, %s items."),
             synced_contract_count,
             synced_item_count,
         )
+    else:
+        logger.info(_reprocessing_log("Character contract sync completed: no relevant contracts or items refreshed."))
 
 
 def _process_reprocessing_request_contracts(
@@ -1393,22 +1454,34 @@ def _process_reprocessing_request_contracts(
 
 
 def auto_progress_reprocessing_requests() -> None:
-    requests = (
+    requests = list(
         ReprocessingServiceRequest.objects.filter(status__in=_ACTIVE_REPROCESSING_STATUSES)
         .select_related("requester", "processor_user", "processor_profile")
         .prefetch_related("items", "expected_outputs")
         .order_by("updated_at")
     )
+    if not requests:
+        logger.debug(_reprocessing_log("Auto-progress skipped: no active reprocessing requests."))
+        return
+
+    logger.info(_reprocessing_log("Auto-progress starting for %s active reprocessing request(s)."), len(requests))
+    failure_count = 0
     for service_request in requests:
         try:
             _process_reprocessing_request_contracts(service_request)
         except Exception as exc:
+            failure_count += 1
             logger.error(
-                "Failed automated reprocessing contract processing for request %s: %s",
+                _reprocessing_log("Failed automated contract processing for request %s: %s"),
                 service_request.request_reference or service_request.id,
                 exc,
                 exc_info=True,
             )
+    logger.info(
+        _reprocessing_log("Auto-progress completed for %s active reprocessing request(s); failures=%s."),
+        len(requests),
+        failure_count,
+    )
 
 
 def send_capital_order_waiting_reminders() -> None:
@@ -1454,6 +1527,16 @@ def send_capital_order_waiting_reminders() -> None:
             },
             level=_pending_request_reminder_level(stage_key),
             link="/indy_hub/material-exchange/capital-orders/admin/",
+        )
+        logger.info(
+            _capital_log(
+                "Sent waiting reminder for order %s (%s). stage=%s elapsed=%s current_status=%s"
+            ),
+            order.order_reference,
+            order.id,
+            stage_key,
+            elapsed_label,
+            str(order.status or ""),
         )
 
 
@@ -1504,6 +1587,16 @@ def send_reprocessing_request_waiting_reminders() -> None:
             link=detail_link,
             link_label=_("Open processing queue"),
         )
+        logger.info(
+            _reprocessing_log(
+                "Sent waiting reminder for request %s (%s). stage=%s elapsed=%s current_status=%s"
+            ),
+            service_request.request_reference,
+            service_request.id,
+            stage_key,
+            elapsed_label,
+            str(service_request.status or ""),
+        )
 
 
 def send_blueprint_copy_request_waiting_reminders() -> None:
@@ -1552,6 +1645,16 @@ def send_blueprint_copy_request_waiting_reminders() -> None:
             },
             notification_level=_pending_request_reminder_level(stage_key),
         )
+        logger.info(
+            _blueprint_copy_log(
+                "Sent waiting reminder for request %s (%s). stage=%s elapsed=%s offers=%s"
+            ),
+            copy_request.type_id,
+            copy_request.id,
+            stage_key,
+            elapsed_label,
+            copy_request.offers.count(),
+        )
 
 
 @shared_task(
@@ -1575,6 +1678,11 @@ def run_material_exchange_cycle():
         material_exchange_enabled = True
 
     material_exchange_has_config = bool(MaterialExchangeConfig.objects.exists())
+    logger.info(
+        _cycle_log("Starting material exchange cycle. buyback_enabled=%s has_config=%s."),
+        material_exchange_enabled,
+        material_exchange_has_config,
+    )
 
     if material_exchange_enabled and material_exchange_has_config:
         # Step 1: sync cached contracts
@@ -1596,7 +1704,14 @@ def run_material_exchange_cycle():
         check_completed_material_exchange_contracts()
     else:
         logger.info(
-            "Skipping Buyback contract workflow (enabled=%s, has_config=%s).",
+            _cycle_log("Skipping Buyback contract workflow (enabled=%s, has_config=%s)."),
+            material_exchange_enabled,
+            material_exchange_has_config,
+        )
+        logger.info(
+            _capital_log(
+                "Capital order processing not reached because Buyback workflow is skipped (enabled=%s, has_config=%s)."
+            ),
             material_exchange_enabled,
             material_exchange_has_config,
         )
@@ -1612,11 +1727,16 @@ def run_material_exchange_cycle():
 
     # Step 10: remind on untouched blueprint copy requests
     send_blueprint_copy_request_waiting_reminders()
+    logger.info(
+        _cycle_log("Completed material exchange cycle. buyback_enabled=%s has_config=%s."),
+        material_exchange_enabled,
+        material_exchange_has_config,
+    )
 
 
 def _sync_contracts_for_corporation(corporation_id: int):
     """Sync ESI contracts for a single corporation."""
-    logger.info("Syncing ESI contracts for corporation %s", corporation_id)
+    logger.info(_contract_sync_log("Syncing ESI contracts for corporation %s."), corporation_id)
 
     # Get pending orders to determine which contracts need item data
     pending_sell_orders = MaterialExchangeSellOrder.objects.filter(
@@ -1640,7 +1760,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
         pending_character_ids.update(char_ids)
 
     logger.info(
-        "Found %s pending sell orders and %s pending buy orders for %s unique characters",
+        _contract_sync_log(
+            "Found %s pending sell orders and %s pending buy orders for %s unique characters."
+        ),
         pending_sell_orders.count(),
         pending_buy_orders.count(),
         len(pending_character_ids),
@@ -1661,21 +1783,21 @@ def _sync_contracts_for_corporation(corporation_id: int):
         )
         if not isinstance(contracts, list):
             logger.warning(
-                "Skipping contract sync for corporation %s: unexpected payload type %s",
+                _contract_sync_log("Skipping contract sync for corporation %s: unexpected payload type %s."),
                 corporation_id,
                 type(contracts).__name__,
             )
             return
 
         logger.info(
-            "Fetched %s contracts from ESI for corporation %s",
+            _contract_sync_log("Fetched %s contracts from ESI for corporation %s."),
             len(contracts),
             corporation_id,
         )
 
     except ESITokenError as exc:
         logger.warning(
-            "Cannot sync contracts for corporation %s - missing ESI scope: %s",
+            _contract_sync_log("Cannot sync contracts for corporation %s - missing ESI scope: %s"),
             corporation_id,
             exc,
         )
@@ -1685,7 +1807,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
         cached_count = cached_contracts.count()
         last_synced = cached_contracts.order_by("-last_synced").values_list("last_synced", flat=True).first()
         logger.info(
-            "Contracts not modified for corporation %s; keeping cached snapshot " "(rows=%s, last_synced=%s)",
+            _contract_sync_log(
+                "Contracts not modified for corporation %s; keeping cached snapshot (rows=%s, last_synced=%s)."
+            ),
             corporation_id,
             cached_count,
             last_synced,
@@ -1693,14 +1817,14 @@ def _sync_contracts_for_corporation(corporation_id: int):
         return
     except ESIRateLimitError as exc:
         logger.warning(
-            "ESI rate limit reached while syncing contracts for corporation %s: %s",
+            _contract_sync_log("ESI rate limit reached while syncing contracts for corporation %s: %s"),
             corporation_id,
             exc,
         )
         raise
     except (ESIClientError, ESIForbiddenError) as exc:
         logger.error(
-            "Failed to fetch contracts from ESI for corporation %s: %s",
+            _contract_sync_log("Failed to fetch contracts from ESI for corporation %s: %s"),
             corporation_id,
             exc,
             exc_info=True,
@@ -1802,7 +1926,7 @@ def _sync_contracts_for_corporation(corporation_id: int):
                     )
                     if not isinstance(contract_items, list):
                         logger.warning(
-                            "Skipping contract items for %s: unexpected payload type %s",
+                            _contract_sync_log("Skipping contract items for %s: unexpected payload type %s."),
                             contract_id,
                             type(contract_items).__name__,
                         )
@@ -1829,22 +1953,24 @@ def _sync_contracts_for_corporation(corporation_id: int):
                         )
 
                     logger.info(
-                        "Contract %s: synced %s items",
+                        _contract_sync_log("Contract %s: synced %s items."),
                         contract_id,
                         len(contract_items),
                     )
 
                 except ESIUnmodifiedError:
                     logger.debug(
-                        "Contract items not modified for %s; keeping cached items",
+                        _contract_sync_log("Contract items not modified for %s; keeping cached items."),
                         contract_id,
                     )
                     # Keep existing items in database - they're still valid
                 except ESIRateLimitError:
                     # Rate limit hit - log and skip remaining items for this cycle
                     logger.warning(
-                        "ESI rate limit hit while fetching items for contract %s. "
-                        "Skipping remaining contract items for this sync cycle.",
+                        _contract_sync_log(
+                            "ESI rate limit hit while fetching items for contract %s. "
+                            "Skipping remaining contract items for this sync cycle."
+                        ),
                         contract_id,
                     )
                     break  # Exit the contract loop to avoid further rate limit errors
@@ -1852,18 +1978,18 @@ def _sync_contracts_for_corporation(corporation_id: int):
                     # 404 is normal for contracts without items or expired contracts
                     if "404" in str(exc):
                         logger.debug(
-                            "Contract %s has no items (404) - skipping items sync",
+                            _contract_sync_log("Contract %s has no items (404) - skipping items sync."),
                             contract_id,
                         )
                     else:
                         logger.warning(
-                            "Failed to fetch items for contract %s: %s",
+                            _contract_sync_log("Failed to fetch items for contract %s: %s"),
                             contract_id,
                             exc,
                         )
                 except Exception as exc:
                     logger.warning(
-                        "Failed to fetch items for contract %s: %s",
+                        _contract_sync_log("Failed to fetch items for contract %s: %s"),
                         contract_id,
                         exc,
                     )
@@ -1883,13 +2009,13 @@ def _sync_contracts_for_corporation(corporation_id: int):
 
         if deleted_count > 0:
             logger.info(
-                "Removed %s stale contracts for corporation %s",
+                _contract_sync_log("Removed %s stale contracts for corporation %s."),
                 deleted_count,
                 corporation_id,
             )
 
     logger.info(
-        "Successfully synced %s relevant contracts (filtered from %s total) for corporation %s",
+        _contract_sync_log("Successfully synced %s relevant contracts (filtered from %s total) for corporation %s."),
         indy_contracts_count,
         len(contracts),
         corporation_id,
@@ -1922,14 +2048,14 @@ def validate_material_exchange_sell_orders():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Buyback disabled; skipping sell validation.")
+            logger.info(_sell_validation_log("Buyback disabled; skipping sell validation."))
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.warning("No Buyback config found")
+        logger.warning(_sell_validation_log("No MaterialExchangeConfig found; skipping sell validation."))
         return
 
     pending_orders = MaterialExchangeSellOrder.objects.filter(
@@ -1943,7 +2069,7 @@ def validate_material_exchange_sell_orders():
     )
 
     if not pending_orders.exists():
-        logger.debug("No pending sell orders to validate")
+        logger.debug(_sell_validation_log("No pending sell orders to validate."))
         return
 
     # Get character IDs from pending orders to filter relevant contracts
@@ -1962,15 +2088,20 @@ def validate_material_exchange_sell_orders():
 
     if not contracts.exists():
         logger.warning(
-            "No cached contracts found for pending sell orders (corporation=%s, sellers=%s). "
-            "Contracts may not be synced yet or issuers don't match.",
+            _sell_validation_log(
+                "No cached contracts found for pending sell orders (corporation=%s, sellers=%s). "
+                "Contracts may not be synced yet or issuers don't match."
+            ),
             config.corporation_id,
             len(seller_character_ids),
         )
         return
 
     logger.info(
-        "Validating %s pending sell orders against %s relevant cached contracts (filtered from issuers: %s characters)",
+        _sell_validation_log(
+            "Validating %s pending sell orders against %s relevant cached contracts "
+            "(filtered from issuers: %s characters)."
+        ),
         pending_orders.count(),
         contracts.count(),
         len(seller_character_ids),
@@ -1981,7 +2112,7 @@ def validate_material_exchange_sell_orders():
         esi_client = shared_client
     except Exception:
         esi_client = None
-        logger.warning("ESI client not available for structure name lookups")
+        logger.warning(_sell_validation_log("ESI client not available for structure name lookups."))
 
     # Process each pending order
     for order in pending_orders:
@@ -1989,7 +2120,7 @@ def validate_material_exchange_sell_orders():
             _validate_sell_order_from_db(config, order, contracts, esi_client)
         except Exception as exc:
             logger.error(
-                "Error validating sell order %s: %s",
+                _sell_validation_log("Error validating sell order %s: %s"),
                 order.id,
                 exc,
                 exc_info=True,
@@ -2022,14 +2153,14 @@ def validate_material_exchange_buy_orders():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Buyback disabled; skipping buy validation.")
+            logger.info(_buy_validation_log("Buyback disabled; skipping buy validation."))
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.warning("No Buyback config found")
+        logger.warning(_buy_validation_log("No MaterialExchangeConfig found; skipping buy validation."))
         return
 
     pending_orders = MaterialExchangeBuyOrder.objects.filter(
@@ -2041,7 +2172,7 @@ def validate_material_exchange_buy_orders():
     )
 
     if not pending_orders.exists():
-        logger.debug("No pending buy orders to validate")
+        logger.debug(_buy_validation_log("No pending buy orders to validate."))
         return
 
     # Notify buyers of awaiting validation orders on first processing.
@@ -2084,30 +2215,34 @@ def validate_material_exchange_buy_orders():
 
     if not contracts.exists():
         logger.warning(
-            "No cached contracts found for pending buy orders (corporation=%s, buyers=%s). "
-            "Contracts may not be synced yet or assignees don't match.",
+            _buy_validation_log(
+                "No cached contracts found for pending buy orders (corporation=%s, buyers=%s). "
+                "Contracts may not be synced yet or assignees don't match."
+            ),
             config.corporation_id,
+            len(buyer_character_ids),
         )
         return
 
     logger.info(
-        "Validating %s pending buy orders against %s cached contracts",
+        _buy_validation_log("Validating %s pending buy orders against %s cached contracts for %s buyer character(s)."),
         pending_orders.count(),
         contracts.count(),
+        len(buyer_character_ids),
     )
 
     try:
         esi_client = shared_client
     except Exception:
         esi_client = None
-        logger.warning("ESI client not available for structure name lookups")
+        logger.warning(_buy_validation_log("ESI client not available for structure name lookups."))
 
     for order in pending_orders:
         try:
             _validate_buy_order_from_db(config, order, contracts, esi_client)
         except Exception as exc:
             logger.error(
-                "Error validating buy order %s: %s",
+                _buy_validation_log("Error validating buy order %s: %s"),
                 order.id,
                 exc,
                 exc_info=True,
@@ -4699,6 +4834,15 @@ def _notify_capital_eta_overdue_manager_once(order: CapitalShipOrder) -> None:
         level="warning",
         link="/indy_hub/material-exchange/capital-orders/admin/",
     )
+    logger.warning(
+        _capital_log(
+            "Sent overdue ETA reminder for order %s (%s) to manager %s. overdue_by=%s"
+        ),
+        order.order_reference,
+        order.id,
+        getattr(manager, "username", "") or manager_id,
+        overdue_text,
+    )
     if _capital_order_add_note_marker(order, marker):
         order.save(update_fields=["notes", "updated_at"])
 
@@ -4715,7 +4859,7 @@ def handle_capital_ship_order_created(order_id):
     try:
         order = CapitalShipOrder.objects.select_related("config", "requester").get(id=order_id)
     except CapitalShipOrder.DoesNotExist:
-        logger.warning("Capital ship order %s not found", order_id)
+        logger.warning(_capital_log("Creation notification skipped: order %s not found."), order_id)
         return
 
     title = _("Capital Order Created")
@@ -4739,7 +4883,8 @@ def handle_capital_ship_order_created(order_id):
             )
         except Exception as exc:
             logger.warning(
-                "Failed sending webhook for capital order %s: %s",
+                _capital_log("Failed sending creation webhook for order %s (%s): %s"),
+                order.order_reference,
                 order.id,
                 exc,
             )
@@ -4774,7 +4919,7 @@ def handle_capital_ship_order_marked_in_production(order_id):
     try:
         order = CapitalShipOrder.objects.select_related("config", "requester", "in_production_by").get(id=order_id)
     except CapitalShipOrder.DoesNotExist:
-        logger.warning("Capital ship order %s not found", order_id)
+        logger.warning(_capital_log("In-production notification skipped: order %s not found."), order_id)
         return
 
     manager_name = str(getattr(order.in_production_by, "username", "") or "").strip() or "Manager"
@@ -4821,7 +4966,7 @@ def handle_capital_ship_order_closed_by_manager(
     try:
         order = CapitalShipOrder.objects.select_related("config", "requester").get(id=order_id)
     except CapitalShipOrder.DoesNotExist:
-        logger.warning("Capital ship order %s not found", order_id)
+        logger.warning(_capital_log("Closed-order notification skipped: order %s not found."), order_id)
         return
 
     if str(order.status or "").strip().lower() != normalized_status:
@@ -4916,6 +5061,14 @@ def _set_capital_order_anomaly(
     previous_status = str(order.status or "")
     previous_reason = str(order.anomaly_reason or "")
     if previous_status == CapitalShipOrder.Status.ANOMALY and previous_reason == reason:
+        logger.info(
+            _capital_log(
+                "Anomaly unchanged for order %s (%s); suppressing duplicate update. reason=%s"
+            ),
+            order.order_reference,
+            order.id,
+            reason,
+        )
         return
 
     order.status = CapitalShipOrder.Status.ANOMALY
@@ -4932,6 +5085,17 @@ def _set_capital_order_anomaly(
             "notes",
             "updated_at",
         ]
+    )
+
+    logger.warning(
+        _capital_log(
+            "Order %s (%s) moved to anomaly. contract_id=%s contract_status=%s reason=%s"
+        ),
+        order.order_reference,
+        order.id,
+        int(order.esi_contract_id or 0) or "none",
+        str(contract_status or "").strip() or "unknown",
+        reason,
     )
 
     notify_user(
@@ -5038,6 +5202,7 @@ def _sync_capital_character_contracts(
 ) -> None:
     """Cache personal character contracts relevant to active capital orders."""
     if not orders:
+        logger.info(_capital_log("Personal contract sync skipped: no active capital orders."))
         return
 
     active_references_upper = {
@@ -5046,6 +5211,7 @@ def _sync_capital_character_contracts(
         if str(order.order_reference or "").strip()
     }
     if not active_references_upper:
+        logger.info(_capital_log("Personal contract sync skipped: no active capital references found."))
         return
 
     participant_character_ids = sorted(
@@ -5057,7 +5223,17 @@ def _sync_capital_character_contracts(
         }
     )
     if not participant_character_ids:
+        logger.info(_capital_log("Personal contract sync skipped: no requester character ids found."))
         return
+
+    logger.info(
+        _capital_log(
+            "Starting personal contract sync for %s active order(s), %s requester(s), %s character(s)."
+        ),
+        len(orders),
+        len(requester_character_ids_by_user_id),
+        len(participant_character_ids),
+    )
 
     synced_contract_count = 0
     synced_item_count = 0
@@ -5070,21 +5246,21 @@ def _sync_capital_character_contracts(
             continue
         except ESIRateLimitError as exc:
             logger.warning(
-                "ESI rate limit during capital character contract sync for %s: %s",
+                _capital_log("ESI rate limit during personal contract sync for character %s: %s"),
                 character_id,
                 exc,
             )
             continue
         except (ESITokenError, ESIForbiddenError) as exc:
             logger.debug(
-                "Skipping capital character contract sync for %s: %s",
+                _capital_log("Skipping personal contract sync for character %s: %s"),
                 character_id,
                 exc,
             )
             continue
         except Exception as exc:
             logger.warning(
-                "Failed fetching character contracts for capital character %s: %s",
+                _capital_log("Failed fetching personal contracts for character %s: %s"),
                 character_id,
                 exc,
             )
@@ -5092,7 +5268,7 @@ def _sync_capital_character_contracts(
 
         if not isinstance(contracts, list):
             logger.warning(
-                "Unexpected payload type for capital character contracts (%s): %s",
+                _capital_log("Unexpected payload type for personal contracts (%s): %s"),
                 character_id,
                 type(contracts).__name__,
             )
@@ -5162,19 +5338,19 @@ def _sync_capital_character_contracts(
             except ESIClientError as exc:
                 if "404" in str(exc):
                     logger.debug(
-                        "No character contract items available for capital contract %s (404).",
+                        _capital_log("No personal contract items available for contract %s (404)."),
                         contract_id,
                     )
                 else:
                     logger.warning(
-                        "Failed fetching character contract items for capital contract %s: %s",
+                        _capital_log("Failed fetching personal contract items for contract %s: %s"),
                         contract_id,
                         exc,
                     )
                 continue
             except Exception as exc:
                 logger.warning(
-                    "Failed fetching character contract items for capital contract %s: %s",
+                    _capital_log("Failed fetching personal contract items for contract %s: %s"),
                     contract_id,
                     exc,
                 )
@@ -5182,7 +5358,7 @@ def _sync_capital_character_contracts(
 
             if not isinstance(contract_items, list):
                 logger.warning(
-                    "Unexpected payload type for capital character contract items (%s): %s",
+                    _capital_log("Unexpected payload type for personal contract items (%s): %s"),
                     contract_id,
                     type(contract_items).__name__,
                 )
@@ -5210,10 +5386,12 @@ def _sync_capital_character_contracts(
 
     if synced_contract_count or synced_item_count:
         logger.info(
-            "Capital character contract sync completed: %s contracts, %s items.",
+            _capital_log("Personal contract sync completed: %s contracts, %s items."),
             synced_contract_count,
             synced_item_count,
         )
+    else:
+        logger.info(_capital_log("Personal contract sync completed: no relevant contracts or items refreshed."))
 
 
 def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfig) -> None:
@@ -5329,6 +5507,15 @@ def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfi
             level="warning",
             link="/indy_hub/material-exchange/capital-orders/admin/",
         )
+        logger.warning(
+            _capital_log(
+                "Order %s (%s) auto-cancelled because requester left the preapproved state. previous_status=%s current_state=%s"
+            ),
+            order.order_reference,
+            order.id,
+            previous_status,
+            state_label,
+        )
 
 
 @shared_task(
@@ -5341,22 +5528,24 @@ def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfi
 @rate_limit_retry_task
 def process_capital_ship_orders():
     """Auto-advance capital ship orders from contracts and contract status."""
+    logger.info(_capital_log("Starting capital order processing cycle."))
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Buyback disabled; skipping capital order processing.")
+            logger.info(_capital_log("Buyback disabled; skipping capital order processing."))
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
+        logger.info(_capital_log("No MaterialExchangeConfig found; skipping capital order processing."))
         return
 
     try:
         _auto_cancel_capital_orders_for_state_mismatch(config)
     except Exception as exc:
         logger.warning(
-            "Failed capital auto-cancel pass for state mismatch: %s",
+            _capital_log("Failed auto-cancel pass for state mismatch: %s"),
             exc,
             exc_info=True,
         )
@@ -5373,7 +5562,14 @@ def process_capital_ship_orders():
         ).select_related("requester", "in_production_by")
     )
     if not active_orders:
+        logger.info(_capital_log("No active capital orders found for processing."))
         return
+
+    logger.info(
+        _capital_log("Loaded %s active capital order(s) for corporation %s."),
+        len(active_orders),
+        int(getattr(config, "corporation_id", 0) or 0),
+    )
 
     requester_character_ids_by_user_id = _collect_capital_requester_character_id_map(active_orders)
     try:
@@ -5382,7 +5578,7 @@ def process_capital_ship_orders():
             requester_character_ids_by_user_id=requester_character_ids_by_user_id,
         )
     except Exception as exc:
-        logger.warning("Failed capital personal-contract sync pass: %s", exc, exc_info=True)
+        logger.warning(_capital_log("Failed personal-contract sync pass: %s"), exc, exc_info=True)
 
     requester_character_ids = sorted(
         {
@@ -5409,10 +5605,24 @@ def process_capital_ship_orders():
     )
     contracts_by_id = {int(contract.contract_id): contract for contract in contracts}
 
+    logger.info(
+        _capital_log(
+            "Scanning %s active order(s) against %s cached capital contract(s); requester character count=%s."
+        ),
+        len(active_orders),
+        len(contracts),
+        len(requester_character_ids),
+    )
+
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
     failed_statuses = {"cancelled", "rejected", "failed", "expired", "deleted", "reversed"}
+    processed_order_count = 0
+    created_contract_matches = 0
+    completed_contract_matches = 0
+    anomaly_count = 0
 
     for order in active_orders:
+        processed_order_count += 1
         _notify_capital_eta_overdue_manager_once(order)
         order_ref_lower = str(order.order_reference or "").strip().lower()
         matching_by_title = [
@@ -5439,6 +5649,7 @@ def process_capital_ship_orders():
                     order,
                     reason="User has no linked character for contract assignment.",
                 )
+                anomaly_count += 1
                 continue
             expected_assignee_id_set = set(expected_assignee_ids)
             expected_assignee_id_labels = ", ".join(str(cid) for cid in sorted(expected_assignee_id_set))
@@ -5482,6 +5693,7 @@ def process_capital_ship_orders():
             if not candidate_contract:
                 if mismatch_reason:
                     _set_capital_order_anomaly(order, reason=mismatch_reason)
+                    anomaly_count += 1
                 continue
 
             contract_status = str(candidate_contract.status or "").lower()
@@ -5492,6 +5704,7 @@ def process_capital_ship_orders():
                     contract_id=int(candidate_contract.contract_id),
                     contract_status=contract_status,
                 )
+                anomaly_count += 1
                 continue
 
             if contract_status in finished_statuses:
@@ -5516,6 +5729,16 @@ def process_capital_ship_orders():
                         "notes",
                         "updated_at",
                     ]
+                )
+                completed_contract_matches += 1
+                logger.info(
+                    _capital_log(
+                        "Order %s (%s) marked completed from contract %s with status=%s."
+                    ),
+                    order.order_reference,
+                    order.id,
+                    int(candidate_contract.contract_id),
+                    contract_status,
                 )
                 notify_user(
                     order.requester,
@@ -5566,6 +5789,16 @@ def process_capital_ship_orders():
                     "notes",
                     "updated_at",
                 ]
+            )
+            created_contract_matches += 1
+            logger.info(
+                _capital_log(
+                    "Order %s (%s) matched to contract %s with status=%s; moved to contract_created."
+                ),
+                order.order_reference,
+                order.id,
+                int(candidate_contract.contract_id),
+                contract_status,
             )
             if status_changed:
                 notify_user(
@@ -5618,6 +5851,16 @@ def process_capital_ship_orders():
                     "updated_at",
                 ]
             )
+            completed_contract_matches += 1
+            logger.info(
+                _capital_log(
+                    "Order %s (%s) observed stored contract %s move to completed with status=%s."
+                ),
+                order.order_reference,
+                order.id,
+                contract_id,
+                contract_status,
+            )
             notify_user(
                 order.requester,
                 _("Capital Contract Completed"),
@@ -5649,6 +5892,7 @@ def process_capital_ship_orders():
                 contract_id=contract_id,
                 contract_status=contract_status,
             )
+            anomaly_count += 1
             continue
 
         if contract_status in {"outstanding", "in_progress"} and not _capital_contract_has_requested_hull(
@@ -5660,6 +5904,17 @@ def process_capital_ship_orders():
                 contract_id=contract_id,
                 contract_status=contract_status,
             )
+            anomaly_count += 1
+
+    logger.info(
+        _capital_log(
+            "Completed capital order processing cycle: processed=%s contract_created=%s completed=%s anomalies=%s."
+        ),
+        processed_order_count,
+        created_contract_matches,
+        completed_contract_matches,
+        anomaly_count,
+    )
 
 
 @shared_task(
@@ -5677,13 +5932,14 @@ def check_completed_material_exchange_contracts():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info("Buyback disabled; skipping completion check.")
+            logger.info(_completion_log("Buyback disabled; skipping contract completion check."))
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
+        logger.info(_completion_log("No MaterialExchangeConfig found; skipping contract completion check."))
         return
 
     approved_orders = MaterialExchangeSellOrder.objects.filter(
@@ -5697,7 +5953,7 @@ def check_completed_material_exchange_contracts():
 
     if not cached_contracts.exists():
         logger.warning(
-            "No cached contracts found for corporation %s. " "Run sync_esi_contracts task first.",
+            _completion_log("No cached contracts found for corporation %s. Run sync_esi_contracts task first."),
             config.corporation_id,
         )
         return
@@ -5706,7 +5962,10 @@ def check_completed_material_exchange_contracts():
     contracts = list(cached_contracts.values("contract_id", "status"))
 
     logger.info(
-        "Checking completion status using cached contracts " "(rows=%s, last_synced=%s)",
+        _completion_log(
+            "Checking completion status using cached contracts (validated_sell_orders=%s, rows=%s, last_synced=%s)."
+        ),
+        approved_orders.count(),
         len(contracts),
         last_synced,
     )
@@ -5756,7 +6015,7 @@ def check_completed_material_exchange_contracts():
             )
 
             logger.warning(
-                "Sell order %s cancelled: contract %s status is %s",
+                _completion_log("Sell order %s cancelled: contract %s status is %s."),
                 order.id,
                 contract_id,
                 contract_status,
@@ -5780,7 +6039,7 @@ def check_completed_material_exchange_contracts():
             )
 
             logger.error(
-                "Sell order %s reversed: contract %s was reversed",
+                _completion_log("Sell order %s reversed: contract %s was reversed."),
                 order.id,
                 contract_id,
             )
@@ -5843,7 +6102,7 @@ def check_completed_material_exchange_contracts():
             )
 
             logger.warning(
-                "Buy order %s cancelled: contract %s status is %s",
+                _completion_log("Buy order %s cancelled: contract %s status is %s."),
                 order.id,
                 contract_id,
                 contract_status,
@@ -5867,7 +6126,7 @@ def check_completed_material_exchange_contracts():
             )
 
             logger.error(
-                "Buy order %s reversed: contract %s was reversed",
+                _completion_log("Buy order %s reversed: contract %s was reversed."),
                 order.id,
                 contract_id,
             )
