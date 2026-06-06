@@ -4993,6 +4993,31 @@ def _collect_capital_requester_character_id_map(
     return by_user_id
 
 
+def _capital_contract_requester_character_ids(contract: ESIContract) -> set[int]:
+    """
+    Return character ids that can identify the requester for a capital contract.
+
+    Outstanding contracts are keyed by assignee. Once accepted/completed, some ESI
+    payloads are more reliable on acceptor_id, so keep that as a fallback too.
+    """
+    character_ids: set[int] = set()
+
+    assignee_id = int(getattr(contract, "assignee_id", 0) or 0)
+    if assignee_id > 0:
+        character_ids.add(assignee_id)
+
+    acceptor_id = int(getattr(contract, "acceptor_id", 0) or 0)
+    contract_status = str(getattr(contract, "status", "") or "").strip().lower()
+    if acceptor_id > 0 and (
+        contract_status in _REPROCESSING_ACCEPTED_STATUSES
+        or getattr(contract, "date_accepted", None) is not None
+        or getattr(contract, "date_completed", None) is not None
+    ):
+        character_ids.add(acceptor_id)
+
+    return character_ids
+
+
 def _is_capital_contract_relevant(
     *,
     contract_title: str | None,
@@ -5370,7 +5395,9 @@ def process_capital_ship_orders():
 
     contract_filter = Q(corporation_id=config.corporation_id)
     if requester_character_ids:
-        contract_filter |= Q(corporation_id=0, assignee_id__in=requester_character_ids)
+        contract_filter |= Q(corporation_id=0) & (
+            Q(assignee_id__in=requester_character_ids) | Q(acceptor_id__in=requester_character_ids)
+        )
 
     contracts = list(
         ESIContract.objects.filter(
@@ -5424,11 +5451,12 @@ def process_capital_ship_orders():
                 reverse=True,
             )
             for contract in sorted_matches:
-                assignee_id = int(getattr(contract, "assignee_id", 0) or 0)
-                if assignee_id not in expected_assignee_id_set:
+                contract_character_ids = _capital_contract_requester_character_ids(contract)
+                if not contract_character_ids.intersection(expected_assignee_id_set):
+                    found_character_ids = ", ".join(str(cid) for cid in sorted(contract_character_ids)) or "none"
                     mismatch_reason = (
-                        f"Contract #{contract.contract_id} assignee mismatch "
-                        f"(expected one of {expected_assignee_id_labels}, got {assignee_id})."
+                        f"Contract #{contract.contract_id} requester mismatch "
+                        f"(expected one of {expected_assignee_id_labels}, got {found_character_ids})."
                     )
                     continue
 

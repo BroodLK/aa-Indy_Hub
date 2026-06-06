@@ -3078,10 +3078,15 @@ class CapitalOrderAdminActionsTests(TestCase):
             is_active=True,
         )
 
-    def _create_order(self, *, status: str = CapitalShipOrder.Status.WAITING) -> CapitalShipOrder:
+    def _create_order(
+        self,
+        *,
+        requester: User | None = None,
+        status: str = CapitalShipOrder.Status.WAITING,
+    ) -> CapitalShipOrder:
         return CapitalShipOrder.objects.create(
             config=self.config,
-            requester=self.requester,
+            requester=requester or self.requester,
             ship_type_id=19720,
             ship_type_name="Revelation",
             ship_class=CapitalShipOrder.ShipClass.DREAD,
@@ -3703,6 +3708,66 @@ class CapitalOrderAdminActionsTests(TestCase):
         self.assertEqual(order.status, CapitalShipOrder.Status.COMPLETED)
         self.assertEqual(int(order.esi_contract_id or 0), int(contract.contract_id))
         self.assertIsNotNone(order.contract_completed_at)
+
+    def test_process_can_complete_concurrent_finished_personal_contracts_using_acceptor_ids(self) -> None:
+        second_requester = User.objects.create_user("caprequester2", password="secret123")
+        assign_main_character(second_requester, character_id=2026001)
+        grant_indy_permissions(second_requester)
+
+        first_order = self._create_order(status=CapitalShipOrder.Status.IN_PRODUCTION)
+        second_order = self._create_order(
+            requester=second_requester,
+            status=CapitalShipOrder.Status.IN_PRODUCTION,
+        )
+
+        issued_at = timezone.now() - timedelta(hours=12)
+        first_completed_at = issued_at + timedelta(hours=1)
+        second_completed_at = issued_at + timedelta(hours=11)
+
+        first_contract = ESIContract.objects.create(
+            contract_id=991_000_003,
+            issuer_id=8_888_003,
+            issuer_corporation_id=3_333_333,
+            assignee_id=0,
+            acceptor_id=2025002,
+            contract_type="item_exchange",
+            status="finished",
+            title=first_order.order_reference,
+            date_issued=issued_at,
+            date_expired=issued_at + timedelta(days=7),
+            date_completed=first_completed_at,
+            corporation_id=0,
+        )
+        second_contract = ESIContract.objects.create(
+            contract_id=991_000_004,
+            issuer_id=8_888_004,
+            issuer_corporation_id=3_333_333,
+            assignee_id=0,
+            acceptor_id=2026001,
+            contract_type="item_exchange",
+            status="finished",
+            title=second_order.order_reference,
+            date_issued=issued_at,
+            date_expired=issued_at + timedelta(days=7),
+            date_completed=second_completed_at,
+            corporation_id=0,
+        )
+
+        # AA Example App
+        from indy_hub.tasks.material_exchange_contracts import (
+            process_capital_ship_orders,
+        )
+
+        process_capital_ship_orders()
+        first_order.refresh_from_db()
+        second_order.refresh_from_db()
+
+        self.assertEqual(first_order.status, CapitalShipOrder.Status.COMPLETED)
+        self.assertEqual(int(first_order.esi_contract_id or 0), int(first_contract.contract_id))
+        self.assertEqual(second_order.status, CapitalShipOrder.Status.COMPLETED)
+        self.assertEqual(int(second_order.esi_contract_id or 0), int(second_contract.contract_id))
+        self.assertEqual(first_order.contract_completed_at, first_completed_at)
+        self.assertEqual(second_order.contract_completed_at, second_completed_at)
 
 
 class MaterialExchangeContractValidationHeuristicsTests(TestCase):
