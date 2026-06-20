@@ -15,6 +15,16 @@
 
 {% block content %}
     <div class="container-fluid py-2 me-config">
+        <!--
+            LIVE MIGRATION NOTE: Header + context mapping
+            Keep the live navigation/actions visible even though the page is being restyled:
+            - Back to Hub link
+            - Add All Scopes link
+            - Manage Tokens link
+            - current corporation / primary structure / hangar context
+            - stock sync / price sync timestamps
+            - config-active / module-enabled / Jita-bounds state
+        -->
         <div class="page-header mb-2">
             <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
                 <div>
@@ -125,11 +135,68 @@
             </section>
         {% endif %}
 
+        <section class="me-summary-grid mb-3" aria-label="{% trans 'Configuration summary' %}">
+            <article class="me-summary-card">
+                <div class="me-summary-label">{% trans "Sell Locations" %}</div>
+                <div class="me-summary-value">{{ selected_sell_structures|length }}</div>
+                <div class="me-summary-note">{% trans "Stations with sell access" %}</div>
+            </article>
+            <article class="me-summary-card">
+                <div class="me-summary-label">{% trans "Buy Locations" %}</div>
+                <div class="me-summary-value">{{ selected_buy_structures|length }}</div>
+                <div class="me-summary-note">{% trans "Stations with buy access" %}</div>
+            </article>
+            <article class="me-summary-card">
+                <div class="me-summary-label">{% trans "Sell Profiles" %}</div>
+                <div class="me-summary-value">{{ sell_market_group_profiles|length }}</div>
+                <div class="me-summary-note">{% trans "Reusable sell-side market group profiles" %}</div>
+            </article>
+            <article class="me-summary-card">
+                <div class="me-summary-label">{% trans "Buy Profiles" %}</div>
+                <div class="me-summary-value">{{ buy_market_group_profiles|length }}</div>
+                <div class="me-summary-note">{% trans "Saved buy routing profiles" %}</div>
+            </article>
+            <article class="me-summary-card">
+                <div class="me-summary-label">{% trans "Item Overrides" %}</div>
+                <div class="me-summary-value">{{ item_price_overrides|length }}</div>
+                <div class="me-summary-note">{% trans "Specific item price exceptions" %}</div>
+            </article>
+            <article class="me-summary-card">
+                <div class="me-summary-label">{% trans "Group Overrides" %}</div>
+                <div class="me-summary-value">{{ market_group_price_overrides|length }}</div>
+                <div class="me-summary-note">{% trans "Market-group fallback rules" %}</div>
+            </article>
+        </section>
+
+        <section class="me-status-banner mb-3">
+            <div class="me-status-copy">
+                <strong>{% trans "Live configuration contract preserved" %}</strong>
+                <span>{% trans "This redesigned page still posts the same live field names and JSON payloads used by the current save handler." %}</span>
+            </div>
+            <div class="me-status-chips">
+                {% if material_exchange_enabled %}
+                    <span class="me-status-chip is-good">{% trans "Module enabled" %}</span>
+                {% else %}
+                    <span class="me-status-chip is-warn">{% trans "Module disabled" %}</span>
+                {% endif %}
+                {% if config and config.is_active %}
+                    <span class="me-status-chip is-good">{% trans "Config active" %}</span>
+                {% else %}
+                    <span class="me-status-chip is-warn">{% trans "Config inactive" %}</span>
+                {% endif %}
+                {% if assets_scope_missing or division_scope_missing %}
+                    <span class="me-status-chip is-warn">{% trans "Token action required" %}</span>
+                {% else %}
+                    <span class="me-status-chip is-good">{% trans "Scopes ready" %}</span>
+                {% endif %}
+            </div>
+        </section>
+
         <section class="dashboard-section mb-3">
             <header class="section-heading my-3">
                 <div>
-                    <h3 class="section-title">{% trans "Hub Configuration" %}</h3>
-                    <p class="text-muted small mb-0">{% trans "Quick setup" %}</p>
+                    <h3 class="section-title">{% trans "Configuration Workspace" %}</h3>
+                    <p class="text-muted small mb-0">{% trans "Station routing, pricing, overrides, and operational state in one live form." %}</p>
                 </div>
             </header>
             <div class="card focus-card">
@@ -152,6 +219,21 @@
                         </div>
 
                         <div class="row g-2">
+                            <!--
+                                LIVE MIGRATION NOTE: Station assignment / location mapping
+                                These controls still submit the existing live fields:
+                                - corporation_id
+                                - sell_structure_ids
+                                - buy_enabled
+                                - allow_fitted_ships
+                                - buy_structure_ids
+                                - location_match_mode
+                                - hangar_division
+                                Preserve live validation:
+                                - at least one sell location is required
+                                - buy locations are required when buy_enabled is checked
+                                - invalid location_match_mode must normalize to name_or_id
+                            -->
 
                             <!-- Step 1: Corporation -->
                             <div class="col-lg-4">
@@ -354,6 +436,17 @@
                                 </div>
                             </div>
 
+                            <!--
+                                LIVE MIGRATION NOTE: Pricing + override mapping
+                                The redesign can consolidate the UI, but these live fields must keep their names:
+                                - sell_markup_percent / sell_markup_base
+                                - buy_markup_percent / buy_markup_base
+                                - enforce_jita_price_bounds
+                                - container_* override inputs
+                                - item_price_overrides_json
+                                - market_group_price_overrides_json
+                                Fixed ISK values must still take precedence over percent/base rules.
+                            -->
                             <!-- Step 4: Pricing Rules -->
                             <div class="col-12">
                                 <div class="card focus-card">
@@ -695,6 +788,21 @@
                                     </div>
                                 </div>
 
+                                <!--
+                                    LIVE MIGRATION NOTE: Market-group acceptance + saved profile mapping
+                                    Preserve the current live contract:
+                                    - allowed_market_groups_sell_by_structure_json
+                                    - allowed_market_groups_sell_json
+                                    - allowed_market_groups_buy_json
+                                    - sell_market_group_profiles_json
+                                    - buy_market_group_profiles_json
+                                    Important behavior to preserve:
+                                    - sell side remains per selected sell location
+                                    - buy side remains one shared selection set
+                                    - sell profiles support allow_all + is_default
+                                    - buy profiles support is_default only
+                                    - apply-to-location / apply-to-all / delete profile flows stay available
+                                -->
                                 <!-- Step 5: Market Groups -->
                                 <div class="col-12">
                                     <div class="card focus-card">
@@ -870,6 +978,15 @@
                                     </div>
                                 </div>
 
+                                <!--
+                                    LIVE MIGRATION NOTE: Operations / notifications mapping
+                                    Preserve these live fields and distinctions:
+                                    - notify_admins_on_sell_anomaly
+                                    - MaterialExchangeSettings.is_enabled (global module state)
+                                    - MaterialExchangeConfig.is_active (this config)
+                                    This page can edit config-active directly; global module state remains a
+                                    separate live control path.
+                                -->
                                 <!-- Step 6: Notifications -->
                                 <div class="col-12">
                                     <div class="card focus-card">
@@ -877,8 +994,49 @@
                                             <div class="d-flex align-items-center gap-2 mb-2">
                                                 <span class="badge bg-secondary me-step-badge">6</span>
                                                 <h5 class="fw-semibold mb-0">
-                                                    <i class="fas fa-bell me-1 text-muted"></i>{% trans "Notifications" %}
+                                                    <i class="fas fa-sliders-h me-1 text-muted"></i>{% trans "Operations" %}
                                                 </h5>
+                                            </div>
+                                            <div class="me-operations-grid mb-3">
+                                                <div class="me-operation-tile">
+                                                    <div class="me-operation-label">{% trans "Module state" %}</div>
+                                                    <div class="me-operation-value">
+                                                        {% if material_exchange_enabled %}
+                                                            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+                                                                {% trans "Enabled" %}
+                                                            </span>
+                                                        {% else %}
+                                                            <span class="badge bg-warning text-dark">{% trans "Disabled" %}</span>
+                                                        {% endif %}
+                                                    </div>
+                                                    <div class="small text-muted">
+                                                        {% trans "Global material exchange availability is still managed from Hub Settings." %}
+                                                    </div>
+                                                    <div class="mt-2">
+                                                        <a href="{% url 'indy_hub:settings_hub' %}" class="btn btn-sm btn-outline-secondary">
+                                                            <i class="fas fa-cog me-1"></i>{% trans "Open Hub Settings" %}
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                                <div class="me-operation-tile">
+                                                    <div class="form-check form-switch mb-2">
+                                                        <input class="form-check-input"
+                                                               type="checkbox"
+                                                               name="is_active"
+                                                               id="isActiveToggle"
+                                                               {% if config %}
+                                                                   {% if config.is_active %}checked{% endif %}
+                                                               {% elif material_exchange_enabled %}
+                                                                   checked
+                                                               {% endif %}>
+                                                        <label class="form-check-label fw-semibold" for="isActiveToggle">
+                                                            {% trans "Config active" %}
+                                                        </label>
+                                                    </div>
+                                                    <div class="small text-muted">
+                                                        {% trans "Controls whether this saved buyback configuration is active without changing the global module state." %}
+                                                    </div>
+                                                </div>
                                             </div>
                                             <div class="form-check mb-2">
                                                 <input class="form-check-input"
@@ -914,7 +1072,11 @@
 
                             </div>
 
-                            <div class="d-flex flex-wrap gap-2 mt-2 justify-content-end">
+                            <div class="d-flex flex-wrap gap-2 mt-3 justify-content-between align-items-center me-footer-bar">
+                                <div class="small text-muted me-footer-copy">
+                                    {% trans "Save submits the same live configuration payloads used by the current backend. Discarding changes still relies on navigation or reload." %}
+                                </div>
+                                <div class="d-flex flex-wrap gap-2">
                                 {% if config %}
                                     <button type="submit"
                                             class="btn btn-outline-danger btn-sm"
@@ -930,6 +1092,7 @@
                                 <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-secondary btn-sm">
                                     {% trans "Cancel" %}
                                 </a>
+                                </div>
                             </div>
                         </form>
                     </div>
@@ -2210,6 +2373,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let granularMode = false;
     let activeSellStructureId = '';
     let expandedNodeIds = new Set();
+    let sellStructureSelectionHydrated = !Object.keys(sellGroupsByStructure).length;
 
     const initializeExpandedNodeIds = () => {
         expandedNodeIds = new Set();
@@ -2663,7 +2827,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!selectedStructures.length) {
             // If structure options are loaded and nothing is selected, clear rules.
             // If options are not loaded yet (initial async hydration), preserve existing map.
-            if (hasSelectableStructures) {
+            if (hasSelectableStructures && sellStructureSelectionHydrated) {
                 sellGroupsByStructure = {};
             }
 
@@ -2683,6 +2847,8 @@ document.addEventListener('DOMContentLoaded', function() {
             updateSelectionSummaries();
             return;
         }
+
+        sellStructureSelectionHydrated = true;
 
         Object.keys(sellGroupsByStructure).forEach(structureId => {
             if (!selectedIds.includes(structureId)) {

@@ -1752,6 +1752,60 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED)
         self.assertEqual(sell_order.payment_verified_at, completed_at)
 
+    @patch("indy_hub.tasks.material_exchange_contracts._log_sell_order_transactions")
+    @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
+    def test_check_completed_anomaly_sell_order_marks_completed_from_cached_contract(
+        self,
+        mock_notify_admins,
+        _mock_log_sell_tx,
+    ):
+        """Finished anomaly sell orders should close once the cached contract shows completion."""
+        # AA Example App
+        from indy_hub.models import ESIContract
+
+        seller = User.objects.create_user(username="test_seller_anomaly_completed")
+        sell_order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=seller,
+            status=MaterialExchangeSellOrder.Status.ANOMALY,
+            order_reference="INDY-SELL-ANOM-COMPLETE-1",
+            notes="Anomaly: contract 227079488 has the correct title but wrong location.",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=sell_order,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=1000,
+            unit_price=5.0,
+            total_price=5000,
+        )
+        completed_at = timezone.now() - timedelta(hours=1)
+        ESIContract.objects.create(
+            contract_id=227079488,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=123,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            acceptor_id=0,
+            status="finished",
+            title=sell_order.order_reference,
+            date_issued=timezone.now() - timedelta(days=1),
+            date_expired=timezone.now() + timedelta(days=29),
+            date_completed=completed_at,
+            price=5000,
+            reward=0,
+            collateral=0,
+        )
+
+        check_completed_material_exchange_contracts()
+
+        sell_order.refresh_from_db()
+        self.assertEqual(sell_order.status, MaterialExchangeSellOrder.Status.COMPLETED)
+        self.assertEqual(sell_order.payment_verified_at, completed_at)
+        self.assertIn("contract 227079488", sell_order.notes)
+        mock_notify_admins.assert_called_once()
+
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
     def test_validate_buy_order_accepts_lowercase_reference_and_missing_issuer_corp(self, mock_multi, mock_user):

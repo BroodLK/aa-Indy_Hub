@@ -157,6 +157,10 @@ _SELL_ORDER_VALIDATION_SOURCE_STATUSES = (
     MaterialExchangeSellOrder.Status.ANOMALY,
     MaterialExchangeSellOrder.Status.ANOMALY_REJECTED,
 )
+_SELL_ORDER_COMPLETION_SOURCE_STATUSES = (
+    MaterialExchangeSellOrder.Status.VALIDATED,
+    MaterialExchangeSellOrder.Status.ANOMALY,
+)
 _BUY_ORDER_VALIDATION_SOURCE_STATUSES = (
     MaterialExchangeBuyOrder.Status.DRAFT,
     MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
@@ -5942,9 +5946,9 @@ def check_completed_material_exchange_contracts():
         logger.info(_completion_log("No MaterialExchangeConfig found; skipping contract completion check."))
         return
 
-    approved_orders = MaterialExchangeSellOrder.objects.filter(
+    sell_orders_to_check = MaterialExchangeSellOrder.objects.filter(
         config=config,
-        status=MaterialExchangeSellOrder.Status.VALIDATED,
+        status__in=_SELL_ORDER_COMPLETION_SOURCE_STATUSES,
     )
 
     # Use cached contracts instead of making redundant ESI call
@@ -5959,27 +5963,27 @@ def check_completed_material_exchange_contracts():
         return
 
     last_synced = cached_contracts.order_by("-last_synced").values_list("last_synced", flat=True).first()
-    contracts = list(cached_contracts.values("contract_id", "status"))
+    contracts_by_id = {
+        int(contract["contract_id"]): contract
+        for contract in cached_contracts.values("contract_id", "status", "date_completed")
+    }
 
     logger.info(
         _completion_log(
-            "Checking completion status using cached contracts (validated_sell_orders=%s, rows=%s, last_synced=%s)."
+            "Checking completion status using cached contracts (sell_orders=%s, rows=%s, last_synced=%s)."
         ),
-        approved_orders.count(),
-        len(contracts),
+        sell_orders_to_check.count(),
+        len(contracts_by_id),
         last_synced,
     )
 
-    for order in approved_orders:
+    for order in sell_orders_to_check:
         # Extract contract ID from stored field or notes
         contract_id = order.esi_contract_id or _extract_contract_id(order.notes)
         if not contract_id:
             continue
 
-        contract = next(
-            (c for c in contracts if c["contract_id"] == contract_id),
-            None,
-        )
+        contract = contracts_by_id.get(int(contract_id))
         if not contract:
             continue
 
@@ -6063,10 +6067,7 @@ def check_completed_material_exchange_contracts():
         if not contract_id:
             continue
 
-        contract = next(
-            (c for c in contracts if c["contract_id"] == contract_id),
-            None,
-        )
+        contract = contracts_by_id.get(int(contract_id))
         if not contract:
             continue
 
