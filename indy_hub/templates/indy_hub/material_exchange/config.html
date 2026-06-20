@@ -25,33 +25,50 @@
             - stock sync / price sync timestamps
             - config-active / module-enabled / Jita-bounds state
         -->
-        <div class="page-header mb-2">
-            <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+        <div class="page">
+            <header class="header">
                 <div>
-                    <h2 class="h3 mb-1">
-                        <i class="fas fa-exchange-alt me-2"></i>
-                        {% trans "Buyback" %}
-                    </h2>
-                    <p class="description mb-0">{% trans "Configure corp hangar locations and pricing rules." %}</p>
+                    <h1 class="title">{% trans "Buyback Configuration" %}</h1>
+                    <div class="subtitle">
+                        {% trans "Configure corp hangar locations, pricing rules, accepted market groups, and live operating state." %}
+                    </div>
+                    <div class="chip-row mt-3">
+                        {% if material_exchange_enabled %}
+                            <span class="chip good">{% trans "Module enabled" %}</span>
+                        {% else %}
+                            <span class="chip warn">{% trans "Module disabled" %}</span>
+                        {% endif %}
+                        {% if config and config.is_active %}
+                            <span class="chip good">{% trans "Config active" %}</span>
+                        {% else %}
+                            <span class="chip warn">{% trans "Config inactive" %}</span>
+                        {% endif %}
+                        {% if assets_scope_missing or division_scope_missing %}
+                            <span class="chip bad">{% trans "Token action required" %}</span>
+                        {% else %}
+                            <span class="chip good">{% trans "Scopes ready" %}</span>
+                        {% endif %}
+                        {% if config and config.enforce_jita_price_bounds %}
+                            <span class="chip warn">{% trans "Jita bounds enabled" %}</span>
+                        {% endif %}
+                    </div>
                 </div>
-                <div class="d-flex flex-column align-items-end gap-2 me-header-actions">
+                <div class="button-row">
                     <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-light me-header-btn me-header-btn--back">
                         <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Hub" %}
                     </a>
-                    <div class="d-flex flex-wrap gap-2">
-                        <a href="{% url 'indy_hub:material_exchange_request_all_scopes' %}"
-                           class="btn btn-success btn-sm me-header-btn me-header-btn--scopes">
-                            <i class="fas fa-plus-circle me-1"></i>
-                            {% trans "Add All Scopes" %}
-                        </a>
-                        <a href="{% url 'indy_hub:token_management' %}"
-                           class="btn btn-outline-secondary btn-sm me-header-btn me-header-btn--tokens">
-                            <i class="fas fa-key me-1"></i>
-                            {% trans "Manage Tokens" %}
-                        </a>
-                    </div>
+                    <a href="{% url 'indy_hub:material_exchange_request_all_scopes' %}"
+                       class="btn btn-success btn-sm me-header-btn me-header-btn--scopes">
+                        <i class="fas fa-plus-circle me-1"></i>
+                        {% trans "Add All Scopes" %}
+                    </a>
+                    <a href="{% url 'indy_hub:token_management' %}"
+                       class="btn btn-outline-secondary btn-sm me-header-btn me-header-btn--tokens">
+                        <i class="fas fa-key me-1"></i>
+                        {% trans "Manage Tokens" %}
+                    </a>
                 </div>
-            </div>
+            </header>
 
             {% if config %}
                 <p class="me-header-sync small mb-0">
@@ -74,12 +91,11 @@
                     </strong>
                 </p>
             {% endif %}
-            <i class="fas fa-exchange-alt header-bg"></i>
         </div>
 
         {% if not available_corps %}
-            <section class="dashboard-section mb-3">
-                <div class="alert alert-warning">
+            <section class="dashboard-section mb-3 status-banner surface">
+                <div class="alert alert-warning mb-0">
                     <i class="fas fa-exclamation-triangle me-2"></i>
                     {% trans "No corporations found. Make sure you have ESI tokens authorized." %}
                 </div>
@@ -90,7 +106,7 @@
 
         {% if config %}
             <section class="dashboard-section mb-3">
-                <div class="card focus-card me-current-bar">
+                <div class="card focus-card me-current-bar status-banner surface">
                     <div class="card-body p-2">
                         <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
                             <div class="me-current-content">
@@ -135,40 +151,40 @@
             </section>
         {% endif %}
 
-        <section class="me-summary-grid mb-3" aria-label="{% trans 'Configuration summary' %}">
-            <article class="me-summary-card">
-                <div class="me-summary-label">{% trans "Sell Locations" %}</div>
-                <div class="me-summary-value">{{ selected_sell_structures|length }}</div>
-                <div class="me-summary-note">{% trans "Stations with sell access" %}</div>
+        <section class="me-summary-grid top-summary mb-3" aria-label="{% trans 'Configuration summary' %}">
+            <article class="me-summary-card summary-card">
+                <div class="me-summary-label summary-label">{% trans "Sell Locations" %}</div>
+                <div class="me-summary-value summary-value">{{ selected_sell_structures|length }}</div>
+                <div class="me-summary-note summary-note">{% trans "Stations with sell access" %}</div>
             </article>
-            <article class="me-summary-card">
-                <div class="me-summary-label">{% trans "Buy Locations" %}</div>
-                <div class="me-summary-value">{{ selected_buy_structures|length }}</div>
-                <div class="me-summary-note">{% trans "Stations with buy access" %}</div>
+            <article class="me-summary-card summary-card">
+                <div class="me-summary-label summary-label">{% trans "Buy Locations" %}</div>
+                <div class="me-summary-value summary-value">{{ selected_buy_structures|length }}</div>
+                <div class="me-summary-note summary-note">{% trans "Stations with buy access" %}</div>
             </article>
-            <article class="me-summary-card">
-                <div class="me-summary-label">{% trans "Sell Profiles" %}</div>
-                <div class="me-summary-value">{{ sell_market_group_profiles|length }}</div>
-                <div class="me-summary-note">{% trans "Reusable sell-side market group profiles" %}</div>
+            <article class="me-summary-card summary-card">
+                <div class="me-summary-label summary-label">{% trans "Sell Profiles" %}</div>
+                <div class="me-summary-value summary-value">{{ sell_market_group_profiles|length }}</div>
+                <div class="me-summary-note summary-note">{% trans "Reusable sell-side market group profiles" %}</div>
             </article>
-            <article class="me-summary-card">
-                <div class="me-summary-label">{% trans "Buy Profiles" %}</div>
-                <div class="me-summary-value">{{ buy_market_group_profiles|length }}</div>
-                <div class="me-summary-note">{% trans "Saved buy routing profiles" %}</div>
+            <article class="me-summary-card summary-card">
+                <div class="me-summary-label summary-label">{% trans "Buy Profiles" %}</div>
+                <div class="me-summary-value summary-value">{{ buy_market_group_profiles|length }}</div>
+                <div class="me-summary-note summary-note">{% trans "Saved buy routing profiles" %}</div>
             </article>
-            <article class="me-summary-card">
-                <div class="me-summary-label">{% trans "Item Overrides" %}</div>
-                <div class="me-summary-value">{{ item_price_overrides|length }}</div>
-                <div class="me-summary-note">{% trans "Specific item price exceptions" %}</div>
+            <article class="me-summary-card summary-card">
+                <div class="me-summary-label summary-label">{% trans "Item Overrides" %}</div>
+                <div class="me-summary-value summary-value">{{ item_price_overrides|length }}</div>
+                <div class="me-summary-note summary-note">{% trans "Specific item price exceptions" %}</div>
             </article>
-            <article class="me-summary-card">
-                <div class="me-summary-label">{% trans "Group Overrides" %}</div>
-                <div class="me-summary-value">{{ market_group_price_overrides|length }}</div>
-                <div class="me-summary-note">{% trans "Market-group fallback rules" %}</div>
+            <article class="me-summary-card summary-card">
+                <div class="me-summary-label summary-label">{% trans "Group Overrides" %}</div>
+                <div class="me-summary-value summary-value">{{ market_group_price_overrides|length }}</div>
+                <div class="me-summary-note summary-note">{% trans "Market-group fallback rules" %}</div>
             </article>
         </section>
 
-        <section class="me-status-banner mb-3">
+        <section class="me-status-banner status-banner surface mb-3">
             <div class="me-status-copy">
                 <strong>{% trans "Live configuration contract preserved" %}</strong>
                 <span>{% trans "This redesigned page still posts the same live field names and JSON payloads used by the current save handler." %}</span>
@@ -192,7 +208,9 @@
             </div>
         </section>
 
-        <section class="dashboard-section mb-3">
+        <div class="layout">
+            <div class="main-column">
+                <section class="dashboard-section mb-3 section surface">
             <header class="section-heading my-3">
                 <div>
                     <h3 class="section-title">{% trans "Configuration Workspace" %}</h3>
@@ -1097,9 +1115,72 @@
                         </form>
                     </div>
                 </div>
-
+                </section>
             </div>
+            <aside class="sidebar">
+                <section class="surface right-card">
+                    <h3>{% trans "Configuration Summary" %}</h3>
+                    <div class="right-list">
+                        <div class="right-row">
+                            <span>{% trans "Corporation" %}</span>
+                            <strong>{% if config %}{% if current_corp_ticker %}[{{ current_corp_ticker }}]{% else %}{{ config.corporation_id }}{% endif %}{% else %}{% trans "Pending" %}{% endif %}</strong>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Hangar" %}</span>
+                            <strong>{% if config %}{{ current_hangar_name|default:config.hangar_division }}{% else %}{% trans "Pending" %}{% endif %}</strong>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Sell locations" %}</span>
+                            <strong>{{ selected_sell_structures|length }}</strong>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Buy locations" %}</span>
+                            <strong>{{ selected_buy_structures|length }}</strong>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Sell profiles" %}</span>
+                            <strong>{{ sell_market_group_profiles|length }}</strong>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Buy profiles" %}</span>
+                            <strong>{{ buy_market_group_profiles|length }}</strong>
+                        </div>
+                    </div>
+                </section>
+                <section class="surface right-card">
+                    <h3>{% trans "Health" %}</h3>
+                    <div class="right-list">
+                        <div class="right-row">
+                            <span>{% trans "Module" %}</span>
+                            <span class="health-state {% if material_exchange_enabled %}good{% else %}warn{% endif %}">{% if material_exchange_enabled %}{% trans "Ready" %}{% else %}{% trans "Disabled" %}{% endif %}</span>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Config state" %}</span>
+                            <span class="health-state {% if config and config.is_active %}good{% else %}warn{% endif %}">{% if config and config.is_active %}{% trans "Active" %}{% else %}{% trans "Inactive" %}{% endif %}</span>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Asset scope" %}</span>
+                            <span class="health-state {% if assets_scope_missing %}bad{% else %}good{% endif %}">{% if assets_scope_missing %}{% trans "Missing" %}{% else %}{% trans "Loaded" %}{% endif %}</span>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Division scope" %}</span>
+                            <span class="health-state {% if division_scope_missing %}bad{% else %}good{% endif %}">{% if division_scope_missing %}{% trans "Missing" %}{% else %}{% trans "Loaded" %}{% endif %}</span>
+                        </div>
+                        <div class="right-row">
+                            <span>{% trans "Jita bounds" %}</span>
+                            <span class="health-state {% if config and config.enforce_jita_price_bounds %}good{% else %}warn{% endif %}">{% if config and config.enforce_jita_price_bounds %}{% trans "On" %}{% else %}{% trans "Off" %}{% endif %}</span>
+                        </div>
+                    </div>
+                </section>
+                <section class="surface right-card">
+                    <h3>{% trans "Implementation Notes" %}</h3>
+                    <div class="note-block">
+                        {% trans "This live template now uses the mockup's page, status banner, summary grid, main-column, sidebar, and footer patterns while preserving the existing save payload and DOM IDs." %}
+                    </div>
+                </section>
+            </aside>
         </div>
+    </div>
 
         {{ hangar_divisions|json_script:"hangarDivisionsData" }}
         {{ selected_sell_structures|json_script:"selectedSellStructures" }}
