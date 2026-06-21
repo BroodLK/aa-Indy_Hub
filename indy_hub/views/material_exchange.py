@@ -3395,6 +3395,7 @@ def _get_buy_location_scoped_corp_assets(
     *,
     config: MaterialExchangeConfig,
     corp_assets: list[dict] | None = None,
+    allow_refresh: bool = False,
 ) -> list[dict]:
     """Return cached corp assets matched to configured buy locations/division."""
 
@@ -3402,7 +3403,7 @@ def _get_buy_location_scoped_corp_assets(
         try:
             corp_assets, _scope_missing = get_corp_assets_cached(
                 int(config.corporation_id),
-                allow_refresh=True,
+                allow_refresh=bool(allow_refresh),
             )
         except Exception:
             return []
@@ -3837,6 +3838,10 @@ def _build_buy_material_rows(
         if int(item_id) > 0 and int(runs or 0) > 0
     }
     container_name_by_key: dict[str, str] = {}
+    pricing_context_by_source_ids: dict[
+        tuple[int, ...],
+        tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
+    ] = {}
 
     def next_row_index() -> int:
         nonlocal row_index
@@ -3918,19 +3923,28 @@ def _build_buy_material_rows(
             default_unit_price = Decimal("0")
             has_override = False
         else:
-            active_buy_profile_name = _resolve_active_profile_name_for_structure_ids(
-                config,
-                mode="buy",
-                structure_ids=source_structure_ids,
-            )
-            _sell_item_overrides, resolved_buy_override_map = _get_item_price_override_maps(
-                config,
-                buy_profile_name=active_buy_profile_name,
-            )
-            _sell_group_overrides, resolved_buy_market_group_override_map = _get_market_group_price_override_maps(
-                config,
-                buy_profile_name=active_buy_profile_name,
-            )
+            normalized_source_ids = tuple(_normalize_source_structure_ids(source_structure_ids))
+            pricing_context = pricing_context_by_source_ids.get(normalized_source_ids)
+            if pricing_context is None:
+                active_buy_profile_name = _resolve_active_profile_name_for_structure_ids(
+                    config,
+                    mode="buy",
+                    structure_ids=normalized_source_ids,
+                )
+                _sell_item_overrides, resolved_buy_override_map = _get_item_price_override_maps(
+                    config,
+                    buy_profile_name=active_buy_profile_name,
+                )
+                _sell_group_overrides, resolved_buy_market_group_override_map = _get_market_group_price_override_maps(
+                    config,
+                    buy_profile_name=active_buy_profile_name,
+                )
+                pricing_context = (
+                    resolved_buy_override_map,
+                    resolved_buy_market_group_override_map,
+                )
+                pricing_context_by_source_ids[normalized_source_ids] = pricing_context
+            resolved_buy_override_map, resolved_buy_market_group_override_map = pricing_context
             unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
                 type_id=type_id_int,
                 jita_buy=Decimal(base_meta.get("jita_buy_price") or 0),
@@ -5661,14 +5675,22 @@ def material_exchange_buy(request, tokens):
     buy_locations_label = ", ".join(buy_location_names).strip() or (
         config.structure_name or f"Structure {config.structure_id}"
     )
+    buy_pricing_context_cache: dict[
+        tuple[int, ...],
+        tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
+    ] = {}
 
     def _get_buy_pricing_context_for_structure_ids(
         source_structure_ids: list[int] | tuple[int, ...] | set[int] | None,
     ) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
+        normalized_source_ids = tuple(_normalize_source_structure_ids(source_structure_ids))
+        cached_context = buy_pricing_context_cache.get(normalized_source_ids)
+        if cached_context is not None:
+            return cached_context
         active_buy_profile_name = _resolve_active_profile_name_for_structure_ids(
             config,
             mode="buy",
-            structure_ids=source_structure_ids,
+            structure_ids=normalized_source_ids,
         )
         _sell_item_overrides, resolved_buy_override_map = _get_item_price_override_maps(
             config,
@@ -5678,7 +5700,9 @@ def material_exchange_buy(request, tokens):
             config,
             buy_profile_name=active_buy_profile_name,
         )
-        return resolved_buy_override_map, resolved_buy_market_group_override_map
+        resolved_context = (resolved_buy_override_map, resolved_buy_market_group_override_map)
+        buy_pricing_context_cache[normalized_source_ids] = resolved_context
+        return resolved_context
 
     def _build_current_buy_stock_snapshot(
         *,
@@ -5836,7 +5860,13 @@ def material_exchange_buy(request, tokens):
 
         stock_rows: list[dict[str, object]] = []
         try:
-            scoped_buy_assets = _get_buy_location_scoped_corp_assets(config=config)
+            # Never force a live corp-assets refresh from this request path.
+            # The async stock refresh already manages ESI calls; here we should
+            # render from cached corp assets or fall back to flat stock rows.
+            scoped_buy_assets = _get_buy_location_scoped_corp_assets(
+                config=config,
+                allow_refresh=False,
+            )
         except Exception:
             scoped_buy_assets = []
 

@@ -13,6 +13,7 @@ from indy_hub.services.asset_cache import make_managed_hangar_location_id
 from indy_hub.tasks.material_exchange import _sync_stock_impl
 from indy_hub.views.material_exchange import (
     _build_buy_material_rows,
+    _get_buy_location_scoped_corp_assets,
     _get_buy_stock_blueprint_variant_map,
     _get_corp_blueprint_details_by_item_id,
     _selected_buy_stock_items_share_source_location,
@@ -198,6 +199,21 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         ]
 
         self.assertFalse(_selected_buy_stock_items_share_source_location(selected_rows))
+
+    @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
+    def test_get_buy_location_scoped_corp_assets_does_not_force_refresh_by_default(
+        self,
+        mock_get_corp_assets_cached,
+    ):
+        mock_get_corp_assets_cached.return_value = ([], False)
+
+        scoped_assets = _get_buy_location_scoped_corp_assets(config=self.config)
+
+        self.assertEqual(scoped_assets, [])
+        mock_get_corp_assets_cached.assert_called_once_with(
+            int(self.config.corporation_id),
+            allow_refresh=False,
+        )
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
     def test_buy_stock_blueprint_variant_map_detects_bpc(self, mock_get_corp_assets_cached):
