@@ -298,7 +298,7 @@
                                                     </td>
                                                 </tr>
                                             {% else %}
-                                                <tr class="stock-row stock-row-item"
+                                                <tr class="stock-row stock-row-item{% if item.is_disabled %} stock-row-disabled-danger{% endif %}"
                                                     data-row-kind="item"
                                                     data-row-index="{{ item.row_index }}"
                                                     data-container-path="{{ item.container_path }}"
@@ -310,7 +310,8 @@
                                                     data-character-name="{{ item.character_name|default:'' }}"
                                                     data-blueprint-variant="{{ item.blueprint_variant }}"
                                                     data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
-                                                    data-max-qty="{{ item.available_quantity }}">
+                                                    data-max-qty="{{ item.available_quantity }}"
+                                                    aria-disabled="{% if item.is_disabled %}true{% else %}false{% endif %}">
                                                     <td>
                                                         <img src="{{ item.icon_url }}"
                                                              data-fallback-src="{{ item.icon_fallback_url }}"
@@ -340,6 +341,11 @@
                                                                     </span>
                                                                 </div>
                                                             {% endif %}
+                                                            {% if item.is_disabled %}
+                                                                <div class="small text-danger fw-semibold">
+                                                                    <i class="fas fa-ban me-1"></i>{{ item.disable_reason }}
+                                                                </div>
+                                                            {% endif %}
                                                             {% if item.reserved_quantity > 0 %}
                                                                 <div class="small text-warning">
                                                                     <i class="fas fa-lock me-1"></i>{% trans "Reserved in your open orders:" %} {{ item.reserved_quantity|intcomma }}
@@ -348,10 +354,20 @@
                                                         </div>
                                                     </td>
                                                     <td class="text-end">
-                                                        <span class="badge bg-success">{{ item.user_quantity|intcomma }}</span>
-                                                        <div class="small text-muted">{% trans "Available now:" %} {{ item.available_quantity|intcomma }}</div>
+                                                        <span class="badge {% if item.is_disabled %}bg-danger-subtle text-danger-emphasis border border-danger-subtle{% else %}bg-success{% endif %}">{{ item.user_quantity|intcomma }}</span>
+                                                        {% if item.is_disabled %}
+                                                            <div class="small text-danger">{{ item.disable_reason }}</div>
+                                                        {% else %}
+                                                            <div class="small text-muted">{% trans "Available now:" %} {{ item.available_quantity|intcomma }}</div>
+                                                        {% endif %}
                                                     </td>
-                                                    <td class="text-end text-success fw-semibold">{{ item.buy_price_from_member|floatformat:2|intcomma }} ISK</td>
+                                                    <td class="text-end {% if item.is_disabled %}text-danger{% else %}text-success{% endif %} fw-semibold">
+                                                        {% if item.is_disabled %}
+                                                            --
+                                                        {% else %}
+                                                            {{ item.buy_price_from_member|floatformat:2|intcomma }} ISK
+                                                        {% endif %}
+                                                    </td>
                                                     <td class="text-center">
                                                         <div class="qty-cell">
                                                             <div class="qty-input-row">
@@ -366,20 +382,32 @@
                                                                        data-container-path="{{ item.container_path }}"
                                                                        data-max="{{ item.available_quantity }}"
                                                                        data-error-id="error-{{ item.row_index }}"
-                                                                       {% if item.available_quantity <= 0 %}disabled{% endif %}>
+                                                                       data-base-disabled="{% if item.is_disabled or item.available_quantity <= 0 %}1{% else %}0{% endif %}"
+                                                                       {% if item.is_disabled %}title="{{ item.disable_reason }}"{% endif %}
+                                                                       {% if item.is_disabled or item.available_quantity <= 0 %}disabled{% endif %}>
                                                                 <div class="qty-btns" role="group" aria-label="{% trans 'Quantity shortcuts' %}">
                                                                     <button type="button"
                                                                             class="btn btn-secondary btn-sm qty-btn"
                                                                             data-action="zero"
                                                                             title="{% trans 'Zero' %}"
-                                                                            aria-label="{% trans 'Zero' %}">
+                                                                            aria-label="{% trans 'Zero' %}"
+                                                                            {% if item.is_disabled or item.available_quantity <= 0 %}disabled{% endif %}>
                                                                         <i class="fas fa-ban" aria-hidden="true"></i>
                                                                     </button>
-                                                                    <button type="button" class="btn btn-secondary btn-sm qty-btn" data-action="max">{% trans "Max" %}</button>
+                                                                    <button type="button"
+                                                                            class="btn btn-secondary btn-sm qty-btn"
+                                                                            data-action="max"
+                                                                            {% if item.is_disabled or item.available_quantity <= 0 %}disabled{% endif %}>
+                                                                        {% trans "Max" %}
+                                                                    </button>
                                                                 </div>
                                                             </div>
                                                             <div class="qty-error" id="error-{{ item.row_index }}">
-                                                                {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
+                                                                {% if item.is_disabled %}
+                                                                    {{ item.disable_reason }}
+                                                                {% else %}
+                                                                    {% trans "Max available now:" %} {{ item.available_quantity|intcomma }}
+                                                                {% endif %}
                                                             </div>
                                                         </div>
                                                     </td>
@@ -1373,7 +1401,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         const input = row.querySelector('.qty-input');
-        if (!input) {
+        if (!input || input.disabled) {
             return;
         }
         const action = button.dataset.action;
@@ -1438,6 +1466,11 @@ document.addEventListener('DOMContentLoaded', function() {
         qtyInputs.forEach(input => {
             const qty = parseInt(input.value) || 0;
             const row = input.closest('tr');
+
+            if (input.disabled) {
+                row.classList.remove('selected');
+                return;
+            }
 
             // Check limit but don't auto-correct during typing
             checkQuantityLimit(input);

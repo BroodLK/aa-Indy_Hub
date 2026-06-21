@@ -2804,8 +2804,9 @@ def _build_sell_material_rows(
 
     container_item_ids = set(children_by_parent.keys())
     reserved_by_type = {int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()}
-    allowed_types = {int(type_id) for type_id in allowed_type_ids} if allowed_type_ids else None
+    allowed_types = None if allowed_type_ids is None else {int(type_id) for type_id in allowed_type_ids}
     price_meta_cache: dict[tuple[int, str, bool], dict[str, object] | None] = {}
+    not_accepted_reason = _("Item not accepted in its current location")
 
     def get_price_meta(
         type_id: int,
@@ -2818,12 +2819,9 @@ def _build_sell_material_rows(
         if meta_key in price_meta_cache:
             return price_meta_cache[meta_key]
 
-        if allowed_types is not None and type_id_int not in allowed_types:
-            price_meta_cache[meta_key] = None
-            return None
-
         type_name = get_type_name(type_id_int)
         icon_url, icon_fallback_url = _build_eve_type_icon_urls(type_id_int, blueprint_variant=blueprint_variant)
+        is_allowed_at_location = allowed_types is None or type_id_int in allowed_types
 
         if blueprint_variant == "bpc":
             meta = {
@@ -2837,6 +2835,26 @@ def _build_sell_material_rows(
                 "blueprint_variant": "bpc",
                 "icon_url": icon_url,
                 "icon_fallback_url": icon_fallback_url,
+                "is_disabled": not is_allowed_at_location,
+                "disable_reason": not is_allowed_at_location and str(not_accepted_reason) or "",
+            }
+            price_meta_cache[meta_key] = meta
+            return meta
+
+        if not is_allowed_at_location:
+            meta = {
+                "type_id": type_id_int,
+                "type_name": _format_sell_blueprint_type_name(type_name, blueprint_variant),
+                "buy_price_from_member": Decimal("0"),
+                "default_buy_price_from_member": Decimal("0"),
+                "has_sell_price_override": False,
+                "is_blueprint_copy": False,
+                "is_blueprint_original": blueprint_variant == "bpo",
+                "blueprint_variant": "bpo" if blueprint_variant == "bpo" else "",
+                "icon_url": icon_url,
+                "icon_fallback_url": icon_fallback_url,
+                "is_disabled": True,
+                "disable_reason": str(not_accepted_reason),
             }
             price_meta_cache[meta_key] = meta
             return meta
@@ -2888,6 +2906,8 @@ def _build_sell_material_rows(
             "blueprint_variant": "bpo" if blueprint_variant == "bpo" else "",
             "icon_url": icon_url,
             "icon_fallback_url": icon_fallback_url,
+            "is_disabled": False,
+            "disable_reason": "",
         }
         price_meta_cache[meta_key] = meta
         return meta
@@ -2988,10 +3008,14 @@ def _build_sell_material_rows(
         if meta is None:
             return None
 
-        available_for_type = remaining_by_type.get(int(type_id), 0)
-        available_qty = min(int(quantity), int(available_for_type))
-        remaining_by_type[int(type_id)] = max(int(available_for_type) - available_qty, 0)
-        reserved_qty = max(int(quantity) - available_qty, 0)
+        if bool(meta.get("is_disabled", False)):
+            available_qty = 0
+            reserved_qty = 0
+        else:
+            available_for_type = remaining_by_type.get(int(type_id), 0)
+            available_qty = min(int(quantity), int(available_for_type))
+            remaining_by_type[int(type_id)] = max(int(available_for_type) - available_qty, 0)
+            reserved_qty = max(int(quantity) - available_qty, 0)
         row_idx = next_row_index()
         variant_token = str(meta.get("blueprint_variant") or "") or "std"
         container_scope_token = "incan" if in_container else "root"
@@ -3016,6 +3040,8 @@ def _build_sell_material_rows(
             "user_quantity": int(quantity),
             "reserved_quantity": int(reserved_qty),
             "available_quantity": int(available_qty),
+            "is_disabled": bool(meta.get("is_disabled", False)),
+            "disable_reason": str(meta.get("disable_reason") or ""),
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
@@ -5342,15 +5368,6 @@ def material_exchange_sell(request, tokens):
                     filtered_user_assets[type_id] = filtered_user_assets.get(type_id, 0) + qty
             user_assets = filtered_user_assets
 
-            if len(sell_structure_ids) <= 1 and sell_structure_ids:
-                single_location_id = int(sell_structure_ids[0])
-                single_location_allowed = allowed_type_ids_by_location.get(single_location_id)
-                if single_location_allowed is not None:
-                    user_assets_by_character = {
-                        character_id: {tid: qty for tid, qty in char_assets.items() if tid in single_location_allowed}
-                        for character_id, char_assets in user_assets_by_character.items()
-                    }
-
             logger.info(f"SELL DEBUG: {len(user_assets)} items after market group filter")
         except Exception as exc:
             logger.warning("Failed to apply market group filter (GET): %s", exc)
@@ -5421,7 +5438,7 @@ def material_exchange_sell(request, tokens):
             )
             for character_id in sorted_characters:
                 character_assets = user_assets_by_character.get(character_id, {})
-                tab_count = sum(1 for type_id in character_assets if _is_sellable_type(type_id))
+                tab_count = sum(1 for _type_id, qty in character_assets.items() if int(qty or 0) > 0)
                 if tab_count <= 0:
                     continue
                 character_tabs.append(
@@ -5532,6 +5549,17 @@ def material_exchange_sell(request, tokens):
                     continue
 
             display_assets_raw.append(asset)
+
+        display_type_ids: set[int] = set(user_assets.keys())
+        for asset in display_assets_raw:
+            try:
+                asset_type_id = int(asset.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if asset_type_id > 0:
+                display_type_ids.add(asset_type_id)
+        display_type_market_group_path_map = _get_type_market_group_path_map(display_type_ids)
+        display_type_market_group_label_map = _build_type_market_group_label_map(display_type_market_group_path_map)
 
         materials_with_qty = _build_sell_material_rows(
             assets=display_assets_raw,

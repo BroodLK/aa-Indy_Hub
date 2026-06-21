@@ -526,6 +526,29 @@ html[data-theme="darkly"] .status-pending {
     background: rgba(var(--bs-info-rgb), 0.12);
 }
 
+.stock-row-item.stock-row-disabled-danger td {
+    background: rgba(var(--bs-danger-rgb), 0.06);
+    border-top: 1px solid rgba(var(--bs-danger-rgb), 0.32);
+    border-bottom: 1px solid rgba(var(--bs-danger-rgb), 0.32);
+}
+
+.stock-row-item.stock-row-disabled-danger td:first-child {
+    border-left: 1px solid rgba(var(--bs-danger-rgb), 0.45);
+}
+
+.stock-row-item.stock-row-disabled-danger td:last-child {
+    border-right: 1px solid rgba(var(--bs-danger-rgb), 0.45);
+}
+
+.stock-row-item.stock-row-disabled-danger:hover {
+    border-left-color: var(--bs-danger);
+}
+
+.stock-row-item.stock-row-disabled-danger .qty-input,
+.stock-row-item.stock-row-disabled-danger .qty-btns .btn {
+    cursor: not-allowed;
+}
+
 .stock-row-market-group td {
     background: rgba(var(--bs-secondary-rgb), 0.14);
     border-top: 1px solid rgba(var(--bs-border-color-rgb), 0.45);
@@ -752,6 +775,17 @@ html[data-theme="darkly"] .stock-row-market-group .market-group-count {
     background: rgba(148, 163, 184, 0.3);
     color: #e2e8f0;
     border-color: rgba(148, 163, 184, 0.45);
+}
+
+html[data-theme="darkly"] .stock-row-item.stock-row-disabled-danger td {
+    background: rgba(var(--bs-danger-rgb), 0.12);
+    border-top-color: rgba(var(--bs-danger-rgb), 0.4);
+    border-bottom-color: rgba(var(--bs-danger-rgb), 0.4);
+}
+
+html[data-theme="darkly"] .stock-row-item.stock-row-disabled-danger td:first-child,
+html[data-theme="darkly"] .stock-row-item.stock-row-disabled-danger td:last-child {
+    border-color: rgba(var(--bs-danger-rgb), 0.5);
 }
 
 html[data-theme="darkly"] .stock-table tbody tr.selected {

@@ -406,6 +406,43 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertEqual(by_character_name["Pilot Bravo"]["user_quantity"], 7)
         self.assertEqual(by_character_name["Pilot Bravo"]["available_quantity"], 7)
 
+    @patch("indy_hub.views.material_exchange.get_type_name")
+    def test_build_sell_material_rows_keeps_unaccepted_items_as_disabled_rows(self, mock_get_type_name) -> None:
+        mock_get_type_name.side_effect = lambda type_id: {
+            34: "Tritanium",
+            35: "Pyerite",
+        }.get(int(type_id), f"Type {type_id}")
+
+        assets = [
+            {
+                "character_id": 1,
+                "item_id": 99001,
+                "raw_location_id": self.structure_id,
+                "location_id": self.structure_id,
+                "type_id": 35,
+                "quantity": 7,
+                "is_singleton": False,
+                "is_blueprint": False,
+            },
+        ]
+
+        rows = _build_sell_material_rows(
+            assets=assets,
+            config=self.config,
+            price_data={},
+            reserved_quantities={},
+            allowed_type_ids={34},
+            sell_override_map={},
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["row_kind"], "item")
+        self.assertEqual(rows[0]["type_id"], 35)
+        self.assertEqual(rows[0]["user_quantity"], 7)
+        self.assertEqual(rows[0]["available_quantity"], 0)
+        self.assertTrue(rows[0]["is_disabled"])
+        self.assertEqual(rows[0]["disable_reason"], "Item not accepted in its current location")
+
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
@@ -484,3 +521,89 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(mock_reserved_sell.called)
         self.assertNotIn("type_ids", mock_reserved_sell.call_args.kwargs)
+
+    @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
+    @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
+    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
+    @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
+    @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
+    @patch("indy_hub.views.material_exchange.get_user_assets_cached")
+    @patch("indy_hub.views.material_exchange._fetch_user_assets_for_structure_data")
+    @patch("indy_hub.views.material_exchange._get_reserved_sell_quantities")
+    @patch(
+        "indy_hub.views.material_exchange._get_item_price_override_maps",
+        return_value=({}, {}),
+    )
+    @patch("indy_hub.views.material_exchange._get_material_exchange_config")
+    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch("indy_hub.views.material_exchange.render")
+    def test_sell_view_keeps_location_rejected_items_visible_as_disabled_rows(
+        self,
+        mock_render,
+        _mock_enabled,
+        mock_get_config,
+        _mock_override_maps,
+        mock_reserved_sell,
+        mock_fetch_assets_for_structures,
+        mock_get_user_assets_cached,
+        mock_fetch_prices,
+        mock_allowed_type_ids,
+        _mock_corp_name,
+        _mock_build_nav,
+        _mock_build_main_nav,
+    ) -> None:
+        self.config.last_stock_sync = timezone.now()
+        self.config.save(update_fields=["last_stock_sync"])
+
+        mock_get_config.return_value = self.config
+        mock_render.return_value = HttpResponse("ok")
+        mock_fetch_prices.return_value = {34: {"buy": Decimal("10"), "sell": Decimal("11")}}
+        mock_allowed_type_ids.side_effect = lambda _config, mode, structure_id=None: {34} if mode == "sell" else None
+        mock_fetch_assets_for_structures.return_value = (
+            {34: 5},
+            {9001: {34: 5, 35: 7}},
+            {self.structure_id: {34: 5}},
+            False,
+        )
+        mock_get_user_assets_cached.return_value = (
+            [
+                {
+                    "character_id": 9001,
+                    "item_id": 101,
+                    "raw_location_id": self.structure_id,
+                    "location_id": self.structure_id,
+                    "type_id": 34,
+                    "quantity": 5,
+                    "is_singleton": False,
+                },
+                {
+                    "character_id": 9001,
+                    "item_id": 102,
+                    "raw_location_id": self.structure_id,
+                    "location_id": self.structure_id,
+                    "type_id": 35,
+                    "quantity": 7,
+                    "is_singleton": False,
+                },
+            ],
+            False,
+        )
+        mock_reserved_sell.return_value = {}
+
+        request = self.factory.get("/material-exchange/sell/")
+        request.user = self.user
+
+        sell_view = material_exchange_sell.__wrapped__.__wrapped__.__wrapped__
+        response = sell_view(request, tokens=None)
+
+        self.assertEqual(response.status_code, 200)
+        context = mock_render.call_args.args[2]
+        material_rows = [row for row in context["materials"] if row.get("row_kind") == "item"]
+        rows_by_type = {int(row["type_id"]): row for row in material_rows}
+
+        self.assertIn(34, rows_by_type)
+        self.assertIn(35, rows_by_type)
+        self.assertFalse(rows_by_type[34]["is_disabled"])
+        self.assertTrue(rows_by_type[35]["is_disabled"])
+        self.assertEqual(rows_by_type[35]["available_quantity"], 0)
+        self.assertEqual(rows_by_type[35]["disable_reason"], "Item not accepted in its current location")
