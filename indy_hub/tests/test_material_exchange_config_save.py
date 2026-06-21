@@ -264,11 +264,160 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.config.refresh_from_db()
         self.assertEqual(self.config.allowed_market_groups_buy, [200, 300])
+        self.assertEqual(
+            self.config.allowed_market_groups_buy_by_structure,
+            {str(int(self.config.structure_id)): [200, 300]},
+        )
         self.assertEqual(self.config.allowed_market_groups_sell, [400])
         self.assertEqual(
             self.config.allowed_market_groups_sell_by_structure,
             {str(int(self.config.structure_id)): [400]},
         )
+
+    def test_buy_market_groups_can_be_saved_per_structure_from_json_payload(self):
+        second_structure_id = int(self.config.structure_id) + 1
+        post_data = self._base_post_data()
+        post_data["buy_structure_ids"] = [
+            str(self.config.structure_id),
+            str(second_structure_id),
+        ]
+        post_data["allowed_market_groups_buy_by_structure_json"] = (
+            f'{{"{int(self.config.structure_id)}":[200],"{second_structure_id}":[300,400]}}'
+        )
+
+        request = self._build_request(post_data)
+        with patch(
+            "indy_hub.views.material_exchange_config._get_industry_market_group_choice_ids",
+            return_value=set(),
+        ):
+            response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.allowed_market_groups_buy_by_structure,
+            {
+                str(int(self.config.structure_id)): [200],
+                str(second_structure_id): [300, 400],
+            },
+        )
+        self.assertEqual(self.config.allowed_market_groups_buy, [200, 300, 400])
+
+    def test_buy_market_groups_payload_can_mark_location_as_allow_all(self):
+        second_structure_id = int(self.config.structure_id) + 1
+        post_data = self._base_post_data()
+        post_data["buy_structure_ids"] = [
+            str(self.config.structure_id),
+            str(second_structure_id),
+        ]
+        post_data["allowed_market_groups_buy_by_structure_json"] = (
+            f'{{"{int(self.config.structure_id)}":null,"{second_structure_id}":[300,400]}}'
+        )
+
+        request = self._build_request(post_data)
+        with patch(
+            "indy_hub.views.material_exchange_config._get_industry_market_group_choice_ids",
+            return_value=set(),
+        ):
+            response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.allowed_market_groups_buy_by_structure,
+            {
+                str(int(self.config.structure_id)): None,
+                str(second_structure_id): [300, 400],
+            },
+        )
+        self.assertEqual(self.config.allowed_market_groups_buy, [300, 400])
+
+    def test_buy_market_group_profiles_preserve_allow_all_state(self):
+        post_data = self._base_post_data()
+        post_data["buy_market_group_profiles_json"] = (
+            '[{"name":"Everything","is_default":true,"allow_all":true,"market_group_ids":[]}]'
+        )
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.buy_market_group_profiles,
+            [
+                {
+                    "name": "Everything",
+                    "is_default": True,
+                    "allow_all": True,
+                    "market_group_ids": [],
+                }
+            ],
+        )
+
+    def test_explicit_primary_structure_can_be_buy_only_station(self):
+        sell_structure_id = int(self.config.structure_id)
+        buy_only_structure_id = sell_structure_id + 1
+        post_data = self._base_post_data()
+        post_data["sell_structure_ids"] = [str(sell_structure_id)]
+        post_data["buy_structure_ids"] = [str(sell_structure_id), str(buy_only_structure_id)]
+        post_data["primary_structure_id"] = str(buy_only_structure_id)
+
+        request = self._build_request(post_data)
+        with patch(
+            "indy_hub.views.material_exchange_config._get_corp_structures",
+            return_value=(
+                [
+                    {"id": sell_structure_id, "name": "Sell Alpha", "flags": ["CorpSAG1"]},
+                    {"id": buy_only_structure_id, "name": "Buy Beta", "flags": ["CorpSAG1"]},
+                ],
+                False,
+            ),
+        ), patch(
+            "indy_hub.views.material_exchange_config.resolve_structure_names",
+            return_value={
+                sell_structure_id: "Sell Alpha",
+                buy_only_structure_id: "Buy Beta",
+            },
+        ):
+            response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.structure_id, buy_only_structure_id)
+        self.assertEqual(self.config.structure_name, "Buy Beta")
+
+    def test_invalid_explicit_primary_structure_falls_back_to_first_sell_station(self):
+        sell_structure_id = int(self.config.structure_id)
+        buy_only_structure_id = sell_structure_id + 1
+        post_data = self._base_post_data()
+        post_data["sell_structure_ids"] = [str(sell_structure_id)]
+        post_data["buy_structure_ids"] = [str(buy_only_structure_id)]
+        post_data["primary_structure_id"] = str(buy_only_structure_id + 99)
+
+        request = self._build_request(post_data)
+        with patch(
+            "indy_hub.views.material_exchange_config._get_corp_structures",
+            return_value=(
+                [
+                    {"id": sell_structure_id, "name": "Sell Alpha", "flags": ["CorpSAG1"]},
+                    {"id": buy_only_structure_id, "name": "Buy Beta", "flags": ["CorpSAG1"]},
+                ],
+                False,
+            ),
+        ), patch(
+            "indy_hub.views.material_exchange_config.resolve_structure_names",
+            return_value={
+                sell_structure_id: "Sell Alpha",
+                buy_only_structure_id: "Buy Beta",
+            },
+        ):
+            response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.structure_id, sell_structure_id)
+        self.assertEqual(self.config.structure_name, "Sell Alpha")
 
     def test_location_match_mode_defaults_to_name_or_id_when_invalid(self):
         post_data = self._base_post_data()
@@ -390,6 +539,61 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertIsNone(overrides[0].sell_price_override)
         self.assertIsNone(overrides[0].buy_price_override)
 
+    def test_profile_scoped_item_price_overrides_are_split_from_global_rows(self):
+        post_data = self._base_post_data()
+        post_data["sell_market_group_profiles_json"] = (
+            '[{"name":"Ore Desk","allow_all":false,"is_default":false,"market_group_ids":[200]}]'
+        )
+        post_data["buy_market_group_profiles_json"] = (
+            '[{"name":"Buy Desk","allow_all":false,"is_default":false,"market_group_ids":[300]}]'
+        )
+        post_data["item_price_overrides_json"] = (
+            '[{"type_id":34,"type_name":"Tritanium","sell_markup_percent_override":"-5.00","sell_markup_base_override":"sell","buy_markup_percent_override":"","buy_markup_base_override":"buy","sell_profile_name":"","buy_profile_name":""},'
+            '{"type_id":34,"type_name":"Tritanium","sell_markup_percent_override":"-2.50","sell_markup_base_override":"buy","buy_markup_percent_override":"","buy_markup_base_override":"buy","sell_profile_name":"ore desk","buy_profile_name":""},'
+            '{"type_id":35,"type_name":"Pyerite","sell_markup_percent_override":"","sell_markup_base_override":"buy","buy_markup_percent_override":"6.25","buy_markup_base_override":"sell","sell_profile_name":"","buy_profile_name":"BUY DESK"}]'
+        )
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+
+        db_rows = list(MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by("type_id"))
+        self.assertEqual(len(db_rows), 1)
+        self.assertEqual(db_rows[0].type_id, 34)
+        self.assertEqual(db_rows[0].sell_markup_percent_override, Decimal("-5.00"))
+
+        self.assertEqual(
+            self.config.profile_item_price_overrides,
+            [
+                {
+                    "type_id": 34,
+                    "type_name": "Tritanium",
+                    "sell_profile_name": "Ore Desk",
+                    "buy_profile_name": "",
+                    "sell_markup_percent_override": "-2.50",
+                    "sell_markup_base_override": "buy",
+                    "buy_markup_percent_override": None,
+                    "buy_markup_base_override": None,
+                    "sell_price_override": None,
+                    "buy_price_override": None,
+                },
+                {
+                    "type_id": 35,
+                    "type_name": "Pyerite",
+                    "sell_profile_name": "",
+                    "buy_profile_name": "Buy Desk",
+                    "sell_markup_percent_override": None,
+                    "sell_markup_base_override": None,
+                    "buy_markup_percent_override": "6.25",
+                    "buy_markup_base_override": "sell",
+                    "sell_price_override": None,
+                    "buy_price_override": None,
+                },
+            ],
+        )
+
     def test_market_group_price_overrides_are_saved(self):
         post_data = self._base_post_data()
         post_data["market_group_price_overrides_json"] = (
@@ -420,6 +624,54 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         )
         self.assertIsInstance(row.get("buy_markup_percent_override"), str)
         self.assertEqual(str(row.get("buy_markup_base_override") or ""), "sell")
+
+    def test_market_group_price_overrides_preserve_profile_scope_names(self):
+        post_data = self._base_post_data()
+        post_data["sell_market_group_profiles_json"] = (
+            '[{"name":"Ore Desk","allow_all":false,"is_default":false,"market_group_ids":[200]}]'
+        )
+        post_data["buy_market_group_profiles_json"] = (
+            '[{"name":"Buy Desk","allow_all":false,"is_default":false,"market_group_ids":[300]}]'
+        )
+        post_data["market_group_price_overrides_json"] = (
+            '[{"market_group_id":300,"market_group_path":"Manufacture & Research -> Materials","sell_markup_percent_override":"4.50","sell_markup_base_override":"buy","sell_profile_name":"ore desk","buy_profile_name":""},'
+            '{"market_group_id":300,"market_group_path":"Manufacture & Research -> Materials","buy_markup_percent_override":"5.25","buy_markup_base_override":"sell","sell_profile_name":"","buy_profile_name":"BUY DESK"}]'
+        )
+
+        request = self._build_request(post_data)
+        response = _handle_config_save(request, self.config)
+
+        self.assertEqual(response.status_code, 302)
+        self.config.refresh_from_db()
+        self.assertEqual(
+            self.config.market_group_price_overrides,
+            [
+                {
+                    "market_group_id": 300,
+                    "market_group_path": "Manufacture & Research -> Materials",
+                    "sell_profile_name": "Ore Desk",
+                    "buy_profile_name": "",
+                    "sell_markup_percent_override": "4.50",
+                    "sell_markup_base_override": "buy",
+                    "buy_markup_percent_override": None,
+                    "buy_markup_base_override": None,
+                    "sell_price_override": None,
+                    "buy_price_override": None,
+                },
+                {
+                    "market_group_id": 300,
+                    "market_group_path": "Manufacture & Research -> Materials",
+                    "sell_profile_name": "",
+                    "buy_profile_name": "Buy Desk",
+                    "sell_markup_percent_override": None,
+                    "sell_markup_base_override": None,
+                    "buy_markup_percent_override": "5.25",
+                    "buy_markup_base_override": "sell",
+                    "sell_price_override": None,
+                    "buy_price_override": None,
+                },
+            ],
+        )
 
     def test_market_group_profiles_are_saved_separately_for_sell_and_buy(self):
         post_data = self._base_post_data()

@@ -711,6 +711,7 @@ def material_exchange_config(request, tokens):
         else []
     )
     selected_sell_market_groups_by_structure: dict[str, list[int] | None] = {}
+    selected_buy_market_groups_by_structure: dict[str, list[int] | None] = {}
 
     selected_sell_structures: list[dict[str, object]] = []
     selected_buy_structures: list[dict[str, object]] = []
@@ -795,6 +796,22 @@ def material_exchange_config(request, tokens):
             for sid in sell_ids:
                 selected_sell_market_groups_by_structure[str(int(sid))] = list(fallback_sell_groups)
 
+        buy_group_map = config.get_buy_market_group_map()
+        if buy_group_map:
+            for sid in buy_ids:
+                sid_int = int(sid)
+                if sid_int not in buy_group_map:
+                    continue
+                groups = buy_group_map[sid_int]
+                if groups is None:
+                    selected_buy_market_groups_by_structure[str(sid_int)] = None
+                    continue
+                selected_buy_market_groups_by_structure[str(sid_int)] = _normalize_selected_group_ids_for_ui(groups)
+        elif selected_market_groups_buy:
+            fallback_buy_groups = _normalize_selected_group_ids_for_ui(selected_market_groups_buy)
+            for sid in buy_ids:
+                selected_buy_market_groups_by_structure[str(int(sid))] = list(fallback_buy_groups)
+
     market_group_search_index = {}
     try:
         market_group_search_index = _get_market_group_search_index_for_ids(allowed_choice_ids)
@@ -836,12 +853,40 @@ def material_exchange_config(request, tokens):
                 {
                     "type_id": type_id,
                     "type_name": type_name,
+                    "sell_profile_name": "",
+                    "buy_profile_name": "",
                     "sell_markup_percent_override": row.get("sell_markup_percent_override"),
                     "sell_markup_base_override": row.get("sell_markup_base_override"),
                     "buy_markup_percent_override": row.get("buy_markup_percent_override"),
                     "buy_markup_base_override": row.get("buy_markup_base_override"),
                     # Legacy fixed-price values are still surfaced so existing rows can be
                     # migrated by admins during normal config edits.
+                    "sell_price_override": row.get("sell_price_override"),
+                    "buy_price_override": row.get("buy_price_override"),
+                }
+            )
+
+        raw_profile_item_override_rows = list(getattr(config, "profile_item_price_overrides", []) or [])
+        for row in raw_profile_item_override_rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                type_id = int(row.get("type_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if type_id <= 0:
+                continue
+            type_name = str(row.get("type_name") or "").strip() or get_type_name(type_id)
+            item_price_overrides.append(
+                {
+                    "type_id": type_id,
+                    "type_name": type_name,
+                    "sell_profile_name": str(row.get("sell_profile_name") or "").strip(),
+                    "buy_profile_name": str(row.get("buy_profile_name") or "").strip(),
+                    "sell_markup_percent_override": row.get("sell_markup_percent_override"),
+                    "sell_markup_base_override": row.get("sell_markup_base_override"),
+                    "buy_markup_percent_override": row.get("buy_markup_percent_override"),
+                    "buy_markup_base_override": row.get("buy_markup_base_override"),
                     "sell_price_override": row.get("sell_price_override"),
                     "buy_price_override": row.get("buy_price_override"),
                 }
@@ -865,7 +910,7 @@ def material_exchange_config(request, tokens):
         ]
 
         raw_group_override_rows = list(getattr(config, "market_group_price_overrides", []) or [])
-        parsed_group_overrides: dict[int, dict[str, object]] = {}
+        parsed_group_overrides: list[dict[str, object]] = []
         for row in raw_group_override_rows:
             if not isinstance(row, dict):
                 continue
@@ -884,19 +929,27 @@ def material_exchange_config(request, tokens):
                 ).strip()
                 or f"Group {market_group_id}"
             )
-            parsed_group_overrides[market_group_id] = {
-                "market_group_id": market_group_id,
-                "market_group_path": market_group_path,
-                "sell_markup_percent_override": row.get("sell_markup_percent_override"),
-                "sell_markup_base_override": row.get("sell_markup_base_override"),
-                "buy_markup_percent_override": row.get("buy_markup_percent_override"),
-                "buy_markup_base_override": row.get("buy_markup_base_override"),
-                "sell_price_override": row.get("sell_price_override"),
-                "buy_price_override": row.get("buy_price_override"),
-            }
+            parsed_group_overrides.append(
+                {
+                    "market_group_id": market_group_id,
+                    "market_group_path": market_group_path,
+                    "sell_profile_name": str(row.get("sell_profile_name") or "").strip(),
+                    "buy_profile_name": str(row.get("buy_profile_name") or "").strip(),
+                    "sell_markup_percent_override": row.get("sell_markup_percent_override"),
+                    "sell_markup_base_override": row.get("sell_markup_base_override"),
+                    "buy_markup_percent_override": row.get("buy_markup_percent_override"),
+                    "buy_markup_base_override": row.get("buy_markup_base_override"),
+                    "sell_price_override": row.get("sell_price_override"),
+                    "buy_price_override": row.get("buy_price_override"),
+                }
+            )
         market_group_price_overrides = sorted(
-            parsed_group_overrides.values(),
-            key=lambda payload: str(payload.get("market_group_path") or "").lower(),
+            parsed_group_overrides,
+            key=lambda payload: (
+                str(payload.get("market_group_path") or "").lower(),
+                str(payload.get("sell_profile_name") or "").lower(),
+                str(payload.get("buy_profile_name") or "").lower(),
+            ),
         )
 
         raw_container_override = getattr(config, "container_price_overrides", {}) or {}
@@ -916,7 +969,7 @@ def material_exchange_config(request, tokens):
         )
         buy_market_group_profiles = _normalize_saved_market_group_profiles(
             getattr(config, "buy_market_group_profiles", []) or [],
-            allow_all_supported=False,
+            allow_all_supported=True,
         )
 
     context = {
@@ -937,6 +990,7 @@ def material_exchange_config(request, tokens):
         "selected_market_groups_buy": selected_market_groups_buy,
         "selected_market_groups_sell": selected_market_groups_sell,
         "selected_sell_market_groups_by_structure": selected_sell_market_groups_by_structure,
+        "selected_buy_market_groups_by_structure": selected_buy_market_groups_by_structure,
         "market_group_search_index": market_group_search_index,
         "selected_sell_structures": selected_sell_structures,
         "selected_buy_structures": selected_buy_structures,
@@ -2033,6 +2087,7 @@ def _handle_config_save(request, existing_config):
     corporation_id = request.POST.get("corporation_id")
     sell_structure_ids_raw = request.POST.getlist("sell_structure_ids")
     buy_structure_ids_raw = request.POST.getlist("buy_structure_ids")
+    primary_structure_id_raw = (request.POST.get("primary_structure_id", "") or "").strip()
     hangar_division = request.POST.get("hangar_division")
     sell_markup_percent = request.POST.get("sell_markup_percent", "0")
     sell_markup_base = request.POST.get("sell_markup_base", "buy")
@@ -2044,6 +2099,9 @@ def _handle_config_save(request, existing_config):
     allowed_market_groups_sell_json_raw = (request.POST.get("allowed_market_groups_sell_json", "") or "").strip()
     allowed_market_groups_sell_by_structure_raw = (
         request.POST.get("allowed_market_groups_sell_by_structure_json", "") or ""
+    ).strip()
+    allowed_market_groups_buy_by_structure_raw = (
+        request.POST.get("allowed_market_groups_buy_by_structure_json", "") or ""
     ).strip()
     sell_market_group_profiles_raw = (request.POST.get("sell_market_group_profiles_json", "") or "").strip()
     buy_market_group_profiles_raw = (request.POST.get("buy_market_group_profiles_json", "") or "").strip()
@@ -2393,7 +2451,7 @@ def _handle_config_save(request, existing_config):
         if not isinstance(payload, list):
             return []
 
-        parsed_by_type: dict[int, dict[str, object]] = {}
+        parsed_by_type: dict[tuple[int, str, str], dict[str, object]] = {}
         for row in payload:
             if not isinstance(row, dict):
                 continue
@@ -2445,9 +2503,13 @@ def _handle_config_save(request, existing_config):
             if not has_markup_override and not has_legacy_override:
                 continue
 
-            parsed_by_type[type_id] = {
+            sell_profile_name = str(row.get("sell_profile_name") or "").strip()[:80]
+            buy_profile_name = str(row.get("buy_profile_name") or "").strip()[:80]
+            parsed_by_type[(type_id, sell_profile_name.casefold(), buy_profile_name.casefold())] = {
                 "type_id": type_id,
                 "type_name": type_name,
+                "sell_profile_name": sell_profile_name,
+                "buy_profile_name": buy_profile_name,
                 "sell_markup_percent_override": sell_markup_percent_override,
                 "sell_markup_base_override": sell_markup_base_override,
                 "buy_markup_percent_override": buy_markup_percent_override,
@@ -2495,7 +2557,7 @@ def _handle_config_save(request, existing_config):
         if not isinstance(payload, list):
             return []
 
-        parsed_by_group: dict[int, dict[str, object]] = {}
+        parsed_by_group: dict[tuple[int, str, str], dict[str, object]] = {}
         for row in payload:
             if not isinstance(row, dict):
                 continue
@@ -2545,7 +2607,9 @@ def _handle_config_save(request, existing_config):
             if not has_markup_override and not has_fixed_override:
                 continue
 
-            parsed_by_group[int(market_group_id)] = {
+            sell_profile_name = str(row.get("sell_profile_name") or "").strip()[:80]
+            buy_profile_name = str(row.get("buy_profile_name") or "").strip()[:80]
+            parsed_by_group[(int(market_group_id), sell_profile_name.casefold(), buy_profile_name.casefold())] = {
                 "market_group_id": int(market_group_id),
                 "market_group_path": str(
                     row.get("market_group_path")
@@ -2553,6 +2617,8 @@ def _handle_config_save(request, existing_config):
                     or _build_market_group_path_label(int(market_group_id), all_groups)
                 ).strip()
                 or f"Group {int(market_group_id)}",
+                "sell_profile_name": sell_profile_name,
+                "buy_profile_name": buy_profile_name,
                 "sell_markup_percent_override": _decimal_for_json(sell_markup_percent_override),
                 "sell_markup_base_override": sell_markup_base_override,
                 "buy_markup_percent_override": _decimal_for_json(buy_markup_percent_override),
@@ -2590,16 +2656,10 @@ def _handle_config_save(request, existing_config):
         hangar_division = int(hangar_division)
         sell_markup_percent = _parse_decimal(sell_markup_percent, "0")
         buy_markup_percent = _parse_decimal(buy_markup_percent, "5")
-        item_price_overrides = _parse_item_price_overrides(item_price_overrides_raw)
 
         market_group_tree = _get_market_group_tree()
         allowed_ids: set[int] = _collect_market_group_tree_ids(market_group_tree)
         all_groups = _build_market_group_index()
-        market_group_price_overrides = _parse_market_group_price_overrides(
-            market_group_price_overrides_raw,
-            allowed_ids=allowed_ids,
-            all_groups=all_groups,
-        )
         container_price_overrides = _parse_container_price_overrides()
         if capital_fields_submitted:
             capital_default_price_dread = _parse_optional_price(capital_default_price_dread_raw)
@@ -2858,8 +2918,77 @@ def _handle_config_save(request, existing_config):
         )
         buy_market_group_profiles = _parse_market_group_profiles(
             buy_market_group_profiles_raw,
-            allow_all_supported=False,
+            allow_all_supported=True,
         )
+
+        def _build_profile_name_map(
+            raw_profiles: list[dict[str, object]],
+        ) -> dict[str, str]:
+            name_map: dict[str, str] = {}
+            for row in raw_profiles:
+                profile_name = str(row.get("name") or "").strip()
+                if profile_name:
+                    name_map[profile_name.casefold()] = profile_name
+            return name_map
+
+        sell_profile_name_map = _build_profile_name_map(sell_market_group_profiles)
+        buy_profile_name_map = _build_profile_name_map(buy_market_group_profiles)
+
+        def _normalize_profile_name(raw_value, *, profile_name_map: dict[str, str]) -> str:
+            profile_name = str(raw_value or "").strip()
+            if not profile_name:
+                return ""
+            return str(profile_name_map.get(profile_name.casefold(), ""))
+
+        item_price_overrides = _parse_item_price_overrides(item_price_overrides_raw)
+        profile_item_price_overrides: list[dict[str, object]] = []
+        normalized_item_price_overrides: list[dict[str, object]] = []
+        for row in item_price_overrides:
+            normalized_row = dict(row)
+            normalized_row["sell_profile_name"] = _normalize_profile_name(
+                row.get("sell_profile_name"),
+                profile_name_map=sell_profile_name_map,
+            )
+            normalized_row["buy_profile_name"] = _normalize_profile_name(
+                row.get("buy_profile_name"),
+                profile_name_map=buy_profile_name_map,
+            )
+            normalized_row["sell_markup_percent_override"] = _decimal_for_json(
+                normalized_row.get("sell_markup_percent_override")
+            )
+            normalized_row["buy_markup_percent_override"] = _decimal_for_json(
+                normalized_row.get("buy_markup_percent_override")
+            )
+            normalized_row["sell_price_override"] = _decimal_for_json(
+                normalized_row.get("sell_price_override")
+            )
+            normalized_row["buy_price_override"] = _decimal_for_json(
+                normalized_row.get("buy_price_override")
+            )
+            if normalized_row["sell_profile_name"] or normalized_row["buy_profile_name"]:
+                profile_item_price_overrides.append(normalized_row)
+            else:
+                normalized_item_price_overrides.append(normalized_row)
+        item_price_overrides = normalized_item_price_overrides
+
+        market_group_price_overrides = _parse_market_group_price_overrides(
+            market_group_price_overrides_raw,
+            allowed_ids=allowed_ids,
+            all_groups=all_groups,
+        )
+        normalized_market_group_price_overrides: list[dict[str, object]] = []
+        for row in market_group_price_overrides:
+            normalized_row = dict(row)
+            normalized_row["sell_profile_name"] = _normalize_profile_name(
+                row.get("sell_profile_name"),
+                profile_name_map=sell_profile_name_map,
+            )
+            normalized_row["buy_profile_name"] = _normalize_profile_name(
+                row.get("buy_profile_name"),
+                profile_name_map=buy_profile_name_map,
+            )
+            normalized_market_group_price_overrides.append(normalized_row)
+        market_group_price_overrides = normalized_market_group_price_overrides
 
         if not (1 <= hangar_division <= 7):
             raise ValueError("Hangar division must be between 1 and 7")
@@ -2937,6 +3066,48 @@ def _handle_config_save(request, existing_config):
     elif allowed_market_groups_sell:
         for sid in sell_structure_ids:
             allowed_market_groups_sell_by_structure[str(int(sid))] = list(allowed_market_groups_sell)
+
+    allowed_market_groups_buy_by_structure: dict[str, list[int] | None] = {}
+    buy_group_payload_was_submitted = bool(allowed_market_groups_buy_by_structure_raw)
+    if buy_group_payload_was_submitted:
+        try:
+            payload = json.loads(allowed_market_groups_buy_by_structure_raw)
+        except json.JSONDecodeError:
+            payload = {}
+        if isinstance(payload, dict):
+            for raw_sid, raw_groups in payload.items():
+                try:
+                    sid = int(raw_sid)
+                except (TypeError, ValueError):
+                    continue
+                if sid not in buy_structure_ids:
+                    continue
+                if raw_groups is None:
+                    allowed_market_groups_buy_by_structure[str(sid)] = None
+                    continue
+                if not isinstance(raw_groups, (list, tuple, set)):
+                    continue
+                allowed_market_groups_buy_by_structure[str(sid)] = _parse_group_ids(
+                    [str(gid) for gid in raw_groups]
+                )
+
+        for sid in buy_structure_ids:
+            sid_key = str(int(sid))
+            if sid_key not in allowed_market_groups_buy_by_structure:
+                allowed_market_groups_buy_by_structure[sid_key] = list(allowed_market_groups_buy)
+    elif buy_structure_ids:
+        for sid in buy_structure_ids:
+            allowed_market_groups_buy_by_structure[str(int(sid))] = list(allowed_market_groups_buy)
+
+    if allowed_market_groups_buy_by_structure:
+        normalized_buy_union: list[int] = []
+        for raw_groups in allowed_market_groups_buy_by_structure.values():
+            if raw_groups is None:
+                continue
+            for group_id in raw_groups:
+                if group_id not in normalized_buy_union:
+                    normalized_buy_union.append(int(group_id))
+        allowed_market_groups_buy = normalized_buy_union
 
     structure_flags_by_id: dict[int, set[str]] = {}
     allowed_structure_ids: set[int] = set()
@@ -3040,7 +3211,17 @@ def _handle_config_save(request, existing_config):
         sell_structure_names = [_resolve_name(sid) for sid in sell_structure_ids]
         buy_structure_names = [_resolve_name(sid) for sid in buy_structure_ids]
 
-        primary_structure_id = sell_structure_ids[0] if sell_structure_ids else 0
+        valid_primary_structure_ids = {int(sid) for sid in sell_structure_ids + buy_structure_ids}
+        primary_structure_id = 0
+        if primary_structure_id_raw:
+            try:
+                candidate_primary_structure_id = int(primary_structure_id_raw)
+            except (TypeError, ValueError):
+                candidate_primary_structure_id = 0
+            if candidate_primary_structure_id in valid_primary_structure_ids:
+                primary_structure_id = candidate_primary_structure_id
+        if not primary_structure_id and sell_structure_ids:
+            primary_structure_id = sell_structure_ids[0]
         if not primary_structure_id and buy_structure_ids:
             primary_structure_id = buy_structure_ids[0]
         primary_structure_name = _resolve_name(primary_structure_id) if primary_structure_id else ""
@@ -3086,10 +3267,12 @@ def _handle_config_save(request, existing_config):
             existing_config.capital_disabled_ship_groups = capital_disabled_ship_groups
             existing_config.capital_ship_estimated_price_overrides = capital_ship_estimated_price_overrides
             existing_config.allowed_market_groups_buy = allowed_market_groups_buy
+            existing_config.allowed_market_groups_buy_by_structure = allowed_market_groups_buy_by_structure
             existing_config.allowed_market_groups_sell = allowed_market_groups_sell
             existing_config.allowed_market_groups_sell_by_structure = allowed_market_groups_sell_by_structure
             existing_config.sell_market_group_profiles = sell_market_group_profiles
             existing_config.buy_market_group_profiles = buy_market_group_profiles
+            existing_config.profile_item_price_overrides = profile_item_price_overrides
             existing_config.market_group_price_overrides = market_group_price_overrides
             existing_config.container_price_overrides = container_price_overrides
             existing_config.is_active = is_active
@@ -3135,10 +3318,12 @@ def _handle_config_save(request, existing_config):
                 capital_disabled_ship_groups=capital_disabled_ship_groups,
                 capital_ship_estimated_price_overrides=capital_ship_estimated_price_overrides,
                 allowed_market_groups_buy=allowed_market_groups_buy,
+                allowed_market_groups_buy_by_structure=allowed_market_groups_buy_by_structure,
                 allowed_market_groups_sell=allowed_market_groups_sell,
                 allowed_market_groups_sell_by_structure=allowed_market_groups_sell_by_structure,
                 sell_market_group_profiles=sell_market_group_profiles,
                 buy_market_group_profiles=buy_market_group_profiles,
+                profile_item_price_overrides=profile_item_price_overrides,
                 market_group_price_overrides=market_group_price_overrides,
                 container_price_overrides=container_price_overrides,
                 is_active=is_active,

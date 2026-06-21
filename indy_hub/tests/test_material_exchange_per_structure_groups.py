@@ -22,6 +22,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
             structure_name="Primary Structure",
             sell_structure_ids=[60003760, 60003761],
             sell_structure_names=["Alpha", "Beta"],
+            buy_structure_ids=[60003760, 60003761],
+            buy_structure_names=["Alpha", "Beta"],
+            allowed_market_groups_buy=[150],
+            allowed_market_groups_buy_by_structure={
+                "60003760": [300],
+                "60003761": [400],
+            },
             allowed_market_groups_sell=[100],
             allowed_market_groups_sell_by_structure={
                 "60003760": None,
@@ -65,7 +72,7 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         )
 
         self.assertEqual(allowed_type_ids, {34, 35})
-        mock_filter.assert_called_once_with(market_group_id_raw__in={200})
+        mock_filter.assert_called_once_with(market_group_id__in={200})
 
     @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={100})
     @patch("eve_sde.models.ItemType.objects.filter")
@@ -88,7 +95,70 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         )
 
         self.assertEqual(allowed_type_ids, {36})
-        mock_filter.assert_called_once_with(market_group_id_raw__in={100})
+        mock_filter.assert_called_once_with(market_group_id__in={100})
+
+    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={300})
+    @patch("eve_sde.models.ItemType.objects.filter")
+    def test_buy_structure_specific_groups_override_global_groups(
+        self,
+        mock_filter,
+        _mock_expand_market_group_ids,
+    ):
+        mock_queryset = Mock()
+        mock_queryset.values_list.return_value = [44]
+        mock_filter.return_value = mock_queryset
+
+        allowed_type_ids = _get_allowed_type_ids_for_config(
+            self.config,
+            "buy",
+            structure_id=60003760,
+        )
+
+        self.assertEqual(allowed_type_ids, {44})
+        mock_filter.assert_called_once_with(market_group_id__in={300})
+
+    @patch("indy_hub.views.material_exchange._expand_market_group_ids")
+    @patch("eve_sde.models.ItemType.objects.filter")
+    def test_buy_structure_with_explicit_all_returns_no_filter(
+        self,
+        mock_filter,
+        mock_expand_market_group_ids,
+    ):
+        self.config.allowed_market_groups_buy_by_structure = {"60003760": None}
+        self.config.save(update_fields=["allowed_market_groups_buy_by_structure"])
+
+        allowed_type_ids = _get_allowed_type_ids_for_config(
+            self.config,
+            "buy",
+            structure_id=60003760,
+        )
+
+        self.assertIsNone(allowed_type_ids)
+        mock_filter.assert_not_called()
+        mock_expand_market_group_ids.assert_not_called()
+
+    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={150})
+    @patch("eve_sde.models.ItemType.objects.filter")
+    def test_buy_structure_without_override_uses_global_groups(
+        self,
+        mock_filter,
+        _mock_expand_market_group_ids,
+    ):
+        self.config.allowed_market_groups_buy_by_structure = {"60003760": [300]}
+        self.config.save(update_fields=["allowed_market_groups_buy_by_structure"])
+
+        mock_queryset = Mock()
+        mock_queryset.values_list.return_value = [45]
+        mock_filter.return_value = mock_queryset
+
+        allowed_type_ids = _get_allowed_type_ids_for_config(
+            self.config,
+            "buy",
+            structure_id=60003761,
+        )
+
+        self.assertEqual(allowed_type_ids, {45})
+        mock_filter.assert_called_once_with(market_group_id__in={150})
 
     @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
     def test_find_sell_locations_for_type_returns_only_accepted_locations(

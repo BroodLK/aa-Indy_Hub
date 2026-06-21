@@ -1,4 +1,5 @@
 # Standard Library
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -7,7 +8,7 @@ from django.contrib.auth.models import User
 from django.test import TestCase
 
 # AA Example App
-from indy_hub.models import Blueprint, MaterialExchangeConfig, MaterialExchangeStock
+from indy_hub.models import Blueprint, MaterialExchangeConfig, MaterialExchangeItemPriceOverride, MaterialExchangeStock
 from indy_hub.services.asset_cache import make_managed_hangar_location_id
 from indy_hub.tasks.material_exchange import _sync_stock_impl
 from indy_hub.views.material_exchange import (
@@ -506,7 +507,10 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
 
         rows = _build_buy_material_rows(
             scoped_assets=scoped_assets,
+            config=self.config,
             stock_meta_by_type=stock_meta_by_type,
+            buy_override_map={},
+            buy_market_group_override_map={},
             buy_name_map={1001: "Structure Alpha"},
             fallback_location_label="Structure Alpha",
             blueprint_variant_by_item_id={child_item_id: "bpc"},
@@ -521,3 +525,105 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(item_rows[0]["blueprint_variant"], "bpc")
         self.assertEqual(item_rows[0]["bpc_runs"], 7)
         self.assertEqual(item_rows[0]["display_sell_price_to_member"], 0)
+
+    def test_build_buy_material_rows_uses_profile_specific_price_for_matching_source_profile(self):
+        MaterialExchangeItemPriceOverride.objects.create(
+            config=self.config,
+            type_id=34,
+            type_name="Tritanium",
+            buy_price_override=Decimal("6.10"),
+        )
+        self.config.buy_structure_ids = [1001, 1002]
+        self.config.buy_structure_names = ["Structure Alpha", "Structure Beta"]
+        self.config.allowed_market_groups_buy_by_structure = {
+            "1001": [500],
+            "1002": [600],
+        }
+        self.config.buy_market_group_profiles = [
+            {"name": "Alpha Desk", "market_group_ids": [500]},
+            {"name": "Beta Desk", "market_group_ids": [600]},
+        ]
+        self.config.profile_item_price_overrides = [
+            {
+                "type_id": 34,
+                "type_name": "Tritanium",
+                "buy_profile_name": "Beta Desk",
+                "buy_price_override": "7.25",
+            }
+        ]
+        self.config.save(
+            update_fields=[
+                "buy_structure_ids",
+                "buy_structure_names",
+                "allowed_market_groups_buy_by_structure",
+                "buy_market_group_profiles",
+                "profile_item_price_overrides",
+            ]
+        )
+
+        scoped_assets = [
+            {
+                "item_id": 7001,
+                "location_id": 1001,
+                "location_flag": "CorpSAG1",
+                "type_id": 34,
+                "quantity": 10,
+                "is_singleton": False,
+                "is_blueprint": False,
+                "source_structure_ids": [1001],
+            },
+            {
+                "item_id": 7002,
+                "location_id": 1002,
+                "location_flag": "CorpSAG1",
+                "type_id": 34,
+                "quantity": 5,
+                "is_singleton": False,
+                "is_blueprint": False,
+                "source_structure_ids": [1002],
+            },
+        ]
+        stock_meta_by_type = {
+            34: {
+                "type_id": 34,
+                "base_type_name": "Tritanium",
+                "display_type_name": "Tritanium",
+                "blueprint_variant": "",
+                "display_sell_price_to_member": 6.10,
+                "default_sell_price_to_member": 5.50,
+                "has_buy_price_override": True,
+                "jita_buy_price": 5,
+                "jita_sell_price": 6,
+                "quantity": 15,
+                "reserved_quantity": 0,
+                "available_quantity": 15,
+                "source_structure_ids": [1001, 1002],
+                "buy_location_label": "Structure Alpha, Structure Beta",
+            }
+        }
+
+        rows = _build_buy_material_rows(
+            scoped_assets=scoped_assets,
+            config=self.config,
+            stock_meta_by_type=stock_meta_by_type,
+            buy_override_map={},
+            buy_market_group_override_map={},
+            buy_name_map={1001: "Structure Alpha", 1002: "Structure Beta"},
+            fallback_location_label="Structure Alpha, Structure Beta",
+        )
+
+        item_rows_by_source = {
+            tuple(row["source_structure_ids"]): row
+            for row in rows
+            if row.get("row_kind") == "item"
+        }
+        self.assertEqual(
+            item_rows_by_source[(1001,)]["display_sell_price_to_member"],
+            Decimal("6.10"),
+        )
+        self.assertEqual(
+            item_rows_by_source[(1002,)]["display_sell_price_to_member"],
+            Decimal("7.25"),
+        )
+        self.assertTrue(item_rows_by_source[(1001,)]["has_buy_price_override"])
+        self.assertTrue(item_rows_by_source[(1002,)]["has_buy_price_override"])

@@ -20,6 +20,8 @@ from indy_hub.views.material_exchange import (
     _compute_effective_sell_unit_price,
     _format_buy_stock_type_name,
     _get_item_price_override_maps,
+    _get_market_group_price_override_maps,
+    _parse_submitted_buy_item_quantities,
     _parse_submitted_quantities,
     _parse_submitted_sell_item_quantities,
 )
@@ -333,6 +335,65 @@ class MaterialExchangePricingTests(TestCase):
             Decimal("4.00"),
         )
 
+    def test_profile_scoped_item_override_beats_global_when_profile_matches(self):
+        MaterialExchangeItemPriceOverride.objects.create(
+            config=self.config,
+            type_id=self.stock.type_id,
+            type_name="Tritanium",
+            sell_markup_percent_override=Decimal("5.00"),
+            sell_markup_base_override="buy",
+        )
+        self.config.profile_item_price_overrides = [
+            {
+                "type_id": self.stock.type_id,
+                "type_name": "Tritanium",
+                "sell_profile_name": "Ore Desk",
+                "buy_profile_name": "",
+                "sell_markup_percent_override": "12.50",
+                "sell_markup_base_override": "sell",
+            }
+        ]
+        self.config.save(update_fields=["profile_item_price_overrides"])
+
+        sell_override_map, _buy_override_map = _get_item_price_override_maps(
+            self.config,
+            sell_profile_name="Ore Desk",
+        )
+
+        self.assertIn(self.stock.type_id, sell_override_map)
+        self.assertEqual(sell_override_map[self.stock.type_id]["kind"], "markup")
+        self.assertEqual(sell_override_map[self.stock.type_id]["percent"], Decimal("12.50"))
+        self.assertEqual(sell_override_map[self.stock.type_id]["base"], "sell")
+
+    def test_profile_scoped_market_group_override_beats_global_when_profile_matches(self):
+        self.config.market_group_price_overrides = [
+            {
+                "market_group_id": 300,
+                "market_group_path": "Manufacture & Research -> Materials",
+                "sell_markup_percent_override": "5.00",
+                "sell_markup_base_override": "buy",
+            },
+            {
+                "market_group_id": 300,
+                "market_group_path": "Manufacture & Research -> Materials",
+                "sell_profile_name": "Ore Desk",
+                "buy_profile_name": "",
+                "sell_markup_percent_override": "9.75",
+                "sell_markup_base_override": "sell",
+            },
+        ]
+        self.config.save(update_fields=["market_group_price_overrides"])
+
+        sell_override_map, _buy_override_map = _get_market_group_price_override_maps(
+            self.config,
+            sell_profile_name="Ore Desk",
+        )
+
+        self.assertIn(300, sell_override_map)
+        self.assertEqual(sell_override_map[300]["kind"], "markup")
+        self.assertEqual(sell_override_map[300]["percent"], Decimal("9.75"))
+        self.assertEqual(sell_override_map[300]["base"], "sell")
+
     def test_parse_submitted_quantities_sums_split_row_inputs(self):
         payload = QueryDict("", mutable=True)
         payload.update(
@@ -383,6 +444,29 @@ class MaterialExchangePricingTests(TestCase):
         self.assertEqual(by_key.get((36, "", True)), 5)
         self.assertEqual(by_key.get((36, "", False)), 1)
         self.assertNotIn((36, "bpc", False), by_key)
+
+    def test_parse_submitted_buy_item_quantities_keeps_row_index(self):
+        payload = QueryDict("", mutable=True)
+        payload.setlist("qty_34_std_root_7", ["2", "3"])
+        payload.setlist("qty_34_bpc_incan_9", ["1"])
+        payload.setlist("qty_35_11", ["4"])
+        payload.setlist("qty_36_std_root_12", ["0"])
+
+        parsed = _parse_submitted_buy_item_quantities(payload)
+        by_key = {
+            (
+                int(entry["type_id"]),
+                str(entry["blueprint_variant"] or ""),
+                bool(entry.get("in_container")),
+                int(entry["row_index"]),
+            ): int(entry["quantity"])
+            for entry in parsed
+        }
+
+        self.assertEqual(by_key.get((34, "", False, 7)), 5)
+        self.assertEqual(by_key.get((34, "bpc", True, 9)), 1)
+        self.assertEqual(by_key.get((35, "", False, 11)), 4)
+        self.assertNotIn((36, "", False, 12), by_key)
 
     def test_format_buy_stock_type_name_appends_blueprint_variant_suffix(self):
         self.assertEqual(

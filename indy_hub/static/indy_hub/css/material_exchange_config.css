@@ -502,6 +502,16 @@
     margin-top: 0.35rem;
 }
 
+.me-config .me-market-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem;
+    border: 1px solid var(--me-line);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
 .me-config .me-market-mode-badge {
     display: inline-flex;
     align-items: center;
@@ -516,6 +526,14 @@
 
 .me-config .me-market-mode-btn {
     border-radius: 999px;
+    border-color: transparent;
+    min-width: 74px;
+}
+
+.me-config .me-market-mode-btn.is-active {
+    background: rgba(73, 162, 255, 0.18);
+    border-color: rgba(73, 162, 255, 0.3);
+    color: #d9ecff;
 }
 
 .me-config .me-market-panel {
@@ -988,6 +1006,256 @@
     margin-top: 0 !important;
 }
 
+.me-config .section-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.9rem;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+}
+
+.me-config .section-copy {
+    margin-top: 0.35rem;
+    max-width: 58rem;
+    color: var(--me-muted);
+    font-size: 0.84rem;
+    line-height: 1.5;
+}
+
+.me-config .station-assignment-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.85rem;
+}
+
+.me-config .field {
+    display: grid;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+.me-config .field > label {
+    margin: 0;
+    color: var(--me-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.me-config .station-layout {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.me-config .subpanel {
+    padding: 0.9rem;
+    border: 1px solid var(--me-line);
+    border-radius: var(--me-radius);
+    background: var(--me-panel-2);
+}
+
+.me-config .subpanel-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.me-config .subpanel-title {
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--me-text);
+}
+
+.me-config .subpanel-meta {
+    color: var(--me-muted);
+    font-size: 0.76rem;
+}
+
+.me-config .muted {
+    color: var(--me-muted);
+    font-size: 0.8rem;
+}
+
+.me-config .station-list,
+.me-config .validation-list,
+.me-config .detail-list,
+.me-config .preview-list,
+.me-config .inline-stats {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.me-config .station-card,
+.me-config .validation-row,
+.me-config .detail-row,
+.me-config .preview-row {
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--me-line);
+    border-radius: var(--me-radius);
+    background: var(--me-panel);
+}
+
+.me-config .station-card {
+    cursor: pointer;
+}
+
+.me-config .station-card.active {
+    border-color: rgba(73, 162, 255, 0.42);
+    background: var(--me-accent-soft);
+}
+
+.me-config .station-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin-bottom: 0.55rem;
+}
+
+.me-config .station-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--me-text);
+}
+
+.me-config .station-sub,
+.me-config .profile-sub,
+.me-config .override-sub,
+.me-config .detail-sub,
+.me-config .preview-sub {
+    margin-top: 0.25rem;
+    color: var(--me-muted);
+    font-size: 0.78rem;
+    line-height: 1.45;
+}
+
+.me-config .station-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.me-config .mini-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--me-panel-3);
+    color: var(--me-text);
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.me-config .mini-badge.sell {
+    border-color: rgba(73, 162, 255, 0.28);
+    color: #cde5ff;
+}
+
+.me-config .mini-badge.buy {
+    border-color: rgba(99, 192, 141, 0.28);
+    color: #cff0db;
+}
+
+.me-config .mini-badge.warn {
+    border-color: rgba(229, 180, 97, 0.3);
+    color: #ffe3b2;
+}
+
+.me-config .mini-badge.off {
+    color: var(--me-muted);
+}
+
+.me-config .validation-row.good,
+.me-config .health-state.good {
+    border-color: rgba(99, 192, 141, 0.28);
+}
+
+.me-config .validation-row.warn,
+.me-config .health-state.warn {
+    border-color: rgba(229, 180, 97, 0.28);
+}
+
+.me-config .validation-row.bad,
+.me-config .health-state.bad {
+    border-color: rgba(224, 107, 117, 0.28);
+}
+
+.me-config .health-state {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--me-line);
+    background: var(--me-panel-3);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.me-config .health-state.good {
+    color: #cff0db;
+}
+
+.me-config .health-state.warn {
+    color: #ffe3b2;
+}
+
+.me-config .health-state.bad {
+    color: #ffd4d7;
+}
+
+.me-config .preview-shell {
+    min-height: 0;
+}
+
+.me-config .me-sync-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.me-config .me-scope-note {
+    margin-top: 0.65rem;
+}
+
+.me-config .me-hidden-controls {
+    display: none;
+}
+
+.me-config .right-card .right-list {
+    display: grid;
+    gap: 0;
+}
+
+.me-config .footer-bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    align-items: center;
+    padding: 1rem;
+    border: 1px solid var(--me-line);
+    border-radius: var(--me-radius);
+    background: var(--me-panel);
+    box-shadow: var(--me-shadow);
+}
+
+.me-config .footer-copy {
+    margin-top: 0.3rem;
+    max-width: 42rem;
+    color: var(--me-muted);
+    font-size: 0.84rem;
+    line-height: 1.5;
+}
+
 @media (max-width: 1500px) {
     .me-config .top-summary {
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1002,18 +1270,28 @@
     .me-config .sidebar {
         position: static;
     }
+
+    .me-config .station-layout {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 768px) {
     .me-config .header,
     .me-config .status-banner,
-    .me-config .toggle-line {
+    .me-config .toggle-line,
+    .me-config .footer-bar {
         display: grid;
         grid-template-columns: 1fr;
     }
 
     .me-config .top-summary {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .me-config .station-assignment-grid,
+    .me-config .me-sync-grid {
+        grid-template-columns: 1fr;
     }
 }
 

@@ -2197,6 +2197,14 @@ class MaterialExchangeConfig(models.Model):
         default=list,
         help_text=_("List of market group IDs allowed for buying. Empty = all industry market groups allowed."),
     )
+    allowed_market_groups_buy_by_structure = models.JSONField(
+        blank=True,
+        default=dict,
+        help_text=_(
+            "Per-buy-location market group rules. Key = structure ID. "
+            "Value = list of market group IDs allowed for that buy location."
+        ),
+    )
     allowed_market_groups_sell = models.JSONField(
         blank=True,
         default=list,
@@ -2224,6 +2232,15 @@ class MaterialExchangeConfig(models.Model):
         help_text=_(
             "Saved buy-side market-group profiles. Each row can define name, "
             "default flag, and selected market group IDs."
+        ),
+    )
+    profile_item_price_overrides = models.JSONField(
+        blank=True,
+        default=list,
+        help_text=_(
+            "Per-item pricing overrides scoped to a saved sell or buy market-group profile. "
+            "Each row can define the target type, the side-specific profile name, and fixed "
+            "price and/or markup overrides for the matching side."
         ),
     )
     market_group_price_overrides = models.JSONField(
@@ -2366,6 +2383,51 @@ class MaterialExchangeConfig(models.Model):
             normalized[sid] = groups
 
         return normalized
+
+    def get_buy_market_group_map(self) -> dict[int, list[int] | None]:
+        """Return per-buy-location market group rules keyed by structure ID."""
+
+        raw_mapping = getattr(self, "allowed_market_groups_buy_by_structure", None)
+        normalized: dict[int, list[int] | None] = {}
+        mapping_found = False
+        if isinstance(raw_mapping, dict):
+            for raw_sid, raw_groups in raw_mapping.items():
+                try:
+                    sid = int(raw_sid)
+                except (TypeError, ValueError):
+                    continue
+                if sid <= 0:
+                    continue
+                if raw_groups is None:
+                    normalized[sid] = None
+                    mapping_found = True
+                    continue
+                if not isinstance(raw_groups, (list, tuple, set)):
+                    continue
+                groups: list[int] = []
+                for raw_gid in raw_groups:
+                    try:
+                        gid = int(raw_gid)
+                    except (TypeError, ValueError):
+                        continue
+                    if gid <= 0:
+                        continue
+                    if gid not in groups:
+                        groups.append(gid)
+                normalized[sid] = groups
+                mapping_found = True
+
+        if mapping_found:
+            return normalized
+
+        fallback_groups = self._normalize_structure_ids(getattr(self, "allowed_market_groups_buy", None) or [])
+        if not fallback_groups:
+            return {}
+
+        fallback_mapping: dict[int, list[int]] = {}
+        for sid in self.get_buy_structure_ids(include_primary=False):
+            fallback_mapping[int(sid)] = list(fallback_groups)
+        return fallback_mapping
 
     def get_capital_preapproved_state_names(self) -> list[str]:
         raw = list(getattr(self, "capital_auto_cancel_preapproved_state_names", []) or [])
