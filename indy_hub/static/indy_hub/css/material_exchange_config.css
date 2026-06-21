@@ -628,6 +628,11 @@
     border-color: rgba(73, 162, 255, 0.28);
 }
 
+.me-config .me-market-tree-row.is-partial {
+    background: rgba(73, 162, 255, 0.08);
+    border-color: rgba(73, 162, 255, 0.18);
+}
+
 .me-config .me-market-tree-row-content {
     width: 100%;
 }
@@ -654,6 +659,32 @@
 .me-config .me-market-tree-label {
     font-size: 0.92rem;
     font-weight: 600;
+}
+
+.me-config .me-market-tree-state {
+    position: relative;
+    width: 1rem;
+    min-width: 1rem;
+    height: 1rem;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    padding: 0;
+    box-shadow: inset 0 0 0 1px rgba(73, 162, 255, 0.58);
+    cursor: pointer;
+}
+
+.me-config .me-market-tree-state.is-partial::after {
+    content: "";
+    position: absolute;
+    inset: 0.22rem;
+    border-radius: 1px;
+    background: rgba(73, 162, 255, 0.16);
+}
+
+.me-config .me-market-tree-state:disabled {
+    cursor: default;
+    opacity: 0.55;
 }
 
 .me-config .me-market-tree-label-body {
@@ -836,6 +867,89 @@
     border-color: rgba(224, 107, 117, 0.32);
     background: rgba(224, 107, 117, 0.12);
     color: #ffd1d5;
+}
+
+.me-config .me-toast-region {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1100;
+    display: grid;
+    gap: 0.65rem;
+    width: min(24rem, calc(100vw - 2rem));
+    pointer-events: none;
+}
+
+.me-config .me-toast {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
+    gap: 0.7rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--me-line);
+    border-radius: var(--me-radius);
+    background: rgba(15, 20, 24, 0.96);
+    box-shadow: var(--me-shadow);
+    color: var(--me-text);
+    pointer-events: auto;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.me-config .me-toast.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.me-config .me-toast-icon {
+    width: 0.7rem;
+    height: 0.7rem;
+    margin-top: 0.28rem;
+    border-radius: 999px;
+    background: var(--me-accent);
+}
+
+.me-config .me-toast-success {
+    border-color: rgba(99, 192, 141, 0.38);
+}
+
+.me-config .me-toast-success .me-toast-icon {
+    background: var(--me-good);
+}
+
+.me-config .me-toast-info {
+    border-color: rgba(73, 162, 255, 0.38);
+}
+
+.me-config .me-toast-warning {
+    border-color: rgba(229, 180, 97, 0.38);
+}
+
+.me-config .me-toast-warning .me-toast-icon {
+    background: var(--me-warn);
+}
+
+.me-config .me-toast-danger {
+    border-color: rgba(224, 107, 117, 0.38);
+}
+
+.me-config .me-toast-danger .me-toast-icon {
+    background: var(--me-danger);
+}
+
+.me-config .me-toast-message {
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.me-config .me-toast-close {
+    border: 0;
+    background: transparent;
+    color: var(--me-muted);
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0;
 }
 
 .me-config .top-summary {

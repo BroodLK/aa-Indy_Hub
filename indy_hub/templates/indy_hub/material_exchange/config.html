@@ -15,6 +15,7 @@
 
 {% block content %}
     <div class="container-fluid py-2 me-config">
+        <div id="configToastRegion" class="me-toast-region" aria-live="polite" aria-atomic="true"></div>
         <!--
             LIVE MIGRATION NOTE: Header + context mapping
             Keep the live navigation/actions visible even though the page is being restyled:
@@ -1084,6 +1085,47 @@
         {{ buy_market_group_profiles|json_script:"buyMarketGroupProfilesData" }}
 
         <script>
+window.showMaterialExchangeConfigToast = function(message, tone = 'success') {
+    const toastRegion = document.getElementById('configToastRegion');
+    if (!toastRegion || !message) {
+        return;
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `me-toast me-toast-${String(tone || 'success')}`;
+    toast.setAttribute('role', 'status');
+    toast.innerHTML = `
+        <span class="me-toast-icon" aria-hidden="true"></span>
+        <span class="me-toast-message"></span>
+        <button type="button" class="me-toast-close" aria-label="{% trans 'Dismiss notification' %}">&times;</button>
+    `;
+
+    const messageEl = toast.querySelector('.me-toast-message');
+    if (messageEl) {
+        messageEl.textContent = String(message);
+    }
+
+    const dismissToast = () => {
+        toast.classList.remove('is-visible');
+        window.setTimeout(() => {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 180);
+    };
+
+    const closeButton = toast.querySelector('.me-toast-close');
+    if (closeButton) {
+        closeButton.addEventListener('click', dismissToast);
+    }
+
+    toastRegion.appendChild(toast);
+    window.requestAnimationFrame(() => {
+        toast.classList.add('is-visible');
+    });
+    window.setTimeout(dismissToast, 3200);
+};
+
 document.addEventListener('DOMContentLoaded', function() {
     const corpSelect = document.getElementById('corpSelect');
     const sellStructureSelect = document.getElementById('sellStructureSelect');
@@ -2795,6 +2837,64 @@ document.addEventListener('DOMContentLoaded', function() {
     const getSelectedBuyProfile = () =>
         (buyProfiles || []).find(profile => profile.name === (buyProfileSelect ? buyProfileSelect.value : '')) || null;
 
+    const matchProfileByRule = (profiles, groupRule) => {
+        const allowAll = groupRule === null;
+        const normalizedGroups = Array.isArray(groupRule) ? normalizeGroupIdList(groupRule) : [];
+        return (Array.isArray(profiles) ? profiles : []).find(profile => {
+            if (!profile || typeof profile !== 'object') {
+                return false;
+            }
+            if (allowAll) {
+                return !!profile.allow_all;
+            }
+            if (!!profile.allow_all) {
+                return false;
+            }
+            const profileGroups = normalizeGroupIdList(profile.market_group_ids || []);
+            return JSON.stringify(profileGroups) === JSON.stringify(normalizedGroups);
+        }) || null;
+    };
+
+    const getSellRuleForStructure = (structureId) => {
+        const structureKey = String(structureId || '');
+        return Object.prototype.hasOwnProperty.call(sellGroupsByStructure, structureKey)
+            ? sellGroupsByStructure[structureKey]
+            : [];
+    };
+
+    const getBuyRuleForStructure = (structureId) => {
+        const structureKey = String(structureId || '');
+        return Object.prototype.hasOwnProperty.call(buyGroupsByStructure, structureKey)
+            ? buyGroupsByStructure[structureKey]
+            : [];
+    };
+
+    const getMatchedSellProfileNameForStructure = (structureId) => {
+        const matchedProfile = matchProfileByRule(sellProfiles, getSellRuleForStructure(structureId));
+        return matchedProfile ? matchedProfile.name : '';
+    };
+
+    const getMatchedBuyProfileNameForStructure = (structureId) => {
+        const matchedProfile = matchProfileByRule(buyProfiles, getBuyRuleForStructure(structureId));
+        return matchedProfile ? matchedProfile.name : '';
+    };
+
+    const getCurrentSellRule = () => {
+        const selectedProfile = getSelectedSellProfile();
+        if (selectedProfile) {
+            return selectedProfile.allow_all ? null : normalizeGroupIdList(selectedProfile.market_group_ids || []);
+        }
+        return getSellRuleForStructure(activeSellStructureId);
+    };
+
+    const getCurrentBuyRule = () => {
+        const selectedProfile = getSelectedBuyProfile();
+        if (selectedProfile) {
+            return selectedProfile.allow_all ? null : normalizeGroupIdList(selectedProfile.market_group_ids || []);
+        }
+        return getBuyRuleForStructure(activeBuyStructureId);
+    };
+
     const applySellProfileToLocationId = (profile, structureId) => {
         if (!profile || !structureId) {
             return;
@@ -2820,11 +2920,21 @@ document.addEventListener('DOMContentLoaded', function() {
             selectedName,
         });
         const selectedProfile = getSelectedSellProfile();
+        const activeRule = getSellRuleForStructure(activeSellStructureId);
         if (sellProfileNameInput) {
             sellProfileNameInput.value = selectedProfile ? selectedProfile.name : '';
         }
         if (sellProfileDefaultToggle) {
             sellProfileDefaultToggle.checked = !!(selectedProfile && selectedProfile.is_default);
+        }
+        if (sellAllowAllToggle) {
+            if (selectedProfile) {
+                sellAllowAllToggle.checked = !!selectedProfile.allow_all;
+            } else if (activeSellStructureId) {
+                sellAllowAllToggle.checked = activeRule === null;
+            } else {
+                sellAllowAllToggle.checked = false;
+            }
         }
         if (applySellProfileBtn) {
             applySellProfileBtn.disabled = !selectedProfile || !activeSellStructureId;
@@ -2845,14 +2955,21 @@ document.addEventListener('DOMContentLoaded', function() {
             selectedName,
         });
         const selectedProfile = getSelectedBuyProfile();
+        const activeRule = getBuyRuleForStructure(activeBuyStructureId);
         if (buyProfileNameInput) {
             buyProfileNameInput.value = selectedProfile ? selectedProfile.name : '';
         }
         if (buyProfileDefaultToggle) {
             buyProfileDefaultToggle.checked = !!(selectedProfile && selectedProfile.is_default);
         }
-        if (buyAllowAllToggle && selectedProfile) {
-            buyAllowAllToggle.checked = !!selectedProfile.allow_all;
+        if (buyAllowAllToggle) {
+            if (selectedProfile) {
+                buyAllowAllToggle.checked = !!selectedProfile.allow_all;
+            } else if (activeBuyStructureId) {
+                buyAllowAllToggle.checked = activeRule === null;
+            } else {
+                buyAllowAllToggle.checked = false;
+            }
         }
         if (applyBuyProfileBtn) {
             applyBuyProfileBtn.disabled = !selectedProfile || !activeBuyStructureId;
@@ -2885,7 +3002,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const updateSelectionSummaries = () => {
         if (sellSummaryEl) {
-            if (!activeSellStructureId) {
+            const selectedProfile = getSelectedSellProfile();
+            if (selectedProfile) {
+                const baseSummary = selectedProfile.allow_all
+                    ? "{% trans 'all groups accepted' %}"
+                    : formatSelectionSummary(getCurrentSellSelectionSet().size);
+                sellSummaryEl.textContent = `${selectedProfile.name} - ${baseSummary}`;
+            } else if (!activeSellStructureId) {
                 sellSummaryEl.textContent = "{% trans 'No location selected' %}";
             } else if (sellAllowAllToggle && sellAllowAllToggle.checked) {
                 const structureName = getSelectedStructureName(activeSellStructureId, getSelectedSellStructures());
@@ -2893,7 +3016,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     ? `${structureName} - {% trans 'all groups accepted' %}`
                     : "{% trans 'All groups accepted' %}";
             } else {
-                const selectedCount = getActiveSellSelectionSet().size;
+                const selectedCount = getCurrentSellSelectionSet().size;
                 const structureName = getSelectedStructureName(activeSellStructureId, getSelectedSellStructures());
                 const baseSummary = formatSelectionSummary(selectedCount);
                 sellSummaryEl.textContent = structureName
@@ -2903,7 +3026,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         if (buySummaryEl) {
-            if (!activeBuyStructureId) {
+            const selectedProfile = getSelectedBuyProfile();
+            if (selectedProfile) {
+                const baseSummary = selectedProfile.allow_all
+                    ? "{% trans 'all groups offered' %}"
+                    : formatSelectionSummary(getCurrentBuySelectionSet().size);
+                buySummaryEl.textContent = `${selectedProfile.name} - ${baseSummary}`;
+            } else if (!activeBuyStructureId) {
                 buySummaryEl.textContent = "{% trans 'No location selected' %}";
             } else if (buyAllowAllToggle && buyAllowAllToggle.checked) {
                 const structureName = getSelectedStructureName(activeBuyStructureId, getSelectedBuyStructures());
@@ -2912,7 +3041,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     : "{% trans 'All groups offered' %}";
             } else {
                 const structureName = getSelectedStructureName(activeBuyStructureId, getSelectedBuyStructures());
-                const baseSummary = formatSelectionSummary(getActiveBuySelectionSet().size);
+                const baseSummary = formatSelectionSummary(getCurrentBuySelectionSet().size);
                 buySummaryEl.textContent = structureName
                     ? `${structureName} - ${baseSummary}`
                     : baseSummary;
@@ -2938,6 +3067,154 @@ document.addEventListener('DOMContentLoaded', function() {
             }));
     };
 
+    const getSellProfileByName = (profileName) =>
+        (sellProfiles || []).find(profile => String(profile.name || '') === String(profileName || '')) || null;
+
+    const getBuyProfileByName = (profileName) =>
+        (buyProfiles || []).find(profile => String(profile.name || '') === String(profileName || '')) || null;
+
+    const showConfigToast = (message, tone = 'success') => {
+        if (typeof window.showMaterialExchangeConfigToast === 'function') {
+            window.showMaterialExchangeConfigToast(message, tone);
+        }
+    };
+
+    const describeStructureName = (structureId, structures) =>
+        getSelectedStructureName(structureId, structures) || `Structure ${structureId}`;
+
+    const applySellProfileAssignment = ({
+        profileName = '',
+        structureId = '',
+        announce = true,
+        message = '',
+    } = {}) => {
+        const normalizedStructureId = String(structureId || '').trim();
+        const profile = getSellProfileByName(profileName);
+        if (!profile || !normalizedStructureId) {
+            return false;
+        }
+
+        applySellProfileToLocationId(profile, normalizedStructureId);
+        if (activeSellStructureId === normalizedStructureId && sellAllowAllToggle) {
+            sellAllowAllToggle.checked = !!profile.allow_all;
+        }
+        serializeSellGroupMap();
+        serializeSellUnionGroups();
+        renderSellProfiles({ selectedName: profile.name });
+        renderSellTree();
+        updateSelectionSummaries();
+
+        if (announce) {
+            const structureName = describeStructureName(normalizedStructureId, getSelectedSellStructures());
+            showConfigToast(
+                message || `{% trans "Applied sell profile" %} "${profile.name}" {% trans "to" %} ${structureName}.`
+            );
+        }
+        return true;
+    };
+
+    const applyBuyProfileAssignment = ({
+        profileName = '',
+        structureId = '',
+        announce = true,
+        message = '',
+    } = {}) => {
+        const normalizedStructureId = String(structureId || '').trim();
+        const profile = getBuyProfileByName(profileName);
+        if (!profile || !normalizedStructureId) {
+            return false;
+        }
+
+        applyBuyProfileToLocationId(profile, normalizedStructureId);
+        if (activeBuyStructureId === normalizedStructureId && buyAllowAllToggle) {
+            buyAllowAllToggle.checked = !!profile.allow_all;
+        }
+        serializeBuyGroupMap();
+        serializeBuyGroups();
+        renderBuyProfiles({ selectedName: profile.name });
+        renderBuyTree();
+        updateSelectionSummaries();
+
+        if (announce) {
+            const structureName = describeStructureName(normalizedStructureId, getSelectedBuyStructures());
+            showConfigToast(
+                message || `{% trans "Applied buy profile" %} "${profile.name}" {% trans "to" %} ${structureName}.`
+            );
+        }
+        return true;
+    };
+
+    const applySellProfileAssignmentToAll = ({ profileName = '', announce = true } = {}) => {
+        const profile = getSellProfileByName(profileName);
+        const structures = getSelectedSellStructures();
+        if (!profile || !structures.length) {
+            return false;
+        }
+        structures.forEach(structure => {
+            applySellProfileToLocationId(profile, structure.id);
+        });
+        if (activeSellStructureId && sellAllowAllToggle) {
+            sellAllowAllToggle.checked = sellGroupsByStructure[activeSellStructureId] === null;
+        }
+        serializeSellGroupMap();
+        serializeSellUnionGroups();
+        renderSellProfiles({ selectedName: profile.name });
+        renderSellTree();
+        updateSelectionSummaries();
+
+        if (announce) {
+            showConfigToast(
+                `{% trans "Applied sell profile" %} "${profile.name}" {% trans "to" %} ${structures.length} {% trans "sell location(s)." %}`
+            );
+        }
+        return true;
+    };
+
+    const applyBuyProfileAssignmentToAll = ({ profileName = '', announce = true } = {}) => {
+        const profile = getBuyProfileByName(profileName);
+        const structures = getSelectedBuyStructures();
+        if (!profile || !structures.length) {
+            return false;
+        }
+        structures.forEach(structure => {
+            applyBuyProfileToLocationId(profile, structure.id);
+        });
+        if (activeBuyStructureId && buyAllowAllToggle) {
+            buyAllowAllToggle.checked = buyGroupsByStructure[activeBuyStructureId] === null;
+        }
+        serializeBuyGroupMap();
+        serializeBuyGroups();
+        renderBuyProfiles({ selectedName: profile.name });
+        renderBuyTree();
+        updateSelectionSummaries();
+
+        if (announce) {
+            showConfigToast(
+                `{% trans "Applied buy profile" %} "${profile.name}" {% trans "to" %} ${structures.length} {% trans "buy location(s)." %}`
+            );
+        }
+        return true;
+    };
+
+    window.materialExchangeConfigProfileApi = {
+        applySellProfileToStructureByName(profileName, structureId, options = {}) {
+            return applySellProfileAssignment({
+                profileName,
+                structureId,
+                announce: options.announce !== false,
+                message: options.message || '',
+            });
+        },
+        applyBuyProfileToStructureByName(profileName, structureId, options = {}) {
+            return applyBuyProfileAssignment({
+                profileName,
+                structureId,
+                announce: options.announce !== false,
+                message: options.message || '',
+            });
+        },
+    };
+
     const getActiveSellSelectionSet = () => {
         const rule = sellGroupsByStructure[activeSellStructureId];
         if (!Array.isArray(rule)) {
@@ -2952,6 +3229,44 @@ document.addEventListener('DOMContentLoaded', function() {
             return new Set();
         }
         return new Set(normalizeGroupIdList(rule));
+    };
+
+    const getCurrentSellSelectionSet = () => {
+        const rule = getCurrentSellRule();
+        if (!Array.isArray(rule)) {
+            return new Set();
+        }
+        return new Set(normalizeGroupIdList(rule));
+    };
+
+    const getCurrentBuySelectionSet = () => {
+        const rule = getCurrentBuyRule();
+        if (!Array.isArray(rule)) {
+            return new Set();
+        }
+        return new Set(normalizeGroupIdList(rule));
+    };
+
+    const getNodeSelectionState = (node, selectedSet) => {
+        const nodeId = parseInt(node.id, 10);
+        if (!Number.isInteger(nodeId) || nodeId <= 0) {
+            return 'unchecked';
+        }
+
+        const descendants = getNodeDescendantIds(node);
+        const nodeIsSelected = selectedSet.has(nodeId);
+        if (!descendants.length) {
+            return nodeIsSelected ? 'checked' : 'unchecked';
+        }
+
+        const selectedDescendants = descendants.filter(descendantId => selectedSet.has(descendantId));
+        if (nodeIsSelected || selectedDescendants.length === descendants.length) {
+            return 'checked';
+        }
+        if (selectedDescendants.length > 0) {
+            return 'partial';
+        }
+        return 'unchecked';
     };
 
     const renderTreeRow = ({
@@ -3001,32 +3316,23 @@ document.addEventListener('DOMContentLoaded', function() {
             rowContent.appendChild(spacer);
         }
 
-        const labelWrap = document.createElement('label');
-        labelWrap.className = 'form-check mb-0 d-flex align-items-start gap-2 flex-grow-1';
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'form-check-input mt-1';
-
         const nodeId = parseInt(node.id, 10);
         const descendants = getNodeDescendantIds(node);
-        if (marketGroupViewMode === 'top' && depth === 0 && descendants.length > 0) {
-            checkbox.checked = selectedSet.has(nodeId) || descendants.some(id => selectedSet.has(id));
-        } else {
-            checkbox.checked = selectedSet.has(nodeId);
-        }
-        row.classList.toggle('is-selected', checkbox.checked);
-        checkbox.disabled = !!disableSelection;
-        checkbox.addEventListener('change', function() {
+        const selectionState = getNodeSelectionState(node, selectedSet);
+        row.classList.toggle('is-selected', selectionState !== 'unchecked');
+        row.classList.toggle('is-partial', selectionState === 'partial');
+
+        const applyNodeSelectionChange = (checked) => {
             const nextSet = new Set(selectedSet);
             if (marketGroupViewMode === 'top' && depth === 0) {
-                if (checkbox.checked) {
+                if (checked) {
                     nextSet.add(nodeId);
                     descendants.forEach(descendantId => nextSet.delete(descendantId));
                 } else {
                     nextSet.delete(nodeId);
                     descendants.forEach(descendantId => nextSet.delete(descendantId));
                 }
-            } else if (checkbox.checked) {
+            } else if (checked) {
                 nextSet.add(nodeId);
                 descendants.forEach(descendantId => nextSet.add(descendantId));
             } else {
@@ -3034,10 +3340,54 @@ document.addEventListener('DOMContentLoaded', function() {
                 descendants.forEach(descendantId => nextSet.delete(descendantId));
             }
             onToggle(nextSet);
-        });
+        };
+
+        const labelWrap = document.createElement('div');
+        labelWrap.className = 'mb-0 d-flex align-items-start gap-2 flex-grow-1';
+
+        let checkbox = null;
+        if (selectionState === 'partial') {
+            const partialButton = document.createElement('button');
+            partialButton.type = 'button';
+            partialButton.className = 'me-market-tree-state is-partial mt-1';
+            partialButton.setAttribute('aria-label', '{% trans "Partially selected branch" %}');
+            partialButton.disabled = !!disableSelection;
+            partialButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (disableSelection) {
+                    return;
+                }
+                applyNodeSelectionChange(true);
+            });
+            labelWrap.appendChild(partialButton);
+        } else {
+            checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'form-check-input mt-1';
+            checkbox.checked = selectionState === 'checked';
+            checkbox.disabled = !!disableSelection;
+            checkbox.addEventListener('change', function() {
+                applyNodeSelectionChange(checkbox.checked);
+            });
+            labelWrap.appendChild(checkbox);
+        }
 
         const labelBody = document.createElement('span');
         labelBody.className = 'me-market-tree-label-body';
+        labelBody.addEventListener('click', function(event) {
+            if (disableSelection) {
+                return;
+            }
+            event.preventDefault();
+            if (selectionState === 'partial') {
+                applyNodeSelectionChange(true);
+                return;
+            }
+            if (checkbox) {
+                checkbox.click();
+            }
+        });
 
         const titleRow = document.createElement('span');
         titleRow.className = 'me-market-tree-title-row';
@@ -3069,7 +3419,6 @@ document.addEventListener('DOMContentLoaded', function() {
         meta.appendChild(branchChip);
         labelBody.appendChild(meta);
 
-        labelWrap.appendChild(checkbox);
         labelWrap.appendChild(labelBody);
         rowContent.appendChild(labelWrap);
         row.appendChild(rowContent);
@@ -3143,6 +3492,9 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     const persistActiveSellRule = () => {
+        if (getSelectedSellProfile()) {
+            return;
+        }
         if (!activeSellStructureId) {
             return;
         }
@@ -3154,8 +3506,9 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     const renderSellTree = () => {
-        const disableSelection = !!(sellAllowAllToggle && sellAllowAllToggle.checked);
-        const selectedSet = getActiveSellSelectionSet();
+        const selectedProfile = getSelectedSellProfile();
+        const disableSelection = getCurrentSellRule() === null;
+        const selectedSet = getCurrentSellSelectionSet();
         sellTreeContainer.classList.toggle('me-market-tree-disabled', disableSelection);
         renderTree({
             container: sellTreeContainer,
@@ -3165,10 +3518,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (sellAllowAllToggle) {
                     sellAllowAllToggle.checked = false;
                 }
-                sellGroupsByStructure[activeSellStructureId] = Array.from(nextSet).sort((a, b) => a - b);
-                serializeSellGroupMap();
-                serializeSellUnionGroups();
-                renderSellProfiles();
+                if (selectedProfile) {
+                    selectedProfile.allow_all = false;
+                    selectedProfile.market_group_ids = Array.from(nextSet).sort((a, b) => a - b);
+                    serializeSellProfiles();
+                    renderSellProfiles({ selectedName: selectedProfile.name });
+                } else if (activeSellStructureId) {
+                    sellGroupsByStructure[activeSellStructureId] = Array.from(nextSet).sort((a, b) => a - b);
+                    serializeSellGroupMap();
+                    serializeSellUnionGroups();
+                    renderSellProfiles({ selectedName: getMatchedSellProfileNameForStructure(activeSellStructureId) });
+                }
                 renderSellTree();
             },
         });
@@ -3176,8 +3536,9 @@ document.addEventListener('DOMContentLoaded', function() {
     };
 
     const renderBuyTree = () => {
-        const disableSelection = !!(buyAllowAllToggle && buyAllowAllToggle.checked);
-        const selectedSet = getActiveBuySelectionSet();
+        const selectedProfile = getSelectedBuyProfile();
+        const disableSelection = getCurrentBuyRule() === null;
+        const selectedSet = getCurrentBuySelectionSet();
         buyTreeContainer.classList.toggle('me-market-tree-disabled', disableSelection);
         renderTree({
             container: buyTreeContainer,
@@ -3190,10 +3551,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (buyAllowAllToggle) {
                     buyAllowAllToggle.checked = false;
                 }
-                buyGroupsByStructure[activeBuyStructureId] = Array.from(nextSet).sort((a, b) => a - b);
-                serializeBuyGroupMap();
-                serializeBuyGroups();
-                renderBuyProfiles();
+                if (selectedProfile) {
+                    selectedProfile.allow_all = false;
+                    selectedProfile.market_group_ids = Array.from(nextSet).sort((a, b) => a - b);
+                    serializeBuyProfiles();
+                    renderBuyProfiles({ selectedName: selectedProfile.name });
+                } else {
+                    buyGroupsByStructure[activeBuyStructureId] = Array.from(nextSet).sort((a, b) => a - b);
+                    serializeBuyGroupMap();
+                    serializeBuyGroups();
+                    renderBuyProfiles({ selectedName: getMatchedBuyProfileNameForStructure(activeBuyStructureId) });
+                }
                 renderBuyTree();
             },
         });
@@ -3274,7 +3642,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         serializeSellGroupMap();
         serializeSellUnionGroups();
-        renderSellProfiles();
+        renderSellProfiles({ selectedName: getMatchedSellProfileNameForStructure(activeSellStructureId) });
         renderSellTree();
         updateSelectionSummaries();
     };
@@ -3343,7 +3711,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         serializeBuyGroupMap();
         serializeBuyGroups();
-        renderBuyProfiles();
+        renderBuyProfiles({ selectedName: getMatchedBuyProfileNameForStructure(activeBuyStructureId) });
         renderBuyTree();
         updateSelectionSummaries();
     };
@@ -3384,7 +3752,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         serializeSellGroupMap();
         serializeSellUnionGroups();
-        renderSellProfiles();
+        renderSellProfiles({ selectedName: getMatchedSellProfileNameForStructure(activeSellStructureId) });
         renderSellTree();
         updateSelectionSummaries();
     });
@@ -3396,13 +3764,25 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         serializeBuyGroupMap();
         serializeBuyGroups();
-        renderBuyProfiles();
+        renderBuyProfiles({ selectedName: getMatchedBuyProfileNameForStructure(activeBuyStructureId) });
         renderBuyTree();
         updateSelectionSummaries();
     });
 
     if (sellAllowAllToggle) {
         sellAllowAllToggle.addEventListener('change', function() {
+            const selectedProfile = getSelectedSellProfile();
+            if (selectedProfile) {
+                selectedProfile.allow_all = !!sellAllowAllToggle.checked;
+                if (selectedProfile.allow_all) {
+                    selectedProfile.market_group_ids = [];
+                }
+                serializeSellProfiles();
+                renderSellProfiles({ selectedName: selectedProfile.name });
+                renderSellTree();
+                updateSelectionSummaries();
+                return;
+            }
             if (!activeSellStructureId) {
                 return;
             }
@@ -3413,7 +3793,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             serializeSellGroupMap();
             serializeSellUnionGroups();
-            renderSellProfiles();
+            renderSellProfiles({ selectedName: getMatchedSellProfileNameForStructure(activeSellStructureId) });
             renderSellTree();
             updateSelectionSummaries();
         });
@@ -3421,6 +3801,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (buyAllowAllToggle) {
         buyAllowAllToggle.addEventListener('change', function() {
+            const selectedProfile = getSelectedBuyProfile();
+            if (selectedProfile) {
+                selectedProfile.allow_all = !!buyAllowAllToggle.checked;
+                if (selectedProfile.allow_all) {
+                    selectedProfile.market_group_ids = [];
+                }
+                serializeBuyProfiles();
+                renderBuyProfiles({ selectedName: selectedProfile.name });
+                renderBuyTree();
+                updateSelectionSummaries();
+                return;
+            }
             if (!activeBuyStructureId) {
                 return;
             }
@@ -3431,7 +3823,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             serializeBuyGroupMap();
             serializeBuyGroups();
-            renderBuyProfiles();
+            renderBuyProfiles({ selectedName: getMatchedBuyProfileNameForStructure(activeBuyStructureId) });
             renderBuyTree();
             updateSelectionSummaries();
         });
@@ -3440,18 +3832,22 @@ document.addEventListener('DOMContentLoaded', function() {
     if (sellProfileSelect) {
         sellProfileSelect.addEventListener('change', function() {
             renderSellProfiles({ selectedName: sellProfileSelect.value || '' });
+            renderSellTree();
+            updateSelectionSummaries();
         });
     }
 
     if (buyProfileSelect) {
         buyProfileSelect.addEventListener('change', function() {
             renderBuyProfiles({ selectedName: buyProfileSelect.value || '' });
+            renderBuyTree();
+            updateSelectionSummaries();
         });
     }
 
     if (saveSellProfileBtn) {
         saveSellProfileBtn.addEventListener('click', function() {
-            if (!activeSellStructureId || !sellProfileNameInput) {
+            if (!sellProfileNameInput || (!activeSellStructureId && !getSelectedSellProfile())) {
                 return;
             }
             const profileName = String(sellProfileNameInput.value || '').trim();
@@ -3466,7 +3862,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 allow_all: !!(sellAllowAllToggle && sellAllowAllToggle.checked),
                 market_group_ids: sellAllowAllToggle && sellAllowAllToggle.checked
                     ? []
-                    : Array.from(getActiveSellSelectionSet()).sort((a, b) => a - b),
+                    : Array.from(getCurrentSellSelectionSet()).sort((a, b) => a - b),
             };
             sellProfiles = (sellProfiles || []).filter(
                 profile => String(profile.name || '').toLowerCase() !== profileName.toLowerCase()
@@ -3476,6 +3872,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             sellProfiles.push(nextProfile);
             renderSellProfiles({ selectedName: nextProfile.name });
+            showConfigToast(`{% trans "Saved sell profile" %} "${nextProfile.name}".`);
         });
     }
 
@@ -3485,15 +3882,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!profile || !activeSellStructureId) {
                 return;
             }
-            applySellProfileToLocationId(profile, activeSellStructureId);
-            if (sellAllowAllToggle) {
-                sellAllowAllToggle.checked = profile.allow_all;
-            }
-            serializeSellGroupMap();
-            serializeSellUnionGroups();
-            renderSellProfiles({ selectedName: profile.name });
-            renderSellTree();
-            updateSelectionSummaries();
+            applySellProfileAssignment({
+                profileName: profile.name,
+                structureId: activeSellStructureId,
+            });
         });
     }
 
@@ -3503,17 +3895,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!profile) {
                 return;
             }
-            getSelectedSellStructures().forEach(structure => {
-                applySellProfileToLocationId(profile, structure.id);
-            });
-            if (activeSellStructureId && sellAllowAllToggle) {
-                sellAllowAllToggle.checked = sellGroupsByStructure[activeSellStructureId] === null;
-            }
-            serializeSellGroupMap();
-            serializeSellUnionGroups();
-            renderSellProfiles({ selectedName: profile.name });
-            renderSellTree();
-            updateSelectionSummaries();
+            applySellProfileAssignmentToAll({ profileName: profile.name });
         });
     }
 
@@ -3523,14 +3905,20 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!profile) {
                 return;
             }
+            if (!window.confirm(`{% trans "Delete sell profile" %} "${profile.name}"?`)) {
+                return;
+            }
             sellProfiles = (sellProfiles || []).filter(entry => entry.name !== profile.name);
-            renderSellProfiles();
+            renderSellProfiles({ selectedName: getMatchedSellProfileNameForStructure(activeSellStructureId) });
+            renderSellTree();
+            updateSelectionSummaries();
+            showConfigToast(`{% trans "Deleted sell profile" %} "${profile.name}".`, 'info');
         });
     }
 
     if (saveBuyProfileBtn) {
         saveBuyProfileBtn.addEventListener('click', function() {
-            if (!buyProfileNameInput || !activeBuyStructureId) {
+            if (!buyProfileNameInput || (!activeBuyStructureId && !getSelectedBuyProfile())) {
                 return;
             }
             const profileName = String(buyProfileNameInput.value || '').trim();
@@ -3544,7 +3932,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 allow_all: !!(buyAllowAllToggle && buyAllowAllToggle.checked),
                 market_group_ids: buyAllowAllToggle && buyAllowAllToggle.checked
                     ? []
-                    : Array.from(getActiveBuySelectionSet()).sort((a, b) => a - b),
+                    : Array.from(getCurrentBuySelectionSet()).sort((a, b) => a - b),
             };
             buyProfiles = (buyProfiles || []).filter(
                 profile => String(profile.name || '').toLowerCase() !== profileName.toLowerCase()
@@ -3554,6 +3942,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             buyProfiles.push(nextProfile);
             renderBuyProfiles({ selectedName: nextProfile.name });
+            showConfigToast(`{% trans "Saved buy profile" %} "${nextProfile.name}".`);
         });
     }
 
@@ -3563,15 +3952,10 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!profile || !activeBuyStructureId) {
                 return;
             }
-            applyBuyProfileToLocationId(profile, activeBuyStructureId);
-            if (buyAllowAllToggle) {
-                buyAllowAllToggle.checked = !!profile.allow_all;
-            }
-            serializeBuyGroupMap();
-            serializeBuyGroups();
-            renderBuyProfiles({ selectedName: profile.name });
-            renderBuyTree();
-            updateSelectionSummaries();
+            applyBuyProfileAssignment({
+                profileName: profile.name,
+                structureId: activeBuyStructureId,
+            });
         });
     }
 
@@ -3581,17 +3965,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!profile) {
                 return;
             }
-            getSelectedBuyStructures().forEach(structure => {
-                applyBuyProfileToLocationId(profile, structure.id);
-            });
-            if (activeBuyStructureId && buyAllowAllToggle) {
-                buyAllowAllToggle.checked = buyGroupsByStructure[activeBuyStructureId] === null;
-            }
-            serializeBuyGroupMap();
-            serializeBuyGroups();
-            renderBuyProfiles({ selectedName: profile.name });
-            renderBuyTree();
-            updateSelectionSummaries();
+            applyBuyProfileAssignmentToAll({ profileName: profile.name });
         });
     }
 
@@ -3601,8 +3975,14 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!profile) {
                 return;
             }
+            if (!window.confirm(`{% trans "Delete buy profile" %} "${profile.name}"?`)) {
+                return;
+            }
             buyProfiles = (buyProfiles || []).filter(entry => entry.name !== profile.name);
-            renderBuyProfiles();
+            renderBuyProfiles({ selectedName: getMatchedBuyProfileNameForStructure(activeBuyStructureId) });
+            renderBuyTree();
+            updateSelectionSummaries();
+            showConfigToast(`{% trans "Deleted buy profile" %} "${profile.name}".`, 'info');
         });
     }
 
@@ -4083,6 +4463,70 @@ document.addEventListener('DOMContentLoaded', function() {
         }) || null;
     };
 
+    const getStationSellRule = (station) => {
+        if (!station || !station.sellSelected) {
+            return [];
+        }
+        const sellGroupMap = readSellGroupMap();
+        return Object.prototype.hasOwnProperty.call(sellGroupMap, String(station.id))
+            ? sellGroupMap[String(station.id)]
+            : [];
+    };
+
+    const getStationBuyRule = (station) => {
+        if (!station || !station.buySelected) {
+            return [];
+        }
+        return readBuyRuleForStation(station.id);
+    };
+
+    const getStationSellProfileMatch = (station, profiles = readSellProfileList()) => {
+        const currentSellRule = getStationSellRule(station);
+        return station && station.sellSelected
+            ? matchProfileByGroups(
+                profiles,
+                Array.isArray(currentSellRule) ? currentSellRule : [],
+                currentSellRule === null
+            )
+            : null;
+    };
+
+    const getStationBuyProfileMatch = (station, profiles = readBuyProfileList()) => {
+        const currentBuyRule = getStationBuyRule(station);
+        return station && station.buySelected
+            ? matchProfileByGroups(
+                profiles,
+                Array.isArray(currentBuyRule) ? currentBuyRule : [],
+                currentBuyRule === null
+            )
+            : null;
+    };
+
+    const syncEditorSelectToStation = (selectEl, stationId) => {
+        if (!selectEl || !stationId) {
+            return false;
+        }
+        const targetOption = Array.from(selectEl.options).find((option) => option.value === String(stationId));
+        if (!targetOption || selectEl.value === String(stationId)) {
+            return !!targetOption;
+        }
+        selectEl.value = String(stationId);
+        selectEl.dispatchEvent(new Event('change'));
+        return true;
+    };
+
+    const syncMarketGroupEditorsToStation = (station) => {
+        if (!station) {
+            return;
+        }
+        if (station.sellSelected) {
+            syncEditorSelectToStation(sellProfileStructureSelect, station.id);
+        }
+        if (station.buySelected) {
+            syncEditorSelectToStation(buyProfileStructureSelect, station.id);
+        }
+    };
+
     const buildSummaryRow = (label, value, valueClass = '') =>
         `<div class="right-row"><span>${escapeHtml(label)}</span><strong class="${valueClass}">${escapeHtml(value)}</strong></div>`;
 
@@ -4218,15 +4662,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const renderProfileAssignmentControls = (station) => {
         const sellProfiles = readSellProfileList();
         const buyProfiles = readBuyProfileList();
-        const sellGroupMap = readSellGroupMap();
-        const currentSellRule = sellGroupMap[String(station.id)];
-        const sellAllowAll = currentSellRule === null;
-        const sellGroups = Array.isArray(currentSellRule) ? currentSellRule : [];
-        const currentBuyRule = readBuyRuleForStation(station.id);
-        const buyAllowAll = currentBuyRule === null;
-        const buyGroups = Array.isArray(currentBuyRule) ? currentBuyRule : [];
-        const matchedSellProfile = matchProfileByGroups(sellProfiles, sellGroups, sellAllowAll);
-        const matchedBuyProfile = matchProfileByGroups(buyProfiles, buyGroups, buyAllowAll);
+        const matchedSellProfile = getStationSellProfileMatch(station, sellProfiles);
+        const matchedBuyProfile = getStationBuyProfileMatch(station, buyProfiles);
 
         stationSellProfileSelect.innerHTML = '';
         stationSellProfileSelect.add(new Option("{% trans 'Custom sell configuration' %}", '', false, false));
@@ -4262,12 +4699,11 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        const sellGroupMap = readSellGroupMap();
-        const currentSellRule = sellGroupMap[String(station.id)];
+        const currentSellRule = getStationSellRule(station);
         const currentSellLabels = currentSellRule === null
             ? ["{% trans 'Exchange buys every market group' %}"]
             : findMarketGroupLabels(currentSellRule);
-        const currentBuyRule = readBuyRuleForStation(station.id);
+        const currentBuyRule = getStationBuyRule(station);
         const buyAllowAll = currentBuyRule === null;
         const buyGroupLabels = buyAllowAll
             ? ["{% trans 'Exchange offers every market group' %}"]
@@ -4301,27 +4737,33 @@ document.addEventListener('DOMContentLoaded', function() {
         ));
         validations.push(buildValidationRow(
             "{% trans 'Exchange Buys From Members' %}",
-            currentSellRule === null
+            !station.sellSelected
+                ? "{% trans 'This location is not active for sell-to-exchange routing.' %}"
+                : currentSellRule === null
                 ? "{% trans 'This location accepts every market group members can sell into the exchange.' %}"
                 : (
                     currentSellLabels.length
                         ? `${currentSellLabels.length} {% trans 'group branches selected for incoming sells' %}`
                         : "{% trans 'No sell-to-exchange groups selected yet.' %}"
                 ),
-            currentSellRule === null || currentSellLabels.length ? 'good' : 'warn'
+            !station.sellSelected ? 'warn' : (currentSellRule === null || currentSellLabels.length ? 'good' : 'warn')
         ));
         validations.push(buildValidationRow(
             "{% trans 'Exchange Sells To Members' %}",
             buyEnabledToggle && buyEnabledToggle.checked
                 ? (
-                    buyAllowAll
+                    !station.buySelected
+                        ? "{% trans 'This location is not active for buy-from-exchange routing.' %}"
+                        : buyAllowAll
                         ? "{% trans 'This location offers every market group members can buy from the exchange.' %}"
                         : buyGroupLabels.length
                         ? `${buyGroupLabels.length} {% trans 'group branches selected for outgoing stock' %}`
                         : "{% trans 'No buy-from-exchange groups selected yet.' %}"
                 )
                 : "{% trans 'Buy orders are currently disabled.' %}",
-            buyEnabledToggle && buyEnabledToggle.checked && (buyAllowAll || buyGroupLabels.length) ? 'good' : 'warn'
+            buyEnabledToggle && buyEnabledToggle.checked && station.buySelected && (buyAllowAll || buyGroupLabels.length)
+                ? 'good'
+                : 'warn'
         ));
         stationValidationList.innerHTML = validations.join('');
 
@@ -4332,13 +4774,17 @@ document.addEventListener('DOMContentLoaded', function() {
         ));
         details.push(buildDetailRow(
             "{% trans 'Members Can Sell These Branches' %}",
-            currentSellRule === null
+            !station.sellSelected
+                ? "{% trans 'This location is not currently configured for sell-to-exchange routing' %}"
+                : currentSellRule === null
                 ? "{% trans 'Exchange buys every market group here' %}"
                 : (currentSellLabels.length ? currentSellLabels.join(' | ') : "{% trans 'No specific groups selected' %}")
         ));
         details.push(buildDetailRow(
             "{% trans 'Members Can Buy These Branches' %}",
-            buyAllowAll
+            !station.buySelected
+                ? "{% trans 'This location is not currently configured for buy-from-exchange routing' %}"
+                : buyAllowAll
                 ? "{% trans 'Exchange offers every market group here' %}"
                 : (buyGroupLabels.length ? buyGroupLabels.join(' | ') : "{% trans 'No specific groups selected' %}")
         ));
@@ -4351,18 +4797,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const filteredStations = stations.filter((station) => {
             const sellProfiles = readSellProfileList();
             const buyProfiles = readBuyProfileList();
-            const currentSellRule = readSellGroupMap()[String(station.id)];
-            const currentBuyRule = readBuyRuleForStation(station.id);
-            const matchedSellProfile = matchProfileByGroups(
-                sellProfiles,
-                Array.isArray(currentSellRule) ? currentSellRule : [],
-                currentSellRule === null
-            );
-            const matchedBuyProfile = matchProfileByGroups(
-                buyProfiles,
-                Array.isArray(currentBuyRule) ? currentBuyRule : [],
-                currentBuyRule === null
-            );
+            const matchedSellProfile = getStationSellProfileMatch(station, sellProfiles);
+            const matchedBuyProfile = getStationBuyProfileMatch(station, buyProfiles);
             const haystack = [
                 station.name,
                 station.role.replace('_', ' '),
@@ -4381,24 +4817,21 @@ document.addEventListener('DOMContentLoaded', function() {
         stationList.innerHTML = filteredStations.map((station) => {
             const sellProfiles = readSellProfileList();
             const buyProfiles = readBuyProfileList();
-            const sellGroupMap = readSellGroupMap();
-            const currentSellRule = sellGroupMap[String(station.id)];
-            const currentBuyRule = readBuyRuleForStation(station.id);
-            const matchedSellProfile = matchProfileByGroups(
-                sellProfiles,
-                Array.isArray(currentSellRule) ? currentSellRule : [],
-                currentSellRule === null
-            );
-            const matchedBuyProfile = matchProfileByGroups(
-                buyProfiles,
-                Array.isArray(currentBuyRule) ? currentBuyRule : [],
-                currentBuyRule === null
-            );
+            const matchedSellProfile = getStationSellProfileMatch(station, sellProfiles);
+            const matchedBuyProfile = getStationBuyProfileMatch(station, buyProfiles);
             const profileSummary = "{% trans 'Sell profile' %}: "
-                + (matchedSellProfile ? matchedSellProfile.name : "{% trans 'Custom' %}")
+                + (
+                    station.sellSelected
+                        ? (matchedSellProfile ? matchedSellProfile.name : "{% trans 'Custom' %}")
+                        : "{% trans 'Inactive' %}"
+                )
                 + " | "
                 + "{% trans 'Buy profile' %}: "
-                + (matchedBuyProfile ? matchedBuyProfile.name : "{% trans 'Custom' %}");
+                + (
+                    station.buySelected
+                        ? (matchedBuyProfile ? matchedBuyProfile.name : "{% trans 'Custom' %}")
+                        : "{% trans 'Inactive' %}"
+                );
             const roleLabel = station.role === 'sell_buy'
                 ? "{% trans 'Sell to + Buy from exchange' %}"
                 : station.role === 'sell'
@@ -4511,33 +4944,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const sellProfiles = readSellProfileList();
         const buyProfiles = readBuyProfileList();
-        const sellGroupMap = readSellGroupMap();
-        const currentSellRule = sellGroupMap[String(station.id)];
+        const currentSellRule = getStationSellRule(station);
         const sellAllowAll = currentSellRule === null;
         const currentSellLabels = sellAllowAll
             ? ["{% trans 'Exchange buys every market group' %}"]
             : findMarketGroupLabels(currentSellRule);
-        const currentBuyRule = readBuyRuleForStation(station.id);
+        const currentBuyRule = getStationBuyRule(station);
         const buyAllowAll = currentBuyRule === null;
         const buyGroups = Array.isArray(currentBuyRule) ? currentBuyRule : [];
         const buyLabels = buyAllowAll
             ? ["{% trans 'All market groups' %}"]
             : findMarketGroupLabels(buyGroups);
-        const matchedSellProfile = matchProfileByGroups(
-            sellProfiles,
-            Array.isArray(currentSellRule) ? currentSellRule : [],
-            sellAllowAll
-        );
-        const matchedBuyProfile = matchProfileByGroups(buyProfiles, buyGroups, buyAllowAll);
+        const matchedSellProfile = getStationSellProfileMatch(station, sellProfiles);
+        const matchedBuyProfile = getStationBuyProfileMatch(station, buyProfiles);
 
         if (profileChangeMeta) {
             profileChangeMeta.textContent = station.name;
         }
         profilePreviewList.innerHTML = [
-            `<div class="preview-row"><div class="station-name">{% trans 'Sell-To-Exchange Profile Match' %}</div><div class="preview-sub">${escapeHtml(matchedSellProfile ? matchedSellProfile.name : "{% trans 'Custom live rule set' %}")}</div></div>`,
-            `<div class="preview-row"><div class="station-name">{% trans 'Members Can Sell These Branches' %}</div><div class="preview-sub">${escapeHtml(currentSellLabels.join(' | '))}</div></div>`,
-            `<div class="preview-row"><div class="station-name">{% trans 'Buy-From-Exchange Profile Match' %}</div><div class="preview-sub">${escapeHtml(matchedBuyProfile ? matchedBuyProfile.name : "{% trans 'Custom live rule set' %}")}</div></div>`,
-            `<div class="preview-row"><div class="station-name">{% trans 'Members Can Buy These Branches' %}</div><div class="preview-sub">${escapeHtml(buyLabels.join(' | '))}</div></div>`,
+            `<div class="preview-row"><div class="station-name">{% trans 'Sell-To-Exchange Profile Match' %}</div><div class="preview-sub">${escapeHtml(station.sellSelected ? (matchedSellProfile ? matchedSellProfile.name : "{% trans 'Custom live rule set' %}") : "{% trans 'Inactive for sell routing' %}")}</div></div>`,
+            `<div class="preview-row"><div class="station-name">{% trans 'Members Can Sell These Branches' %}</div><div class="preview-sub">${escapeHtml(station.sellSelected ? currentSellLabels.join(' | ') : "{% trans 'No sell-to-exchange routing on this station' %}")}</div></div>`,
+            `<div class="preview-row"><div class="station-name">{% trans 'Buy-From-Exchange Profile Match' %}</div><div class="preview-sub">${escapeHtml(station.buySelected ? (matchedBuyProfile ? matchedBuyProfile.name : "{% trans 'Custom live rule set' %}") : "{% trans 'Inactive for buy routing' %}")}</div></div>`,
+            `<div class="preview-row"><div class="station-name">{% trans 'Members Can Buy These Branches' %}</div><div class="preview-sub">${escapeHtml(station.buySelected ? buyLabels.join(' | ') : "{% trans 'No buy-from-exchange routing on this station' %}")}</div></div>`,
         ].join('');
     };
 
@@ -4551,6 +4979,7 @@ document.addEventListener('DOMContentLoaded', function() {
             selectedStationId = preferredStation ? preferredStation.id : '';
         }
         const selectedStation = getStationById(selectedStationId);
+        syncMarketGroupEditorsToStation(selectedStation);
         renderStationList();
         renderStationDetail(selectedStation);
         renderContextValidation();
@@ -4575,32 +5004,32 @@ document.addEventListener('DOMContentLoaded', function() {
         renderAll();
     });
     stationSellProfileSelect.addEventListener('change', function() {
-        if (!selectedStationId || !sellProfileLibrarySelect || !sellProfileApplyBtn || !sellProfileStructureSelect) {
+        const profileApi = window.materialExchangeConfigProfileApi || {};
+        if (!selectedStationId || typeof profileApi.applySellProfileToStructureByName !== 'function') {
             return;
         }
         if (!stationSellProfileSelect.value) {
             renderAll();
             return;
         }
-        sellProfileStructureSelect.value = selectedStationId;
-        sellProfileStructureSelect.dispatchEvent(new Event('change'));
-        sellProfileLibrarySelect.value = stationSellProfileSelect.value;
-        sellProfileApplyBtn.click();
-        window.setTimeout(renderAll, 0);
+        profileApi.applySellProfileToStructureByName(stationSellProfileSelect.value, selectedStationId, {
+            message: `{% trans "Updated station sell profile for" %} ${stationNameInput.value || selectedStationId}.`,
+        });
+        renderAll();
     });
     stationBuyProfileSelect.addEventListener('change', function() {
-        if (!selectedStationId || !buyProfileLibrarySelect || !buyProfileApplyBtn || !buyProfileStructureSelect) {
+        const profileApi = window.materialExchangeConfigProfileApi || {};
+        if (!selectedStationId || typeof profileApi.applyBuyProfileToStructureByName !== 'function') {
             return;
         }
         if (!stationBuyProfileSelect.value) {
             renderAll();
             return;
         }
-        buyProfileStructureSelect.value = selectedStationId;
-        buyProfileStructureSelect.dispatchEvent(new Event('change'));
-        buyProfileLibrarySelect.value = stationBuyProfileSelect.value;
-        buyProfileApplyBtn.click();
-        window.setTimeout(renderAll, 0);
+        profileApi.applyBuyProfileToStructureByName(stationBuyProfileSelect.value, selectedStationId, {
+            message: `{% trans "Updated station buy profile for" %} ${stationNameInput.value || selectedStationId}.`,
+        });
+        renderAll();
     });
 
     [

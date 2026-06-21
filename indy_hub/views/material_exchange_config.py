@@ -207,6 +207,17 @@ MARKET_GROUP_GRANULAR_CHILDREN: dict[str, list[str]] = {
         "Unknown Components",
     ],
 }
+MATERIAL_EXCHANGE_ALLOWED_STRUCTURE_TYPE_IDS = {
+    35825,
+    35826,
+    35827,
+    35832,
+    35833,
+    35834,
+    35835,
+    35836,
+}
+PLAYER_STRUCTURE_ID_MIN = 2_147_483_648
 
 
 def _normalize_market_group_name(raw_value: str) -> str:
@@ -260,6 +271,80 @@ def _find_market_group_id_by_name(
 
 def payload_parent_id_is_none(parent_id) -> bool:
     return parent_id in (None, "", 0, "0")
+
+
+def _get_material_exchange_structure_type_map(corp_id: int) -> dict[int, int]:
+    """Return cached CorpTools structure type IDs for the configured corporation."""
+
+    cache_key = f"indy_hub:material_exchange:corp_structure_types:v1:{int(corp_id)}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        try:
+            return {
+                int(structure_id): int(type_id)
+                for structure_id, type_id in dict(cached).items()
+                if int(structure_id) > 0 and int(type_id) > 0
+            }
+        except Exception:
+            return {}
+
+    try:
+        # Third Party
+        from corptools.models.audits import CorporationAudit
+        from corptools.models.structures import Structure
+    except Exception:
+        cache.set(cache_key, {}, 300)
+        return {}
+
+    try:
+        corp_audits = CorporationAudit.objects.filter(corporation__corporation_id=int(corp_id)).select_related(
+            "corporation"
+        )
+        if not corp_audits.exists():
+            cache.set(cache_key, {}, 300)
+            return {}
+
+        structure_type_map = {
+            int(structure_id): int(type_id)
+            for structure_id, type_id in Structure.objects.filter(corporation__in=corp_audits)
+            .exclude(structure_id__isnull=True)
+            .exclude(type_id__isnull=True)
+            .values_list("structure_id", "type_id")
+            if int(structure_id) > 0 and int(type_id) > 0
+        }
+    except Exception:
+        structure_type_map = {}
+
+    cache.set(cache_key, structure_type_map, 300)
+    return structure_type_map
+
+
+def _filter_material_exchange_structure_ids(corp_id: int, structure_ids: list[int]) -> list[int]:
+    """Keep only material-exchange-compatible dockable Upwell structures."""
+
+    filtered_ids: list[int] = []
+    seen_ids: set[int] = set()
+    structure_type_map = _get_material_exchange_structure_type_map(int(corp_id))
+
+    for raw_structure_id in structure_ids or []:
+        try:
+            structure_id = int(raw_structure_id)
+        except (TypeError, ValueError):
+            continue
+        if structure_id <= 0 or structure_id in seen_ids:
+            continue
+        seen_ids.add(structure_id)
+
+        structure_type_id = int(structure_type_map.get(structure_id) or 0)
+        if structure_type_id:
+            if structure_type_id in MATERIAL_EXCHANGE_ALLOWED_STRUCTURE_TYPE_IDS:
+                filtered_ids.append(structure_id)
+            continue
+
+        if structure_id >= PLAYER_STRUCTURE_ID_MIN:
+            filtered_ids.append(structure_id)
+
+    return filtered_ids
 
 
 def _get_market_group_children_lookup(
@@ -1608,7 +1693,7 @@ def _get_user_corporations(user):
 def _get_corp_structures(user, corp_id):
     """Get list of player structures using lazy queryset and resolve names for user's DIRECTOR characters."""
 
-    cache_key = f"indy_hub:material_exchange:corp_structures:v4:{int(corp_id)}"
+    cache_key = f"indy_hub:material_exchange:corp_structures:v5:{int(corp_id)}"
     cached = cache.get(cache_key)
     if cached is not None:
         try:
@@ -1668,7 +1753,7 @@ def _get_corp_structures(user, corp_id):
             loc_ids_set.add(int(structure_id))
             structure_flags.setdefault(int(structure_id), set()).add(str(flag))
 
-    loc_ids = list(loc_ids_set)
+    loc_ids = _filter_material_exchange_structure_ids(int(corp_id), sorted(loc_ids_set))
 
     if not loc_ids:
         result = (

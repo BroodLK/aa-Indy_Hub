@@ -125,6 +125,7 @@ class MaterialExchangeConfigRenderContractTests(TestCase):
             self.assertIn(text, content)
 
         expected_controls = [
+            'id="configToastRegion"',
             'id="corpSelect"',
             'id="primaryStructureIdInput"',
             'id="sellStructureSelect"',
@@ -150,6 +151,8 @@ class MaterialExchangeConfigRenderContractTests(TestCase):
             self.assertIn(control, content)
 
         self.assertIn('"60000003": null', content)
+        self.assertIn('showMaterialExchangeConfigToast', content)
+        self.assertIn('me-market-tree-state is-partial', content)
 
         expected_fields = [
             'name="corporation_id"',
