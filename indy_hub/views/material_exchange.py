@@ -6,6 +6,7 @@ import re
 import unicodedata
 from datetime import datetime, time, timedelta
 from decimal import ROUND_CEILING, Decimal
+from time import perf_counter
 
 # Django
 from django.contrib import messages
@@ -103,6 +104,7 @@ _PRODUCTION_IDS_CACHE: set[int] | None = None
 _INDUSTRY_MARKET_GROUP_IDS_CACHE: set[int] | None = None
 _SELL_ESTIMATE_TYPE_LOOKUP_CACHE: dict[str, int | None] = {}
 MAX_ESTIMATE_LIVE_PRICE_LOOKUPS = 400
+MAX_BUY_BROWSE_SCOPED_ASSETS = 3000
 
 _ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
     MaterialExchangeBuyOrder.Status.DRAFT,
@@ -3710,10 +3712,39 @@ def _get_buy_stock_blueprint_variant_map(
             scoped_item_id = 0
         if scoped_item_id > 0:
             scoped_item_ids.add(scoped_item_id)
-    blueprint_variant_by_item_id = _get_corp_blueprint_variant_by_item_id(
+    blueprint_details_by_item_id = _get_corp_blueprint_details_by_item_id(
         config=config,
         item_ids=scoped_item_ids,
     )
+    return _get_buy_stock_blueprint_variant_map_from_scoped_assets(
+        scoped_assets=scoped_assets,
+        type_ids=type_ids,
+        blueprint_details_by_item_id=blueprint_details_by_item_id,
+    )
+
+
+def _get_buy_stock_blueprint_variant_map_from_scoped_assets(
+    *,
+    scoped_assets: list[dict],
+    type_ids: set[int] | None = None,
+    blueprint_details_by_item_id: dict[int, dict[str, object]] | None = None,
+) -> dict[int, str]:
+    """Return stock blueprint variant by type_id using pre-scoped corp assets."""
+
+    if not scoped_assets:
+        return {}
+
+    wanted_type_ids: set[int] | None = None
+    if type_ids:
+        wanted_type_ids = {int(type_id) for type_id in type_ids if int(type_id) > 0}
+
+    if blueprint_details_by_item_id is None:
+        blueprint_details_by_item_id = {}
+    blueprint_variant_by_item_id = {
+        int(item_id): str(details.get("variant") or "").strip().lower()
+        for item_id, details in blueprint_details_by_item_id.items()
+        if str(details.get("variant") or "").strip().lower() in {"bpc", "bpo"}
+    }
 
     variants_by_type: dict[int, set[str]] = {}
     for asset in scoped_assets:
@@ -5720,12 +5751,41 @@ def material_exchange_buy(request, tokens):
         stock_items_for_meta = list(snapshot_stock_items)
 
         stock_type_ids = {int(item.type_id) for item in stock_items_for_meta}
-        stock_blueprint_variants = _get_buy_stock_blueprint_variant_map(
-            config=config,
-            type_ids=stock_type_ids,
-        )
         displayed_type_market_group_path_map = _get_type_market_group_path_map(stock_type_ids)
         displayed_type_market_group_label_map = _build_type_market_group_label_map(displayed_type_market_group_path_map)
+        scoped_buy_assets: list[dict] = []
+        blueprint_details_by_item_id: dict[int, dict[str, object]] = {}
+        try:
+            corp_assets, _scope_missing = get_corp_assets_cached(
+                int(config.corporation_id),
+                allow_refresh=False,
+            )
+            scoped_buy_assets = _get_buy_location_scoped_corp_assets(
+                config=config,
+                corp_assets=corp_assets,
+                allow_refresh=False,
+            )
+        except Exception:
+            scoped_buy_assets = []
+        if scoped_buy_assets:
+            scoped_item_ids: set[int] = set()
+            for scoped_asset in scoped_buy_assets:
+                try:
+                    scoped_item_id = int(scoped_asset.get("item_id") or 0)
+                except (TypeError, ValueError):
+                    scoped_item_id = 0
+                if scoped_item_id > 0:
+                    scoped_item_ids.add(scoped_item_id)
+            if scoped_item_ids:
+                blueprint_details_by_item_id = _get_corp_blueprint_details_by_item_id(
+                    config=config,
+                    item_ids=scoped_item_ids,
+                )
+        stock_blueprint_variants = _get_buy_stock_blueprint_variant_map_from_scoped_assets(
+            scoped_assets=scoped_buy_assets,
+            type_ids=stock_type_ids,
+            blueprint_details_by_item_id=blueprint_details_by_item_id,
+        )
 
         effective_reserved_quantities = reserved_quantities
         if effective_reserved_quantities is None:
@@ -5859,30 +5919,16 @@ def material_exchange_buy(request, tokens):
             }
 
         stock_rows: list[dict[str, object]] = []
-        try:
-            # Never force a live corp-assets refresh from this request path.
-            # The async stock refresh already manages ESI calls; here we should
-            # render from cached corp assets or fall back to flat stock rows.
-            scoped_buy_assets = _get_buy_location_scoped_corp_assets(
-                config=config,
-                allow_refresh=False,
+        use_detailed_scoped_rows = bool(scoped_buy_assets) and len(scoped_buy_assets) <= int(MAX_BUY_BROWSE_SCOPED_ASSETS)
+        if scoped_buy_assets and not use_detailed_scoped_rows:
+            logger.info(
+                "Buy browse view falling back to flat stock rows for config %s: scoped asset count %s exceeds limit %s",
+                config.pk,
+                len(scoped_buy_assets),
+                int(MAX_BUY_BROWSE_SCOPED_ASSETS),
             )
-        except Exception:
-            scoped_buy_assets = []
 
-        if scoped_buy_assets:
-            scoped_item_ids: set[int] = set()
-            for scoped_asset in scoped_buy_assets:
-                try:
-                    scoped_item_id = int(scoped_asset.get("item_id") or 0)
-                except (TypeError, ValueError):
-                    scoped_item_id = 0
-                if scoped_item_id > 0:
-                    scoped_item_ids.add(scoped_item_id)
-            blueprint_details_by_item_id = _get_corp_blueprint_details_by_item_id(
-                config=config,
-                item_ids=scoped_item_ids,
-            )
+        if use_detailed_scoped_rows:
             blueprint_variant_by_item_id = {
                 int(item_id): str(details.get("variant") or "").strip().lower()
                 for item_id, details in blueprint_details_by_item_id.items()
@@ -5968,6 +6014,8 @@ def material_exchange_buy(request, tokens):
             "reserved_quantities": effective_reserved_quantities,
             "pre_filter_stock_count": pre_filter_stock_count,
             "post_group_filter_count": post_group_filter_count,
+            "scoped_asset_count": len(scoped_buy_assets),
+            "used_detailed_rows": bool(use_detailed_scoped_rows),
         }
 
     corp_assets_scope_missing = False
@@ -6189,13 +6237,27 @@ def material_exchange_buy(request, tokens):
     # GET: ensure prices are populated if stock exists without prices
     base_stock_qs = config.stock_items.filter(quantity__gt=0)
     if base_stock_qs.exists() and not base_stock_qs.filter(jita_buy_price__gt=0).exists():
-        try:
-            sync_material_exchange_prices()
-            config.refresh_from_db()
-        except Exception as exc:  # pragma: no cover - defensive
-            messages.warning(request, f"Price sync failed automatically: {exc}")
+        price_refresh_key = f"indy_hub:material_exchange:buy_price_refresh:{int(config.corporation_id)}"
+        if not cache.get(price_refresh_key):
+            cache.set(price_refresh_key, True, 10 * 60)
+            try:
+                sync_material_exchange_prices.delay()
+            except Exception as exc:  # pragma: no cover - defensive
+                cache.delete(price_refresh_key)
+                logger.warning("Failed to start background buy price sync for corporation %s: %s", config.corporation_id, exc)
 
+    buy_stock_snapshot_started_at = perf_counter()
     buy_stock_snapshot = _build_current_buy_stock_snapshot()
+    logger.info(
+        "Buy browse snapshot built for config %s in %.3fs (pre_filter=%s post_filter=%s scoped_assets=%s detailed_rows=%s rendered_rows=%s)",
+        config.pk,
+        perf_counter() - buy_stock_snapshot_started_at,
+        int(buy_stock_snapshot.get("pre_filter_stock_count") or 0),
+        int(buy_stock_snapshot.get("post_group_filter_count") or 0),
+        int(buy_stock_snapshot.get("scoped_asset_count") or 0),
+        bool(buy_stock_snapshot.get("used_detailed_rows")),
+        len(buy_stock_snapshot.get("stock_rows") or []),
+    )
     stock_rows = buy_stock_snapshot["stock_rows"]
     pre_filter_stock_count = int(buy_stock_snapshot["pre_filter_stock_count"] or 0)
     post_group_filter_count = int(buy_stock_snapshot["post_group_filter_count"] or 0)

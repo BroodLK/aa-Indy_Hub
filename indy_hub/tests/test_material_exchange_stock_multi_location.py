@@ -15,6 +15,7 @@ from indy_hub.views.material_exchange import (
     _build_buy_material_rows,
     _get_buy_location_scoped_corp_assets,
     _get_buy_stock_blueprint_variant_map,
+    _get_buy_stock_blueprint_variant_map_from_scoped_assets,
     _get_corp_blueprint_details_by_item_id,
     _selected_buy_stock_items_share_source_location,
 )
@@ -239,6 +240,29 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         variants = _get_buy_stock_blueprint_variant_map(
             config=self.config,
             type_ids={77777},
+        )
+
+        self.assertEqual(variants.get(77777), "bpc")
+
+    def test_buy_stock_blueprint_variant_map_from_scoped_assets_reuses_prefetched_details(self):
+        scoped_assets = [
+            {
+                "item_id": 3001,
+                "location_id": 1001,
+                "location_flag": "CorpSAG1",
+                "type_id": 77777,
+                "quantity": 1,
+                "is_singleton": True,
+                "is_blueprint": False,
+            }
+        ]
+
+        variants = _get_buy_stock_blueprint_variant_map_from_scoped_assets(
+            scoped_assets=scoped_assets,
+            type_ids={77777},
+            blueprint_details_by_item_id={
+                3001: {"variant": "bpc", "runs": 5},
+            },
         )
 
         self.assertEqual(variants.get(77777), "bpc")
