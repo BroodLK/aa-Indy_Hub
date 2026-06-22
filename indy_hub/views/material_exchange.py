@@ -4762,6 +4762,42 @@ def rebuild_material_exchange_buy_browse_snapshot_cache(
     return cached_snapshot
 
 
+def _get_buy_stock_snapshot_for_submission(
+    *,
+    config: MaterialExchangeConfig,
+    submitted_type_ids: set[int] | None = None,
+    reserved_quantities: dict[int, int] | None = None,
+) -> dict[str, object]:
+    snapshot_cache_key = _get_buy_browse_snapshot_cache_key(config)
+    buy_stock_snapshot_static = cache.get(snapshot_cache_key)
+    if buy_stock_snapshot_static is None:
+        buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
+
+    effective_reserved_quantities = reserved_quantities
+    if effective_reserved_quantities is None:
+        requested_type_ids: set[int] = set()
+        for raw_type_id in submitted_type_ids or set():
+            try:
+                type_id = int(raw_type_id)
+            except (TypeError, ValueError):
+                continue
+            if type_id > 0:
+                requested_type_ids.add(type_id)
+        effective_reserved_quantities = (
+            _get_reserved_buy_quantities(
+                config=config,
+                type_ids=requested_type_ids,
+            )
+            if requested_type_ids
+            else {}
+        )
+
+    return _apply_reserved_quantities_to_buy_stock_snapshot(
+        buy_stock_snapshot=buy_stock_snapshot_static,
+        reserved_quantities=effective_reserved_quantities,
+    )
+
+
 def _apply_reserved_quantities_to_buy_stock_snapshot(
     *,
     buy_stock_snapshot: dict[str, object],
@@ -6168,9 +6204,6 @@ def material_exchange_buy(request, tokens):
         messages.info(request, _("Buy orders are currently disabled for this hub."))
         return redirect("indy_hub:material_exchange_index")
     stock_refreshing = False
-    _sell_override_map, buy_override_map = _get_item_price_override_maps(config)
-    _sell_market_group_override_map, buy_market_group_override_map = _get_market_group_price_override_maps(config)
-    _sell_container_override, buy_container_override = _get_container_price_override_maps(config)
 
     buy_name_map, buy_locations_label = _get_buy_location_display_context(config)
 
@@ -6210,19 +6243,26 @@ def material_exchange_buy(request, tokens):
             locked_stock_items = list(
                 config.stock_items.select_for_update().filter(type_id__in=submitted_type_ids, quantity__gt=0)
             )
-            locked_stock_items_by_type = {int(stock_item.type_id): stock_item for stock_item in locked_stock_items}
-            stock_items_for_snapshot = [
-                locked_stock_items_by_type.get(int(stock_item.type_id), stock_item)
-                for stock_item in config.stock_items.filter(quantity__gt=0)
-            ]
-            buy_stock_snapshot = _build_current_buy_stock_snapshot(
+            locked_reserved_quantities = (
+                _get_reserved_buy_quantities(
+                    config=config,
+                    type_ids=submitted_type_ids,
+                )
+                if submitted_type_ids
+                else {}
+            )
+            current_available_by_type: dict[int, int] = {}
+            current_reserved_by_type: dict[int, int] = {}
+            for stock_item in locked_stock_items:
+                type_id = int(stock_item.type_id)
+                reserved_qty = int(locked_reserved_quantities.get(type_id, 0) or 0)
+                current_reserved_by_type[type_id] = reserved_qty
+                current_available_by_type[type_id] = max(int(stock_item.quantity) - reserved_qty, 0)
+
+            buy_stock_snapshot = _get_buy_stock_snapshot_for_submission(
                 config=config,
-                stock_items=stock_items_for_snapshot,
-                buy_name_map=buy_name_map,
-                buy_locations_label=buy_locations_label,
-                buy_override_map=buy_override_map,
-                buy_market_group_override_map=buy_market_group_override_map,
-                buy_container_override=buy_container_override,
+                submitted_type_ids=submitted_type_ids,
+                reserved_quantities=locked_reserved_quantities,
             )
             stock_row_by_index = buy_stock_snapshot["stock_row_by_index"]
 
@@ -6265,8 +6305,12 @@ def material_exchange_buy(request, tokens):
                     continue
 
                 display_type_name = str(row_data.get("display_type_name") or get_type_name(type_id))
-                available_qty = int(row_data.get("available_quantity") or 0)
-                reserved_qty = int(row_data.get("reserved_quantity") or 0)
+                snapshot_available_qty = int(row_data.get("available_quantity") or 0)
+                current_available_qty = int(current_available_by_type.get(type_id, 0) or 0)
+                available_qty = min(snapshot_available_qty, current_available_qty)
+                reserved_qty = int(
+                    current_reserved_by_type.get(type_id, row_data.get("reserved_quantity") or 0) or 0
+                )
                 if qty > available_qty:
                     errors.append(
                         _(

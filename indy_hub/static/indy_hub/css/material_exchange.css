@@ -118,6 +118,45 @@ html[data-theme="darkly"] {
     }
 }
 
+.me-submit-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+}
+
+.me-submit-overlay-dialog {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    width: min(100%, 420px);
+    padding: 1rem 1.25rem;
+    border-radius: 8px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: rgba(248, 250, 252, 0.96);
+    color: var(--me-card-text, #0f172a);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
+}
+
+.me-submit-overlay-dialog .spinner-border {
+    flex: 0 0 auto;
+}
+
+html[data-theme="darkly"] .me-submit-overlay {
+    background: rgba(2, 6, 23, 0.66);
+}
+
+html[data-theme="darkly"] .me-submit-overlay-dialog {
+    border-color: rgba(148, 163, 184, 0.22);
+    background: rgba(15, 23, 42, 0.95);
+    color: var(--me-card-text, #f8fafc);
+}
+
 html[data-theme="darkly"] .me-hub-banner {
     background: linear-gradient(90deg, rgba(13, 110, 253, 0.22), rgba(25, 135, 84, 0.22));
     border-color: rgba(148, 163, 184, 0.35);

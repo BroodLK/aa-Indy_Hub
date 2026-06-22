@@ -387,9 +387,21 @@
                                         <span class="fw-bold">{% trans "Total Amount" %}</span>
                                         <span class="h4 mb-0 text-primary" id="totalAmount">0 ISK</span>
                                     </div>
-                                    <button type="submit" form="purchaseForm" class="btn btn-primary w-100 mt-3">
-                                        <i class="fas fa-shopping-cart me-2"></i>{% trans "Confirm Purchase" %}
+                                    <button type="submit" form="purchaseForm" class="btn btn-primary w-100 mt-3" id="confirmPurchaseBtn">
+                                        <span class="confirm-purchase-idle">
+                                            <i class="fas fa-shopping-cart me-2"></i>{% trans "Confirm Purchase" %}
+                                        </span>
+                                        <span class="confirm-purchase-loading d-none">
+                                            <span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>{% trans "Processing..." %}
+                                        </span>
                                     </button>
+                                    <div id="purchaseSubmitStatus"
+                                         class="d-none small text-muted mt-2 d-flex align-items-center justify-content-center gap-2"
+                                         role="status"
+                                         aria-live="polite">
+                                        <span class="spinner-border spinner-border-sm text-info" aria-hidden="true"></span>
+                                        <span>{% trans "Submitting your purchase. Please wait..." %}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -438,6 +450,16 @@
         </div>
     </div>
 
+    <div id="purchaseSubmitOverlay" class="me-submit-overlay d-none" aria-hidden="true">
+        <div class="me-submit-overlay-dialog" role="status" aria-live="assertive" aria-atomic="true">
+            <span class="spinner-border text-info" aria-hidden="true"></span>
+            <div>
+                <div class="fw-semibold">{% trans "Submitting purchase" %}</div>
+                <div class="small text-muted">{% trans "This can take a little while. Please wait..." %}</div>
+            </div>
+        </div>
+    </div>
+
     <script>
 document.addEventListener('DOMContentLoaded', function() {
     const cleanUrl = new URL(window.location.href);
@@ -456,6 +478,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const buyMultibuySearchBtn = document.getElementById('buyMultibuySearchBtn');
     const buyMultibuyModalElement = document.getElementById('buyMultibuyModal');
     const invoiceItemsList = document.getElementById('itemsList');
+    const confirmPurchaseBtn = document.getElementById('confirmPurchaseBtn');
+    const purchaseSubmitStatus = document.getElementById('purchaseSubmitStatus');
+    const purchaseSubmitOverlay = document.getElementById('purchaseSubmitOverlay');
     const stockRows = Array.from(document.querySelectorAll('.stock-row'));
     const rowLocationIdsCache = new WeakMap();
     const containerRows = stockRows.filter(row => row.dataset.rowKind === 'container');
@@ -473,6 +498,34 @@ document.addEventListener('DOMContentLoaded', function() {
     let marketGroupViewActive = false;
     const collapsedMarketGroups = new Set();
     const marketGroupHeaderRowsByKey = new Map();
+    let purchaseSubmissionInProgress = false;
+
+    function setPurchaseSubmitting(isSubmitting) {
+        purchaseSubmissionInProgress = Boolean(isSubmitting);
+
+        if (confirmPurchaseBtn) {
+            confirmPurchaseBtn.disabled = purchaseSubmissionInProgress;
+            confirmPurchaseBtn.classList.toggle('disabled', purchaseSubmissionInProgress);
+            const idleLabel = confirmPurchaseBtn.querySelector('.confirm-purchase-idle');
+            const loadingLabel = confirmPurchaseBtn.querySelector('.confirm-purchase-loading');
+            if (idleLabel) {
+                idleLabel.classList.toggle('d-none', purchaseSubmissionInProgress);
+            }
+            if (loadingLabel) {
+                loadingLabel.classList.toggle('d-none', !purchaseSubmissionInProgress);
+            }
+            confirmPurchaseBtn.setAttribute('aria-busy', purchaseSubmissionInProgress ? 'true' : 'false');
+        }
+
+        if (purchaseSubmitStatus) {
+            purchaseSubmitStatus.classList.toggle('d-none', !purchaseSubmissionInProgress);
+        }
+
+        if (purchaseSubmitOverlay) {
+            purchaseSubmitOverlay.classList.toggle('d-none', !purchaseSubmissionInProgress);
+            purchaseSubmitOverlay.setAttribute('aria-hidden', purchaseSubmissionInProgress ? 'false' : 'true');
+        }
+    }
 
     function splitContainerPath(pathValue) {
         return String(pathValue || '')
@@ -1701,9 +1754,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const purchaseForm = document.getElementById('purchaseForm');
     if (purchaseForm) {
         purchaseForm.addEventListener('submit', function(e) {
+            if (purchaseSubmissionInProgress) {
+                e.preventDefault();
+                return false;
+            }
+
             // Generate order reference and add to form before submitting
             const orderRef = generateOrderReference();
-            document.getElementById('hidden_order_reference').value = orderRef;
+            const hiddenOrderReference = document.getElementById('hidden_order_reference');
+            if (hiddenOrderReference) {
+                hiddenOrderReference.value = orderRef;
+            }
 
             let hasError = false;
             qtyInputs.forEach(input => {
@@ -1721,8 +1782,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateInvoice();
                 return false;
             }
+
+            setPurchaseSubmitting(true);
         });
     }
+
+    window.addEventListener('pageshow', function() {
+        setPurchaseSubmitting(false);
+    });
 
     if (buyMultibuySearchBtn) {
         buyMultibuySearchBtn.addEventListener('click', function() {
@@ -1757,6 +1824,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Initial update
+    setPurchaseSubmitting(false);
     updateInvoice();
     populateMarketGroupFilterOptions();
     applySortMode();
