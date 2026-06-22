@@ -63,7 +63,6 @@ from ..models import (
 from ..services.asset_cache import (
     _get_character_for_scope,
     add_cached_corp_assets_for_sell_completion,
-    asset_chain_has_context,
     build_asset_index_by_item_id,
     consume_cached_corp_assets_for_buy_completion,
     get_corp_assets_cached,
@@ -105,6 +104,7 @@ _INDUSTRY_MARKET_GROUP_IDS_CACHE: set[int] | None = None
 _SELL_ESTIMATE_TYPE_LOOKUP_CACHE: dict[str, int | None] = {}
 MAX_ESTIMATE_LIVE_PRICE_LOOKUPS = 400
 MAX_BUY_BROWSE_SCOPED_ASSETS = 3000
+BUY_BROWSE_SNAPSHOT_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 _ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
     MaterialExchangeBuyOrder.Status.DRAFT,
@@ -3461,60 +3461,73 @@ def _get_buy_location_scoped_corp_assets(
             context_to_structure_ids.setdefault(context_id_int, set()).add(structure_id_int)
 
     index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
+    resolved_structure_ids_by_item_id: dict[int, tuple[int, ...]] = {}
 
-    def _asset_chain_contains_location(asset_row: dict, location_id: int) -> bool:
-        current = asset_row
-        seen: set[int] = set()
-        target_id = int(location_id)
-        for depth in range(25):
-            try:
-                current_location_id = int(current.get("location_id", 0) or 0)
-            except (TypeError, ValueError):
-                return False
-            if current_location_id == target_id:
-                return True
-            parent = index_by_item_id.get(current_location_id)
-            if not parent:
-                return False
-            if current_location_id in seen:
-                return False
-            seen.add(current_location_id)
-            current = parent
-        return False
+    def _direct_context_structure_ids(asset_row: dict) -> tuple[int, ...]:
+        try:
+            current_location_id = int(asset_row.get("location_id", 0) or 0)
+        except (TypeError, ValueError):
+            return ()
+
+        structure_ids = context_to_structure_ids.get(current_location_id, set())
+        if not structure_ids:
+            return ()
+
+        if current_location_id < 0:
+            return tuple(sorted(int(sid) for sid in structure_ids))
+
+        current_flag = str(asset_row.get("location_flag", "") or "")
+        if current_flag == str(target_flag):
+            return tuple(sorted(int(sid) for sid in structure_ids))
+        if current_location_id in hangar_fallback_context_ids and current_flag == "Hangar":
+            return tuple(sorted(int(sid) for sid in structure_ids))
+        return ()
+
+    def _resolve_structure_ids_for_asset(asset_row: dict, *, depth: int = 0) -> tuple[int, ...]:
+        if depth >= 25:
+            return ()
+
+        try:
+            item_id = int(asset_row.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        if item_id > 0 and item_id in resolved_structure_ids_by_item_id:
+            return resolved_structure_ids_by_item_id[item_id]
+
+        direct_match = _direct_context_structure_ids(asset_row)
+        if direct_match:
+            if item_id > 0:
+                resolved_structure_ids_by_item_id[item_id] = direct_match
+            return direct_match
+
+        try:
+            parent_item_id = int(asset_row.get("location_id", 0) or 0)
+        except (TypeError, ValueError):
+            parent_item_id = 0
+        if parent_item_id <= 0:
+            if item_id > 0:
+                resolved_structure_ids_by_item_id[item_id] = ()
+            return ()
+
+        parent_asset = index_by_item_id.get(parent_item_id)
+        if not parent_asset:
+            if item_id > 0:
+                resolved_structure_ids_by_item_id[item_id] = ()
+            return ()
+
+        resolved = _resolve_structure_ids_for_asset(parent_asset, depth=depth + 1)
+        if item_id > 0:
+            resolved_structure_ids_by_item_id[item_id] = resolved
+        return resolved
 
     scoped_assets: list[dict] = []
     for raw_asset in corp_assets or []:
-        matches_any_location = False
-        matched_structure_ids: set[int] = set()
-        for location_id in effective_location_ids:
-            location_id_int = int(location_id)
-            if location_id_int < 0:
-                matched = _asset_chain_contains_location(raw_asset, location_id_int)
-            else:
-                matched = asset_chain_has_context(
-                    raw_asset,
-                    index_by_item_id,
-                    location_id=location_id_int,
-                    location_flag=str(target_flag),
-                )
-                if not matched and location_id_int in hangar_fallback_context_ids:
-                    matched = asset_chain_has_context(
-                        raw_asset,
-                        index_by_item_id,
-                        location_id=location_id_int,
-                        location_flag="Hangar",
-                    )
-            if not matched:
-                continue
-            matches_any_location = True
-            matched_structure_ids.update(context_to_structure_ids.get(location_id_int, set()))
-            break
-
-        if not matches_any_location:
+        matched_structure_ids = _resolve_structure_ids_for_asset(raw_asset)
+        if not matched_structure_ids:
             continue
 
         asset = dict(raw_asset)
-        asset["source_structure_ids"] = sorted(int(sid) for sid in matched_structure_ids)
+        asset["source_structure_ids"] = [int(sid) for sid in matched_structure_ids]
         scoped_assets.append(asset)
 
     return scoped_assets
@@ -4339,6 +4352,468 @@ def _normalize_source_structure_ids(
             continue
         normalized_source_ids.append(structure_id)
     return normalized_source_ids
+
+
+def _get_buy_location_display_context(config: MaterialExchangeConfig) -> tuple[dict[int, str], str]:
+    buy_name_map = config.get_buy_structure_name_map()
+    buy_location_names: list[str] = []
+    for raw_structure_id in config.get_buy_structure_ids():
+        structure_id = int(raw_structure_id)
+        buy_location_names.append(buy_name_map.get(structure_id) or f"Structure {structure_id}")
+    buy_locations_label = ", ".join(buy_location_names).strip() or (
+        config.structure_name or f"Structure {config.structure_id}"
+    )
+    return buy_name_map, buy_locations_label
+
+
+def _get_buy_pricing_context_for_structure_ids(
+    *,
+    config: MaterialExchangeConfig,
+    buy_pricing_context_cache: dict[
+        tuple[int, ...],
+        tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
+    ],
+    source_structure_ids: list[int] | tuple[int, ...] | set[int] | None,
+) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
+    normalized_source_ids = tuple(_normalize_source_structure_ids(source_structure_ids))
+    cached_context = buy_pricing_context_cache.get(normalized_source_ids)
+    if cached_context is not None:
+        return cached_context
+
+    active_buy_profile_name = _resolve_active_profile_name_for_structure_ids(
+        config,
+        mode="buy",
+        structure_ids=normalized_source_ids,
+    )
+    _sell_item_overrides, resolved_buy_override_map = _get_item_price_override_maps(
+        config,
+        buy_profile_name=active_buy_profile_name,
+    )
+    _sell_group_overrides, resolved_buy_market_group_override_map = _get_market_group_price_override_maps(
+        config,
+        buy_profile_name=active_buy_profile_name,
+    )
+    resolved_context = (resolved_buy_override_map, resolved_buy_market_group_override_map)
+    buy_pricing_context_cache[normalized_source_ids] = resolved_context
+    return resolved_context
+
+
+def _build_current_buy_stock_snapshot(
+    *,
+    config: MaterialExchangeConfig,
+    stock_items: list[MaterialExchangeStock] | None = None,
+    reserved_quantities: dict[int, int] | None = None,
+    buy_name_map: dict[int, str] | None = None,
+    buy_locations_label: str | None = None,
+    buy_override_map: dict[int, dict[str, object]] | None = None,
+    buy_market_group_override_map: dict[int, dict[str, object]] | None = None,
+    buy_container_override: dict[str, object] | None = None,
+) -> dict[str, object]:
+    if buy_name_map is None or buy_locations_label is None:
+        buy_name_map, buy_locations_label = _get_buy_location_display_context(config)
+    if buy_override_map is None:
+        _sell_override_map, buy_override_map = _get_item_price_override_maps(config)
+    if buy_market_group_override_map is None:
+        _sell_market_group_override_map, buy_market_group_override_map = _get_market_group_price_override_maps(config)
+    if buy_container_override is None:
+        _sell_container_override, buy_container_override = _get_container_price_override_maps(config)
+
+    buy_pricing_context_cache: dict[
+        tuple[int, ...],
+        tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
+    ] = {}
+    snapshot_stock_items = list(stock_items) if stock_items is not None else list(config.stock_items.filter(quantity__gt=0))
+    pre_filter_stock_count = len(snapshot_stock_items)
+
+    try:
+        snapshot_stock_items = [item for item in snapshot_stock_items if _stock_item_is_allowed_for_buy(config, item)]
+    except Exception as exc:
+        logger.warning("Failed to apply market group filter: %s", exc)
+    post_group_filter_count = len(snapshot_stock_items)
+    stock_items_for_meta = list(snapshot_stock_items)
+
+    stock_type_ids = {int(item.type_id) for item in stock_items_for_meta}
+    displayed_type_market_group_path_map = _get_type_market_group_path_map(stock_type_ids)
+    displayed_type_market_group_label_map = _build_type_market_group_label_map(displayed_type_market_group_path_map)
+    scoped_buy_assets: list[dict] = []
+    blueprint_details_by_item_id: dict[int, dict[str, object]] = {}
+    try:
+        corp_assets, _scope_missing = get_corp_assets_cached(
+            int(config.corporation_id),
+            allow_refresh=False,
+        )
+        scoped_buy_assets = _get_buy_location_scoped_corp_assets(
+            config=config,
+            corp_assets=corp_assets,
+            allow_refresh=False,
+        )
+    except Exception:
+        scoped_buy_assets = []
+
+    if scoped_buy_assets:
+        scoped_item_ids: set[int] = set()
+        for scoped_asset in scoped_buy_assets:
+            try:
+                scoped_item_id = int(scoped_asset.get("item_id") or 0)
+            except (TypeError, ValueError):
+                scoped_item_id = 0
+            if scoped_item_id > 0:
+                scoped_item_ids.add(scoped_item_id)
+        if scoped_item_ids:
+            blueprint_details_by_item_id = _get_corp_blueprint_details_by_item_id(
+                config=config,
+                item_ids=scoped_item_ids,
+            )
+    stock_blueprint_variants = _get_buy_stock_blueprint_variant_map_from_scoped_assets(
+        scoped_assets=scoped_buy_assets,
+        type_ids=stock_type_ids,
+        blueprint_details_by_item_id=blueprint_details_by_item_id,
+    )
+
+    effective_reserved_quantities = reserved_quantities
+    if effective_reserved_quantities is None:
+        effective_reserved_quantities = _get_reserved_buy_quantities(
+            config=config,
+            type_ids=stock_type_ids,
+        )
+
+    for stock_item in stock_items_for_meta:
+        reserved_qty = int(effective_reserved_quantities.get(int(stock_item.type_id), 0) or 0)
+        stock_item.reserved_quantity = reserved_qty
+        stock_item.available_quantity = max(int(stock_item.quantity) - reserved_qty, 0)
+        try:
+            stock_item.filtered_source_structure_ids = _get_allowed_buy_source_structure_ids_for_type(
+                config,
+                type_id=int(stock_item.type_id),
+                source_structure_ids=getattr(stock_item, "source_structure_ids", []) or [],
+            )
+        except Exception:
+            stock_item.filtered_source_structure_ids = _normalize_source_structure_ids(
+                getattr(stock_item, "source_structure_ids", []) or []
+            )
+        stock_item.buy_location_label = _build_buy_stock_location_label(
+            stock_item,
+            buy_name_map=buy_name_map,
+            fallback_label=buy_locations_label,
+        )
+
+    priced_stock_items: list[MaterialExchangeStock] = []
+    for stock_item in snapshot_stock_items:
+        blueprint_variant = str(stock_blueprint_variants.get(int(stock_item.type_id), "")).strip().lower()
+        stock_item.blueprint_variant = blueprint_variant
+        stock_item.display_type_name = _format_buy_stock_type_name(
+            stock_item.type_name or get_type_name(int(stock_item.type_id)),
+            blueprint_variant,
+        )
+
+        icon_variant = ""
+        if blueprint_variant == "bpc":
+            icon_variant = "bpc"
+        elif blueprint_variant in {"bpo", "mixed"}:
+            icon_variant = "bpo"
+        icon_url, icon_fallback_url = _build_eve_type_icon_urls(
+            int(stock_item.type_id),
+            blueprint_variant=icon_variant,
+            is_blueprint_hint=("blueprint" in str(stock_item.type_name or "").lower()),
+        )
+        stock_item.icon_url = icon_url
+        stock_item.icon_fallback_url = icon_fallback_url
+
+        if blueprint_variant == "bpc":
+            unit_price = Decimal("0")
+            default_unit_price = Decimal("0")
+            has_override = False
+        else:
+            effective_source_structure_ids = getattr(stock_item, "filtered_source_structure_ids", None) or getattr(
+                stock_item,
+                "source_structure_ids",
+                [],
+            )
+            resolved_buy_override_map, resolved_buy_market_group_override_map = _get_buy_pricing_context_for_structure_ids(
+                config=config,
+                buy_pricing_context_cache=buy_pricing_context_cache,
+                source_structure_ids=effective_source_structure_ids,
+            )
+            unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
+                stock_item=stock_item,
+                buy_override_map=resolved_buy_override_map,
+                buy_market_group_override_map=resolved_buy_market_group_override_map,
+                type_market_group_path_map=displayed_type_market_group_path_map,
+                buy_container_override=buy_container_override,
+                in_container=False,
+            )
+        if unit_price <= 0 and blueprint_variant != "bpc":
+            continue
+        stock_item.display_sell_price_to_member = unit_price
+        stock_item.default_sell_price_to_member = default_unit_price
+        stock_item.has_buy_price_override = bool(has_override)
+        priced_stock_items.append(stock_item)
+    snapshot_stock_items = priced_stock_items
+
+    group_map = _get_group_map([item.type_id for item in snapshot_stock_items])
+    snapshot_stock_items.sort(
+        key=lambda i: (
+            group_map.get(i.type_id, "Other").lower(),
+            (str(getattr(i, "display_type_name", "") or i.type_name or "")).lower(),
+        )
+    )
+
+    stock_meta_by_type: dict[int, dict[str, object]] = {}
+    for stock_item in stock_items_for_meta:
+        blueprint_variant = str(stock_blueprint_variants.get(int(stock_item.type_id), "")).strip().lower()
+        if blueprint_variant == "bpc":
+            unit_price = Decimal("0")
+            default_unit_price = Decimal("0")
+            has_override = False
+        else:
+            effective_source_structure_ids = getattr(stock_item, "filtered_source_structure_ids", None) or getattr(
+                stock_item,
+                "source_structure_ids",
+                [],
+            )
+            resolved_buy_override_map, resolved_buy_market_group_override_map = _get_buy_pricing_context_for_structure_ids(
+                config=config,
+                buy_pricing_context_cache=buy_pricing_context_cache,
+                source_structure_ids=effective_source_structure_ids,
+            )
+            unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
+                stock_item=stock_item,
+                buy_override_map=resolved_buy_override_map,
+                buy_market_group_override_map=resolved_buy_market_group_override_map,
+                type_market_group_path_map=displayed_type_market_group_path_map,
+                buy_container_override=buy_container_override,
+                in_container=False,
+            )
+        stock_meta_by_type[int(stock_item.type_id)] = {
+            "type_id": int(stock_item.type_id),
+            "base_type_name": str(stock_item.type_name or get_type_name(int(stock_item.type_id))),
+            "display_type_name": str(stock_item.display_type_name or stock_item.type_name or ""),
+            "blueprint_variant": str(blueprint_variant or ""),
+            "display_sell_price_to_member": unit_price,
+            "default_sell_price_to_member": default_unit_price,
+            "has_buy_price_override": bool(has_override),
+            "jita_buy_price": Decimal(stock_item.jita_buy_price or 0),
+            "jita_sell_price": Decimal(stock_item.jita_sell_price or 0),
+            "quantity": int(stock_item.quantity),
+            "reserved_quantity": int(stock_item.reserved_quantity),
+            "available_quantity": int(stock_item.available_quantity),
+            "source_structure_ids": _normalize_source_structure_ids(
+                getattr(stock_item, "filtered_source_structure_ids", None)
+                or getattr(stock_item, "source_structure_ids", [])
+                or []
+            ),
+            "buy_location_label": str(stock_item.buy_location_label or buy_locations_label),
+        }
+
+    stock_rows: list[dict[str, object]] = []
+    use_detailed_scoped_rows = bool(scoped_buy_assets) and len(scoped_buy_assets) <= int(MAX_BUY_BROWSE_SCOPED_ASSETS)
+    if scoped_buy_assets and not use_detailed_scoped_rows:
+        logger.info(
+            "Buy browse view falling back to flat stock rows for config %s: scoped asset count %s exceeds limit %s",
+            config.pk,
+            len(scoped_buy_assets),
+            int(MAX_BUY_BROWSE_SCOPED_ASSETS),
+        )
+
+    if use_detailed_scoped_rows:
+        blueprint_variant_by_item_id = {
+            int(item_id): str(details.get("variant") or "").strip().lower()
+            for item_id, details in blueprint_details_by_item_id.items()
+            if str(details.get("variant") or "").strip().lower() in {"bpc", "bpo"}
+        }
+        blueprint_runs_by_item_id = {
+            int(item_id): int(details.get("runs") or 0)
+            for item_id, details in blueprint_details_by_item_id.items()
+            if str(details.get("variant") or "").strip().lower() == "bpc" and int(details.get("runs") or 0) > 0
+        }
+        stock_rows = _build_buy_material_rows(
+            scoped_assets=scoped_buy_assets,
+            config=config,
+            stock_meta_by_type=stock_meta_by_type,
+            buy_override_map=buy_override_map,
+            buy_market_group_override_map=buy_market_group_override_map,
+            buy_container_override=buy_container_override,
+            type_market_group_path_map=displayed_type_market_group_path_map,
+            type_market_group_label_map=displayed_type_market_group_label_map,
+            buy_name_map=buy_name_map,
+            fallback_location_label=buy_locations_label,
+            blueprint_variant_by_item_id=blueprint_variant_by_item_id,
+            blueprint_runs_by_item_id=blueprint_runs_by_item_id,
+        )
+
+    if not stock_rows:
+        for index, stock_item in enumerate(snapshot_stock_items):
+            variant_token = str(getattr(stock_item, "blueprint_variant", "") or "") or "std"
+            stock_rows.append(
+                {
+                    "row_kind": "item",
+                    "row_index": int(index),
+                    "type_id": int(stock_item.type_id),
+                    "display_type_name": str(
+                        getattr(stock_item, "display_type_name", "") or stock_item.type_name or ""
+                    ),
+                    "blueprint_variant": str(getattr(stock_item, "blueprint_variant", "") or ""),
+                    "bpc_runs": None,
+                    "quantity": int(stock_item.quantity),
+                    "reserved_quantity": int(stock_item.reserved_quantity),
+                    "available_quantity": int(stock_item.available_quantity),
+                    "display_sell_price_to_member": stock_item.display_sell_price_to_member,
+                    "default_sell_price_to_member": stock_item.default_sell_price_to_member,
+                    "has_buy_price_override": bool(stock_item.has_buy_price_override),
+                    "icon_url": str(getattr(stock_item, "icon_url", "") or ""),
+                    "icon_fallback_url": str(getattr(stock_item, "icon_fallback_url", "") or ""),
+                    "source_structure_ids": _normalize_source_structure_ids(
+                        getattr(stock_item, "filtered_source_structure_ids", None)
+                        or getattr(stock_item, "source_structure_ids", [])
+                        or []
+                    ),
+                    "buy_location_label": str(getattr(stock_item, "buy_location_label", "") or buy_locations_label),
+                    "market_group_name": str(
+                        (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("name") or ""
+                    ),
+                    "market_group_path": str(
+                        (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("path")
+                        or (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("name")
+                        or ""
+                    ),
+                    "depth": 0,
+                    "container_path": "",
+                    "indent_padding_rem": 0,
+                    "form_quantity_field_name": f"qty_{int(stock_item.type_id)}_{variant_token}_root_{int(index)}",
+                }
+            )
+
+    stock_row_by_index = {
+        int(row.get("row_index")): row for row in stock_rows if str(row.get("row_kind") or "").strip() == "item"
+    }
+
+    return {
+        "stock_items": snapshot_stock_items,
+        "stock_rows": stock_rows,
+        "stock_row_by_index": stock_row_by_index,
+        "stock_meta_by_type": stock_meta_by_type,
+        "type_market_group_path_map": displayed_type_market_group_path_map,
+        "type_market_group_label_map": displayed_type_market_group_label_map,
+        "reserved_quantities": effective_reserved_quantities,
+        "pre_filter_stock_count": pre_filter_stock_count,
+        "post_group_filter_count": post_group_filter_count,
+        "scoped_asset_count": len(scoped_buy_assets),
+        "used_detailed_rows": bool(use_detailed_scoped_rows),
+    }
+
+
+def _get_buy_browse_snapshot_cache_key(config: MaterialExchangeConfig) -> str:
+    stock_state = config.stock_items.filter(quantity__gt=0).aggregate(
+        max_updated=Max("updated_at"),
+        row_count=Count("id"),
+    )
+    snapshot_cache_version_source = "|".join(
+        [
+            str(int(config.pk or 0)),
+            str(getattr(config, "updated_at", "") or ""),
+            str(getattr(config, "last_stock_sync", "") or ""),
+            str(getattr(config, "last_price_sync", "") or ""),
+            str(stock_state.get("max_updated") or ""),
+            str(int(stock_state.get("row_count") or 0)),
+        ]
+    )
+    return (
+        "indy_hub:material_exchange:buy_browse_snapshot:v2:"
+        f"{hashlib.md5(snapshot_cache_version_source.encode('utf-8'), usedforsecurity=False).hexdigest()}"
+    )
+
+
+def _build_cached_buy_browse_snapshot_value(buy_stock_snapshot: dict[str, object]) -> dict[str, object]:
+    return {
+        "stock_rows": buy_stock_snapshot.get("stock_rows") or [],
+        "stock_meta_by_type": buy_stock_snapshot.get("stock_meta_by_type") or {},
+        "pre_filter_stock_count": int(buy_stock_snapshot.get("pre_filter_stock_count") or 0),
+        "post_group_filter_count": int(buy_stock_snapshot.get("post_group_filter_count") or 0),
+        "scoped_asset_count": int(buy_stock_snapshot.get("scoped_asset_count") or 0),
+        "used_detailed_rows": bool(buy_stock_snapshot.get("used_detailed_rows")),
+    }
+
+
+def rebuild_material_exchange_buy_browse_snapshot_cache(
+    *,
+    config: MaterialExchangeConfig,
+) -> dict[str, object]:
+    started_at = perf_counter()
+    snapshot = _build_current_buy_stock_snapshot(
+        config=config,
+        reserved_quantities={},
+    )
+    cached_snapshot = _build_cached_buy_browse_snapshot_value(snapshot)
+    cache.set(
+        _get_buy_browse_snapshot_cache_key(config),
+        cached_snapshot,
+        BUY_BROWSE_SNAPSHOT_CACHE_TTL_SECONDS,
+    )
+    logger.info(
+        "Prebuilt buy browse snapshot for config %s in %.3fs (pre_filter=%s post_filter=%s scoped_assets=%s detailed_rows=%s rendered_rows=%s)",
+        config.pk,
+        perf_counter() - started_at,
+        int(cached_snapshot.get("pre_filter_stock_count") or 0),
+        int(cached_snapshot.get("post_group_filter_count") or 0),
+        int(cached_snapshot.get("scoped_asset_count") or 0),
+        bool(cached_snapshot.get("used_detailed_rows")),
+        len(cached_snapshot.get("stock_rows") or []),
+    )
+    return cached_snapshot
+
+
+def _apply_reserved_quantities_to_buy_stock_snapshot(
+    *,
+    buy_stock_snapshot: dict[str, object],
+    reserved_quantities: dict[int, int] | None = None,
+) -> dict[str, object]:
+    effective_reserved_quantities = {
+        int(type_id): int(quantity or 0) for type_id, quantity in (reserved_quantities or {}).items()
+    }
+
+    stock_meta_by_type: dict[int, dict[str, object]] = {}
+    remaining_available_by_type: dict[int, int] = {}
+    for raw_type_id, raw_meta in (buy_stock_snapshot.get("stock_meta_by_type") or {}).items():
+        type_id = int(raw_type_id)
+        meta = dict(raw_meta or {})
+        quantity = int(meta.get("quantity") or 0)
+        reserved_qty = int(effective_reserved_quantities.get(type_id, 0) or 0)
+        available_qty = max(quantity - reserved_qty, 0)
+        meta["reserved_quantity"] = reserved_qty
+        meta["available_quantity"] = available_qty
+        stock_meta_by_type[type_id] = meta
+        remaining_available_by_type[type_id] = available_qty
+
+    stock_rows: list[dict[str, object]] = []
+    for raw_row in buy_stock_snapshot.get("stock_rows") or []:
+        row = dict(raw_row or {})
+        if str(row.get("row_kind") or "").strip() == "item":
+            type_id = int(row.get("type_id") or 0)
+            quantity = int(row.get("quantity") or 0)
+            available_for_type = max(int(remaining_available_by_type.get(type_id, 0) or 0), 0)
+            available_qty = min(quantity, available_for_type)
+            reserved_qty = max(quantity - available_qty, 0)
+            remaining_available_by_type[type_id] = max(available_for_type - available_qty, 0)
+            row["reserved_quantity"] = int(reserved_qty)
+            row["available_quantity"] = int(available_qty)
+
+            variant_token = str(row.get("blueprint_variant") or "") or "std"
+            container_scope_token = "incan" if str(row.get("container_path") or "").strip() else "root"
+            row["form_quantity_field_name"] = (
+                f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{int(row.get('row_index') or 0)}"
+            )
+        stock_rows.append(row)
+
+    stock_row_by_index = {
+        int(row.get("row_index")): row for row in stock_rows if str(row.get("row_kind") or "").strip() == "item"
+    }
+
+    snapshot = dict(buy_stock_snapshot)
+    snapshot["stock_rows"] = stock_rows
+    snapshot["stock_row_by_index"] = stock_row_by_index
+    snapshot["stock_meta_by_type"] = stock_meta_by_type
+    snapshot["reserved_quantities"] = effective_reserved_quantities
+    return snapshot
 
 
 def _resolve_selected_buy_source_location_from_groups(
@@ -5697,326 +6172,7 @@ def material_exchange_buy(request, tokens):
     _sell_market_group_override_map, buy_market_group_override_map = _get_market_group_price_override_maps(config)
     _sell_container_override, buy_container_override = _get_container_price_override_maps(config)
 
-    buy_structure_ids = config.get_buy_structure_ids()
-    buy_name_map = config.get_buy_structure_name_map()
-    buy_location_names = []
-    for sid in buy_structure_ids:
-        sid_int = int(sid)
-        buy_location_names.append(buy_name_map.get(sid_int) or f"Structure {sid_int}")
-    buy_locations_label = ", ".join(buy_location_names).strip() or (
-        config.structure_name or f"Structure {config.structure_id}"
-    )
-    buy_pricing_context_cache: dict[
-        tuple[int, ...],
-        tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
-    ] = {}
-
-    def _get_buy_pricing_context_for_structure_ids(
-        source_structure_ids: list[int] | tuple[int, ...] | set[int] | None,
-    ) -> tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]]:
-        normalized_source_ids = tuple(_normalize_source_structure_ids(source_structure_ids))
-        cached_context = buy_pricing_context_cache.get(normalized_source_ids)
-        if cached_context is not None:
-            return cached_context
-        active_buy_profile_name = _resolve_active_profile_name_for_structure_ids(
-            config,
-            mode="buy",
-            structure_ids=normalized_source_ids,
-        )
-        _sell_item_overrides, resolved_buy_override_map = _get_item_price_override_maps(
-            config,
-            buy_profile_name=active_buy_profile_name,
-        )
-        _sell_group_overrides, resolved_buy_market_group_override_map = _get_market_group_price_override_maps(
-            config,
-            buy_profile_name=active_buy_profile_name,
-        )
-        resolved_context = (resolved_buy_override_map, resolved_buy_market_group_override_map)
-        buy_pricing_context_cache[normalized_source_ids] = resolved_context
-        return resolved_context
-
-    def _build_current_buy_stock_snapshot(
-        *,
-        stock_items: list[MaterialExchangeStock] | None = None,
-        reserved_quantities: dict[int, int] | None = None,
-    ) -> dict[str, object]:
-        snapshot_stock_items = list(stock_items) if stock_items is not None else list(config.stock_items.filter(quantity__gt=0))
-        pre_filter_stock_count = len(snapshot_stock_items)
-
-        try:
-            snapshot_stock_items = [item for item in snapshot_stock_items if _stock_item_is_allowed_for_buy(config, item)]
-        except Exception as exc:
-            logger.warning("Failed to apply market group filter: %s", exc)
-        post_group_filter_count = len(snapshot_stock_items)
-        stock_items_for_meta = list(snapshot_stock_items)
-
-        stock_type_ids = {int(item.type_id) for item in stock_items_for_meta}
-        displayed_type_market_group_path_map = _get_type_market_group_path_map(stock_type_ids)
-        displayed_type_market_group_label_map = _build_type_market_group_label_map(displayed_type_market_group_path_map)
-        scoped_buy_assets: list[dict] = []
-        blueprint_details_by_item_id: dict[int, dict[str, object]] = {}
-        try:
-            corp_assets, _scope_missing = get_corp_assets_cached(
-                int(config.corporation_id),
-                allow_refresh=False,
-            )
-            scoped_buy_assets = _get_buy_location_scoped_corp_assets(
-                config=config,
-                corp_assets=corp_assets,
-                allow_refresh=False,
-            )
-        except Exception:
-            scoped_buy_assets = []
-        if scoped_buy_assets:
-            scoped_item_ids: set[int] = set()
-            for scoped_asset in scoped_buy_assets:
-                try:
-                    scoped_item_id = int(scoped_asset.get("item_id") or 0)
-                except (TypeError, ValueError):
-                    scoped_item_id = 0
-                if scoped_item_id > 0:
-                    scoped_item_ids.add(scoped_item_id)
-            if scoped_item_ids:
-                blueprint_details_by_item_id = _get_corp_blueprint_details_by_item_id(
-                    config=config,
-                    item_ids=scoped_item_ids,
-                )
-        stock_blueprint_variants = _get_buy_stock_blueprint_variant_map_from_scoped_assets(
-            scoped_assets=scoped_buy_assets,
-            type_ids=stock_type_ids,
-            blueprint_details_by_item_id=blueprint_details_by_item_id,
-        )
-
-        effective_reserved_quantities = reserved_quantities
-        if effective_reserved_quantities is None:
-            effective_reserved_quantities = _get_reserved_buy_quantities(
-                config=config,
-                type_ids=stock_type_ids,
-            )
-
-        for stock_item in stock_items_for_meta:
-            reserved_qty = int(effective_reserved_quantities.get(int(stock_item.type_id), 0) or 0)
-            stock_item.reserved_quantity = reserved_qty
-            stock_item.available_quantity = max(int(stock_item.quantity) - reserved_qty, 0)
-            try:
-                stock_item.filtered_source_structure_ids = _get_allowed_buy_source_structure_ids_for_type(
-                    config,
-                    type_id=int(stock_item.type_id),
-                    source_structure_ids=getattr(stock_item, "source_structure_ids", []) or [],
-                )
-            except Exception:
-                stock_item.filtered_source_structure_ids = _normalize_source_structure_ids(
-                    getattr(stock_item, "source_structure_ids", []) or []
-                )
-            stock_item.buy_location_label = _build_buy_stock_location_label(
-                stock_item,
-                buy_name_map=buy_name_map,
-                fallback_label=buy_locations_label,
-            )
-
-        priced_stock_items: list[MaterialExchangeStock] = []
-        for stock_item in snapshot_stock_items:
-            blueprint_variant = str(stock_blueprint_variants.get(int(stock_item.type_id), "")).strip().lower()
-            stock_item.blueprint_variant = blueprint_variant
-            stock_item.display_type_name = _format_buy_stock_type_name(
-                stock_item.type_name or get_type_name(int(stock_item.type_id)),
-                blueprint_variant,
-            )
-
-            icon_variant = ""
-            if blueprint_variant == "bpc":
-                icon_variant = "bpc"
-            elif blueprint_variant in {"bpo", "mixed"}:
-                icon_variant = "bpo"
-            icon_url, icon_fallback_url = _build_eve_type_icon_urls(
-                int(stock_item.type_id),
-                blueprint_variant=icon_variant,
-                is_blueprint_hint=("blueprint" in str(stock_item.type_name or "").lower()),
-            )
-            stock_item.icon_url = icon_url
-            stock_item.icon_fallback_url = icon_fallback_url
-
-            if blueprint_variant == "bpc":
-                unit_price = Decimal("0")
-                default_unit_price = Decimal("0")
-                has_override = False
-            else:
-                effective_source_structure_ids = getattr(stock_item, "filtered_source_structure_ids", None) or getattr(
-                    stock_item,
-                    "source_structure_ids",
-                    [],
-                )
-                resolved_buy_override_map, resolved_buy_market_group_override_map = (
-                    _get_buy_pricing_context_for_structure_ids(effective_source_structure_ids)
-                )
-                unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
-                    stock_item=stock_item,
-                    buy_override_map=resolved_buy_override_map,
-                    buy_market_group_override_map=resolved_buy_market_group_override_map,
-                    type_market_group_path_map=displayed_type_market_group_path_map,
-                    buy_container_override=buy_container_override,
-                    in_container=False,
-                )
-            if unit_price <= 0 and blueprint_variant != "bpc":
-                continue
-            stock_item.display_sell_price_to_member = unit_price
-            stock_item.default_sell_price_to_member = default_unit_price
-            stock_item.has_buy_price_override = bool(has_override)
-            priced_stock_items.append(stock_item)
-        snapshot_stock_items = priced_stock_items
-
-        group_map = _get_group_map([item.type_id for item in snapshot_stock_items])
-        snapshot_stock_items.sort(
-            key=lambda i: (
-                group_map.get(i.type_id, "Other").lower(),
-                (str(getattr(i, "display_type_name", "") or i.type_name or "")).lower(),
-            )
-        )
-
-        stock_meta_by_type: dict[int, dict[str, object]] = {}
-        for stock_item in stock_items_for_meta:
-            blueprint_variant = str(stock_blueprint_variants.get(int(stock_item.type_id), "")).strip().lower()
-            if blueprint_variant == "bpc":
-                unit_price = Decimal("0")
-                default_unit_price = Decimal("0")
-                has_override = False
-            else:
-                effective_source_structure_ids = getattr(stock_item, "filtered_source_structure_ids", None) or getattr(
-                    stock_item,
-                    "source_structure_ids",
-                    [],
-                )
-                resolved_buy_override_map, resolved_buy_market_group_override_map = (
-                    _get_buy_pricing_context_for_structure_ids(effective_source_structure_ids)
-                )
-                unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
-                    stock_item=stock_item,
-                    buy_override_map=resolved_buy_override_map,
-                    buy_market_group_override_map=resolved_buy_market_group_override_map,
-                    type_market_group_path_map=displayed_type_market_group_path_map,
-                    buy_container_override=buy_container_override,
-                    in_container=False,
-                )
-            stock_meta_by_type[int(stock_item.type_id)] = {
-                "type_id": int(stock_item.type_id),
-                "base_type_name": str(stock_item.type_name or get_type_name(int(stock_item.type_id))),
-                "display_type_name": str(stock_item.display_type_name or stock_item.type_name or ""),
-                "blueprint_variant": str(blueprint_variant or ""),
-                "display_sell_price_to_member": unit_price,
-                "default_sell_price_to_member": default_unit_price,
-                "has_buy_price_override": bool(has_override),
-                "jita_buy_price": Decimal(stock_item.jita_buy_price or 0),
-                "jita_sell_price": Decimal(stock_item.jita_sell_price or 0),
-                "quantity": int(stock_item.quantity),
-                "reserved_quantity": int(stock_item.reserved_quantity),
-                "available_quantity": int(stock_item.available_quantity),
-                "source_structure_ids": _normalize_source_structure_ids(
-                    getattr(stock_item, "filtered_source_structure_ids", None)
-                    or getattr(stock_item, "source_structure_ids", [])
-                    or []
-                ),
-                "buy_location_label": str(stock_item.buy_location_label or buy_locations_label),
-            }
-
-        stock_rows: list[dict[str, object]] = []
-        use_detailed_scoped_rows = bool(scoped_buy_assets) and len(scoped_buy_assets) <= int(MAX_BUY_BROWSE_SCOPED_ASSETS)
-        if scoped_buy_assets and not use_detailed_scoped_rows:
-            logger.info(
-                "Buy browse view falling back to flat stock rows for config %s: scoped asset count %s exceeds limit %s",
-                config.pk,
-                len(scoped_buy_assets),
-                int(MAX_BUY_BROWSE_SCOPED_ASSETS),
-            )
-
-        if use_detailed_scoped_rows:
-            blueprint_variant_by_item_id = {
-                int(item_id): str(details.get("variant") or "").strip().lower()
-                for item_id, details in blueprint_details_by_item_id.items()
-                if str(details.get("variant") or "").strip().lower() in {"bpc", "bpo"}
-            }
-            blueprint_runs_by_item_id = {
-                int(item_id): int(details.get("runs") or 0)
-                for item_id, details in blueprint_details_by_item_id.items()
-                if str(details.get("variant") or "").strip().lower() == "bpc" and int(details.get("runs") or 0) > 0
-            }
-            stock_rows = _build_buy_material_rows(
-                scoped_assets=scoped_buy_assets,
-                config=config,
-                stock_meta_by_type=stock_meta_by_type,
-                buy_override_map=buy_override_map,
-                buy_market_group_override_map=buy_market_group_override_map,
-                buy_container_override=buy_container_override,
-                type_market_group_path_map=displayed_type_market_group_path_map,
-                type_market_group_label_map=displayed_type_market_group_label_map,
-                buy_name_map=buy_name_map,
-                fallback_location_label=buy_locations_label,
-                blueprint_variant_by_item_id=blueprint_variant_by_item_id,
-                blueprint_runs_by_item_id=blueprint_runs_by_item_id,
-            )
-
-        if not stock_rows:
-            for index, stock_item in enumerate(snapshot_stock_items):
-                variant_token = str(getattr(stock_item, "blueprint_variant", "") or "") or "std"
-                stock_rows.append(
-                    {
-                        "row_kind": "item",
-                        "row_index": int(index),
-                        "type_id": int(stock_item.type_id),
-                        "display_type_name": str(
-                            getattr(stock_item, "display_type_name", "") or stock_item.type_name or ""
-                        ),
-                        "blueprint_variant": str(getattr(stock_item, "blueprint_variant", "") or ""),
-                        "bpc_runs": None,
-                        "quantity": int(stock_item.quantity),
-                        "reserved_quantity": int(stock_item.reserved_quantity),
-                        "available_quantity": int(stock_item.available_quantity),
-                        "display_sell_price_to_member": stock_item.display_sell_price_to_member,
-                        "default_sell_price_to_member": stock_item.default_sell_price_to_member,
-                        "has_buy_price_override": bool(stock_item.has_buy_price_override),
-                        "icon_url": str(getattr(stock_item, "icon_url", "") or ""),
-                        "icon_fallback_url": str(getattr(stock_item, "icon_fallback_url", "") or ""),
-                        "source_structure_ids": _normalize_source_structure_ids(
-                            getattr(stock_item, "filtered_source_structure_ids", None)
-                            or getattr(stock_item, "source_structure_ids", [])
-                            or []
-                        ),
-                        "buy_location_label": str(getattr(stock_item, "buy_location_label", "") or buy_locations_label),
-                        "market_group_name": str(
-                            (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("name") or ""
-                        ),
-                        "market_group_path": str(
-                            (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("path")
-                            or (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("name")
-                            or ""
-                        ),
-                        "depth": 0,
-                        "container_path": "",
-                        "indent_padding_rem": 0,
-                        "form_quantity_field_name": (
-                            f"qty_{int(stock_item.type_id)}_{variant_token}_root_{int(index)}"
-                        ),
-                    }
-                )
-
-        stock_row_by_index = {
-            int(row.get("row_index")): row
-            for row in stock_rows
-            if str(row.get("row_kind") or "").strip() == "item"
-        }
-
-        return {
-            "stock_items": snapshot_stock_items,
-            "stock_rows": stock_rows,
-            "stock_row_by_index": stock_row_by_index,
-            "stock_meta_by_type": stock_meta_by_type,
-            "type_market_group_path_map": displayed_type_market_group_path_map,
-            "type_market_group_label_map": displayed_type_market_group_label_map,
-            "reserved_quantities": effective_reserved_quantities,
-            "pre_filter_stock_count": pre_filter_stock_count,
-            "post_group_filter_count": post_group_filter_count,
-            "scoped_asset_count": len(scoped_buy_assets),
-            "used_detailed_rows": bool(use_detailed_scoped_rows),
-        }
+    buy_name_map, buy_locations_label = _get_buy_location_display_context(config)
 
     corp_assets_scope_missing = False
     try:
@@ -6060,7 +6216,13 @@ def material_exchange_buy(request, tokens):
                 for stock_item in config.stock_items.filter(quantity__gt=0)
             ]
             buy_stock_snapshot = _build_current_buy_stock_snapshot(
+                config=config,
                 stock_items=stock_items_for_snapshot,
+                buy_name_map=buy_name_map,
+                buy_locations_label=buy_locations_label,
+                buy_override_map=buy_override_map,
+                buy_market_group_override_map=buy_market_group_override_map,
+                buy_container_override=buy_container_override,
             )
             stock_row_by_index = buy_stock_snapshot["stock_row_by_index"]
 
@@ -6246,18 +6408,31 @@ def material_exchange_buy(request, tokens):
                 cache.delete(price_refresh_key)
                 logger.warning("Failed to start background buy price sync for corporation %s: %s", config.corporation_id, exc)
 
-    buy_stock_snapshot_started_at = perf_counter()
-    buy_stock_snapshot = _build_current_buy_stock_snapshot()
-    logger.info(
-        "Buy browse snapshot built for config %s in %.3fs (pre_filter=%s post_filter=%s scoped_assets=%s detailed_rows=%s rendered_rows=%s)",
-        config.pk,
-        perf_counter() - buy_stock_snapshot_started_at,
-        int(buy_stock_snapshot.get("pre_filter_stock_count") or 0),
-        int(buy_stock_snapshot.get("post_group_filter_count") or 0),
-        int(buy_stock_snapshot.get("scoped_asset_count") or 0),
-        bool(buy_stock_snapshot.get("used_detailed_rows")),
-        len(buy_stock_snapshot.get("stock_rows") or []),
+    buy_stock_snapshot_cache_key = _get_buy_browse_snapshot_cache_key(config) if request.method == "GET" else ""
+    buy_stock_snapshot_static = cache.get(buy_stock_snapshot_cache_key) if buy_stock_snapshot_cache_key else None
+    if buy_stock_snapshot_static is not None:
+        logger.info(
+            "Buy browse snapshot cache hit for config %s (rendered_rows=%s)",
+            config.pk,
+            len(buy_stock_snapshot_static.get("stock_rows") or []),
+        )
+    else:
+        buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
+
+    reserved_type_ids = {int(type_id) for type_id in (buy_stock_snapshot_static.get("stock_meta_by_type") or {}).keys()}
+    reserved_quantities = (
+        _get_reserved_buy_quantities(
+            config=config,
+            type_ids=reserved_type_ids,
+        )
+        if reserved_type_ids
+        else {}
     )
+    buy_stock_snapshot = _apply_reserved_quantities_to_buy_stock_snapshot(
+        buy_stock_snapshot=buy_stock_snapshot_static,
+        reserved_quantities=reserved_quantities,
+    )
+
     stock_rows = buy_stock_snapshot["stock_rows"]
     pre_filter_stock_count = int(buy_stock_snapshot["pre_filter_stock_count"] or 0)
     post_group_filter_count = int(buy_stock_snapshot["post_group_filter_count"] or 0)

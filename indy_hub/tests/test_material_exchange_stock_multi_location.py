@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.test import TestCase
 
 # AA Example App
@@ -12,12 +13,15 @@ from indy_hub.models import Blueprint, MaterialExchangeConfig, MaterialExchangeI
 from indy_hub.services.asset_cache import make_managed_hangar_location_id
 from indy_hub.tasks.material_exchange import _sync_stock_impl
 from indy_hub.views.material_exchange import (
+    _apply_reserved_quantities_to_buy_stock_snapshot,
     _build_buy_material_rows,
+    _get_buy_browse_snapshot_cache_key,
     _get_buy_location_scoped_corp_assets,
     _get_buy_stock_blueprint_variant_map,
     _get_buy_stock_blueprint_variant_map_from_scoped_assets,
     _get_corp_blueprint_details_by_item_id,
     _selected_buy_stock_items_share_source_location,
+    rebuild_material_exchange_buy_browse_snapshot_cache,
 )
 
 
@@ -170,6 +174,81 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         self.assertEqual(stock.source_structure_ids, [1001])
         self.assertEqual(stock.source_structure_names, ["Structure Alpha"])
 
+    def test_rebuild_buy_browse_snapshot_cache_persists_flat_stock_rows(self):
+        MaterialExchangeStock.objects.create(
+            config=self.config,
+            type_id=34,
+            type_name="Tritanium",
+            quantity=15,
+            source_structure_ids=[1001, 1002],
+            source_structure_names=["Structure Alpha", "Structure Beta"],
+            jita_buy_price=Decimal("5.00"),
+            jita_sell_price=Decimal("6.00"),
+        )
+
+        with patch("indy_hub.views.material_exchange._stock_item_is_allowed_for_buy", return_value=True):
+            cached_snapshot = rebuild_material_exchange_buy_browse_snapshot_cache(config=self.config)
+        cache_key = _get_buy_browse_snapshot_cache_key(self.config)
+
+        self.assertEqual(cache.get(cache_key), cached_snapshot)
+        self.assertEqual(len(cached_snapshot["stock_rows"]), 1)
+        self.assertEqual(cached_snapshot["stock_rows"][0]["type_id"], 34)
+        self.assertEqual(cached_snapshot["stock_rows"][0]["quantity"], 15)
+        self.assertEqual(cached_snapshot["stock_meta_by_type"][34]["source_structure_ids"], [1001, 1002])
+
+    def test_apply_reserved_quantities_to_buy_stock_snapshot_preserves_row_order_distribution(self):
+        static_snapshot = {
+            "stock_rows": [
+                {
+                    "row_kind": "item",
+                    "row_index": 0,
+                    "type_id": 34,
+                    "quantity": 4,
+                    "blueprint_variant": "",
+                    "container_path": "",
+                },
+                {
+                    "row_kind": "container",
+                    "row_index": 1,
+                    "container_key": "c9001",
+                },
+                {
+                    "row_kind": "item",
+                    "row_index": 2,
+                    "type_id": 34,
+                    "quantity": 6,
+                    "blueprint_variant": "",
+                    "container_path": "c9001",
+                },
+            ],
+            "stock_meta_by_type": {
+                34: {
+                    "type_id": 34,
+                    "quantity": 10,
+                    "reserved_quantity": 0,
+                    "available_quantity": 10,
+                }
+            },
+            "pre_filter_stock_count": 1,
+            "post_group_filter_count": 1,
+        }
+
+        reserved_snapshot = _apply_reserved_quantities_to_buy_stock_snapshot(
+            buy_stock_snapshot=static_snapshot,
+            reserved_quantities={34: 3},
+        )
+
+        self.assertEqual(reserved_snapshot["stock_meta_by_type"][34]["reserved_quantity"], 3)
+        self.assertEqual(reserved_snapshot["stock_meta_by_type"][34]["available_quantity"], 7)
+        self.assertEqual(reserved_snapshot["stock_rows"][0]["available_quantity"], 4)
+        self.assertEqual(reserved_snapshot["stock_rows"][0]["reserved_quantity"], 0)
+        self.assertEqual(reserved_snapshot["stock_rows"][2]["available_quantity"], 3)
+        self.assertEqual(reserved_snapshot["stock_rows"][2]["reserved_quantity"], 3)
+        self.assertEqual(reserved_snapshot["stock_rows"][0]["form_quantity_field_name"], "qty_34_std_root_0")
+        self.assertEqual(reserved_snapshot["stock_rows"][2]["form_quantity_field_name"], "qty_34_std_incan_2")
+        self.assertIn(0, reserved_snapshot["stock_row_by_index"])
+        self.assertIn(2, reserved_snapshot["stock_row_by_index"])
+
 
 class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
     def setUp(self):
@@ -215,6 +294,51 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
             int(self.config.corporation_id),
             allow_refresh=False,
         )
+
+    def test_get_buy_location_scoped_corp_assets_resolves_nested_container_once(self):
+        self.config.buy_structure_ids = [1001]
+        self.config.buy_structure_names = ["Structure Alpha"]
+        self.config.hangar_division = 1
+        self.config.save(update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"])
+
+        corp_assets = [
+            {
+                "item_id": 5001,
+                "location_id": 1001,
+                "location_flag": "OfficeFolder",
+                "type_id": 27,
+                "quantity": 1,
+                "is_singleton": True,
+                "is_blueprint": False,
+            },
+            {
+                "item_id": 5002,
+                "location_id": 5001,
+                "location_flag": "CorpSAG1",
+                "type_id": 23,
+                "quantity": 1,
+                "is_singleton": True,
+                "is_blueprint": False,
+            },
+            {
+                "item_id": 5003,
+                "location_id": 5002,
+                "location_flag": "Unlocked",
+                "type_id": 34,
+                "quantity": 44,
+                "is_singleton": False,
+                "is_blueprint": False,
+            },
+        ]
+
+        scoped_assets = _get_buy_location_scoped_corp_assets(
+            config=self.config,
+            corp_assets=corp_assets,
+        )
+
+        scoped_by_item_id = {int(asset["item_id"]): asset for asset in scoped_assets}
+        self.assertEqual(scoped_by_item_id[5002]["source_structure_ids"], [1001])
+        self.assertEqual(scoped_by_item_id[5003]["source_structure_ids"], [1001])
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
     def test_buy_stock_blueprint_variant_map_detects_bpc(self, mock_get_corp_assets_cached):

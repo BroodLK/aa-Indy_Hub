@@ -592,6 +592,36 @@ def _me_buy_stock_refresh_progress_key(corporation_id: int) -> str:
     return f"indy_hub:material_exchange:buy_stock_refresh:{int(corporation_id)}"
 
 
+def _refresh_buy_browse_snapshot_cache_for_config(config: MaterialExchangeConfig) -> None:
+    if not config or int(getattr(config, "pk", 0) or 0) <= 0:
+        return
+
+    try:
+        from ..views.material_exchange import rebuild_material_exchange_buy_browse_snapshot_cache
+
+        rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
+    except Exception as exc:
+        logger.warning(
+            "Failed to rebuild buy browse snapshot cache for config %s: %s",
+            getattr(config, "pk", None),
+            exc,
+        )
+
+
+def _refresh_buy_browse_snapshot_cache_for_config_ids(config_ids: list[int] | set[int] | tuple[int, ...]) -> None:
+    cleaned_config_ids = sorted({int(config_id) for config_id in (config_ids or []) if int(config_id) > 0})
+    if not cleaned_config_ids:
+        return
+
+    config_by_id = {
+        int(config.id): config for config in MaterialExchangeConfig.objects.filter(id__in=cleaned_config_ids)
+    }
+    for config_id in cleaned_config_ids:
+        config = config_by_id.get(int(config_id))
+        if config is not None:
+            _refresh_buy_browse_snapshot_cache_for_config(config)
+
+
 @shared_task(
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 5},
@@ -1578,10 +1608,14 @@ def _sync_stock_impl():
         )
 
         # Auto-sync prices after stock updates so buy page has prices
+        buy_browse_snapshot_refreshed = False
         try:
             sync_material_exchange_prices()
+            buy_browse_snapshot_refreshed = True
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Auto price sync failed after stock sync: %s", exc)
+        if not buy_browse_snapshot_refreshed or not stock_updates:
+            _refresh_buy_browse_snapshot_cache_for_config(config)
 
         emit_analytics_event(
             task="material_exchange.sync_stock",
@@ -1619,6 +1653,7 @@ def sync_material_exchange_prices():
 
         # Collect all type_ids
         type_ids = list(stock_items.values_list("type_id", flat=True))
+        config_ids = sorted({int(config_id) for config_id in stock_items.values_list("config_id", flat=True) if int(config_id) > 0})
 
         # Local
         from ..services.fuzzwork import FuzzworkError, fetch_fuzzwork_prices
@@ -1628,6 +1663,9 @@ def sync_material_exchange_prices():
         except FuzzworkError as exc:
             logger.error("Failed to fetch prices from Fuzzwork: %s", exc)
             return
+
+        refreshed_config_ids: list[int] = []
+        price_sync_completed_at = timezone.now()
 
         # Update stock prices
         with transaction.atomic():
@@ -1647,13 +1685,20 @@ def sync_material_exchange_prices():
                         f"buy={jita_buy:,.2f} sell={jita_sell:,.2f}"
                     )
 
-            # Update config timestamp
-            config = MaterialExchangeConfig.objects.first()
-            if config:
-                config.last_price_sync = timezone.now()
-                config.save(update_fields=["last_price_sync"])
+            if config_ids:
+                configs_to_update = list(MaterialExchangeConfig.objects.filter(id__in=config_ids))
+                for config in configs_to_update:
+                    config.last_price_sync = price_sync_completed_at
+                if configs_to_update:
+                    MaterialExchangeConfig.objects.bulk_update(
+                        configs_to_update,
+                        fields=["last_price_sync"],
+                        batch_size=200,
+                    )
+                    refreshed_config_ids = [int(config.id) for config in configs_to_update]
 
         logger.info(f"Buyback prices sync completed: {len(type_ids)} types updated")
+        _refresh_buy_browse_snapshot_cache_for_config_ids(refreshed_config_ids)
         emit_analytics_event(
             task="material_exchange.sync_prices",
             label="success",
