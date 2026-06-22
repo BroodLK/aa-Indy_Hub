@@ -268,17 +268,17 @@ def _build_contract_validation_webhook_message(
         if completed_before_validation:
             return (
                 f"{summary_line}\n"
-                "Validation passed. Contract had already been accepted in-game before "
-                "validation finished and is now completed."
+                "Validation passed. Contract had already completed in-game before this "
+                "validation cycle, but it has now been verified and no issues were found."
             )
         return f"{summary_line}\nValidation passed. No anomalies detected before completion."
     if completed_before_validation:
         return (
             f"{summary_line}\n"
-            "Validation anomaly detected.\n"
-            "Contract had already been accepted in-game before validation finished "
-            "and is now completed.\n"
-            f"Reason: {reason_text}"
+            "Validation anomaly detected after in-game completion.\n"
+            "Contract had already completed in-game before this validation cycle, but "
+            "issues were found.\n"
+            f"Reach out to correct the issue(s): {reason_text}"
         )
     return f"{summary_line}\n" "Validation anomaly detected before completion.\n" f"Reason: {reason_text}"
 
@@ -315,7 +315,14 @@ def _is_finished_contract_status(status: str | None) -> bool:
 def _build_completed_before_validation_note(status: str | None) -> str:
     if not _is_finished_contract_status(status):
         return ""
-    return "Contract had already been accepted in-game before validation finished " "and is now completed."
+    return "Contract had already completed in-game before this validation cycle."
+
+
+def _build_completed_before_validation_verified_note(status: str | None) -> str:
+    completion_note = _build_completed_before_validation_note(status)
+    if not completion_note:
+        return ""
+    return f"{completion_note} It has now been verified and no issues were found."
 
 
 def _complete_sell_order(
@@ -2321,6 +2328,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         contract_already_completed = _is_finished_contract_status(normalized_contract_status)
         previous_notes = str(order.notes or "").strip()
         completed_before_validation_note = _build_completed_before_validation_note(normalized_contract_status)
+        completed_before_validation_verified_note = _build_completed_before_validation_verified_note(
+            normalized_contract_status
+        )
 
         if override:
             try:
@@ -2423,15 +2433,20 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             )
             return
 
+        seller_notification_title = (
+            _("Sell Order Verified After Completion")
+            if contract_already_completed
+            else _("Sell Order Validated")
+        )
         notify_user(
             order.seller,
-            _("Sell Order Validated"),
+            seller_notification_title,
             _(
                 f"Your sell order {order.order_reference} has been validated!\n"
                 f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK verified.\n\n"
                 + (f"Location: {contract_location}\n" if contract_location else "")
                 + (
-                    f"Status: {completed_before_validation_note}"
+                    f"Status: {completed_before_validation_verified_note}"
                     if contract_already_completed
                     else "Status: Awaiting corporation to accept the contract.\n"
                     "Once accepted, you will receive payment."
@@ -2441,9 +2456,14 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
         )
 
+        admin_validation_title = (
+            _("Sell Order Verified After Completion")
+            if contract_already_completed
+            else _("Sell Order Validated")
+        )
         _notify_material_exchange_admins(
             config,
-            _("Sell Order Validated"),
+            admin_validation_title,
             _(
                 _build_contract_validation_webhook_message(
                     order.seller.username,
@@ -2824,11 +2844,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         price_details_message_block = f"{price_details_block}\n\n" if price_details_block else ""
 
         previous_notes = str(order.notes or "")
-        previous_core_notes = (
-            previous_notes.split("\n\nContract had already been accepted")[0]
-            if "Contract had already been accepted" in previous_notes
-            else previous_notes
-        )
+        previous_core_notes = previous_notes.split("\n\nContract had already ")[0]
 
         anomaly_updated = (
             order.status != MaterialExchangeSellOrder.Status.ANOMALY or previous_core_notes != core_anomaly_notes
@@ -3159,7 +3175,6 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         normalized_contract_status = str(getattr(contract, "status", "") or "").strip().lower()
         contract_already_completed = _is_finished_contract_status(normalized_contract_status)
         previous_notes = str(order.notes or "").strip()
-        completed_before_validation_note = _build_completed_before_validation_note(normalized_contract_status)
 
         if override:
             notes = (
@@ -3270,24 +3285,27 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             )
             return
 
-        notify_user(
-            order.buyer,
-            _("Buy Contract Created"),
-            _(
-                f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
-                f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
-                + (
-                    f"Status: {completed_before_validation_note}"
-                    if contract_already_completed
-                    else "Next step: accept the in-game contract to receive your items."
-                )
-            ),
-            level="success",
+        admin_validation_title = (
+            _("Buy Contract Verified After Completion")
+            if contract_already_completed
+            else _("Buy Contract Created")
         )
+
+        if not contract_already_completed:
+            notify_user(
+                order.buyer,
+                _("Buy Contract Created"),
+                _(
+                    f"The corporation created your in-game contract for buy order {order.order_reference}.\n"
+                    f"Contract #{normalized_contract_id} for {order.total_price:,.0f} ISK is now available.\n\n"
+                    "Next step: accept the in-game contract to receive your items."
+                ),
+                level="success",
+            )
 
         _notify_material_exchange_admins(
             config,
-            _("Buy Contract Created"),
+            admin_validation_title,
             _(
                 _build_contract_validation_webhook_message(
                     order.buyer.username,

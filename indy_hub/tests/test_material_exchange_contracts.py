@@ -41,6 +41,9 @@ from indy_hub.tasks.material_exchange_contracts import (
 # Note: Legacy test functions _contract_items_match_order and _matches_sell_order_criteria
 # have been replaced with _db variants that work with database models instead of dicts
 
+COMPLETED_BEFORE_VALIDATION_NOTE = "Contract had already completed in-game before this validation cycle"
+VERIFIED_AFTER_COMPLETION_NOTE = "verified and no issues were found"
+
 
 class ContractValidationTestCase(TestCase):
     """Tests for contract matching and validation logic"""
@@ -495,19 +498,15 @@ class ContractValidationTaskTest(TestCase):
 
         mock_notify_user.assert_called_once()
         user_message = str(mock_notify_user.call_args[0][2])
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            user_message,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, user_message)
+        self.assertIn(VERIFIED_AFTER_COMPLETION_NOTE, user_message)
 
         self.assertEqual(mock_notify_admins.call_count, 1)
         validation_title = str(mock_notify_admins.call_args_list[0][0][1])
         validation_message = str(mock_notify_admins.call_args_list[0][0][2])
-        self.assertIn("Validated", validation_title)
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            validation_message,
-        )
+        self.assertIn("Verified After Completion", validation_title)
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, validation_message)
+        self.assertIn(VERIFIED_AFTER_COMPLETION_NOTE, validation_message)
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
@@ -949,20 +948,11 @@ class ContractValidationTaskTest(TestCase):
             MaterialExchangeSellOrder.Status.ANOMALY,
         )
         self.assertIn("item list/quantities do not match", self.sell_order.notes)
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            self.sell_order.notes,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, self.sell_order.notes)
         mock_notify_user.assert_called()
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            str(mock_notify_user.call_args[0][2]),
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, str(mock_notify_user.call_args[0][2]))
         mock_notify_multi.assert_called()
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            str(mock_notify_multi.call_args[0][2]),
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, str(mock_notify_multi.call_args[0][2]))
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -1457,21 +1447,14 @@ class BuyOrderValidationTaskTest(TestCase):
         self.assertIsNotNone(self.buy_order.contract_validated_at)
         self.assertEqual(self.buy_order.delivered_at, completed_at)
 
-        mock_notify_user.assert_called_once()
-        user_message = str(mock_notify_user.call_args[0][2])
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            user_message,
-        )
+        mock_notify_user.assert_not_called()
 
         self.assertEqual(mock_notify_admins.call_count, 1)
         validation_title = str(mock_notify_admins.call_args_list[0][0][1])
         validation_message = str(mock_notify_admins.call_args_list[0][0][2])
-        self.assertIn("Created", validation_title)
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            validation_message,
-        )
+        self.assertIn("Verified After Completion", validation_title)
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, validation_message)
+        self.assertIn(VERIFIED_AFTER_COMPLETION_NOTE, validation_message)
 
     @patch("indy_hub.tasks.material_exchange_contracts._get_character_for_scope")
     @patch("indy_hub.tasks.material_exchange_contracts.shared_client")
@@ -1958,10 +1941,7 @@ class BuyOrderValidationTaskTest(TestCase):
             f"Contract: #{contract.contract_id} (finished)",
             self.buy_order.notes,
         )
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            self.buy_order.notes,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, self.buy_order.notes)
         self.assertIn("Issue(s): items mismatch", self.buy_order.notes)
         self.assertIn("Surplus:", self.buy_order.notes)
 
@@ -1971,10 +1951,7 @@ class BuyOrderValidationTaskTest(TestCase):
             f"Contract: #{contract.contract_id} (finished)",
             admin_message,
         )
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            admin_message,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, admin_message)
         self.assertIn("Reason: contract mismatch.", admin_message)
         mock_user.assert_not_called()
 
@@ -2028,10 +2005,7 @@ class BuyOrderValidationTaskTest(TestCase):
             f"Contract: #{contract.contract_id} (finished)",
             self.buy_order.notes,
         )
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            self.buy_order.notes,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, self.buy_order.notes)
         self.assertIn("Issue(s): wrong contract reference", self.buy_order.notes)
 
         mock_multi.assert_called()
@@ -2040,10 +2014,7 @@ class BuyOrderValidationTaskTest(TestCase):
             f"Contract: #{contract.contract_id} (finished)",
             admin_message,
         )
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            admin_message,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, admin_message)
         mock_user.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
@@ -2096,10 +2067,7 @@ class BuyOrderValidationTaskTest(TestCase):
             f"Contract: #{contract.contract_id} (finished)",
             self.buy_order.notes,
         )
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            self.buy_order.notes,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, self.buy_order.notes)
         self.assertIn("Issue(s): contract criteria mismatch", self.buy_order.notes)
 
         mock_multi.assert_called()
@@ -2108,10 +2076,7 @@ class BuyOrderValidationTaskTest(TestCase):
             f"Contract: #{contract.contract_id} (finished)",
             admin_message,
         )
-        self.assertIn(
-            "accepted in-game before validation finished and is now completed",
-            admin_message,
-        )
+        self.assertIn(COMPLETED_BEFORE_VALIDATION_NOTE, admin_message)
         mock_user.assert_not_called()
 
     @patch("indy_hub.tasks.material_exchange_contracts._notify_material_exchange_admins")
