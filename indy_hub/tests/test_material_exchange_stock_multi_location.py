@@ -16,12 +16,14 @@ from indy_hub.views.material_exchange import (
     _apply_reserved_quantities_to_buy_stock_snapshot,
     _build_buy_material_rows,
     _get_buy_browse_snapshot_cache_key,
+    _get_buy_submission_snapshot_cache_key,
     _get_buy_location_scoped_corp_assets,
     _get_buy_stock_snapshot_for_submission,
     _get_buy_stock_blueprint_variant_map,
     _get_buy_stock_blueprint_variant_map_from_scoped_assets,
     _get_corp_blueprint_details_by_item_id,
     _selected_buy_stock_items_share_source_location,
+    _store_buy_submission_snapshot,
     rebuild_material_exchange_buy_browse_snapshot_cache,
 )
 
@@ -288,6 +290,63 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         self.assertEqual(snapshot["stock_rows"][0]["available_quantity"], 7)
         self.assertEqual(snapshot["stock_rows"][0]["form_quantity_field_name"], "qty_34_std_root_0")
         self.assertIn(0, snapshot["stock_row_by_index"])
+
+    def test_get_buy_stock_snapshot_for_submission_uses_submission_snapshot_token(self):
+        static_snapshot = {
+            "stock_rows": [
+                {
+                    "row_kind": "item",
+                    "row_index": 0,
+                    "type_id": 34,
+                    "quantity": 10,
+                    "available_quantity": 10,
+                    "blueprint_variant": "",
+                    "container_path": "",
+                }
+            ],
+            "stock_meta_by_type": {
+                34: {
+                    "type_id": 34,
+                    "quantity": 10,
+                    "reserved_quantity": 0,
+                    "available_quantity": 10,
+                }
+            },
+            "pre_filter_stock_count": 1,
+            "post_group_filter_count": 1,
+        }
+        viewer = User.objects.create_user("buy_snapshot_viewer")
+        token = _store_buy_submission_snapshot(
+            config=self.config,
+            user_id=viewer.id,
+            buy_stock_snapshot_static=static_snapshot,
+        )
+
+        cache.delete(_get_buy_browse_snapshot_cache_key(self.config))
+
+        with patch("indy_hub.views.material_exchange.rebuild_material_exchange_buy_browse_snapshot_cache") as mock_rebuild:
+            snapshot = _get_buy_stock_snapshot_for_submission(
+                config=self.config,
+                submitted_type_ids={34},
+                reserved_quantities={34: 4},
+                submission_snapshot_token=token,
+                user_id=viewer.id,
+            )
+
+        mock_rebuild.assert_not_called()
+        self.assertEqual(snapshot["stock_meta_by_type"][34]["reserved_quantity"], 4)
+        self.assertEqual(snapshot["stock_meta_by_type"][34]["available_quantity"], 6)
+        self.assertEqual(snapshot["stock_rows"][0]["available_quantity"], 6)
+        self.assertEqual(
+            cache.get(
+                _get_buy_submission_snapshot_cache_key(
+                    config=self.config,
+                    user_id=viewer.id,
+                    token=token,
+                )
+            ),
+            static_snapshot,
+        )
 
 
 class MaterialExchangeBuyLocationCompatibilityTests(TestCase):

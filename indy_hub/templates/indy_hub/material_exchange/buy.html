@@ -184,6 +184,9 @@
                         <form method="post" id="purchaseForm">
                             {% csrf_token %}
                             <input type="hidden" id="hidden_order_reference" name="order_reference" value="">
+                            <input type="hidden"
+                                   name="buy_submission_snapshot_token"
+                                   value="{{ buy_submission_snapshot_token }}">
                             <div class="table-responsive">
                                 <table class="table table-hover stock-table align-middle">
                                     <thead>

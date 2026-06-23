@@ -3,6 +3,7 @@
 # Standard Library
 import hashlib
 import re
+import secrets
 import unicodedata
 from datetime import datetime, time, timedelta
 from decimal import ROUND_CEILING, Decimal
@@ -105,6 +106,7 @@ _SELL_ESTIMATE_TYPE_LOOKUP_CACHE: dict[str, int | None] = {}
 MAX_ESTIMATE_LIVE_PRICE_LOOKUPS = 400
 MAX_BUY_BROWSE_SCOPED_ASSETS = 3000
 BUY_BROWSE_SNAPSHOT_CACHE_TTL_SECONDS = 24 * 60 * 60
+BUY_SUBMISSION_SNAPSHOT_CACHE_TTL_SECONDS = 30 * 60
 
 _ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
     MaterialExchangeBuyOrder.Status.DRAFT,
@@ -4734,6 +4736,37 @@ def _build_cached_buy_browse_snapshot_value(buy_stock_snapshot: dict[str, object
     }
 
 
+def _get_buy_submission_snapshot_cache_key(
+    *,
+    config: MaterialExchangeConfig,
+    user_id: int,
+    token: str,
+) -> str:
+    return (
+        "indy_hub:material_exchange:buy_submission_snapshot:"
+        f"{int(config.pk or 0)}:{int(user_id)}:{str(token or '').strip()}"
+    )
+
+
+def _store_buy_submission_snapshot(
+    *,
+    config: MaterialExchangeConfig,
+    user_id: int,
+    buy_stock_snapshot_static: dict[str, object],
+) -> str:
+    token = secrets.token_urlsafe(16)
+    cache.set(
+        _get_buy_submission_snapshot_cache_key(
+            config=config,
+            user_id=int(user_id),
+            token=token,
+        ),
+        buy_stock_snapshot_static,
+        BUY_SUBMISSION_SNAPSHOT_CACHE_TTL_SECONDS,
+    )
+    return token
+
+
 def rebuild_material_exchange_buy_browse_snapshot_cache(
     *,
     config: MaterialExchangeConfig,
@@ -4767,9 +4800,30 @@ def _get_buy_stock_snapshot_for_submission(
     config: MaterialExchangeConfig,
     submitted_type_ids: set[int] | None = None,
     reserved_quantities: dict[int, int] | None = None,
+    submission_snapshot_token: str = "",
+    user_id: int | None = None,
 ) -> dict[str, object]:
-    snapshot_cache_key = _get_buy_browse_snapshot_cache_key(config)
-    buy_stock_snapshot_static = cache.get(snapshot_cache_key)
+    buy_stock_snapshot_static = None
+    normalized_submission_snapshot_token = str(submission_snapshot_token or "").strip()
+    if normalized_submission_snapshot_token and int(user_id or 0) > 0:
+        buy_stock_snapshot_static = cache.get(
+            _get_buy_submission_snapshot_cache_key(
+                config=config,
+                user_id=int(user_id),
+                token=normalized_submission_snapshot_token,
+            )
+        )
+        if buy_stock_snapshot_static is not None:
+            logger.info(
+                "Buy submission snapshot token hit for config %s user %s (rendered_rows=%s)",
+                config.pk,
+                int(user_id),
+                len(buy_stock_snapshot_static.get("stock_rows") or []),
+            )
+
+    if buy_stock_snapshot_static is None:
+        snapshot_cache_key = _get_buy_browse_snapshot_cache_key(config)
+        buy_stock_snapshot_static = cache.get(snapshot_cache_key)
     if buy_stock_snapshot_static is None:
         buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
 
@@ -6206,6 +6260,7 @@ def material_exchange_buy(request, tokens):
     stock_refreshing = False
 
     buy_name_map, buy_locations_label = _get_buy_location_display_context(config)
+    buy_submission_snapshot_token = ""
 
     corp_assets_scope_missing = False
     try:
@@ -6263,6 +6318,8 @@ def material_exchange_buy(request, tokens):
                 config=config,
                 submitted_type_ids=submitted_type_ids,
                 reserved_quantities=locked_reserved_quantities,
+                submission_snapshot_token=request.POST.get("buy_submission_snapshot_token", ""),
+                user_id=int(request.user.id),
             )
             stock_row_by_index = buy_stock_snapshot["stock_row_by_index"]
 
@@ -6462,6 +6519,12 @@ def material_exchange_buy(request, tokens):
         )
     else:
         buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
+    if request.method == "GET":
+        buy_submission_snapshot_token = _store_buy_submission_snapshot(
+            config=config,
+            user_id=int(request.user.id),
+            buy_stock_snapshot_static=buy_stock_snapshot_static,
+        )
 
     reserved_type_ids = {int(type_id) for type_id in (buy_stock_snapshot_static.get("stock_meta_by_type") or {}).keys()}
     reserved_quantities = (
@@ -6513,6 +6576,7 @@ def material_exchange_buy(request, tokens):
         "hangar_division_label": hangar_division_label,
         "buy_last_update": buy_last_update,
         "buy_next_refresh_minutes": _minutes_until_refresh(buy_last_update),
+        "buy_submission_snapshot_token": buy_submission_snapshot_token,
         "nav_context": _build_nav_context(request.user),
     }
 
