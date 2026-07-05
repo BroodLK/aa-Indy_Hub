@@ -128,13 +128,27 @@ def _get_reserved_buy_quantities(
     config: MaterialExchangeConfig,
     type_ids: set[int] | None = None,
     exclude_order_id: int | None = None,
+    stock_synced_at=None,
 ) -> dict[int, int]:
-    """Return reserved quantities by type for active buy orders."""
+    """Return reserved quantities by type for active buy orders.
+
+    Active buy orders (draft/awaiting_validation/validated) are always reserved.
+    COMPLETED buy orders remain reserved until the next stock sync happened
+    after the completion, closing the race window between the buyer accepting
+    the contract in-game and ESI reporting the reduced corp inventory.
+    """
+
+    status_filter = Q(order__status__in=_ACTIVE_BUY_RESERVATION_STATUSES)
+    completed_pending_sync_filter = Q(
+        order__status=MaterialExchangeBuyOrder.Status.COMPLETED,
+    )
+    if stock_synced_at is not None:
+        completed_pending_sync_filter &= Q(order__updated_at__gt=stock_synced_at)
+    status_filter |= completed_pending_sync_filter
 
     queryset = MaterialExchangeBuyOrderItem.objects.filter(
         order__config=config,
-        order__status__in=_ACTIVE_BUY_RESERVATION_STATUSES,
-    )
+    ).filter(status_filter)
     if type_ids:
         queryset = queryset.filter(type_id__in=type_ids)
     if exclude_order_id:
@@ -4477,6 +4491,7 @@ def _build_current_buy_stock_snapshot(
         effective_reserved_quantities = _get_reserved_buy_quantities(
             config=config,
             type_ids=stock_type_ids,
+            stock_synced_at=config.last_stock_sync,
         )
 
     for stock_item in stock_items_for_meta:
@@ -4841,6 +4856,7 @@ def _get_buy_stock_snapshot_for_submission(
             _get_reserved_buy_quantities(
                 config=config,
                 type_ids=requested_type_ids,
+                stock_synced_at=config.last_stock_sync,
             )
             if requested_type_ids
             else {}
@@ -6302,6 +6318,7 @@ def material_exchange_buy(request, tokens):
                 _get_reserved_buy_quantities(
                     config=config,
                     type_ids=submitted_type_ids,
+                    stock_synced_at=config.last_stock_sync,
                 )
                 if submitted_type_ids
                 else {}
@@ -6531,6 +6548,7 @@ def material_exchange_buy(request, tokens):
         _get_reserved_buy_quantities(
             config=config,
             type_ids=reserved_type_ids,
+            stock_synced_at=config.last_stock_sync,
         )
         if reserved_type_ids
         else {}
