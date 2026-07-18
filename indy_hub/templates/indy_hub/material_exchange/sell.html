@@ -311,6 +311,7 @@
                                                     data-blueprint-variant="{{ item.blueprint_variant }}"
                                                     data-unit-price="{{ item.buy_price_from_member|floatformat:2 }}"
                                                     data-max-qty="{{ item.available_quantity }}"
+                                                    data-refined-breakdown="{{ item.refined_breakdown_json|default:'' }}"
                                                     aria-disabled="{% if item.is_disabled %}true{% else %}false{% endif %}">
                                                     <td>
                                                         <img src="{{ item.icon_url }}"
@@ -1457,6 +1458,57 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function parseRefinedBreakdown(raw) {
+        const trimmed = (raw || '').trim();
+        if (!trimmed) {
+            return null;
+        }
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (!parsed || !Array.isArray(parsed.minerals) || parsed.minerals.length === 0) {
+                return null;
+            }
+            return parsed;
+        } catch (err) {
+            return null;
+        }
+    }
+
+    function formatNumberDetailed(value, digits) {
+        const parsed = Number(value || 0);
+        if (!Number.isFinite(parsed)) {
+            return '0';
+        }
+        return parsed.toLocaleString(undefined, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits
+        });
+    }
+
+    function renderRefinedBreakdownHtml(breakdown) {
+        if (!breakdown) {
+            return '';
+        }
+        const rate = escapeHtml(breakdown.refine_rate_percent || '0');
+        const total = formatNumberDetailed(breakdown.total_per_unit || 0, 2);
+        const rows = (breakdown.minerals || []).map((mineral) => {
+            const name = escapeHtml(mineral.name || '');
+            const qty = formatNumberDetailed(mineral.qty_per_unit || 0, 5);
+            const price = formatNumberDetailed(mineral.effective_price || 0, 2);
+            const subtotal = formatNumberDetailed(mineral.subtotal_per_unit || 0, 2);
+            return `<li>${qty} ${name} × ${price} ISK = ${subtotal} ISK</li>`;
+        }).join('');
+        return `
+            <div class="invoice-item-refined small text-muted mt-1 ps-2 border-start">
+                <div class="d-flex justify-content-between">
+                    <span>{% trans "Refines into (per unit, at" %} ${rate}%):</span>
+                    <span>${total} ISK / unit</span>
+                </div>
+                <ul class="list-unstyled mb-0 ms-2">${rows}</ul>
+            </div>
+        `;
+    }
+
     function updateInvoice() {
         const selectedItems = [];
         let totalCents = 0;
@@ -1495,7 +1547,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     name: displayName,
                     qty: effectiveQty,
                     unitPrice: unitPrice,
-                    subtotal: subtotal
+                    subtotal: subtotal,
+                    refinedBreakdown: parseRefinedBreakdown(row.dataset.refinedBreakdown),
                 });
 
                 totalCents += subtotalCents;
@@ -1522,6 +1575,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             let itemsHTML = '';
             selectedItems.forEach(item => {
+                const breakdownHtml = renderRefinedBreakdownHtml(item.refinedBreakdown);
                 itemsHTML += `
                     <div class="invoice-item">
                         <div class="d-flex justify-content-between mb-1">
@@ -1536,6 +1590,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="d-flex justify-content-between small text-muted">
                             <span>${item.qty.toLocaleString()} × ${formatNumber(item.unitPrice)} ISK</span>
                         </div>
+                        ${breakdownHtml}
                     </div>
                 `;
             });

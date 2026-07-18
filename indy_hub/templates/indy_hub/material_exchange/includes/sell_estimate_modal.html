@@ -166,6 +166,42 @@ document.addEventListener('DOMContentLoaded', () => {
         return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function formatDetailed(value, digits) {
+        const parsed = Number(value || 0);
+        if (!Number.isFinite(parsed)) {
+            return '0';
+        }
+        return parsed.toLocaleString(undefined, {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits
+        });
+    }
+
+    function renderRefinedBreakdownRow(breakdown) {
+        if (!breakdown || !Array.isArray(breakdown.minerals) || breakdown.minerals.length === 0) {
+            return '';
+        }
+        const rate = escapeHtml(breakdown.refine_rate_percent || '0');
+        const total = formatIsk(breakdown.total_per_unit || 0);
+        const rows = breakdown.minerals.map((mineral) => {
+            const name = escapeHtml(mineral.name || '');
+            const qty = formatDetailed(mineral.qty_per_unit || 0, 5);
+            const price = formatIsk(mineral.effective_price || 0);
+            const subtotal = formatIsk(mineral.subtotal_per_unit || 0);
+            return `<li>${qty} ${name} × ${price} ISK = ${subtotal} ISK</li>`;
+        }).join('');
+        return `
+            <tr class="estimate-refined-detail">
+                <td colspan="6" class="small text-muted">
+                    <div class="d-flex justify-content-between">
+                        <span>{% trans "Refines into (per unit, at" %} ${rate}%):</span>
+                        <span>${total} ISK / unit</span>
+                    </div>
+                    <ul class="list-unstyled mb-0 ms-3">${rows}</ul>
+                </td>
+            </tr>`;
+    }
+
     function renderRows(items) {
         return (items || []).map((item) => {
             const statusClass = item.status === 'ok'
@@ -177,6 +213,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const locations = Array.isArray(item.accepted_locations) && item.accepted_locations.length
                 ? `<ul class="estimate-locations">${item.accepted_locations.map((locationName) => `<li>${escapeHtml(locationName)}</li>`).join('')}</ul>`
                 : `<span class="text-muted">{% trans "None" %}</span>`;
+            const breakdownRow = renderRefinedBreakdownRow(item.refined_breakdown);
 
             return `
                 <tr>
@@ -189,7 +226,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="${statusClass} fw-semibold">${statusLabel}</div>
                         ${item.reason ? `<div class="small text-muted">${escapeHtml(item.reason)}</div>` : ''}
                     </td>
-                </tr>`;
+                </tr>${breakdownRow}`;
         }).join('');
     }
 

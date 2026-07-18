@@ -507,10 +507,12 @@ ORE_CATEGORY_IDS = {25}
 
 
 def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
-    """Return the subset of ``type_ids`` that belong to an ore-like SDE category.
+    """Return the subset of ``type_ids`` that are ore or compressed ore.
 
-    Covers both raw ore and compressed ore (asteroid category 25). Returns an
-    empty set if the SDE is not available.
+    Matches asteroid category (25) OR names containing "Compressed" whose market
+    group ancestry (up to 4 levels) includes "Compressed"/"ore" — mirroring the
+    existing ``_compressed_ore_type_filter`` in this module. Excludes
+    "Batch Compressed" names. Returns empty when SDE isn't available.
     """
     cleaned: set[int] = set()
     for raw_id in type_ids or []:
@@ -534,10 +536,20 @@ def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
         return set()
 
     try:
-        rows = item_type_model.objects.filter(
-            id__in=cleaned,
-            group__category_id__in=ORE_CATEGORY_IDS,
-        ).values_list("id", flat=True)
+        market_group_filter = models.Q()
+        relation = "market_group"
+        for _ in range(4):
+            market_group_filter |= models.Q(**{f"{relation}__name__icontains": "compressed"}) & models.Q(
+                **{f"{relation}__name__icontains": "ore"}
+            )
+            relation = f"{relation}__parent_group"
+        compressed_ore_filter = (
+            models.Q(name__icontains="Compressed")
+            & ~models.Q(name__icontains="Batch Compressed")
+            & (models.Q(group__category_id__in=ORE_CATEGORY_IDS) | market_group_filter)
+        )
+        combined_filter = models.Q(group__category_id__in=ORE_CATEGORY_IDS) | compressed_ore_filter
+        rows = item_type_model.objects.filter(id__in=cleaned).filter(combined_filter).values_list("id", flat=True)
         return {int(row) for row in rows}
     except Exception:
         return set()
@@ -573,6 +585,7 @@ def get_reprocessing_outputs_map(type_ids: Iterable[int]) -> dict[int, dict[int,
         ("TypeMaterial", ("type_id", "material_type_id", "quantity")),
         ("ItemTypeMaterial", ("type_id", "material_type_id", "quantity")),
         ("ItemTypeMaterials", ("item_type_id", "material_item_type_id", "quantity")),
+        ("ItemTypeMaterials", ("item_type", "material_item_type", "quantity")),
     ]
 
     for model_name, (source_field, output_field, qty_field) in candidates:

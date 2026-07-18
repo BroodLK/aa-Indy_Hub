@@ -2,6 +2,7 @@
 
 # Standard Library
 import hashlib
+import json
 import re
 import secrets
 import unicodedata
@@ -1545,11 +1546,72 @@ def _build_refined_ore_pricing_context(
                 jita_sell=jita_sell,
             )
 
+    mineral_name_map = _get_type_name_map(mineral_ids)
+    refine_rate_str = format(refine_rate.quantize(Decimal("0.01")), ".2f")
+    ratio = refine_rate / Decimal("100")
+
+    def _build_breakdown_map(
+        side: str,
+        effective_prices: dict[int, Decimal],
+    ) -> dict[int, dict[str, object]]:
+        breakdowns: dict[int, dict[str, object]] = {}
+        for ore_type_id, outputs in ore_reprocessing_map.items():
+            portion_size = int((ore_portion_size_map or {}).get(ore_type_id, 1) or 1)
+            if portion_size <= 0:
+                continue
+            minerals_detail: list[dict[str, object]] = []
+            total_per_unit = Decimal("0")
+            usable = True
+            for mineral_id, qty_per_portion in outputs.items():
+                try:
+                    qty = Decimal(int(qty_per_portion or 0))
+                except (TypeError, ValueError):
+                    usable = False
+                    break
+                if qty <= 0:
+                    continue
+                effective_price = effective_prices.get(mineral_id)
+                if effective_price is None or Decimal(effective_price) <= 0:
+                    usable = False
+                    break
+                effective_price = Decimal(effective_price)
+                yield_per_unit = (qty * ratio) / Decimal(portion_size)
+                subtotal_per_unit = yield_per_unit * effective_price
+                total_per_unit += subtotal_per_unit
+                minerals_detail.append(
+                    {
+                        "type_id": int(mineral_id),
+                        "name": str(mineral_name_map.get(int(mineral_id)) or f"Type {int(mineral_id)}"),
+                        "qty_per_unit": format(yield_per_unit.quantize(Decimal("0.00001")), ".5f"),
+                        "effective_price": format(effective_price.quantize(Decimal("0.01")), ".2f"),
+                        "subtotal_per_unit": format(subtotal_per_unit.quantize(Decimal("0.01")), ".2f"),
+                    }
+                )
+            if not usable or not minerals_detail or total_per_unit <= 0:
+                continue
+            breakdowns[int(ore_type_id)] = {
+                "side": side,
+                "refine_rate_percent": refine_rate_str,
+                "portion_size": portion_size,
+                "total_per_unit": format(total_per_unit.quantize(Decimal("0.01")), ".2f"),
+                "minerals": minerals_detail,
+            }
+        return breakdowns
+
+    refined_sell_breakdowns: dict[int, dict[str, object]] = (
+        _build_breakdown_map("sell", mineral_effective_sell_prices) if sell_enabled else {}
+    )
+    refined_buy_breakdowns: dict[int, dict[str, object]] = (
+        _build_breakdown_map("buy", mineral_effective_buy_prices) if buy_enabled else {}
+    )
+
     return {
         "ore_reprocessing_map": ore_reprocessing_map,
         "ore_portion_size_map": ore_portion_size_map,
         "mineral_effective_sell_prices": mineral_effective_sell_prices,
         "mineral_effective_buy_prices": mineral_effective_buy_prices,
+        "refined_sell_breakdowns": refined_sell_breakdowns,
+        "refined_buy_breakdowns": refined_buy_breakdowns,
     }
 
 
@@ -3049,6 +3111,7 @@ def _build_sell_material_rows(
     ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
     ore_portion_size_map = refined_ore_context["ore_portion_size_map"]
     mineral_effective_sell_prices = refined_ore_context["mineral_effective_sell_prices"]
+    refined_sell_breakdowns = refined_ore_context["refined_sell_breakdowns"]
 
     def get_price_meta(
         type_id: int,
@@ -3140,6 +3203,7 @@ def _build_sell_material_rows(
             price_meta_cache[meta_key] = None
             return None
 
+        breakdown = refined_sell_breakdowns.get(type_id_int) if not bool(has_override) else None
         meta = {
             "type_id": type_id_int,
             "type_name": _format_sell_blueprint_type_name(type_name, blueprint_variant),
@@ -3153,6 +3217,8 @@ def _build_sell_material_rows(
             "icon_fallback_url": icon_fallback_url,
             "is_disabled": False,
             "disable_reason": "",
+            "refined_breakdown": breakdown,
+            "refined_breakdown_json": json.dumps(breakdown) if breakdown else "",
         }
         price_meta_cache[meta_key] = meta
         return meta
@@ -5583,6 +5649,7 @@ def material_exchange_sell_estimate(request):
     ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
     ore_portion_size_map = refined_ore_context["ore_portion_size_map"]
     mineral_effective_sell_prices = refined_ore_context["mineral_effective_sell_prices"]
+    refined_sell_breakdowns = refined_ore_context["refined_sell_breakdowns"]
 
     def format_decimal(value: Decimal) -> str:
         return format(value.quantize(Decimal("0.01")), ".2f")
@@ -5649,6 +5716,9 @@ def material_exchange_sell_estimate(request):
                 "accepted_locations": accepted_locations,
                 "status": status,
                 "reason": str(reason),
+                "refined_breakdown": (
+                    refined_sell_breakdowns.get(type_id) if can_quote else None
+                ),
             }
         )
 
