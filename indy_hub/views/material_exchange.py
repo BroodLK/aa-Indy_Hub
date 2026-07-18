@@ -5,6 +5,7 @@ import hashlib
 import re
 import secrets
 import unicodedata
+from collections.abc import Iterable
 from datetime import datetime, time, timedelta
 from decimal import ROUND_CEILING, Decimal
 from time import perf_counter
@@ -94,6 +95,8 @@ from ..utils.eve import get_corporation_name, get_type_name
 from ..utils.material_exchange_pricing import (
     apply_markup_with_jita_bounds,
     compute_buy_price_from_member,
+    compute_refined_ore_price,
+    compute_sell_price_to_member,
 )
 from .navigation import build_nav_context
 
@@ -1372,6 +1375,184 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
     return price_map
 
 
+def _to_decimal_or_zero(value) -> Decimal:
+    if isinstance(value, Decimal):
+        return value
+    try:
+        return Decimal(str(value or 0))
+    except Exception:
+        return Decimal("0")
+
+
+def _apply_item_override_price(
+    *,
+    override_value: dict | None,
+    config: MaterialExchangeConfig,
+    jita_buy: Decimal,
+    jita_sell: Decimal,
+) -> Decimal | None:
+    """Resolve an item-level override entry to a concrete unit price."""
+
+    if override_value is None:
+        return None
+    if str(override_value.get("kind") or "") == "markup":
+        override_base = str(override_value.get("base") or "buy").strip().lower()
+        if override_base not in {"buy", "sell"}:
+            override_base = "buy"
+        return apply_markup_with_jita_bounds(
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+            base_choice=override_base,
+            percent=Decimal(override_value.get("percent") or 0),
+            enforce_bounds=bool(getattr(config, "enforce_jita_price_bounds", False)),
+        )
+    return Decimal(override_value.get("price") or 0)
+
+
+def _build_refined_ore_pricing_context(
+    *,
+    config: MaterialExchangeConfig,
+    type_ids: Iterable[int],
+    price_data: dict[int, dict[str, Decimal]] | None = None,
+) -> dict[str, object]:
+    """Return refined-ore lookup maps for a set of type IDs.
+
+    Two per-mineral effective-price maps are produced so ore prices reflect
+    override-adjusted mineral prices at the hub:
+    - ``mineral_effective_sell_prices`` — what the hub pays members per mineral
+      unit (used on the SELL page).
+    - ``mineral_effective_buy_prices`` — what the hub charges members per
+      mineral unit (used on the BUY page).
+
+    If a mineral has an item-level sell/buy override, that override's effective
+    price is used; otherwise the hub's config markup is applied to Jita prices.
+    Mineral overrides feed straight into the refined ore total — no additional
+    ore-level markup is layered on top.
+
+    When neither refined toggle is enabled the returned dicts are empty.
+    """
+
+    empty: dict[str, object] = {
+        "ore_reprocessing_map": {},
+        "ore_portion_size_map": {},
+        "mineral_effective_sell_prices": {},
+        "mineral_effective_buy_prices": {},
+    }
+    sell_enabled = bool(getattr(config, "use_refined_minerals_for_ore_pricing_sell", False))
+    buy_enabled = bool(getattr(config, "use_refined_minerals_for_ore_pricing_buy", False))
+    if not (sell_enabled or buy_enabled):
+        return empty
+    refine_rate = _to_decimal_or_zero(getattr(config, "ore_refine_rate_percent", 0))
+    if refine_rate <= 0:
+        return empty
+
+    cleaned_ids: set[int] = set()
+    for raw_type_id in type_ids or []:
+        try:
+            value = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            cleaned_ids.add(value)
+    if not cleaned_ids:
+        return empty
+
+    # Local
+    from ..services.reprocessing import (
+        get_ore_type_ids,
+        get_portion_size_map,
+        get_reprocessing_outputs_map,
+    )
+
+    ore_type_ids = get_ore_type_ids(cleaned_ids)
+    if not ore_type_ids:
+        return empty
+
+    ore_reprocessing_map = get_reprocessing_outputs_map(ore_type_ids)
+    if not ore_reprocessing_map:
+        return empty
+
+    ore_portion_size_map = get_portion_size_map(ore_reprocessing_map.keys())
+
+    mineral_ids: set[int] = set()
+    for outputs in ore_reprocessing_map.values():
+        for mineral_id in outputs.keys():
+            try:
+                mineral_ids.add(int(mineral_id))
+            except (TypeError, ValueError):
+                continue
+    if not mineral_ids:
+        return empty
+
+    mineral_jita_prices: dict[int, dict[str, Decimal]] = {}
+    missing_from_seed: set[int] = set()
+    for mineral_id in mineral_ids:
+        seed = (price_data or {}).get(mineral_id)
+        if seed:
+            mineral_jita_prices[mineral_id] = {
+                "buy": Decimal(seed.get("buy") or 0),
+                "sell": Decimal(seed.get("sell") or 0),
+            }
+        else:
+            missing_from_seed.add(mineral_id)
+    if missing_from_seed:
+        fetched = _fetch_fuzzwork_prices(sorted(missing_from_seed))
+        for mineral_id, prices in fetched.items():
+            try:
+                mineral_jita_prices[int(mineral_id)] = prices
+            except (TypeError, ValueError):
+                continue
+
+    # Resolve base (non-profile) item-level overrides for the minerals in play.
+    sell_override_map, buy_override_map = _get_item_price_override_maps(config)
+
+    mineral_effective_sell_prices: dict[int, Decimal] = {}
+    mineral_effective_buy_prices: dict[int, Decimal] = {}
+    for mineral_id in mineral_ids:
+        jita = mineral_jita_prices.get(mineral_id) or {}
+        jita_buy = Decimal(jita.get("buy") or 0)
+        jita_sell = Decimal(jita.get("sell") or 0)
+        if jita_buy <= 0 and jita_sell <= 0 and mineral_id not in sell_override_map and mineral_id not in buy_override_map:
+            continue
+
+        sell_override_price = _apply_item_override_price(
+            override_value=sell_override_map.get(mineral_id),
+            config=config,
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+        )
+        if sell_override_price is not None and sell_override_price > 0:
+            mineral_effective_sell_prices[mineral_id] = sell_override_price
+        else:
+            mineral_effective_sell_prices[mineral_id] = compute_buy_price_from_member(
+                config=config,
+                jita_buy=jita_buy,
+                jita_sell=jita_sell,
+            )
+
+        buy_override_price = _apply_item_override_price(
+            override_value=buy_override_map.get(mineral_id),
+            config=config,
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+        )
+        if buy_override_price is not None and buy_override_price > 0:
+            mineral_effective_buy_prices[mineral_id] = buy_override_price
+        else:
+            mineral_effective_buy_prices[mineral_id] = compute_sell_price_to_member(
+                config=config,
+                jita_buy=jita_buy,
+                jita_sell=jita_sell,
+            )
+
+    return {
+        "ore_reprocessing_map": ore_reprocessing_map,
+        "ore_portion_size_map": ore_portion_size_map,
+        "mineral_effective_sell_prices": mineral_effective_sell_prices,
+        "mineral_effective_buy_prices": mineral_effective_buy_prices,
+    }
+
+
 def _get_stock_jita_price_map(*, config: MaterialExchangeConfig, type_ids: list[int]) -> dict[int, dict[str, Decimal]]:
     """Return cached Jita buy/sell prices from MaterialExchangeStock for a config."""
 
@@ -2529,14 +2710,30 @@ def _compute_effective_sell_unit_price(
     type_market_group_path_map: dict[int, list[int]] | None = None,
     sell_container_override: dict[str, object] | None = None,
     in_container: bool = False,
+    ore_reprocessing_map: dict[int, dict[int, int]] | None = None,
+    ore_portion_size_map: dict[int, int] | None = None,
+    mineral_effective_sell_prices: dict[int, Decimal] | None = None,
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for sell-page pricing."""
 
-    default_unit_price = compute_buy_price_from_member(
-        config=config,
-        jita_buy=jita_buy,
-        jita_sell=jita_sell,
-    )
+    default_unit_price: Decimal | None = None
+    if (
+        getattr(config, "use_refined_minerals_for_ore_pricing_sell", False)
+        and ore_reprocessing_map
+        and int(type_id) in ore_reprocessing_map
+    ):
+        default_unit_price = compute_refined_ore_price(
+            reprocessing_outputs=ore_reprocessing_map[int(type_id)],
+            portion_size=(ore_portion_size_map or {}).get(int(type_id), 1),
+            refine_rate_percent=Decimal(getattr(config, "ore_refine_rate_percent", 0) or 0),
+            mineral_effective_prices=mineral_effective_sell_prices or {},
+        )
+    if default_unit_price is None:
+        default_unit_price = compute_buy_price_from_member(
+            config=config,
+            jita_buy=jita_buy,
+            jita_sell=jita_sell,
+        )
     override_value = _resolve_price_override_for_type(
         type_id=int(type_id),
         item_override_map=sell_override_map,
@@ -2576,6 +2773,9 @@ def _compute_effective_buy_unit_price(
     type_market_group_path_map: dict[int, list[int]] | None = None,
     buy_container_override: dict[str, object] | None = None,
     in_container: bool = False,
+    ore_reprocessing_map: dict[int, dict[int, int]] | None = None,
+    ore_portion_size_map: dict[int, int] | None = None,
+    mineral_effective_buy_prices: dict[int, Decimal] | None = None,
 ) -> tuple[Decimal, Decimal, bool]:
     """Return (effective, default, has_override) for buy-page pricing."""
 
@@ -2593,7 +2793,22 @@ def _compute_effective_buy_unit_price(
             resolved_default_price = Decimal(stock_item.sell_price_to_member or 0)
         resolved_config = resolved_config or getattr(stock_item, "config", None)
 
-    if resolved_default_price <= 0 and resolved_config is not None:
+    refined_default: Decimal | None = None
+    if (
+        resolved_config is not None
+        and getattr(resolved_config, "use_refined_minerals_for_ore_pricing_buy", False)
+        and ore_reprocessing_map
+        and resolved_type_id in ore_reprocessing_map
+    ):
+        refined_default = compute_refined_ore_price(
+            reprocessing_outputs=ore_reprocessing_map[resolved_type_id],
+            portion_size=(ore_portion_size_map or {}).get(resolved_type_id, 1),
+            refine_rate_percent=Decimal(getattr(resolved_config, "ore_refine_rate_percent", 0) or 0),
+            mineral_effective_prices=mineral_effective_buy_prices or {},
+        )
+    if refined_default is not None:
+        resolved_default_price = refined_default
+    elif resolved_default_price <= 0 and resolved_config is not None:
         base_choice = str(getattr(resolved_config, "buy_markup_base", "buy") or "buy")
         percent = Decimal(getattr(resolved_config, "buy_markup_percent", 0) or 0)
         resolved_default_price = apply_markup_with_jita_bounds(
@@ -2826,6 +3041,15 @@ def _build_sell_material_rows(
     price_meta_cache: dict[tuple[int, str, bool], dict[str, object] | None] = {}
     not_accepted_reason = _("Item not accepted in its current location")
 
+    refined_ore_context = _build_refined_ore_pricing_context(
+        config=config,
+        type_ids={int(asset.get("type_id") or 0) for asset in assets if asset.get("type_id")},
+        price_data=price_data,
+    )
+    ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
+    ore_portion_size_map = refined_ore_context["ore_portion_size_map"]
+    mineral_effective_sell_prices = refined_ore_context["mineral_effective_sell_prices"]
+
     def get_price_meta(
         type_id: int,
         blueprint_variant: str = "",
@@ -2908,6 +3132,9 @@ def _build_sell_material_rows(
             type_market_group_path_map=type_market_group_path_map,
             sell_container_override=sell_container_override,
             in_container=bool(in_container),
+            ore_reprocessing_map=ore_reprocessing_map,
+            ore_portion_size_map=ore_portion_size_map,
+            mineral_effective_sell_prices=mineral_effective_sell_prices,
         )
         if unit_price <= 0:
             price_meta_cache[meta_key] = None
@@ -3903,6 +4130,25 @@ def _build_buy_material_rows(
         tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
     ] = {}
 
+    refined_ore_seed_prices: dict[int, dict[str, Decimal]] = {}
+    for type_id_key, meta in stock_meta_by_type.items():
+        try:
+            resolved_type_id = int(type_id_key)
+        except (TypeError, ValueError):
+            continue
+        refined_ore_seed_prices[resolved_type_id] = {
+            "buy": Decimal(meta.get("jita_buy_price") or 0),
+            "sell": Decimal(meta.get("jita_sell_price") or 0),
+        }
+    refined_ore_context = _build_refined_ore_pricing_context(
+        config=config,
+        type_ids=stock_meta_by_type.keys(),
+        price_data=refined_ore_seed_prices,
+    )
+    ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
+    ore_portion_size_map = refined_ore_context["ore_portion_size_map"]
+    mineral_effective_buy_prices = refined_ore_context["mineral_effective_buy_prices"]
+
     def next_row_index() -> int:
         nonlocal row_index
         idx = row_index
@@ -4016,6 +4262,9 @@ def _build_buy_material_rows(
                 type_market_group_path_map=type_market_group_path_map,
                 buy_container_override=buy_container_override,
                 in_container=bool(in_container),
+                ore_reprocessing_map=ore_reprocessing_map,
+                ore_portion_size_map=ore_portion_size_map,
+                mineral_effective_buy_prices=mineral_effective_buy_prices,
             )
 
         icon_variant = "bpc" if variant == "bpc" else ("bpo" if variant == "bpo" else "")
@@ -4451,6 +4700,21 @@ def _build_current_buy_stock_snapshot(
     stock_type_ids = {int(item.type_id) for item in stock_items_for_meta}
     displayed_type_market_group_path_map = _get_type_market_group_path_map(stock_type_ids)
     displayed_type_market_group_label_map = _build_type_market_group_label_map(displayed_type_market_group_path_map)
+    stock_price_seed: dict[int, dict[str, Decimal]] = {
+        int(item.type_id): {
+            "buy": Decimal(item.jita_buy_price or 0),
+            "sell": Decimal(item.jita_sell_price or 0),
+        }
+        for item in stock_items_for_meta
+    }
+    stock_refined_ore_context = _build_refined_ore_pricing_context(
+        config=config,
+        type_ids=stock_type_ids,
+        price_data=stock_price_seed,
+    )
+    stock_ore_reprocessing_map = stock_refined_ore_context["ore_reprocessing_map"]
+    stock_ore_portion_size_map = stock_refined_ore_context["ore_portion_size_map"]
+    stock_mineral_effective_buy_prices = stock_refined_ore_context["mineral_effective_buy_prices"]
     scoped_buy_assets: list[dict] = []
     blueprint_details_by_item_id: dict[int, dict[str, object]] = {}
     try:
@@ -4558,6 +4822,9 @@ def _build_current_buy_stock_snapshot(
                 type_market_group_path_map=displayed_type_market_group_path_map,
                 buy_container_override=buy_container_override,
                 in_container=False,
+                ore_reprocessing_map=stock_ore_reprocessing_map,
+                ore_portion_size_map=stock_ore_portion_size_map,
+                mineral_effective_buy_prices=stock_mineral_effective_buy_prices,
             )
         if unit_price <= 0 and blueprint_variant != "bpc":
             continue
@@ -4600,6 +4867,9 @@ def _build_current_buy_stock_snapshot(
                 type_market_group_path_map=displayed_type_market_group_path_map,
                 buy_container_override=buy_container_override,
                 in_container=False,
+                ore_reprocessing_map=stock_ore_reprocessing_map,
+                ore_portion_size_map=stock_ore_portion_size_map,
+                mineral_effective_buy_prices=stock_mineral_effective_buy_prices,
             )
         stock_meta_by_type[int(stock_item.type_id)] = {
             "type_id": int(stock_item.type_id),
@@ -5305,6 +5575,15 @@ def material_exchange_sell_estimate(request):
     sell_structure_name_map = config.get_sell_structure_name_map()
     allowed_type_ids_cache: dict[int, set[int] | None] = {}
 
+    refined_ore_context = _build_refined_ore_pricing_context(
+        config=config,
+        type_ids=type_ids,
+        price_data=price_data,
+    )
+    ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
+    ore_portion_size_map = refined_ore_context["ore_portion_size_map"]
+    mineral_effective_sell_prices = refined_ore_context["mineral_effective_sell_prices"]
+
     def format_decimal(value: Decimal) -> str:
         return format(value.quantize(Decimal("0.01")), ".2f")
 
@@ -5339,6 +5618,9 @@ def material_exchange_sell_estimate(request):
             type_market_group_path_map=type_market_group_path_map,
             sell_container_override=sell_container_override,
             in_container=False,
+            ore_reprocessing_map=ore_reprocessing_map,
+            ore_portion_size_map=ore_portion_size_map,
+            mineral_effective_sell_prices=mineral_effective_sell_prices,
         )
 
         can_quote = bool(accepted_locations) and unit_price > 0
@@ -5661,6 +5943,14 @@ def material_exchange_sell(request, tokens):
         total_payout = Decimal("0")
 
         price_data = _fetch_fuzzwork_prices(list(submitted_quantities.keys()))
+        submitted_refined_ore_context = _build_refined_ore_pricing_context(
+            config=config,
+            type_ids=submitted_quantities.keys(),
+            price_data=price_data,
+        )
+        submitted_ore_reprocessing_map = submitted_refined_ore_context["ore_reprocessing_map"]
+        submitted_ore_portion_size_map = submitted_refined_ore_context["ore_portion_size_map"]
+        submitted_mineral_effective_sell_prices = submitted_refined_ore_context["mineral_effective_sell_prices"]
 
         scoped_variant_quantities_available = True
         try:
@@ -5828,6 +6118,9 @@ def material_exchange_sell(request, tokens):
                     type_market_group_path_map=submitted_type_market_group_path_map,
                     sell_container_override=sell_container_override,
                     in_container=in_container,
+                    ore_reprocessing_map=submitted_ore_reprocessing_map,
+                    ore_portion_size_map=submitted_ore_portion_size_map,
+                    mineral_effective_sell_prices=submitted_mineral_effective_sell_prices,
                 )
                 if unit_price <= 0:
                     errors.append(_(f"{type_name} has no valid market price."))
@@ -6002,6 +6295,14 @@ def material_exchange_sell(request, tokens):
         logger.info(f"SELL DEBUG: Got prices for {len(price_data)} items from Fuzzwork")
         display_type_market_group_path_map = _get_type_market_group_path_map(set(user_assets.keys()))
         display_type_market_group_label_map = _build_type_market_group_label_map(display_type_market_group_path_map)
+        display_refined_ore_context = _build_refined_ore_pricing_context(
+            config=config,
+            type_ids=user_assets.keys(),
+            price_data=price_data,
+        )
+        display_ore_reprocessing_map = display_refined_ore_context["ore_reprocessing_map"]
+        display_ore_portion_size_map = display_refined_ore_context["ore_portion_size_map"]
+        display_mineral_effective_sell_prices = display_refined_ore_context["mineral_effective_sell_prices"]
 
         def _is_sellable_type(type_id: int) -> bool:
             fuzz_prices = price_data.get(type_id, {})
@@ -6017,6 +6318,9 @@ def material_exchange_sell(request, tokens):
                 type_market_group_path_map=display_type_market_group_path_map,
                 sell_container_override=sell_container_override,
                 in_container=bool(sell_container_override is not None),
+                ore_reprocessing_map=display_ore_reprocessing_map,
+                ore_portion_size_map=display_ore_portion_size_map,
+                mineral_effective_sell_prices=display_mineral_effective_sell_prices,
             )
             return buy_price > 0
 

@@ -78,3 +78,58 @@ def compute_buy_price_from_member(*, config, jita_buy: Decimal, jita_sell: Decim
         percent=getattr(config, "sell_markup_percent", Decimal("0")),
         enforce_bounds=bool(getattr(config, "enforce_jita_price_bounds", False)),
     )
+
+
+def compute_refined_ore_price(
+    *,
+    reprocessing_outputs: dict[int, int],
+    portion_size: int,
+    refine_rate_percent: Decimal,
+    mineral_effective_prices: dict[int, Decimal],
+) -> Decimal | None:
+    """Return per-ore-unit refined price from precomputed per-mineral hub prices.
+
+    Each mineral's effective hub price should already reflect any relevant
+    override (or the hub's markup applied to Jita) — this function does not add
+    any further markup on top. The result is:
+
+        sum(qty_per_portion * refine_rate / 100 * mineral_effective_price) / portion_size
+
+    Returns None when the inputs cannot produce a usable price:
+    - portion_size <= 0 or no outputs
+    - refine rate <= 0
+    - any output mineral has no effective price in ``mineral_effective_prices``
+    - the resulting price sums to zero
+    """
+
+    try:
+        portion_size_int = int(portion_size or 0)
+    except (TypeError, ValueError):
+        return None
+    if portion_size_int <= 0 or not reprocessing_outputs:
+        return None
+
+    ratio = _to_decimal(refine_rate_percent) / Decimal("100")
+    if ratio <= 0:
+        return None
+
+    total = Decimal("0")
+    for mineral_id, qty_per_portion in reprocessing_outputs.items():
+        try:
+            mineral_key = int(mineral_id)
+            qty = Decimal(int(qty_per_portion or 0))
+        except (TypeError, ValueError):
+            return None
+        if qty <= 0:
+            continue
+        if mineral_key not in mineral_effective_prices:
+            return None
+        effective_price = _to_decimal(mineral_effective_prices.get(mineral_key))
+        if effective_price <= 0:
+            return None
+        yield_per_ore_unit = (qty * ratio) / Decimal(portion_size_int)
+        total += yield_per_ore_unit * effective_price
+
+    if total <= 0:
+        return None
+    return total

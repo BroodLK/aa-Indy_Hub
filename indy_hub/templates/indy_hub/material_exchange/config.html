@@ -720,6 +720,50 @@
                             </div>
                         </div>
 
+                        <div class="station-assignment-grid mt-3">
+                            <div class="toggle-line">
+                                <div class="toggle-copy">
+                                    <strong>{% trans "Use refined minerals for ore pricing (Sell page)" %}</strong>
+                                    <span>{% trans "When members sell ores to the hub, price each ore by its refined mineral yield (using each mineral's effective hub buy price, override-aware) times the refine rate below." %}</span>
+                                </div>
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           name="use_refined_minerals_for_ore_pricing_sell"
+                                           id="useRefinedMineralsForOrePricingSell"
+                                           {% if config and config.use_refined_minerals_for_ore_pricing_sell %}checked{% endif %}>
+                                </div>
+                            </div>
+                            <div class="toggle-line mt-2">
+                                <div class="toggle-copy">
+                                    <strong>{% trans "Use refined minerals for ore pricing (Buy page)" %}</strong>
+                                    <span>{% trans "When members buy ores from the hub, price each ore by its refined mineral yield (using each mineral's effective hub sell price, override-aware) times the refine rate below." %}</span>
+                                </div>
+                                <div class="form-check form-switch mb-0">
+                                    <input class="form-check-input"
+                                           type="checkbox"
+                                           name="use_refined_minerals_for_ore_pricing_buy"
+                                           id="useRefinedMineralsForOrePricingBuy"
+                                           {% if config and config.use_refined_minerals_for_ore_pricing_buy %}checked{% endif %}>
+                                </div>
+                            </div>
+                            <div class="field mt-2">
+                                <label for="oreRefineRatePercent">{% trans "Ore refine rate %" %}</label>
+                                <input type="number"
+                                       name="ore_refine_rate_percent"
+                                       class="form-control form-control-sm"
+                                       id="oreRefineRatePercent"
+                                       min="0"
+                                       max="100"
+                                       step="0.01"
+                                       inputmode="decimal"
+                                       value="{{ config.ore_refine_rate_percent|default_if_none:'0'|floatformat:'-2' }}">
+                                <small class="text-muted d-block mt-1">
+                                    {% trans "Any item-level override on an ore will block saving with refined-ore pricing enabled. Remove the ore overrides first. Mineral overrides are fine and will feed into the refined ore price." %}
+                                </small>
+                            </div>
+                        </div>
+
                         <div class="subpanel mt-3">
                             <div class="subpanel-head">
                                 <h3 class="subpanel-title">{% trans "Container Fallback Pricing" %}</h3>

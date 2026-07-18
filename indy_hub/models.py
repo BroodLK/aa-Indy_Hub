@@ -2091,6 +2091,28 @@ class MaterialExchangeConfig(models.Model):
         ),
     )
 
+    use_refined_minerals_for_ore_pricing_sell = models.BooleanField(
+        default=False,
+        help_text=_(
+            "When enabled, the SELL page prices ores by their refined mineral yield "
+            "(what the hub pays members for each yielded mineral) times the configured refine rate."
+        ),
+    )
+    use_refined_minerals_for_ore_pricing_buy = models.BooleanField(
+        default=False,
+        help_text=_(
+            "When enabled, the BUY page prices ores by their refined mineral yield "
+            "(what the hub charges members for each yielded mineral) times the configured refine rate."
+        ),
+    )
+    ore_refine_rate_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
+        help_text=_("Effective refine rate (0-100) used when refined-mineral ore pricing is enabled."),
+    )
+
     notify_admins_on_sell_anomaly = models.BooleanField(
         default=True,
         help_text=_("When enabled, Material Hub admins are notified when a sell contract anomaly is detected."),

@@ -503,6 +503,151 @@ def get_reprocessing_portion_size(type_id: int) -> int:
     return value if value > 0 else 1
 
 
+ORE_CATEGORY_IDS = {25}
+
+
+def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
+    """Return the subset of ``type_ids`` that belong to an ore-like SDE category.
+
+    Covers both raw ore and compressed ore (asteroid category 25). Returns an
+    empty set if the SDE is not available.
+    """
+    cleaned: set[int] = set()
+    for raw_id in type_ids or []:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            cleaned.add(value)
+    if not cleaned:
+        return set()
+
+    try:
+        # Alliance Auth (External Libs)
+        import eve_sde.models as sde_models
+    except Exception:
+        return set()
+
+    item_type_model = getattr(sde_models, "ItemType", None)
+    if item_type_model is None:
+        return set()
+
+    try:
+        rows = item_type_model.objects.filter(
+            id__in=cleaned,
+            group__category_id__in=ORE_CATEGORY_IDS,
+        ).values_list("id", flat=True)
+        return {int(row) for row in rows}
+    except Exception:
+        return set()
+
+
+def get_reprocessing_outputs_map(type_ids: Iterable[int]) -> dict[int, dict[int, int]]:
+    """Return ``{source_type_id: {material_type_id: qty_per_portion}}`` for the given IDs.
+
+    Only entries with at least one output are returned. Uses a single batched SDE
+    query. Missing SDE data yields an empty map.
+    """
+    cleaned: set[int] = set()
+    for raw_id in type_ids or []:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            cleaned.add(value)
+    if not cleaned:
+        return {}
+
+    try:
+        # Alliance Auth (External Libs)
+        import eve_sde.models as sde_models
+    except Exception:
+        return {}
+
+    candidates = [
+        ("TypeMaterial", ("eve_type_id", "material_eve_type_id", "quantity")),
+        ("ItemTypeMaterial", ("eve_type_id", "material_eve_type_id", "quantity")),
+        ("TypeMaterials", ("eve_type_id", "material_eve_type_id", "quantity")),
+        ("TypeMaterial", ("type_id", "material_type_id", "quantity")),
+        ("ItemTypeMaterial", ("type_id", "material_type_id", "quantity")),
+        ("ItemTypeMaterials", ("item_type_id", "material_item_type_id", "quantity")),
+    ]
+
+    for model_name, (source_field, output_field, qty_field) in candidates:
+        model = getattr(sde_models, model_name, None)
+        if model is None:
+            continue
+        field_names = {field.name for field in model._meta.get_fields()}
+        if source_field not in field_names or output_field not in field_names or qty_field not in field_names:
+            continue
+        try:
+            rows = list(
+                model.objects.filter(**{f"{source_field}__in": cleaned}).values_list(
+                    source_field, output_field, qty_field
+                )
+            )
+        except Exception:
+            continue
+        outputs_map: dict[int, dict[int, int]] = {}
+        for source_id, material_id, quantity in rows:
+            try:
+                source_int = int(source_id)
+                material_int = int(material_id)
+                quantity_int = int(quantity or 0)
+            except (TypeError, ValueError):
+                continue
+            if source_int <= 0 or material_int <= 0 or quantity_int <= 0:
+                continue
+            entry = outputs_map.setdefault(source_int, {})
+            entry[material_int] = entry.get(material_int, 0) + quantity_int
+        if outputs_map:
+            return outputs_map
+    return {}
+
+
+def get_portion_size_map(type_ids: Iterable[int]) -> dict[int, int]:
+    """Return ``{type_id: portion_size}`` for the given IDs in one SDE query.
+
+    Missing SDE data or rows fall back to a portion size of 1.
+    """
+    cleaned: set[int] = set()
+    for raw_id in type_ids or []:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            cleaned.add(value)
+    if not cleaned:
+        return {}
+
+    result: dict[int, int] = {tid: 1 for tid in cleaned}
+    try:
+        # Alliance Auth (External Libs)
+        import eve_sde.models as sde_models
+    except Exception:
+        return result
+
+    item_type_model = getattr(sde_models, "ItemType", None)
+    if item_type_model is None:
+        return result
+    try:
+        rows = item_type_model.objects.filter(id__in=cleaned).values_list("id", "portion_size")
+    except Exception:
+        return result
+
+    for type_id, portion_size in rows:
+        try:
+            tid = int(type_id)
+            size = int(portion_size or 1)
+        except (TypeError, ValueError):
+            continue
+        result[tid] = size if size > 0 else 1
+    return result
+
+
 def _get_reprocessing_skill_attribute_ids() -> list[int]:
     try:
         # Alliance Auth (External Libs)

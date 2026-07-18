@@ -2233,6 +2233,14 @@ def _handle_config_save(request, existing_config):
 
     enforce_jita_price_bounds = request.POST.get("enforce_jita_price_bounds") == "on"
 
+    use_refined_minerals_for_ore_pricing_sell = (
+        request.POST.get("use_refined_minerals_for_ore_pricing_sell") == "on"
+    )
+    use_refined_minerals_for_ore_pricing_buy = (
+        request.POST.get("use_refined_minerals_for_ore_pricing_buy") == "on"
+    )
+    ore_refine_rate_percent_raw = (request.POST.get("ore_refine_rate_percent", "") or "").strip()
+
     notify_admins_on_sell_anomaly = request.POST.get("notify_admins_on_sell_anomaly") == "on"
     capital_auto_cancel_on_state_change = request.POST.get("capital_auto_cancel_on_state_change") == "on"
     buy_enabled = request.POST.get("buy_enabled") == "on"
@@ -2741,6 +2749,17 @@ def _handle_config_save(request, existing_config):
         hangar_division = int(hangar_division)
         sell_markup_percent = _parse_decimal(sell_markup_percent, "0")
         buy_markup_percent = _parse_decimal(buy_markup_percent, "5")
+        ore_refine_rate_percent = _parse_decimal(ore_refine_rate_percent_raw or "0", "0")
+        if ore_refine_rate_percent < Decimal("0") or ore_refine_rate_percent > Decimal("100"):
+            raise ValueError("Ore refine rate must be between 0 and 100.")
+        refined_ore_pricing_enabled = (
+            use_refined_minerals_for_ore_pricing_sell
+            or use_refined_minerals_for_ore_pricing_buy
+        )
+        if refined_ore_pricing_enabled and ore_refine_rate_percent <= Decimal("0"):
+            raise ValueError(
+                "Set a refine rate greater than 0 when refined-mineral ore pricing is enabled."
+            )
 
         market_group_tree = _get_market_group_tree()
         allowed_ids: set[int] = _collect_market_group_tree_ids(market_group_tree)
@@ -3056,6 +3075,31 @@ def _handle_config_save(request, existing_config):
                 normalized_item_price_overrides.append(normalized_row)
         item_price_overrides = normalized_item_price_overrides
 
+        if refined_ore_pricing_enabled:
+            override_type_ids: set[int] = set()
+            for row in item_price_overrides + profile_item_price_overrides:
+                try:
+                    tid = int(row.get("type_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if tid > 0:
+                    override_type_ids.add(tid)
+            if override_type_ids:
+                # Local
+                from ..services.reprocessing import get_ore_type_ids
+
+                ore_override_ids = get_ore_type_ids(override_type_ids)
+                if ore_override_ids:
+                    sample_ids = sorted(ore_override_ids)[:5]
+                    sample_display = ", ".join(str(tid) for tid in sample_ids)
+                    if len(ore_override_ids) > len(sample_ids):
+                        sample_display += ", ..."
+                    raise ValueError(
+                        "Cannot enable refined-mineral ore pricing while ore item overrides exist. "
+                        f"Remove overrides for ore type IDs: {sample_display} "
+                        "(mineral overrides are fine and will feed into the refined ore price)."
+                    )
+
         market_group_price_overrides = _parse_market_group_price_overrides(
             market_group_price_overrides_raw,
             allowed_ids=allowed_ids,
@@ -3324,6 +3368,9 @@ def _handle_config_save(request, existing_config):
             existing_config.buy_markup_percent = buy_markup_percent
             existing_config.buy_markup_base = buy_markup_base
             existing_config.enforce_jita_price_bounds = enforce_jita_price_bounds
+            existing_config.use_refined_minerals_for_ore_pricing_sell = use_refined_minerals_for_ore_pricing_sell
+            existing_config.use_refined_minerals_for_ore_pricing_buy = use_refined_minerals_for_ore_pricing_buy
+            existing_config.ore_refine_rate_percent = ore_refine_rate_percent
             existing_config.notify_admins_on_sell_anomaly = notify_admins_on_sell_anomaly
             existing_config.sell_structure_ids = sell_structure_ids
             existing_config.sell_structure_names = sell_structure_names
@@ -3375,6 +3422,9 @@ def _handle_config_save(request, existing_config):
                 buy_markup_percent=buy_markup_percent,
                 buy_markup_base=buy_markup_base,
                 enforce_jita_price_bounds=enforce_jita_price_bounds,
+                use_refined_minerals_for_ore_pricing_sell=use_refined_minerals_for_ore_pricing_sell,
+                use_refined_minerals_for_ore_pricing_buy=use_refined_minerals_for_ore_pricing_buy,
+                ore_refine_rate_percent=ore_refine_rate_percent,
                 notify_admins_on_sell_anomaly=notify_admins_on_sell_anomaly,
                 sell_structure_ids=sell_structure_ids,
                 sell_structure_names=sell_structure_names,
