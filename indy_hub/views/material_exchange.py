@@ -1438,6 +1438,8 @@ def _build_refined_ore_pricing_context(
         "ore_portion_size_map": {},
         "mineral_effective_sell_prices": {},
         "mineral_effective_buy_prices": {},
+        "refined_sell_breakdowns": {},
+        "refined_buy_breakdowns": {},
     }
     sell_enabled = bool(getattr(config, "use_refined_minerals_for_ore_pricing_sell", False))
     buy_enabled = bool(getattr(config, "use_refined_minerals_for_ore_pricing_buy", False))

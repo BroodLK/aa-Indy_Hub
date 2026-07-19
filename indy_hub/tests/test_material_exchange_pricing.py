@@ -16,6 +16,7 @@ from indy_hub.models import (
     MaterialExchangeStock,
 )
 from indy_hub.views.material_exchange import (
+    _build_refined_ore_pricing_context,
     _compute_effective_buy_unit_price,
     _compute_effective_sell_unit_price,
     _format_buy_stock_type_name,
@@ -133,6 +134,21 @@ class MaterialExchangePricingTests(TestCase):
         self.assertEqual(new_config.sell_markup_base, "buy")
         self.assertEqual(new_config.buy_markup_base, "buy")
         self.assertFalse(new_config.enforce_jita_price_bounds)
+
+    def test_refined_ore_pricing_context_empty_shape_includes_breakdowns(self):
+        """Empty refined-ore contexts should keep the same keys as populated ones."""
+        context = _build_refined_ore_pricing_context(
+            config=self.config,
+            type_ids=[self.stock.type_id],
+            price_data={},
+        )
+
+        self.assertEqual(context["ore_reprocessing_map"], {})
+        self.assertEqual(context["ore_portion_size_map"], {})
+        self.assertEqual(context["mineral_effective_sell_prices"], {})
+        self.assertEqual(context["mineral_effective_buy_prices"], {})
+        self.assertEqual(context["refined_sell_breakdowns"], {})
+        self.assertEqual(context["refined_buy_breakdowns"], {})
 
     def test_bounds_clamp_sell_base_negative_floors_at_buy(self):
         """When enabled, Jita Sell + negative % cannot go below Jita Buy."""
