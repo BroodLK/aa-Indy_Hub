@@ -3363,6 +3363,8 @@ def _build_sell_material_rows(
             "source_location_ids": sorted(
                 {int(location_id) for location_id in (source_location_ids or set()) if int(location_id) > 0}
             ),
+            "refined_breakdown": meta.get("refined_breakdown"),
+            "refined_breakdown_json": str(meta.get("refined_breakdown_json") or ""),
         }
 
     def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:

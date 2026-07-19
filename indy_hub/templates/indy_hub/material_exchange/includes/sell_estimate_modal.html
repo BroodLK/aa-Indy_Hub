@@ -177,25 +177,33 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function renderRefinedBreakdownRow(breakdown) {
+    function renderRefinedBreakdownRow(breakdown, quantity) {
         if (!breakdown || !Array.isArray(breakdown.minerals) || breakdown.minerals.length === 0) {
             return '';
         }
+        const qtyMultiplier = Math.max(Number(quantity) || 0, 0);
+        if (qtyMultiplier <= 0) {
+            return '';
+        }
         const rate = escapeHtml(breakdown.refine_rate_percent || '0');
-        const total = formatIsk(breakdown.total_per_unit || 0);
+        const totalPerUnit = Number(breakdown.total_per_unit || 0);
+        const total = formatIsk(totalPerUnit * qtyMultiplier);
         const rows = breakdown.minerals.map((mineral) => {
             const name = escapeHtml(mineral.name || '');
-            const qty = formatDetailed(mineral.qty_per_unit || 0, 5);
-            const price = formatIsk(mineral.effective_price || 0);
-            const subtotal = formatIsk(mineral.subtotal_per_unit || 0);
-            return `<li>${qty} ${name} × ${price} ISK = ${subtotal} ISK</li>`;
+            const totalQty = Number(mineral.qty_per_unit || 0) * qtyMultiplier;
+            const price = Number(mineral.effective_price || 0);
+            const subtotal = Number(mineral.subtotal_per_unit || 0) * qtyMultiplier;
+            const qtyLabel = formatDetailed(totalQty, totalQty >= 100 ? 0 : 2);
+            const priceLabel = formatIsk(price);
+            const subtotalLabel = formatIsk(subtotal);
+            return `<li>${qtyLabel} ${name} × ${priceLabel} ISK = ${subtotalLabel} ISK</li>`;
         }).join('');
         return `
             <tr class="estimate-refined-detail">
                 <td colspan="6" class="small text-muted">
                     <div class="d-flex justify-content-between">
-                        <span>{% trans "Refines into (per unit, at" %} ${rate}%):</span>
-                        <span>${total} ISK / unit</span>
+                        <span>{% trans "Refines into (at" %} ${rate}%):</span>
+                        <span>${total} ISK</span>
                     </div>
                     <ul class="list-unstyled mb-0 ms-3">${rows}</ul>
                 </td>
@@ -213,7 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const locations = Array.isArray(item.accepted_locations) && item.accepted_locations.length
                 ? `<ul class="estimate-locations">${item.accepted_locations.map((locationName) => `<li>${escapeHtml(locationName)}</li>`).join('')}</ul>`
                 : `<span class="text-muted">{% trans "None" %}</span>`;
-            const breakdownRow = renderRefinedBreakdownRow(item.refined_breakdown);
+            const breakdownRow = renderRefinedBreakdownRow(item.refined_breakdown, item.quantity);
 
             return `
                 <tr>
