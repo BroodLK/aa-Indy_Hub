@@ -55,6 +55,87 @@ def _can_manage_material_hub(user) -> bool:
     return any(user.has_perm(permission) for permission in _MATERIAL_HUB_MANAGER_PERMS)
 
 
+def _build_sell_order_item_breakdowns(*, config, items) -> dict[int, dict]:
+    """Return {item_id: breakdown_dict_scaled_to_quantity} for ores on a sell order.
+
+    Breakdown values are computed against the current config's refined-ore
+    settings and each mineral's effective hub buy price (override-aware).
+    Non-ore items or items without a computable refined price are omitted.
+    """
+
+    if config is None:
+        return {}
+    if not getattr(config, "use_refined_minerals_for_ore_pricing_sell", False):
+        return {}
+
+    # Standard Library
+    from decimal import Decimal
+
+    # Local
+    from .material_exchange import _build_refined_ore_pricing_context
+
+    type_ids: set[int] = set()
+    for item in items:
+        try:
+            tid = int(getattr(item, "type_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if tid > 0:
+            type_ids.add(tid)
+    if not type_ids:
+        return {}
+
+    context = _build_refined_ore_pricing_context(config=config, type_ids=type_ids)
+    per_ore_breakdowns = context.get("refined_sell_breakdowns") or {}
+    if not per_ore_breakdowns:
+        return {}
+
+    result: dict[int, dict] = {}
+    for item in items:
+        try:
+            item_id = int(getattr(item, "id", 0) or 0)
+            item_type_id = int(getattr(item, "type_id", 0) or 0)
+            quantity = int(getattr(item, "quantity", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if item_id <= 0 or item_type_id <= 0 or quantity <= 0:
+            continue
+        breakdown = per_ore_breakdowns.get(item_type_id)
+        if not breakdown:
+            continue
+        qty_multiplier = Decimal(quantity)
+        scaled_minerals = []
+        scaled_total = Decimal("0")
+        for mineral in breakdown.get("minerals", []):
+            try:
+                qty_per_unit = Decimal(mineral.get("qty_per_unit") or 0)
+                effective_price = Decimal(mineral.get("effective_price") or 0)
+                subtotal_per_unit = Decimal(mineral.get("subtotal_per_unit") or 0)
+            except Exception:
+                continue
+            total_qty = qty_per_unit * qty_multiplier
+            total_subtotal = subtotal_per_unit * qty_multiplier
+            scaled_total += total_subtotal
+            scaled_minerals.append(
+                {
+                    "type_id": mineral.get("type_id"),
+                    "name": mineral.get("name") or "",
+                    "total_qty": total_qty.quantize(Decimal("0.01")),
+                    "effective_price": effective_price.quantize(Decimal("0.01")),
+                    "total_subtotal": total_subtotal.quantize(Decimal("0.01")),
+                }
+            )
+        if not scaled_minerals:
+            continue
+        result[item_id] = {
+            "refine_rate_percent": breakdown.get("refine_rate_percent") or "0",
+            "quantity": quantity,
+            "total": scaled_total.quantize(Decimal("0.01")),
+            "minerals": scaled_minerals,
+        }
+    return result
+
+
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
 def my_orders(request):
@@ -211,6 +292,11 @@ def sell_order_detail(request, order_id):
     # Get all items with their details
     items = order.items.all()
 
+    # Build refined-ore breakdowns per item (scaled by ordered quantity) using
+    # the current config. Silent no-op when refined pricing is disabled or the
+    # item isn't an ore with a computable breakdown.
+    refined_breakdowns_by_item_id = _build_sell_order_item_breakdowns(config=config, items=items)
+
     # Status timeline + breadcrumb
     timeline = _build_status_timeline(order, "sell")
     timeline_breadcrumb = _build_timeline_breadcrumb(order, "sell")
@@ -221,6 +307,7 @@ def sell_order_detail(request, order_id):
         "corporation_name": corporation_name,
         "order_location_label": order_location_label,
         "items": items,
+        "refined_breakdowns_by_item_id": refined_breakdowns_by_item_id,
         "timeline": timeline,
         "timeline_breadcrumb": timeline_breadcrumb,
         "can_cancel": order.status not in ["completed", "rejected", "cancelled"],

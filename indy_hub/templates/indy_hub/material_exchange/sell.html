@@ -1485,24 +1485,32 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function renderRefinedBreakdownHtml(breakdown) {
+    function renderRefinedBreakdownHtml(breakdown, quantity) {
         if (!breakdown) {
             return '';
         }
+        const qtyMultiplier = Math.max(Number(quantity) || 0, 0);
+        if (qtyMultiplier <= 0) {
+            return '';
+        }
         const rate = escapeHtml(breakdown.refine_rate_percent || '0');
-        const total = formatNumberDetailed(breakdown.total_per_unit || 0, 2);
+        const totalPerUnit = Number(breakdown.total_per_unit || 0);
+        const total = formatNumberDetailed(totalPerUnit * qtyMultiplier, 2);
         const rows = (breakdown.minerals || []).map((mineral) => {
             const name = escapeHtml(mineral.name || '');
-            const qty = formatNumberDetailed(mineral.qty_per_unit || 0, 5);
-            const price = formatNumberDetailed(mineral.effective_price || 0, 2);
-            const subtotal = formatNumberDetailed(mineral.subtotal_per_unit || 0, 2);
-            return `<li>${qty} ${name} × ${price} ISK = ${subtotal} ISK</li>`;
+            const totalQty = Number(mineral.qty_per_unit || 0) * qtyMultiplier;
+            const price = Number(mineral.effective_price || 0);
+            const subtotal = Number(mineral.subtotal_per_unit || 0) * qtyMultiplier;
+            const qtyLabel = formatNumberDetailed(totalQty, totalQty >= 100 ? 0 : 2);
+            const priceLabel = formatNumberDetailed(price, 2);
+            const subtotalLabel = formatNumberDetailed(subtotal, 2);
+            return `<li>${qtyLabel} ${name} × ${priceLabel} ISK = ${subtotalLabel} ISK</li>`;
         }).join('');
         return `
             <div class="invoice-item-refined small text-muted mt-1 ps-2 border-start">
                 <div class="d-flex justify-content-between">
-                    <span>{% trans "Refines into (per unit, at" %} ${rate}%):</span>
-                    <span>${total} ISK / unit</span>
+                    <span>{% trans "Refines into (at" %} ${rate}%):</span>
+                    <span>${total} ISK</span>
                 </div>
                 <ul class="list-unstyled mb-0 ms-2">${rows}</ul>
             </div>
@@ -1575,7 +1583,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             let itemsHTML = '';
             selectedItems.forEach(item => {
-                const breakdownHtml = renderRefinedBreakdownHtml(item.refinedBreakdown);
+                const breakdownHtml = renderRefinedBreakdownHtml(item.refinedBreakdown, item.qty);
                 itemsHTML += `
                     <div class="invoice-item">
                         <div class="d-flex justify-content-between mb-1">

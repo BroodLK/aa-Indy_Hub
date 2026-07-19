@@ -2,6 +2,7 @@
 {% load i18n %}
 {% load static %}
 {% load humanize %}
+{% load dict_get %}
 
 {% block page_title %}
     {% trans "Sell Order Details" %} - {{ order.order_reference }}
@@ -248,6 +249,23 @@
                                                     </td>
                                                 {% endif %}
                                             </tr>
+                                            {% with breakdown=refined_breakdowns_by_item_id|dict_get:item.id %}
+                                            {% if breakdown %}
+                                                <tr class="table-light">
+                                                    <td colspan="{% if order.status != 'draft' and order.status != 'awaiting_validation' %}5{% else %}4{% endif %}" class="small text-muted">
+                                                        <div class="d-flex justify-content-between">
+                                                            <span>{% trans "Refines into (at" %} {{ breakdown.refine_rate_percent }}%):</span>
+                                                            <span>{{ breakdown.total|floatformat:2|intcomma }} ISK</span>
+                                                        </div>
+                                                        <ul class="list-unstyled mb-0 ms-3">
+                                                            {% for mineral in breakdown.minerals %}
+                                                                <li>{{ mineral.total_qty|floatformat:2|intcomma }} {{ mineral.name }} &times; {{ mineral.effective_price|floatformat:2|intcomma }} ISK = {{ mineral.total_subtotal|floatformat:2|intcomma }} ISK</li>
+                                                            {% endfor %}
+                                                        </ul>
+                                                    </td>
+                                                </tr>
+                                            {% endif %}
+                                            {% endwith %}
                                         {% endfor %}
                                     </tbody>
                                     <tfoot>
