@@ -4216,6 +4216,7 @@ def _build_buy_material_rows(
     ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
     ore_portion_size_map = refined_ore_context["ore_portion_size_map"]
     mineral_effective_buy_prices = refined_ore_context["mineral_effective_buy_prices"]
+    refined_buy_breakdowns = refined_ore_context["refined_buy_breakdowns"]
 
     def next_row_index() -> int:
         nonlocal row_index
@@ -4446,6 +4447,14 @@ def _build_buy_material_rows(
             "container_name_path": str(container_name_path),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
             "form_quantity_field_name": (f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"),
+            "refined_breakdown_json": (
+                json.dumps(refined_buy_breakdowns[int(type_id)])
+                if (
+                    not bool(item_meta.get("has_buy_price_override", False))
+                    and int(type_id) in refined_buy_breakdowns
+                )
+                else ""
+            ),
         }
 
     def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
