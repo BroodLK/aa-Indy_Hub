@@ -3658,12 +3658,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     (structure) => structure.id === String(structureId)
                 );
                 const defaultSellProfile = getDefaultProfile(sellProfiles);
-                if (isSharedSellAndBuy) {
+                if (defaultSellProfile) {
+                    applySellProfileToLocationId(defaultSellProfile, structureId);
+                } else if (isSharedSellAndBuy) {
                     // Shared locations default to accepting all incoming sells unless
                     // the user explicitly assigns a tighter sell-to-exchange profile.
                     sellGroupsByStructure[structureId] = null;
-                } else if (defaultSellProfile) {
-                    applySellProfileToLocationId(defaultSellProfile, structureId);
                 } else {
                     sellGroupsByStructure[structureId] = null;
                 }

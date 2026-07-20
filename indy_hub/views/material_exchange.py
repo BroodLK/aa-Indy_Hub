@@ -527,6 +527,43 @@ def _expand_market_group_ids(group_ids: set[int]) -> set[int]:
     return expanded
 
 
+def _get_default_market_group_profile_rule(
+    config: MaterialExchangeConfig,
+    *,
+    mode: str,
+) -> tuple[bool, list[int] | None]:
+    """Return the default profile rule for a mode when one is configured.
+
+    The boolean indicates whether a default profile was found. The rule is
+    ``None`` for an allow-all profile, otherwise a normalized list of groups.
+    """
+
+    raw_profiles = (
+        getattr(config, "sell_market_group_profiles", []) or []
+        if mode == "sell"
+        else getattr(config, "buy_market_group_profiles", []) or []
+    )
+    if not isinstance(raw_profiles, (list, tuple)):
+        return False, None
+
+    for raw_profile in raw_profiles:
+        if not isinstance(raw_profile, dict) or not bool(raw_profile.get("is_default")):
+            continue
+        if bool(raw_profile.get("allow_all")):
+            return True, None
+        group_ids: list[int] = []
+        for raw_group_id in raw_profile.get("market_group_ids") or raw_profile.get("group_ids") or []:
+            try:
+                group_id = int(raw_group_id)
+            except (TypeError, ValueError):
+                continue
+            if group_id <= 0 or group_id in group_ids:
+                continue
+            group_ids.append(group_id)
+        return True, group_ids
+    return False, None
+
+
 def _get_allowed_type_ids_for_config(
     config: MaterialExchangeConfig, mode: str, *, structure_id: int | None = None
 ) -> set[int] | None:
@@ -548,7 +585,15 @@ def _get_allowed_type_ids_for_config(
                 if raw_group_ids is None:
                     explicit_all_groups = True
             else:
-                raw_group_ids = config.allowed_market_groups_sell
+                has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(
+                    config,
+                    mode="sell",
+                )
+                if has_default_profile:
+                    raw_group_ids = default_profile_rule
+                    explicit_all_groups = default_profile_rule is None
+                else:
+                    raw_group_ids = config.allowed_market_groups_sell
         elif mode == "buy" and structure_id:
             structure_group_map = config.get_buy_market_group_map()
             structure_key = int(structure_id)
@@ -557,9 +602,25 @@ def _get_allowed_type_ids_for_config(
                 if raw_group_ids is None:
                     explicit_all_groups = True
             else:
-                raw_group_ids = config.allowed_market_groups_buy
+                has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(
+                    config,
+                    mode="buy",
+                )
+                if has_default_profile:
+                    raw_group_ids = default_profile_rule
+                    explicit_all_groups = default_profile_rule is None
+                else:
+                    raw_group_ids = config.allowed_market_groups_buy
         else:
-            raw_group_ids = config.allowed_market_groups_sell if mode == "sell" else config.allowed_market_groups_buy
+            has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(
+                config,
+                mode=mode,
+            )
+            if has_default_profile:
+                raw_group_ids = default_profile_rule
+                explicit_all_groups = default_profile_rule is None
+            else:
+                raw_group_ids = config.allowed_market_groups_sell if mode == "sell" else config.allowed_market_groups_buy
 
         if explicit_all_groups:
             return None
@@ -2358,12 +2419,22 @@ def _get_structure_profile_name_map(
         structure_ids = [int(sid) for sid in (config.get_sell_structure_ids(include_primary=False) or [])]
         structure_group_map = config.get_sell_market_group_map()
         raw_profiles = getattr(config, "sell_market_group_profiles", []) or []
-        fallback_rule = list(getattr(config, "allowed_market_groups_sell", []) or []) or None
+        has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(config, mode="sell")
+        fallback_rule = (
+            default_profile_rule
+            if has_default_profile
+            else list(getattr(config, "allowed_market_groups_sell", []) or []) or None
+        )
     else:
         structure_ids = [int(sid) for sid in (config.get_buy_structure_ids(include_primary=False) or [])]
         structure_group_map = config.get_buy_market_group_map()
         raw_profiles = getattr(config, "buy_market_group_profiles", []) or []
-        fallback_rule = list(getattr(config, "allowed_market_groups_buy", []) or []) or None
+        has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(config, mode="buy")
+        fallback_rule = (
+            default_profile_rule
+            if has_default_profile
+            else list(getattr(config, "allowed_market_groups_buy", []) or []) or None
+        )
 
     profile_name_by_structure: dict[int, str] = {}
     for structure_id in structure_ids:
