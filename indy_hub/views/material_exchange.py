@@ -564,6 +564,47 @@ def _get_default_market_group_profile_rule(
     return False, None
 
 
+def _get_type_ids_for_market_group_branches(expanded_group_ids: set[int]) -> set[int]:
+    """Return item type IDs whose market-group path intersects the allowed branches."""
+
+    if not expanded_group_ids:
+        return set()
+
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+    except Exception:
+        return set()
+
+    parent_map = _get_market_group_parent_map()
+    allowed_type_ids: set[int] = set()
+    rows = ItemType.objects.exclude(market_group_id__isnull=True).values_list("id", "market_group_id")
+    for raw_type_id, raw_market_group_id in rows:
+        try:
+            type_id = int(raw_type_id)
+            market_group_id = int(raw_market_group_id or 0)
+        except (TypeError, ValueError):
+            continue
+        if type_id <= 0 or market_group_id <= 0:
+            continue
+
+        seen: set[int] = set()
+        current_id = market_group_id
+        while current_id > 0 and current_id not in seen:
+            if current_id in expanded_group_ids:
+                allowed_type_ids.add(type_id)
+                break
+            seen.add(current_id)
+            parent_id = parent_map.get(current_id)
+            if parent_id in (None, 0):
+                break
+            try:
+                current_id = int(parent_id)
+            except (TypeError, ValueError):
+                break
+    return allowed_type_ids
+
+
 def _get_allowed_type_ids_for_config(
     config: MaterialExchangeConfig, mode: str, *, structure_id: int | None = None
 ) -> set[int] | None:
@@ -573,9 +614,6 @@ def _get_allowed_type_ids_for_config(
         return None
 
     try:
-        # Alliance Auth (External Libs)
-        from eve_sde.models import ItemType
-
         explicit_all_groups = False
         if mode == "sell" and structure_id:
             structure_group_map = config.get_sell_market_group_map()
@@ -632,14 +670,12 @@ def _get_allowed_type_ids_for_config(
         expanded_group_ids = _expand_market_group_ids(group_ids)
         groups_key = ",".join(map(str, sorted(expanded_group_ids)))
         groups_hash = hashlib.md5(groups_key.encode("utf-8"), usedforsecurity=False).hexdigest()
-        cache_key = "indy_hub:material_exchange:allowed_type_ids:v1:" f"{mode}:{groups_hash}"
+        cache_key = "indy_hub:material_exchange:allowed_type_ids:v2:" f"{mode}:{groups_hash}"
         cached = cache.get(cache_key)
         if cached is not None:
             return {int(x) for x in cached}
 
-        allowed_type_ids = set(
-            ItemType.objects.filter(market_group_id__in=expanded_group_ids).values_list("id", flat=True)
-        )
+        allowed_type_ids = _get_type_ids_for_market_group_branches(expanded_group_ids)
         cache.set(cache_key, list(allowed_type_ids), 3600)
         return allowed_type_ids
     except Exception as exc:
