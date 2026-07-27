@@ -6025,6 +6025,13 @@ def material_exchange_sell(request, tokens):
                 selected_location_id = None
         if selected_location_id not in sell_structure_ids:
             selected_location_id = sell_structure_ids[0]
+        selected_character_id = None
+        selected_character_param = (request.POST.get("sell_character_id") or "").strip()
+        if selected_character_param:
+            try:
+                selected_character_id = int(selected_character_param)
+            except (TypeError, ValueError):
+                selected_character_id = None
         active_location_name = sell_structure_name_map.get(int(selected_location_id)) if selected_location_id else ""
         if not active_location_name and selected_location_id:
             active_location_name = f"Structure {selected_location_id}"
@@ -6042,8 +6049,13 @@ def material_exchange_sell(request, tokens):
             sell_profile_name=active_sell_profile_name,
         )
         sell_redirect_url = reverse("indy_hub:material_exchange_sell")
+        redirect_params = []
         if selected_location_id:
-            sell_redirect_url = f"{sell_redirect_url}?location={int(selected_location_id)}"
+            redirect_params.append(f"location={int(selected_location_id)}")
+        if selected_character_id:
+            redirect_params.append(f"character={int(selected_character_id)}")
+        if redirect_params:
+            sell_redirect_url = f"{sell_redirect_url}?{'&'.join(redirect_params)}"
 
         (
             _all_sell_assets,
@@ -6062,6 +6074,26 @@ def material_exchange_sell(request, tokens):
             return redirect(sell_redirect_url)
 
         selected_location_assets_raw = all_sell_assets_by_location.get(int(selected_location_id), {})
+        if selected_character_id:
+            cached_assets_for_scope, _ = get_user_assets_cached(request.user, allow_refresh=False)
+            selected_location_assets_raw = {}
+            valid_character = False
+            for asset in cached_assets_for_scope:
+                try:
+                    asset_location = int(asset.get("location_id") or 0)
+                    asset_character = int(asset.get("character_id") or 0)
+                    type_id = int(asset.get("type_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if asset_location != int(selected_location_id) or asset_character != int(selected_character_id):
+                    continue
+                valid_character = True
+                quantity = _asset_quantity(asset)
+                if quantity > 0:
+                    selected_location_assets_raw[type_id] = selected_location_assets_raw.get(type_id, 0) + quantity
+            if not valid_character:
+                messages.error(request, _("That character is not available at this location."))
+                return redirect(sell_redirect_url)
         if not selected_location_assets_raw:
             messages.error(
                 request,
@@ -6151,6 +6183,11 @@ def material_exchange_sell(request, tokens):
         except Exception:
             all_cached_assets_for_pricing = []
             scoped_variant_quantities_available = False
+        if selected_character_id:
+            all_cached_assets_for_pricing = [
+                asset for asset in all_cached_assets_for_pricing
+                if int(asset.get("character_id") or 0) == int(selected_character_id)
+            ]
         variant_quantities = _build_sell_variant_quantities(
             assets=all_cached_assets_for_pricing,
             location_id=selected_location_id,
@@ -6549,7 +6586,7 @@ def material_exchange_sell(request, tokens):
             sell_profile_name=active_sell_profile_name,
         )
 
-        show_character_tabs = len(sell_structure_ids) <= 1
+        show_character_tabs = True
 
         if show_character_tabs:
             sorted_characters = sorted(
@@ -6566,7 +6603,7 @@ def material_exchange_sell(request, tokens):
                         "id": str(character_id),
                         "name": character_names_map.get(character_id, _("Character %(id)s") % {"id": character_id}),
                         "item_count": tab_count,
-                        "url": f"{sell_page_base_url}?character={character_id}",
+                        "url": f"{sell_page_base_url}?location={selected_location_id}&character={character_id}",
                     }
                 )
 

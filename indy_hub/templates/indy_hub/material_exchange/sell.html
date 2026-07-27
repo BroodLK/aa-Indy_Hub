@@ -231,6 +231,7 @@
                         <form method="post" id="sellForm">
                             {% csrf_token %}
                             <input type="hidden" name="sell_location_id" value="{{ active_location_id }}">
+                            {% if active_character_tab %}<input type="hidden" name="sell_character_id" value="{{ active_character_tab }}">{% endif %}
                             <div class="table-responsive">
                                 <table class="table table-hover stock-table align-middle">
                                     <thead>
