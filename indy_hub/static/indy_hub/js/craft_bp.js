@@ -796,12 +796,39 @@ function computeBpcCoverageSignature() {
     });
     modeTokens.sort();
 
+    // Owned components reduce the number of runs that actually need building, so
+    // the owned list is part of this cache key.
+    const ownedAllocation = getOwnedAllocation();
+    const ownedSignature = ownedAllocation ? String(ownedAllocation.signature || '') : '';
+
     return [
         `runs=${runs}`,
         `use=${blueprintUseTokens.join(',')}`,
         `mode=${modeTokens.join(',')}`,
         `contracts=${getSelectedContractsCoverageSignature()}`,
+        `owned=${ownedSignature}`,
     ].join('|');
+}
+
+/**
+ * Runs actually required per product type, net of owned components.
+ * SimulationAPI derives these from the same allocation the planner uses, so a
+ * component covered by stock stops asking for BPC runs.
+ */
+function getRequiredRunsByProductTypeId() {
+    const map = new Map();
+    const api = window.SimulationAPI;
+    if (!api || typeof api.getProductionCycles !== 'function') {
+        return map;
+    }
+    (api.getProductionCycles() || []).forEach((entry) => {
+        const productTypeId = Number(entry?.typeId ?? entry?.type_id) || 0;
+        if (!productTypeId) {
+            return;
+        }
+        map.set(productTypeId, Math.max(0, Number(entry?.cycles) || 0));
+    });
+    return map;
 }
 
 function rebuildCanonicalBpcCoverageState({ force = false } = {}) {
@@ -822,6 +849,11 @@ function rebuildCanonicalBpcCoverageState({ force = false } = {}) {
     }
 
     const cyclesSummary = getCraftCyclesSummaryForFinancialPlanner();
+    const liveRequiredRuns = getRequiredRunsByProductTypeId();
+    const bpcAllocation = getOwnedAllocation();
+    const grossProdCraftables = bpcAllocation && bpcAllocation.grossProdCraftables instanceof Map
+        ? bpcAllocation.grossProdCraftables
+        : new Map();
     const mainBpInfo = getMainBlueprintInfoForFinancialPlanner();
     const blueprintNames = getBlueprintNameMapFromConfigPane();
     const selectedByBlueprintType = getBlueprintUseSelectionFromDom();
@@ -859,8 +891,18 @@ function rebuildCanonicalBpcCoverageState({ force = false } = {}) {
             || cyclesSummary[blueprintTypeId]
             || cyclesSummary[String(blueprintTypeId)];
 
-        let requiredRuns = cyclesData ? (Number(cyclesData.cycles) || 0) : null;
-        if (requiredRuns === null && mainBpTypeId && blueprintTypeId === mainBpTypeId) {
+        // Live cycles are net of owned components. A component that appears in
+        // the tree but produced no cycles this pass is fully covered by stock,
+        // so it needs zero BPC runs. Anything the simulation cannot resolve
+        // (notably the final product itself) falls back to the server summary.
+        let requiredRuns = null;
+        if (liveRequiredRuns.has(productTypeId)) {
+            requiredRuns = liveRequiredRuns.get(productTypeId);
+        } else if (grossProdCraftables.has(productTypeId)) {
+            requiredRuns = 0;
+        } else if (cyclesData) {
+            requiredRuns = Number(cyclesData.cycles) || 0;
+        } else if (mainBpTypeId && blueprintTypeId === mainBpTypeId) {
             requiredRuns = mainNumRuns;
         }
         if (requiredRuns === null) {
@@ -995,6 +1037,12 @@ function attachPriceInputListener(input) {
 function refreshTabsAfterStateChange(options = {}) {
     if (!options.keepComputedNeeded) {
         CRAFT_COMPUTED_NEEDED_ROWS = null;
+    }
+    // Owned coverage depends on switch states, runs and the payload tree, all of
+    // which may have just changed.
+    invalidateOwnedAllocation();
+    if (typeof refreshTreeOwnedBadges === 'function') {
+        refreshTreeOwnedBadges();
     }
     rebuildCanonicalBpcCoverageState({ force: true });
     if (typeof syncConfigureVisibilityWithPlan === 'function') {
@@ -2072,6 +2120,7 @@ function refreshTreeSwitchHierarchy() {
     switches.forEach(applyParentLockState);
     refreshTreeBlueprintContextLabels();
     refreshTreeQuantityLabels();
+    refreshTreeOwnedBadges();
 }
 
 if (typeof window !== 'undefined' && !window.refreshTreeSwitchHierarchy) {
@@ -4748,16 +4797,30 @@ function initializeFinancialCalculations() {
     if (computeButton) {
         computeButton.addEventListener('click', () => {
             CRAFT_COMPUTED_NEEDED_ROWS = null;
-            computeNeededPurchases();
+            invalidateOwnedAllocation();
+            refreshTabsAfterStateChange({ forceNeeded: true });
+            if (!document.getElementById('tab-needed')) {
+                // refreshTabsAfterStateChange only recomputes the shopping list
+                // through updateNeededTabFromState, which needs that container.
+                computeNeededPurchases();
+            }
         });
     }
     const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
     if (ownedMaterialsInput && ownedMaterialsInput.dataset.financialBound !== 'true') {
+        // Owned stock now feeds the Plan tree, planner rows, shopping list and
+        // BPC deficits, so a paste has to refresh all of them - debounced, since
+        // the list can be long.
+        let ownedRefreshTimer = null;
         const handleOwnedInputChange = () => {
-            CRAFT_COMPUTED_NEEDED_ROWS = null;
-            if (typeof updateFinancialTabFromState === 'function') {
-                updateFinancialTabFromState();
+            if (ownedRefreshTimer) {
+                window.clearTimeout(ownedRefreshTimer);
             }
+            ownedRefreshTimer = window.setTimeout(() => {
+                ownedRefreshTimer = null;
+                CRAFT_COMPUTED_NEEDED_ROWS = null;
+                refreshTabsAfterStateChange({ forceNeeded: true });
+            }, 300);
         };
         ownedMaterialsInput.addEventListener('input', handleOwnedInputChange);
         ownedMaterialsInput.addEventListener('change', handleOwnedInputChange);
@@ -6761,32 +6824,10 @@ function recalcFinancials() {
     let costTotal = 0;
     let revTotal = 0;
     let shippingFeeTotal = 0;
-    const ownedInputEl = document.getElementById('ownedMaterialsInput');
-    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
-    const ownedLookup = buildOwnedTypeLookupFromPayload(
-        ownedData.byName,
-        ownedData.labelsByName
-    );
-    const remainingOwnedByType = new Map(ownedLookup.byType || []);
-    const remainingOwnedByName = new Map();
-    ownedData.byName.forEach((qty, normalizedName) => {
-        if (!normalizedName) {
-            return;
-        }
-        if (ownedLookup.matchedNames && ownedLookup.matchedNames.has(normalizedName)) {
-            return;
-        }
-        remainingOwnedByName.set(normalizedName, Math.max(0, Number(qty) || 0));
-    });
 
-    const resolveRowTypeName = (row) => {
-        const badge = row.querySelector('.craft-planner-item-name');
-        if (badge && badge.textContent) {
-            return String(badge.textContent).trim();
-        }
-        const firstCell = row.querySelector('td');
-        return String(firstCell && firstCell.textContent ? firstCell.textContent : '').trim();
-    };
+    // Owned coverage is decided once, by the allocation engine, and baked into
+    // each row's data-qty-required / data-qty-pay / data-qty-owned by
+    // updateFinancialTabFromState(). Re-deriving it here would subtract twice.
 
     document.querySelectorAll('#financialItemsBody tr').forEach(tr => {
         const qtyCell = tr.querySelector('.craft-financial-qty-cell') || tr.querySelector('[data-qty]');
@@ -6812,50 +6853,19 @@ function recalcFinancials() {
         if (costInput) {
             const typeId = Number(tr.getAttribute('data-type-id')) || 0;
             const rowKind = String(tr.getAttribute('data-row-kind') || 'material').toLowerCase();
-            let requiredQty = qty;
-            let payableQty = qty;
-            let ownedApplied = 0;
+            const presetRequired = Number(qtyCell?.dataset?.qtyRequired);
+            const presetPayable = Number(qtyCell?.dataset?.qtyPay);
+            const presetOwned = Number(qtyCell?.dataset?.qtyOwned || 0);
 
-            const hasPresetPay = qtyCell && qtyCell.dataset && qtyCell.dataset.qtyPay !== undefined;
-            const hasPresetRequired = qtyCell && qtyCell.dataset && qtyCell.dataset.qtyRequired !== undefined;
-            if (hasPresetPay && hasPresetRequired) {
-                const presetRequired = Number(qtyCell.dataset.qtyRequired);
-                const presetPayable = Number(qtyCell.dataset.qtyPay);
-                const presetOwned = Number(qtyCell.dataset.qtyOwned || 0);
-                requiredQty = Number.isFinite(presetRequired)
-                    ? Math.max(0, Math.ceil(presetRequired))
-                    : qty;
-                payableQty = Number.isFinite(presetPayable)
-                    ? Math.max(0, Math.ceil(presetPayable))
-                    : qty;
-                ownedApplied = Number.isFinite(presetOwned)
-                    ? Math.max(0, Math.ceil(presetOwned))
-                    : Math.max(0, requiredQty - payableQty);
-            } else if (rowKind !== 'bpc') {
-                const availableOwnedByType = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
-                const coveredByType = Math.min(requiredQty, availableOwnedByType);
-                if (coveredByType > 0) {
-                    remainingOwnedByType.set(typeId, availableOwnedByType - coveredByType);
-                    ownedApplied += coveredByType;
-                }
-
-                const remainingRequiredAfterType = Math.max(0, requiredQty - ownedApplied);
-                if (remainingRequiredAfterType > 0) {
-                    const normalizedRowName = normalizeOwnedMaterialName(resolveRowTypeName(tr));
-                    if (normalizedRowName) {
-                        const availableOwnedByName = Math.max(
-                            0,
-                            Number(remainingOwnedByName.get(normalizedRowName) || 0)
-                        );
-                        const coveredByName = Math.min(remainingRequiredAfterType, availableOwnedByName);
-                        if (coveredByName > 0) {
-                            remainingOwnedByName.set(normalizedRowName, availableOwnedByName - coveredByName);
-                            ownedApplied += coveredByName;
-                        }
-                    }
-                }
-                payableQty = Math.max(0, requiredQty - ownedApplied);
-            }
+            const requiredQty = Number.isFinite(presetRequired)
+                ? Math.max(0, Math.ceil(presetRequired))
+                : qty;
+            const payableQty = Number.isFinite(presetPayable)
+                ? Math.max(0, Math.ceil(presetPayable))
+                : qty;
+            const ownedApplied = Number.isFinite(presetOwned)
+                ? Math.max(0, Math.ceil(presetOwned))
+                : Math.max(0, requiredQty - payableQty);
 
             let ownedNoteEl = tr.querySelector('.financial-owned-note');
             if (!ownedNoteEl) {
@@ -8221,6 +8231,64 @@ function refreshTreeQuantityLabels() {
         } else if (defaultWrap) {
             defaultWrap.classList.add('d-none');
         }
+    });
+}
+
+/**
+ * Annotate production tree nodes that the owned-materials list covers.
+ * Pass 1 of the allocation spends stock on components, so a node marked here is
+ * one whose sub-tree of raw material demand has been removed downstream.
+ */
+function refreshTreeOwnedBadges() {
+    const treeTab = document.getElementById('tab-tree');
+    if (!treeTab) {
+        return;
+    }
+
+    const allocation = getOwnedAllocation();
+    // Only pass 1 (components) is shown here. appliedByType would also include
+    // raw materials, and every occurrence of a shared mineral carries the same
+    // data-type-id, so raw badges would repeat the same global total on dozens
+    // of nodes.
+    const appliedByType = allocation && allocation.componentAppliedByType instanceof Map
+        ? allocation.componentAppliedByType
+        : new Map();
+    const requiredByType = allocation && allocation.requiredByType instanceof Map
+        ? allocation.requiredByType
+        : new Map();
+
+    treeTab.querySelectorAll('summary[data-type-id]').forEach((summaryEl) => {
+        const typeId = Number(summaryEl.getAttribute('data-type-id') || 0) || 0;
+        // A node without a prod/buy switch is a leaf, i.e. a pass 2 material.
+        const isCraftable = !!summaryEl.querySelector('input.mat-switch');
+        const ownedQty = (typeId && isCraftable)
+            ? Math.max(0, Number(appliedByType.get(typeId) || 0))
+            : 0;
+        const requiredQty = typeId ? Math.max(0, Number(requiredByType.get(typeId) || 0)) : 0;
+        const qtyWrap = summaryEl.querySelector('.tree-qty-wrap');
+        let badgeEl = summaryEl.querySelector('.tree-owned-badge');
+
+        if (ownedQty <= 0) {
+            if (badgeEl) {
+                badgeEl.remove();
+            }
+            summaryEl.classList.remove('craft-tree-node-owned');
+            return;
+        }
+
+        if (!badgeEl && qtyWrap && qtyWrap.parentElement) {
+            badgeEl = document.createElement('span');
+            badgeEl.className = 'badge bg-secondary-subtle text-secondary-emphasis ms-2 text-xs tree-owned-badge';
+            qtyWrap.parentElement.insertBefore(badgeEl, qtyWrap.nextSibling);
+        }
+        if (badgeEl) {
+            badgeEl.textContent = `${__('Owned')} x${formatInteger(ownedQty)}`;
+            badgeEl.setAttribute(
+                'title',
+                `${__('Owned')}: ${formatInteger(ownedQty)} / ${__('Need')}: ${formatInteger(requiredQty)}`
+            );
+        }
+        summaryEl.classList.toggle('craft-tree-node-owned', requiredQty > 0 && ownedQty >= requiredQty);
     });
 }
 
@@ -9804,19 +9872,29 @@ function updateFinancialTabFromState() {
         if (!typeId || (productTypeId && typeId === productTypeId) || CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.has(typeId)) {
             return;
         }
-        const quantity = Math.ceil(Number(item.quantity ?? item.qty ?? 0));
-        if (quantity <= 0) {
+        const quantity = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0)) || 0);
+        const requiredQuantity = Math.max(
+            0,
+            Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? item.qty ?? 0)) || 0
+        );
+        // Gate on required, not payable: a row fully covered by owned stock nets
+        // to zero but must stay visible so its "Owned: N / Need: N" note shows.
+        if (requiredQuantity <= 0) {
             return;
         }
         const existing = aggregated.get(typeId) || {
             typeId,
             typeName: item.typeName || item.type_name || '',
             quantity: 0,
+            requiredQuantity: 0,
+            ownedQuantity: 0,
             marketGroup: item.marketGroup || item.market_group || '',
             rowKind: 'material',
             rowKey: `material:${typeId}`,
         };
         existing.quantity += quantity;
+        existing.requiredQuantity += requiredQuantity;
+        existing.ownedQuantity += Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
         if (!existing.marketGroup && (item.marketGroup || item.market_group)) {
             existing.marketGroup = item.marketGroup || item.market_group || '';
         }
@@ -9878,31 +9956,45 @@ function updateFinancialTabFromState() {
         return String(a.typeName).localeCompare(String(b.typeName), undefined, { sensitivity: 'base' });
     });
 
-    const ownedInputEl = document.getElementById('ownedMaterialsInput');
-    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
-    const ownedLookup = buildOwnedTypeLookupFromPayload(
-        ownedData.byName,
-        ownedData.labelsByName
+    // Tree-derived rows already carry their owned coverage from the shared
+    // allocation engine. Manual rows (e.g. compressed ore swapped in for
+    // minerals) are not part of the production tree, so they get a residual
+    // pass over whatever stock the engine did not spend. Copies are used so
+    // repeated renders stay idempotent.
+    const ownedAllocation = getOwnedAllocation();
+    const residualOwnedByType = new Map(
+        ownedAllocation ? ownedAllocation.remainingOwnedByType : []
     );
-    const remainingOwnedByType = new Map(ownedLookup.byType || []);
-    const unmatchedOwnedByName = new Map();
-    ownedData.byName.forEach((qty, normalizedName) => {
-        if (!normalizedName) {
-            return;
-        }
-        if (ownedLookup.matchedNames && ownedLookup.matchedNames.has(normalizedName)) {
-            return;
-        }
-        unmatchedOwnedByName.set(normalizedName, Math.max(0, Number(qty) || 0));
-    });
+    const residualOwnedByName = new Map(
+        ownedAllocation ? ownedAllocation.remainingOwnedByName : []
+    );
 
     const materialsWithOwnedCoverage = sortedMaterials.map((item) => {
         const typeId = Number(item.typeId || item.type_id) || 0;
-        const requiredQty = Math.max(0, Math.ceil(Number(item.quantity || item.qty || 0) || 0));
-        const availableOwned = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
-        let ownedQty = Math.min(requiredQty, availableOwned);
-        if (ownedQty > 0) {
-            remainingOwnedByType.set(typeId, availableOwned - ownedQty);
+        const requiredQty = Math.max(
+            0,
+            Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? item.qty ?? 0) || 0)
+        );
+
+        if (!item.isManualFinancial) {
+            const ownedQty = Math.min(
+                requiredQty,
+                Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0))
+            );
+            return {
+                ...item,
+                requiredQuantity: requiredQty,
+                ownedQuantity: ownedQty,
+                quantity: Math.max(0, requiredQty - ownedQty),
+            };
+        }
+
+        let ownedQty = 0;
+        const availableOwned = Math.max(0, Number(residualOwnedByType.get(typeId) || 0));
+        const coveredByType = Math.min(requiredQty, availableOwned);
+        if (coveredByType > 0) {
+            residualOwnedByType.set(typeId, availableOwned - coveredByType);
+            ownedQty += coveredByType;
         }
 
         const remainingRequiredAfterType = Math.max(0, requiredQty - ownedQty);
@@ -9911,22 +10003,28 @@ function updateFinancialTabFromState() {
                 item.typeName || item.type_name || item.name || ''
             );
             if (normalizedTypeName) {
-                const availableByName = Math.max(0, Number(unmatchedOwnedByName.get(normalizedTypeName) || 0));
+                const availableByName = Math.max(0, Number(residualOwnedByName.get(normalizedTypeName) || 0));
                 const coveredByName = Math.min(remainingRequiredAfterType, availableByName);
                 if (coveredByName > 0) {
-                    unmatchedOwnedByName.set(normalizedTypeName, availableByName - coveredByName);
+                    residualOwnedByName.set(normalizedTypeName, availableByName - coveredByName);
                     ownedQty += coveredByName;
                 }
             }
         }
-        const payableQty = Math.max(0, requiredQty - ownedQty);
+
         return {
             ...item,
             requiredQuantity: requiredQty,
             ownedQuantity: ownedQty,
-            quantity: payableQty,
+            quantity: Math.max(0, requiredQty - ownedQty),
         };
     });
+
+    if (ownedAllocation) {
+        // Published for the Shopping List and its "Copy Leftovers" export.
+        ownedAllocation.leftoverOwnedByType = residualOwnedByType;
+        ownedAllocation.leftoverOwnedByName = residualOwnedByName;
+    }
 
     const selectedBpcRows = collectSelectedBlueprintContractRows().map((row) => ({
         ...row,
@@ -10221,7 +10319,7 @@ function updateMaterialsTabFromState() {
     const fallbackGroupName = __('Other');
     const aggregated = new Map();
     const usageByType = buildMaterialUsageTargetsByType();
-    const treeScopedItems = computeNeededItemsFromTreeWithOwned(window.SimulationAPI, new Map());
+    const treeScopedItems = buildNeededItemsFromAllocation(getOwnedAllocation());
     const items = Array.isArray(CRAFT_COMPUTED_NEEDED_ROWS)
         ? CRAFT_COMPUTED_NEEDED_ROWS
         : (Array.isArray(treeScopedItems) && treeScopedItems.length > 0
@@ -10347,149 +10445,8 @@ function updateNeededTabFromState(force = false) {
     }
 }
 
-function normalizeOwnedMaterialName(value) {
-    return String(value || '')
-        .toLowerCase()
-        .replace(/[\u2010-\u2015]/g, '-')
-        .replace(/\s*-\s*/g, '-')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function parseOwnedMaterialsInput(rawText) {
-    const byName = new Map();
-    const labelsByName = new Map();
-    const malformedLines = [];
-    const lines = String(rawText || '').split(/\r?\n/);
-
-    lines.forEach((rawLine, index) => {
-        const line = String(rawLine || '').trim();
-        if (!line) {
-            return;
-        }
-
-        let namePart = '';
-        let qtyPart = '';
-
-        const tabParts = line
-            .split('\t')
-            .map((part) => part.trim())
-            .filter((part) => part !== '');
-        if (tabParts.length >= 2) {
-            qtyPart = tabParts[tabParts.length - 1];
-            namePart = tabParts.slice(0, -1).join(' ');
-        } else {
-            const match = line.match(/^(.*\S)\s+([+-]?\d[\d,._]*)$/);
-            if (match) {
-                namePart = String(match[1] || '').trim();
-                qtyPart = String(match[2] || '').trim();
-            }
-        }
-
-        const normalizedName = normalizeOwnedMaterialName(namePart);
-        const numericQty = Number(String(qtyPart || '').replace(/[,_\s]/g, ''));
-        const qty = Number.isFinite(numericQty) ? Math.floor(numericQty) : 0;
-
-        if (!normalizedName || qty <= 0) {
-            malformedLines.push(index + 1);
-            return;
-        }
-
-        byName.set(normalizedName, (byName.get(normalizedName) || 0) + qty);
-        if (!labelsByName.has(normalizedName)) {
-            labelsByName.set(normalizedName, namePart);
-        }
-    });
-
-    return {
-        byName,
-        labelsByName,
-        malformedLines,
-    };
-}
-
-function buildOwnedTypeLookupFromPayload(ownedByName, labelsByName) {
-    const payload = window.BLUEPRINT_DATA || {};
-    const nameToTypeIds = new Map();
-    const byType = new Map();
-    const matchedNames = new Set();
-    const unresolvedNames = [];
-    const chosenTypeIdByName = new Map();
-    const typeLabelsById = new Map();
-
-    const addNameType = (typeId, typeName) => {
-        const numericTypeId = Number(typeId) || 0;
-        const resolvedTypeName = String(typeName || '').trim();
-        const normalizedName = normalizeOwnedMaterialName(resolvedTypeName);
-        if (!numericTypeId || !normalizedName) {
-            return;
-        }
-        if (!nameToTypeIds.has(normalizedName)) {
-            nameToTypeIds.set(normalizedName, new Set());
-        }
-        nameToTypeIds.get(normalizedName).add(numericTypeId);
-        if (!typeLabelsById.has(numericTypeId) && resolvedTypeName) {
-            typeLabelsById.set(numericTypeId, resolvedTypeName);
-        }
-    };
-
-    const walkTree = (nodes) => {
-        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
-            const typeId = Number(node && (node.type_id || node.typeId)) || 0;
-            const typeName = String((node && (node.type_name || node.typeName)) || '');
-            addNameType(typeId, typeName);
-            const children = Array.isArray(node && node.sub_materials)
-                ? node.sub_materials
-                : (Array.isArray(node && node.subMaterials) ? node.subMaterials : []);
-            if (children.length > 0) {
-                walkTree(children);
-            }
-        });
-    };
-
-    const addArrayEntries = (items) => {
-        (Array.isArray(items) ? items : []).forEach((item) => {
-            const typeId = Number(item && (item.type_id || item.typeId)) || 0;
-            const typeName = String((item && (item.type_name || item.typeName)) || '');
-            addNameType(typeId, typeName);
-        });
-    };
-
-    walkTree(payload.materials_tree);
-    addArrayEntries(payload.materials);
-    addArrayEntries(payload.direct_materials);
-    addArrayEntries(getManualFinancialStateItems());
-    addArrayEntries(getPurchasePlannerItemsFromDom());
-
-    const grouped = payload.materials_by_group || payload.materialsByGroup || {};
-    Object.values(grouped).forEach((group) => {
-        if (!group || !Array.isArray(group.items)) {
-            return;
-        }
-        addArrayEntries(group.items);
-    });
-
-    ownedByName.forEach((qty, normalizedName) => {
-        const typeIds = nameToTypeIds.get(normalizedName);
-        if (!typeIds || typeIds.size === 0) {
-            unresolvedNames.push(labelsByName.get(normalizedName) || normalizedName);
-            return;
-        }
-
-        const chosenTypeId = Array.from(typeIds)[0];
-        byType.set(chosenTypeId, (byType.get(chosenTypeId) || 0) + qty);
-        matchedNames.add(normalizedName);
-        chosenTypeIdByName.set(normalizedName, chosenTypeId);
-    });
-
-    return {
-        byType,
-        matchedNames,
-        unresolvedNames,
-        chosenTypeIdByName,
-        typeLabelsById,
-    };
-}
+// normalizeOwnedMaterialName / parseOwnedMaterialsInput / buildOwnedTypeLookupFromPayload
+// now live in craft_bp_owned.js, which loads first and publishes them as globals.
 
 function buildOwnedMaterialsRemainderRows(ownedData, ownedLookup, remainingOwnedByType, remainingOwnedByName) {
     const remainderRows = [];
@@ -10552,7 +10509,31 @@ function buildOwnedMaterialsRemainderRows(ownedData, ownedLookup, remainingOwned
     return remainderRows;
 }
 
-function computeNeededItemsFromTreeWithOwned(api, ownedByType, options = {}) {
+function getOwnedAllocation({ force = false } = {}) {
+    if (window.CraftOwned && typeof window.CraftOwned.computeOwnedAllocation === 'function') {
+        return window.CraftOwned.computeOwnedAllocation({ force });
+    }
+    return null;
+}
+
+function invalidateOwnedAllocation() {
+    if (window.CraftOwned && typeof window.CraftOwned.invalidateOwnedAllocation === 'function') {
+        window.CraftOwned.invalidateOwnedAllocation();
+    }
+}
+
+/**
+ * Flatten the owned-aware allocation into the buy-list shape used by the
+ * shopping list and the Plan tab materials list: leaf inputs plus craftables
+ * switched to Buy, already net of everything the user owns.
+ * Returns null when there is no production tree, so callers can fall back to
+ * their own source (same contract as the previous tree walk).
+ */
+function buildNeededItemsFromAllocation(allocation) {
+    if (!allocation) {
+        return null;
+    }
+
     const payload = window.BLUEPRINT_DATA || {};
     const rootNodes = Array.isArray(payload.materials_tree) ? payload.materials_tree : [];
     if (rootNodes.length === 0) {
@@ -10560,135 +10541,40 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType, options = {}) {
     }
 
     const marketGroupMap = payload.market_group_map || {};
-    const results = new Map(); // typeId -> { typeId, typeName, quantity, marketGroup }
-    const remainingOwned = new Map(ownedByType || []);
-    // Keep a name-based pool as a safety net. Some payloads contain the same
-    // item in the production tree and planner rows with different ID fields.
-    const remainingOwnedByName = new Map(options.ownedByName || []);
+    const typeLabelsById = allocation.ownedLookup && allocation.ownedLookup.typeLabelsById instanceof Map
+        ? allocation.ownedLookup.typeLabelsById
+        : new Map();
+    const results = new Map();
 
-    const addResult = (typeId, typeName, marketGroup, qty) => {
+    const addResult = (typeId, qty) => {
         const numericTypeId = Number(typeId) || 0;
         const normalizedQty = Math.max(0, Math.ceil(Number(qty) || 0));
         if (!numericTypeId || normalizedQty <= 0) {
             return;
         }
+        const marketGroup = marketGroupMap[numericTypeId] && marketGroupMap[numericTypeId].group_name
+            ? String(marketGroupMap[numericTypeId].group_name)
+            : '';
         const existing = results.get(numericTypeId) || {
             typeId: numericTypeId,
-            typeName: String(typeName || ''),
+            typeName: String(
+                allocation.typeNamesById.get(numericTypeId)
+                || typeLabelsById.get(numericTypeId)
+                || ''
+            ),
             quantity: 0,
-            marketGroup: String(marketGroup || ''),
+            marketGroup,
+            requiredQuantity: Math.max(0, Number(allocation.requiredByType.get(numericTypeId) || 0)),
+            ownedQuantity: Math.max(0, Number(allocation.appliedByType.get(numericTypeId) || 0)),
         };
         existing.quantity += normalizedQty;
-        if (!existing.typeName && typeName) {
-            existing.typeName = String(typeName);
-        }
-        if (!existing.marketGroup && marketGroup) {
-            existing.marketGroup = String(marketGroup);
-        }
         results.set(numericTypeId, existing);
     };
 
-    const resolveSwitchState = (typeId, craftable) => {
-        if (!craftable) {
-            return 'prod';
-        }
-        if (api && typeof api.getSwitchState === 'function') {
-            const state = api.getSwitchState(typeId);
-            if (state === 'buy' || state === 'prod' || state === 'useless') {
-                return state;
-            }
-        }
-        const switchEl = document.querySelector(`#tab-tree input.mat-switch[data-type-id="${typeId}"]`);
-        if (switchEl) {
-            if (switchEl.dataset.fixedMode === 'useless' || switchEl.dataset.userState === 'useless') {
-                return 'useless';
-            }
-            return switchEl.checked ? 'prod' : 'buy';
-        }
-        return 'prod';
-    };
+    allocation.netLeafNeeds.forEach((qty, typeId) => addResult(typeId, qty));
+    allocation.netBuyCraftables.forEach((qty, typeId) => addResult(typeId, qty));
 
-    const walk = (nodes, multiplier) => {
-        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
-            const typeId = Number(node && (node.type_id || node.typeId)) || 0;
-            if (!typeId) {
-                return;
-            }
-
-            const rawQty = Number(node && (node.quantity ?? node.qty ?? 0));
-            if (!Number.isFinite(rawQty) || rawQty <= 0) {
-                return;
-            }
-
-            const requiredQty = Math.max(0, Math.ceil(rawQty * multiplier));
-            if (requiredQty <= 0) {
-                return;
-            }
-
-            const typeName = String((node && (node.type_name || node.typeName)) || '');
-            const marketGroup = marketGroupMap[typeId] && marketGroupMap[typeId].group_name
-                ? String(marketGroupMap[typeId].group_name)
-                : '';
-            const children = Array.isArray(node && node.sub_materials)
-                ? node.sub_materials
-                : (Array.isArray(node && node.subMaterials) ? node.subMaterials : []);
-            const craftable = children.length > 0;
-            const state = resolveSwitchState(typeId, craftable);
-            const normalizedName = normalizeOwnedMaterialName(typeName);
-
-            if (state === 'useless') {
-                return;
-            }
-
-            const ownedQty = Math.max(0, Number(remainingOwned.get(typeId) || 0));
-            let consumedQty = Math.min(requiredQty, ownedQty);
-            if (consumedQty > 0) {
-                remainingOwned.set(typeId, ownedQty - consumedQty);
-                if (normalizedName) {
-                    const ownedByNameQty = Math.max(0, Number(remainingOwnedByName.get(normalizedName) || 0));
-                    remainingOwnedByName.set(normalizedName, Math.max(0, ownedByNameQty - consumedQty));
-                }
-            }
-
-            const remainingRequiredAfterType = Math.max(0, requiredQty - consumedQty);
-            if (remainingRequiredAfterType > 0 && normalizedName) {
-                const ownedByNameQty = Math.max(0, Number(remainingOwnedByName.get(normalizedName) || 0));
-                const nameConsumedQty = Math.min(remainingRequiredAfterType, ownedByNameQty);
-                if (nameConsumedQty > 0) {
-                    remainingOwnedByName.set(normalizedName, ownedByNameQty - nameConsumedQty);
-                    consumedQty += nameConsumedQty;
-                }
-            }
-
-            const missingQty = requiredQty - consumedQty;
-            if (missingQty <= 0) {
-                return;
-            }
-
-            if (craftable) {
-                if (state === 'buy') {
-                    addResult(typeId, typeName, marketGroup, missingQty);
-                    return;
-                }
-                const childMultiplier = missingQty / requiredQty;
-                walk(children, childMultiplier);
-                return;
-            }
-
-            addResult(typeId, typeName, marketGroup, missingQty);
-        });
-    };
-
-    walk(rootNodes, 1);
-    const items = Array.from(results.values());
-    if (options.includeRemainingOwned === true) {
-        return {
-            items,
-            remainingOwned,
-            remainingOwnedByName,
-        };
-    }
-    return items;
+    return Array.from(results.values());
 }
 
 function getPurchasePlannerItemsFromDom() {
@@ -10771,185 +10657,138 @@ function getPurchasePlannerItemsFromDom() {
     return items;
 }
 
-function buildNeededPurchasesState() {
-    const api = window.SimulationAPI;
-    const ownedInputEl = document.getElementById('ownedMaterialsInput');
-    const ownedData = parseOwnedMaterialsInput(ownedInputEl ? ownedInputEl.value : '');
-    const ownedLookup = buildOwnedTypeLookupFromPayload(
-        ownedData.byName,
-        ownedData.labelsByName
+function sortNeededPurchaseRows(rows) {
+    const ordering = getDashboardMaterialsOrdering();
+    return rows.slice().sort((a, b) => {
+        const typeA = Number(a.typeId) || 0;
+        const typeB = Number(b.typeId) || 0;
+
+        const dashboardA = ordering.itemOrder.get(typeA);
+        const dashboardB = ordering.itemOrder.get(typeB);
+        const groupA = (a.marketGroup || ordering.fallbackGroupName);
+        const groupB = (b.marketGroup || ordering.fallbackGroupName);
+
+        const groupIdxA = dashboardA
+            ? dashboardA.groupIdx
+            : (ordering.groupOrder.has(groupA) ? ordering.groupOrder.get(groupA) : Number.POSITIVE_INFINITY);
+        const groupIdxB = dashboardB
+            ? dashboardB.groupIdx
+            : (ordering.groupOrder.has(groupB) ? ordering.groupOrder.get(groupB) : Number.POSITIVE_INFINITY);
+        if (groupIdxA !== groupIdxB) {
+            return groupIdxA - groupIdxB;
+        }
+
+        const itemIdxA = dashboardA ? dashboardA.itemIdx : Number.POSITIVE_INFINITY;
+        const itemIdxB = dashboardB ? dashboardB.itemIdx : Number.POSITIVE_INFINITY;
+        if (itemIdxA !== itemIdxB) {
+            return itemIdxA - itemIdxB;
+        }
+
+        const groupCmp = String(groupA).localeCompare(String(groupB), undefined, { sensitivity: 'base' });
+        if (groupCmp !== 0) {
+            return groupCmp;
+        }
+        return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
+    });
+}
+
+function getLeftoverOwnedRows(allocation) {
+    if (!allocation) {
+        return [];
+    }
+    // updateFinancialTabFromState() publishes post-manual-row leftovers; fall back
+    // to the raw engine remainder when the planner has not rendered yet.
+    const byType = allocation.leftoverOwnedByType instanceof Map
+        ? allocation.leftoverOwnedByType
+        : allocation.remainingOwnedByType;
+    const byName = allocation.leftoverOwnedByName instanceof Map
+        ? allocation.leftoverOwnedByName
+        : allocation.remainingOwnedByName;
+    return buildOwnedMaterialsRemainderRows(
+        allocation.ownedData,
+        allocation.ownedLookup,
+        byType,
+        byName
     );
+}
+
+/**
+ * Shopping list state. Demand comes from the shared owned-materials allocation
+ * (components consumed first, then raw materials), so it always agrees with the
+ * Purchase Planner and the Buy BPCs tab.
+ */
+function buildNeededPurchasesState() {
+    const allocation = getOwnedAllocation();
     const plannerItems = getPurchasePlannerItemsFromDom();
     const usingPlannerItems = plannerItems.length > 0;
-    let rowsToDisplay = plannerItems;
-    let remainingOwnedByType = new Map(ownedLookup.byType || []);
-    let remainingOwnedByName = new Map();
 
-    ownedData.byName.forEach((qty, normalizedName) => {
-        if (!normalizedName) {
-            return;
-        }
-        if (ownedLookup.matchedNames && ownedLookup.matchedNames.has(normalizedName)) {
-            return;
-        }
-        remainingOwnedByName.set(normalizedName, Math.max(0, Number(qty) || 0));
-    });
-
-    if (api && typeof api.getNeededMaterials === 'function') {
-        const treeComputation = computeNeededItemsFromTreeWithOwned(
-            api,
-            ownedLookup.byType,
-            { includeRemainingOwned: true, ownedByName: ownedData.byName }
-        );
-        const treeItems = Array.isArray(treeComputation?.items) ? treeComputation.items : null;
-        const usedTreeComputation = Array.isArray(treeItems);
-        const items = usedTreeComputation ? treeItems : (api.getNeededMaterials() || []);
-        if (usedTreeComputation) {
-            // The tree calculation is the only path that can consume an owned
-            // intermediate (for example, a Capital Component) before walking
-            // down to its mineral inputs. Keep prices and other planner-only
-            // metadata from the financial rows when available.
-            const plannerByType = new Map(
-                plannerItems.map((item) => [Number(item.typeId ?? item.type_id), item])
-            );
-            items.forEach((item) => {
-                const plannerItem = plannerByType.get(Number(item.typeId ?? item.type_id));
-                if (plannerItem) {
-                    Object.assign(item, {
-                        unitPrice: plannerItem.unitPrice,
-                        price: plannerItem.price,
-                        totalPrice: plannerItem.totalPrice,
-                    });
-                }
-            });
-        }
-        const aggregated = new Map();
-
-        if (usedTreeComputation && treeComputation?.remainingOwned instanceof Map) {
-                remainingOwnedByType = new Map(treeComputation.remainingOwned);
-        } else {
-                remainingOwnedByType = new Map();
-                remainingOwnedByName = new Map(ownedData.byName);
-        }
-
-        items.forEach((item) => {
-                const typeId = Number(item.typeId ?? item.type_id) || 0;
-                if (!typeId) {
-                    return;
-                }
-                const qty = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0))) || 0;
-                if (!qty) {
-                    return;
-                }
-                const name = String(item.typeName || item.type_name || '');
-                const marketGroup = String(item.marketGroup || item.market_group || '');
-                const existing = aggregated.get(typeId) || { typeId, name, qty: 0, marketGroup, unitPrice: 0 };
-                existing.qty += qty;
-                if (!existing.unitPrice && item.unitPrice != null) {
-                    existing.unitPrice = Number(item.unitPrice) || 0;
-                }
-                if (!existing.name && name) {
-                    existing.name = name;
-                }
-                if (!existing.marketGroup && marketGroup) {
-                    existing.marketGroup = marketGroup;
-                }
-                aggregated.set(typeId, existing);
-        });
-
-        const ordering = getDashboardMaterialsOrdering();
-            const rows = Array.from(aggregated.values()).sort((a, b) => {
-                const typeA = Number(a.typeId) || 0;
-                const typeB = Number(b.typeId) || 0;
-
-                const dashboardA = ordering.itemOrder.get(typeA);
-                const dashboardB = ordering.itemOrder.get(typeB);
-                const groupA = (a.marketGroup || ordering.fallbackGroupName);
-                const groupB = (b.marketGroup || ordering.fallbackGroupName);
-
-                const groupIdxA = dashboardA
-                    ? dashboardA.groupIdx
-                    : (ordering.groupOrder.has(groupA) ? ordering.groupOrder.get(groupA) : Number.POSITIVE_INFINITY);
-                const groupIdxB = dashboardB
-                    ? dashboardB.groupIdx
-                    : (ordering.groupOrder.has(groupB) ? ordering.groupOrder.get(groupB) : Number.POSITIVE_INFINITY);
-                if (groupIdxA !== groupIdxB) {
-                    return groupIdxA - groupIdxB;
-                }
-
-                const itemIdxA = dashboardA ? dashboardA.itemIdx : Number.POSITIVE_INFINITY;
-                const itemIdxB = dashboardB ? dashboardB.itemIdx : Number.POSITIVE_INFINITY;
-                if (itemIdxA !== itemIdxB) {
-                    return itemIdxA - itemIdxB;
-                }
-
-                const groupCmp = String(groupA).localeCompare(String(groupB), undefined, { sensitivity: 'base' });
-                if (groupCmp !== 0) {
-                    return groupCmp;
-                }
-                return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
-            });
-
-        rowsToDisplay = rows;
-        if (!usedTreeComputation) {
-            rowsToDisplay = plannerItems
-                .map((item) => {
-                    const typeId = Number(item.typeId ?? item.type_id) || 0;
-                    const requiredQty = Math.max(
-                        0,
-                        Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? item.qty ?? 0) || 0)
-                    );
-                    if (!typeId || requiredQty <= 0) {
-                        return null;
-                    }
-
-                    let ownedQty = 0;
-                    const availableOwnedByType = Math.max(0, Number(remainingOwnedByType.get(typeId) || 0));
-                    const coveredByType = Math.min(requiredQty, availableOwnedByType);
-                    if (coveredByType > 0) {
-                        remainingOwnedByType.set(typeId, availableOwnedByType - coveredByType);
-                        ownedQty += coveredByType;
-                    }
-
-                    const remainingRequiredAfterType = Math.max(0, requiredQty - ownedQty);
-                    if (remainingRequiredAfterType > 0) {
-                        const normalizedTypeName = normalizeOwnedMaterialName(
-                            item.typeName || item.type_name || item.name || String(typeId)
-                        );
-                        if (normalizedTypeName) {
-                            const availableByName = Math.max(0, Number(remainingOwnedByName.get(normalizedTypeName) || 0));
-                            const coveredByName = Math.min(remainingRequiredAfterType, availableByName);
-                            if (coveredByName > 0) {
-                                remainingOwnedByName.set(normalizedTypeName, availableByName - coveredByName);
-                                ownedQty += coveredByName;
-                            }
-                        }
-                    }
-
-                    const payableQty = Math.max(0, requiredQty - ownedQty);
-                    return {
-                        ...item,
-                        qty: payableQty,
-                        quantity: payableQty,
-                        requiredQuantity: requiredQty,
-                        ownedQuantity: ownedQty,
-                    };
-                })
-                .filter((item) => item && item.qty > 0);
-        }
+    if (!allocation) {
+        return {
+            ownedData: { byName: new Map(), labelsByName: new Map(), malformedLines: [] },
+            ownedLookup: { byType: new Map(), matchedNames: new Set(), unresolvedNames: [] },
+            rowsToDisplay: plannerItems,
+            usingPlannerItems,
+            leftoverOwnedRows: [],
+        };
     }
+
+    const ownedData = allocation.ownedData;
+    const ownedLookup = allocation.ownedLookup;
+    const treeItems = buildNeededItemsFromAllocation(allocation);
+
+    // No production tree to walk: fall back to the planner rows, which already
+    // carry their owned coverage from updateFinancialTabFromState().
+    if (!Array.isArray(treeItems)) {
+        return {
+            ownedData,
+            ownedLookup,
+            rowsToDisplay: plannerItems.filter((item) => Number(item.qty) > 0),
+            usingPlannerItems,
+            leftoverOwnedRows: getLeftoverOwnedRows(allocation),
+        };
+    }
+
+    // Keep prices and other planner-only metadata from the financial rows.
+    const plannerByType = new Map(
+        plannerItems.map((item) => [Number(item.typeId ?? item.type_id), item])
+    );
+
+    const aggregated = new Map();
+    treeItems.forEach((item) => {
+        const typeId = Number(item.typeId ?? item.type_id) || 0;
+        if (!typeId) {
+            return;
+        }
+        const qty = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0))) || 0;
+        if (!qty) {
+            return;
+        }
+        const plannerItem = plannerByType.get(typeId);
+        const name = String(item.typeName || item.type_name || '');
+        const marketGroup = String(item.marketGroup || item.market_group || '');
+        const existing = aggregated.get(typeId) || {
+            typeId,
+            name,
+            qty: 0,
+            marketGroup,
+            unitPrice: Number(plannerItem && plannerItem.unitPrice) || 0,
+        };
+        existing.qty += qty;
+        if (!existing.name && name) {
+            existing.name = name;
+        }
+        if (!existing.marketGroup && marketGroup) {
+            existing.marketGroup = marketGroup;
+        }
+        aggregated.set(typeId, existing);
+    });
 
     return {
         ownedData,
         ownedLookup,
-        rowsToDisplay,
+        rowsToDisplay: sortNeededPurchaseRows(Array.from(aggregated.values())),
         usingPlannerItems,
-        leftoverOwnedRows: buildOwnedMaterialsRemainderRows(
-            ownedData,
-            ownedLookup,
-            remainingOwnedByType,
-            remainingOwnedByName
-        ),
+        leftoverOwnedRows: getLeftoverOwnedRows(allocation),
     };
 }
 

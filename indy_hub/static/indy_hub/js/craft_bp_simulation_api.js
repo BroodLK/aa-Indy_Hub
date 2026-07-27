@@ -461,7 +461,35 @@
         return entry ? entry.state : null;
     }
 
+    function getOwnedAllocation() {
+        if (window.CraftOwned && typeof window.CraftOwned.computeOwnedAllocation === 'function') {
+            try {
+                return window.CraftOwned.computeOwnedAllocation();
+            } catch (error) {
+                debugWarn('[SimulationAPI] Owned allocation failed, falling back to gross demand.', error);
+            }
+        }
+        return null;
+    }
+
     function computeDemandFromPayloadTree() {
+        // The owned-materials engine walks the same tree but subtracts what the
+        // user already has: components first, then raw materials. Prefer its net
+        // demand so every consumer (planner rows, production cycles, BPC runs)
+        // agrees on the same numbers.
+        const allocation = getOwnedAllocation();
+        if (allocation) {
+            return {
+                leafNeeds: allocation.netLeafNeeds,
+                buyCraftables: allocation.netBuyCraftables,
+                prodCraftables: allocation.netProdCraftables,
+                grossLeafNeeds: allocation.grossLeafNeeds,
+                grossBuyCraftables: allocation.grossBuyCraftables,
+                grossProdCraftables: allocation.grossProdCraftables,
+                appliedByType: allocation.appliedByType,
+            };
+        }
+
         const leafNeeds = new Map();
         const buyCraftables = new Map();
         const prodCraftables = new Map();
@@ -515,16 +543,46 @@
         debugLog('[SimulationAPI] Computing financial items from payload tree traversal.');
 
         const demand = computeDemandFromPayloadTree();
+        const grossLeafNeeds = demand.grossLeafNeeds instanceof Map ? demand.grossLeafNeeds : demand.leafNeeds;
+        const grossBuyCraftables = demand.grossBuyCraftables instanceof Map
+            ? demand.grossBuyCraftables
+            : demand.buyCraftables;
+        const appliedByType = demand.appliedByType instanceof Map ? demand.appliedByType : new Map();
 
-        const addItem = (typeId, qty) => {
-            const materialEntry = materialsMap.get(typeId) || treeMap.get(typeId) || { typeId, typeName: '', quantity: 0 };
+        const addItem = (typeId, qty, grossMap) => {
+            const numericTypeId = Number(typeId);
+            const materialEntry = materialsMap.get(numericTypeId)
+                || treeMap.get(numericTypeId)
+                || { typeId: numericTypeId, typeName: '', quantity: 0 };
             const dto = materialToDto(materialEntry);
             dto.quantity = normalizeQuantity(qty);
-            items.set(Number(typeId), dto);
+            dto.requiredQuantity = normalizeQuantity(
+                (grossMap instanceof Map ? grossMap.get(numericTypeId) : null) ?? qty
+            );
+            dto.ownedQuantity = Math.max(0, dto.requiredQuantity - dto.quantity);
+            items.set(numericTypeId, dto);
         };
 
-        demand.leafNeeds.forEach((qty, typeId) => addItem(typeId, qty));
-        demand.buyCraftables.forEach((qty, typeId) => addItem(typeId, qty));
+        demand.leafNeeds.forEach((qty, typeId) => addItem(typeId, qty, grossLeafNeeds));
+        demand.buyCraftables.forEach((qty, typeId) => addItem(typeId, qty, grossBuyCraftables));
+
+        // A row whose demand is fully covered by owned stock nets to 0 and would
+        // otherwise vanish from the planner. Keep it so the "Owned: N / Need: N"
+        // note stays visible.
+        const keepCoveredRow = (grossMap) => {
+            (grossMap instanceof Map ? grossMap : new Map()).forEach((requiredQty, typeId) => {
+                const numericTypeId = Number(typeId);
+                if (items.has(numericTypeId) || normalizeQuantity(requiredQty) <= 0) {
+                    return;
+                }
+                if (!appliedByType.has(numericTypeId)) {
+                    return;
+                }
+                addItem(numericTypeId, 0, grossMap);
+            });
+        };
+        keepCoveredRow(grossLeafNeeds);
+        keepCoveredRow(grossBuyCraftables);
 
         if (items.size === 0) {
             const fallbackMaterials = Array.isArray(payload.direct_materials)
@@ -611,6 +669,10 @@
             const marketGroup = marketGroupInfo && marketGroupInfo.groupName ? marketGroupInfo.groupName : null;
 
             const totalNeeded = normalizeQuantity(qtyNeeded);
+            if (totalNeeded <= 0) {
+                // Fully covered by owned stock (or no demand): nothing to build.
+                return;
+            }
 
             // produced_per_cycle is stable per blueprint output; pull from materialsMap first.
             // Fallback to payload craft_cycles_summary if present.
@@ -737,6 +799,7 @@
         getFinancialItems,
         getAllMaterials,
         getNeededMaterials,
+        getOwnedAllocation,
     getProductionCycles: buildProductionCycles,
         getPrice,
         setPrice,

@@ -2501,3 +2501,12 @@ html[data-theme="darkly"] #blueprintSearchInput {
     background: var(--bs-body-bg);
     border-color: var(--bs-border-color);
 }
+
+/* ========== OWNED MATERIALS COVERAGE (PRODUCTION TREE) ========== */
+.craft-tree-node-owned {
+    opacity: 0.6;
+}
+
+.craft-tree-node-owned .tree-qty-current {
+    text-decoration: line-through;
+}
