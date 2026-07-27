@@ -10562,6 +10562,9 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType, options = {}) {
     const marketGroupMap = payload.market_group_map || {};
     const results = new Map(); // typeId -> { typeId, typeName, quantity, marketGroup }
     const remainingOwned = new Map(ownedByType || []);
+    // Keep a name-based pool as a safety net. Some payloads contain the same
+    // item in the production tree and planner rows with different ID fields.
+    const remainingOwnedByName = new Map(options.ownedByName || []);
 
     const addResult = (typeId, typeName, marketGroup, qty) => {
         const numericTypeId = Number(typeId) || 0;
@@ -10631,15 +10634,30 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType, options = {}) {
                 : (Array.isArray(node && node.subMaterials) ? node.subMaterials : []);
             const craftable = children.length > 0;
             const state = resolveSwitchState(typeId, craftable);
+            const normalizedName = normalizeOwnedMaterialName(typeName);
 
             if (state === 'useless') {
                 return;
             }
 
             const ownedQty = Math.max(0, Number(remainingOwned.get(typeId) || 0));
-            const consumedQty = Math.min(requiredQty, ownedQty);
+            let consumedQty = Math.min(requiredQty, ownedQty);
             if (consumedQty > 0) {
                 remainingOwned.set(typeId, ownedQty - consumedQty);
+                if (normalizedName) {
+                    const ownedByNameQty = Math.max(0, Number(remainingOwnedByName.get(normalizedName) || 0));
+                    remainingOwnedByName.set(normalizedName, Math.max(0, ownedByNameQty - consumedQty));
+                }
+            }
+
+            const remainingRequiredAfterType = Math.max(0, requiredQty - consumedQty);
+            if (remainingRequiredAfterType > 0 && normalizedName) {
+                const ownedByNameQty = Math.max(0, Number(remainingOwnedByName.get(normalizedName) || 0));
+                const nameConsumedQty = Math.min(remainingRequiredAfterType, ownedByNameQty);
+                if (nameConsumedQty > 0) {
+                    remainingOwnedByName.set(normalizedName, ownedByNameQty - nameConsumedQty);
+                    consumedQty += nameConsumedQty;
+                }
             }
 
             const missingQty = requiredQty - consumedQty;
@@ -10667,6 +10685,7 @@ function computeNeededItemsFromTreeWithOwned(api, ownedByType, options = {}) {
         return {
             items,
             remainingOwned,
+            remainingOwnedByName,
         };
     }
     return items;
@@ -10780,7 +10799,7 @@ function buildNeededPurchasesState() {
         const treeComputation = computeNeededItemsFromTreeWithOwned(
             api,
             ownedLookup.byType,
-            { includeRemainingOwned: true }
+            { includeRemainingOwned: true, ownedByName: ownedData.byName }
         );
         const treeItems = Array.isArray(treeComputation?.items) ? treeComputation.items : null;
         const usedTreeComputation = Array.isArray(treeItems);
