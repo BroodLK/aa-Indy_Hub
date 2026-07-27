@@ -6075,7 +6075,10 @@ def material_exchange_sell(request, tokens):
 
         selected_location_assets_raw = all_sell_assets_by_location.get(int(selected_location_id), {})
         if selected_character_id:
-            cached_assets_for_scope, _ = get_user_assets_cached(request.user, allow_refresh=False)
+            cached_assets_for_scope, _scope_missing_for_character = get_user_assets_cached(
+                request.user,
+                allow_refresh=False,
+            )
             selected_location_assets_raw = {}
             valid_character = False
             for asset in cached_assets_for_scope:
