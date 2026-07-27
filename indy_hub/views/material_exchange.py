@@ -6589,15 +6589,53 @@ def material_exchange_sell(request, tokens):
             sell_profile_name=active_sell_profile_name,
         )
 
+        # Keep location navigation available alongside the character tabs.
+        for loc_id in sell_structure_ids:
+            loc_assets = user_assets_by_location.get(int(loc_id), {})
+            location_tabs.append(
+                {
+                    "id": str(loc_id),
+                    "name": sell_structure_name_map.get(int(loc_id), "") or f"Structure {loc_id}",
+                    "item_count": sum(1 for type_id in loc_assets if _is_sellable_type(type_id)),
+                    "url": f"{sell_page_base_url}?location={loc_id}",
+                }
+            )
+
         show_character_tabs = True
 
         if show_character_tabs:
+            # Build the character tabs from the active location.  The aggregate
+            # per-character map spans every configured location, so using it here
+            # can select a character that has no assets at the active location.
+            try:
+                cached_assets_for_tabs, scope_missing_for_tabs = get_user_assets_cached(
+                    request.user,
+                    allow_refresh=False,
+                )
+            except Exception:
+                cached_assets_for_tabs = []
+                scope_missing_for_tabs = False
+            character_assets_by_location: dict[int, dict[int, int]] = {}
+            for asset in cached_assets_for_tabs:
+                try:
+                    asset_location_id = int(asset.get("location_id") or 0)
+                    asset_character_id = int(asset.get("character_id") or 0)
+                    asset_type_id = int(asset.get("type_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if asset_location_id != int(selected_location_id or 0) or asset_character_id <= 0:
+                    continue
+                quantity = _asset_quantity(asset)
+                if quantity > 0 and asset_type_id > 0:
+                    character_assets = character_assets_by_location.setdefault(asset_character_id, {})
+                    character_assets[asset_type_id] = character_assets.get(asset_type_id, 0) + quantity
+
             sorted_characters = sorted(
-                user_assets_by_character.keys(),
+                character_assets_by_location.keys(),
                 key=lambda character_id: character_names_map.get(character_id, str(character_id)).lower(),
             )
             for character_id in sorted_characters:
-                character_assets = user_assets_by_character.get(character_id, {})
+                character_assets = character_assets_by_location.get(character_id, {})
                 tab_count = sum(1 for _type_id, qty in character_assets.items() if int(qty or 0) > 0)
                 if tab_count <= 0:
                     continue
