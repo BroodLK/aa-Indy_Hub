@@ -10777,25 +10777,43 @@ function buildNeededPurchasesState() {
     });
 
     if (api && typeof api.getNeededMaterials === 'function') {
-        if (!usingPlannerItems) {
-            const treeComputation = computeNeededItemsFromTreeWithOwned(
-                api,
-                ownedLookup.byType,
-                { includeRemainingOwned: true }
+        const treeComputation = computeNeededItemsFromTreeWithOwned(
+            api,
+            ownedLookup.byType,
+            { includeRemainingOwned: true }
+        );
+        const treeItems = Array.isArray(treeComputation?.items) ? treeComputation.items : null;
+        const usedTreeComputation = Array.isArray(treeItems);
+        const items = usedTreeComputation ? treeItems : (api.getNeededMaterials() || []);
+        if (usedTreeComputation) {
+            // The tree calculation is the only path that can consume an owned
+            // intermediate (for example, a Capital Component) before walking
+            // down to its mineral inputs. Keep prices and other planner-only
+            // metadata from the financial rows when available.
+            const plannerByType = new Map(
+                plannerItems.map((item) => [Number(item.typeId ?? item.type_id), item])
             );
-            const treeItems = Array.isArray(treeComputation?.items) ? treeComputation.items : null;
-            const usedTreeComputation = Array.isArray(treeItems);
-            const items = usedTreeComputation ? treeItems : (api.getNeededMaterials() || []);
-            const aggregated = new Map();
+            items.forEach((item) => {
+                const plannerItem = plannerByType.get(Number(item.typeId ?? item.type_id));
+                if (plannerItem) {
+                    Object.assign(item, {
+                        unitPrice: plannerItem.unitPrice,
+                        price: plannerItem.price,
+                        totalPrice: plannerItem.totalPrice,
+                    });
+                }
+            });
+        }
+        const aggregated = new Map();
 
-            if (usedTreeComputation && treeComputation?.remainingOwned instanceof Map) {
+        if (usedTreeComputation && treeComputation?.remainingOwned instanceof Map) {
                 remainingOwnedByType = new Map(treeComputation.remainingOwned);
-            } else {
+        } else {
                 remainingOwnedByType = new Map();
                 remainingOwnedByName = new Map(ownedData.byName);
-            }
+        }
 
-            items.forEach((item) => {
+        items.forEach((item) => {
                 const typeId = Number(item.typeId ?? item.type_id) || 0;
                 if (!typeId) {
                     return;
@@ -10808,6 +10826,9 @@ function buildNeededPurchasesState() {
                 const marketGroup = String(item.marketGroup || item.market_group || '');
                 const existing = aggregated.get(typeId) || { typeId, name, qty: 0, marketGroup, unitPrice: 0 };
                 existing.qty += qty;
+                if (!existing.unitPrice && item.unitPrice != null) {
+                    existing.unitPrice = Number(item.unitPrice) || 0;
+                }
                 if (!existing.name && name) {
                     existing.name = name;
                 }
@@ -10815,9 +10836,9 @@ function buildNeededPurchasesState() {
                     existing.marketGroup = marketGroup;
                 }
                 aggregated.set(typeId, existing);
-            });
+        });
 
-            const ordering = getDashboardMaterialsOrdering();
+        const ordering = getDashboardMaterialsOrdering();
             const rows = Array.from(aggregated.values()).sort((a, b) => {
                 const typeA = Number(a.typeId) || 0;
                 const typeB = Number(b.typeId) || 0;
@@ -10850,24 +10871,8 @@ function buildNeededPurchasesState() {
                 return String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' });
             });
 
-            rowsToDisplay = usedTreeComputation
-                ? rows
-                : rows
-                    .map((item) => {
-                        const normalizedName = normalizeOwnedMaterialName(item.name || String(item.typeId));
-                        const availableOwned = Math.max(0, Number(remainingOwnedByName.get(normalizedName) || 0));
-                        const appliedOwned = Math.min(Math.max(0, Number(item.qty) || 0), availableOwned);
-                        if (appliedOwned > 0) {
-                            remainingOwnedByName.set(normalizedName, availableOwned - appliedOwned);
-                        }
-                        const adjustedQty = Math.max(0, Number(item.qty) - appliedOwned);
-                        return {
-                            ...item,
-                            qty: adjustedQty,
-                        };
-                    })
-                    .filter((item) => item.qty > 0);
-        } else {
+        rowsToDisplay = rows;
+        if (!usedTreeComputation) {
             rowsToDisplay = plannerItems
                 .map((item) => {
                     const typeId = Number(item.typeId ?? item.type_id) || 0;
