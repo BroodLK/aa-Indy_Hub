@@ -92,7 +92,7 @@ from ..tasks.material_exchange import (
     sync_material_exchange_stock,
 )
 from ..utils.analytics import emit_view_analytics_event
-from ..utils.eve import get_corporation_name, get_type_name
+from ..utils.eve import batch_cache_type_names, get_corporation_name, get_type_name
 from ..utils.material_exchange_pricing import (
     apply_markup_with_jita_bounds,
     compute_buy_price_from_member,
@@ -111,6 +111,9 @@ MAX_ESTIMATE_LIVE_PRICE_LOOKUPS = 400
 MAX_BUY_BROWSE_SCOPED_ASSETS = 3000
 BUY_BROWSE_SNAPSHOT_CACHE_TTL_SECONDS = 24 * 60 * 60
 BUY_SUBMISSION_SNAPSHOT_CACHE_TTL_SECONDS = 30 * 60
+STOCK_SYNC_DISPATCH_GUARD_TTL_SECONDS = 10 * 60
+FUZZWORK_PRICE_CACHE_TTL_SECONDS = 15 * 60
+FUZZWORK_PRICE_MISS_CACHE_TTL_SECONDS = 5 * 60
 
 _ACTIVE_BUY_RESERVATION_STATUSES: tuple[str, ...] = (
     MaterialExchangeBuyOrder.Status.DRAFT,
@@ -916,10 +919,20 @@ def _fetch_user_assets_for_structure_data(
     *,
     allow_refresh: bool = True,
     config: MaterialExchangeConfig | None = None,
+    assets: list[dict] | None = None,
+    excluded_item_ids: set[int] | None = None,
 ) -> tuple[dict[int, int], dict[int, dict[int, int]], dict[int, dict[int, int]], bool]:
-    """Return aggregated and per-character asset quantities at structure(s) using cache."""
+    """Return aggregated and per-character asset quantities at structure(s) using cache.
 
-    assets, scope_missing = get_user_assets_cached(user, allow_refresh=allow_refresh)
+    Pass ``assets`` (and optionally the matching ``excluded_item_ids``) when the caller has
+    already materialized the user's cached assets, so a single request does not re-read the
+    whole asset table — reading it is the dominant cost for members with large hangars.
+    """
+
+    if assets is None:
+        assets, scope_missing = get_user_assets_cached(user, allow_refresh=allow_refresh)
+    else:
+        scope_missing = False
 
     aggregated: dict[int, int] = {}
     by_character: dict[int, dict[int, int]] = {}
@@ -941,8 +954,9 @@ def _fetch_user_assets_for_structure_data(
     if not structure_id_set:
         return aggregated, by_character, by_location, scope_missing
 
-    exclude_fitted_ships = not bool(getattr(config, "allow_fitted_ships", False))
-    excluded_item_ids: set[int] = _build_fitted_ship_excluded_item_ids(assets) if exclude_fitted_ships else set()
+    if excluded_item_ids is None:
+        exclude_fitted_ships = not bool(getattr(config, "allow_fitted_ships", False))
+        excluded_item_ids = _build_fitted_ship_excluded_item_ids(assets) if exclude_fitted_ships else set()
 
     for asset in assets:
         if excluded_item_ids:
@@ -1170,6 +1184,39 @@ def material_exchange_sell_assets_refresh_status(request):
         response["last_update"] = last_update_utc.isoformat()
 
     return JsonResponse(response)
+
+
+def _ensure_background_stock_sync_started(config) -> bool:
+    """Dispatch the corp stock sync asynchronously, at most once per guard window.
+
+    Callers use this from GET paths that must not block on ESI. Returns True when a task
+    was dispatched for this request.
+    """
+
+    if not config:
+        return False
+
+    guard_key = f"indy_hub:material_exchange:stock_sync_dispatch:{int(config.corporation_id)}"
+    if cache.get(guard_key):
+        return False
+    cache.set(guard_key, True, STOCK_SYNC_DISPATCH_GUARD_TTL_SECONDS)
+
+    try:
+        sync_material_exchange_stock.delay()
+        logger.info(
+            "Dispatched background stock sync for corporation %s (last_sync=%s)",
+            config.corporation_id,
+            config.last_stock_sync,
+        )
+        return True
+    except Exception as exc:  # pragma: no cover - defensive
+        cache.delete(guard_key)
+        logger.warning(
+            "Failed to dispatch background stock sync for corporation %s: %s",
+            config.corporation_id,
+            exc,
+        )
+        return False
 
 
 def _ensure_buy_stock_refresh_started(config) -> dict:
@@ -1435,8 +1482,19 @@ def _get_type_name_map(type_ids: list[int]) -> dict[int, str]:
     return type_name_map
 
 
+def _fuzzwork_price_cache_key(type_id: int) -> str:
+    return f"indy_hub:fuzzwork_price:v1:{int(type_id)}"
+
+
 def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]:
-    """Batch fetch Jita buy/sell prices from Fuzzwork for given type IDs."""
+    """Batch fetch Jita buy/sell prices from Fuzzwork for given type IDs.
+
+    Prices are cached per type ID so repeat renders (page reloads, tab switches) and
+    concurrent viewers do not re-hit the Fuzzwork API for the same items. Types Fuzzwork
+    has no price for are cached for a shorter window so a handful of unpriced items cannot
+    force a network round-trip on every render.
+    """
+
     # Local
     from ..services.fuzzwork import FuzzworkError, fetch_fuzzwork_prices
 
@@ -1456,9 +1514,32 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
         return {}
 
     price_map: dict[int, dict[str, Decimal]] = {}
+    missing_ids: list[int] = []
+    try:
+        cached_entries = cache.get_many([_fuzzwork_price_cache_key(type_id) for type_id in unique_ids])
+    except Exception:  # pragma: no cover - defensive (cache backend issues)
+        cached_entries = {}
+    for type_id in unique_ids:
+        cached_entry = cached_entries.get(_fuzzwork_price_cache_key(type_id))
+        if cached_entry is None:
+            missing_ids.append(type_id)
+            continue
+        if not cached_entry:
+            # Cached "no price" marker: keep it out of the result, like a miss upstream.
+            continue
+        price_map[type_id] = {
+            "buy": _to_decimal_or_zero(cached_entry.get("buy")),
+            "sell": _to_decimal_or_zero(cached_entry.get("sell")),
+        }
+
+    if not missing_ids:
+        return price_map
+
+    fetched_prices: dict[int, dict[str, Decimal]] = {}
+    fetched_id_set: set[int] = set()
     batch_size = 200
-    for batch_start in range(0, len(unique_ids), batch_size):
-        batch_ids = unique_ids[batch_start : batch_start + batch_size]
+    for batch_start in range(0, len(missing_ids), batch_size):
+        batch_ids = missing_ids[batch_start : batch_start + batch_size]
         try:
             batch_prices = fetch_fuzzwork_prices(batch_ids, timeout=12)
         except FuzzworkError as exc:  # pragma: no cover - defensive
@@ -1469,7 +1550,35 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
                 exc,
             )
             continue
-        price_map.update(batch_prices)
+        fetched_prices.update(batch_prices)
+        # Only IDs from batches that actually completed may be cached as "no price".
+        fetched_id_set.update(batch_ids)
+
+    price_entries: dict[str, dict[str, str]] = {}
+    miss_entries: dict[str, dict] = {}
+    for type_id in fetched_id_set:
+        prices = fetched_prices.get(type_id) or {}
+        buy_price = _to_decimal_or_zero(prices.get("buy"))
+        sell_price = _to_decimal_or_zero(prices.get("sell"))
+        if buy_price <= 0 and sell_price <= 0:
+            miss_entries[_fuzzwork_price_cache_key(type_id)] = {}
+            continue
+        price_map[type_id] = {"buy": buy_price, "sell": sell_price}
+        # Store as strings: Decimal survives pickle, but string keeps the entry portable
+        # across cache backends that serialize to JSON.
+        price_entries[_fuzzwork_price_cache_key(type_id)] = {
+            "buy": str(buy_price),
+            "sell": str(sell_price),
+        }
+
+    try:
+        if price_entries:
+            cache.set_many(price_entries, FUZZWORK_PRICE_CACHE_TTL_SECONDS)
+        if miss_entries:
+            cache.set_many(miss_entries, FUZZWORK_PRICE_MISS_CACHE_TTL_SECONDS)
+    except Exception:  # pragma: no cover - defensive (cache backend issues)
+        logger.debug("material_exchange: failed to cache fuzzwork prices", exc_info=True)
+
     return price_map
 
 
@@ -5944,6 +6053,10 @@ def material_exchange_sell(request, tokens):
     Member chooses materials + quantities, creates ONE order with multiple items.
     """
     emit_view_analytics_event(view_name="material_exchange.sell", request=request)
+    view_started_at = perf_counter()
+    assets_load_seconds = 0.0
+    price_fetch_seconds = 0.0
+    row_build_seconds = 0.0
     if not _is_material_exchange_enabled():
         messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
@@ -6057,15 +6170,19 @@ def material_exchange_sell(request, tokens):
         if redirect_params:
             sell_redirect_url = f"{sell_redirect_url}?{'&'.join(redirect_params)}"
 
+        # Read the user's cached assets once and reuse the list for every pass below
+        # (aggregation, character scoping, variant pricing).
+        posted_cached_assets, scope_missing = get_user_assets_cached(request.user)
         (
             _all_sell_assets,
             _all_sell_assets_by_character,
             all_sell_assets_by_location,
-            scope_missing,
+            _aggregate_scope_missing,
         ) = _fetch_user_assets_for_structure_data(
             request.user,
             sell_structure_ids,
             config=config,
+            assets=posted_cached_assets,
         )
         if scope_missing:
             # Avoid transient flash messaging for missing scopes; the page already
@@ -6075,13 +6192,9 @@ def material_exchange_sell(request, tokens):
 
         selected_location_assets_raw = all_sell_assets_by_location.get(int(selected_location_id), {})
         if selected_character_id:
-            cached_assets_for_scope, _scope_missing_for_character = get_user_assets_cached(
-                request.user,
-                allow_refresh=False,
-            )
             selected_location_assets_raw = {}
             valid_character = False
-            for asset in cached_assets_for_scope:
+            for asset in posted_cached_assets:
                 try:
                     asset_location = int(asset.get("location_id") or 0)
                     asset_character = int(asset.get("character_id") or 0)
@@ -6178,14 +6291,7 @@ def material_exchange_sell(request, tokens):
         submitted_mineral_effective_sell_prices = submitted_refined_ore_context["mineral_effective_sell_prices"]
 
         scoped_variant_quantities_available = True
-        try:
-            all_cached_assets_for_pricing, _scope_missing_for_pricing = get_user_assets_cached(
-                request.user,
-                allow_refresh=False,
-            )
-        except Exception:
-            all_cached_assets_for_pricing = []
-            scoped_variant_quantities_available = False
+        all_cached_assets_for_pricing = posted_cached_assets
         if selected_character_id:
             all_cached_assets_for_pricing = [
                 asset for asset in all_cached_assets_for_pricing
@@ -6409,7 +6515,6 @@ def material_exchange_sell(request, tokens):
         return redirect(sell_redirect_url)
 
     # GET branch: trigger stock sync only if stale (> 1h) or never synced
-    message_shown = False
     try:
         last_sync = config.last_stock_sync
         needs_refresh = not last_sync or (timezone.now() - last_sync).total_seconds() > 3600
@@ -6426,24 +6531,9 @@ def material_exchange_sell(request, tokens):
         stock_version_refresh = False
 
     if needs_refresh or stock_version_refresh:
-        messages.info(
-            request,
-            _("Refreshing via ESI. Make sure you have granted the assets scope to at least one character."),
-        )
-        message_shown = True
-        try:
-            logger.info(
-                "Starting stock sync for sell page (last_sync=%s)",
-                config.last_stock_sync,
-            )
-            sync_material_exchange_stock()
-            config.refresh_from_db()
-            logger.info(
-                "Stock sync completed successfully (last_sync=%s)",
-                config.last_stock_sync,
-            )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Stock auto-sync failed (sell page): %s", exc, exc_info=True)
+        # The corp stock sync walks the whole corp asset tree over ESI and nothing on this
+        # page consumes it, so never run it inline: dispatch it and keep rendering.
+        _ensure_background_stock_sync_started(config)
 
     # Avoid blocking GET requests: if a background refresh is running, don't do a synchronous refresh.
     # If we're on ?refreshed=1 and nothing is cached yet, allow a one-time sync refresh so the list
@@ -6462,12 +6552,26 @@ def material_exchange_sell(request, tokens):
     allow_refresh = (
         not bool(sell_assets_progress.get("running")) or sell_assets_progress.get("error") == "task_start_failed"
     ) and (request.GET.get("refreshed") != "1" or not has_cached_assets or needs_user_assets_version_refresh)
-    user_assets, user_assets_by_character, user_assets_by_location, scope_missing = (
+
+    # Materialize the user's cached assets exactly once: both the per-location aggregation
+    # and the row builder below work off this same list.
+    assets_load_started_at = perf_counter()
+    all_cached_assets, scope_missing = get_user_assets_cached(request.user, allow_refresh=allow_refresh)
+    excluded_item_ids: set[int] = set()
+    try:
+        if not bool(getattr(config, "allow_fitted_ships", False)):
+            excluded_item_ids = _build_fitted_ship_excluded_item_ids(all_cached_assets)
+    except Exception:
+        excluded_item_ids = set()
+    assets_load_seconds = perf_counter() - assets_load_started_at
+
+    user_assets, user_assets_by_character, user_assets_by_location, _aggregate_scope_missing = (
         _fetch_user_assets_for_structure_data(
             request.user,
             sell_structure_ids,
-            allow_refresh=allow_refresh,
             config=config,
+            assets=all_cached_assets,
+            excluded_item_ids=excluded_item_ids,
         )
     )
     if sell_assets_progress.get("error") == "no_assets_fetched" and (has_cached_assets or user_assets):
@@ -6526,7 +6630,9 @@ def material_exchange_sell(request, tokens):
         except Exception as exc:
             logger.warning("Failed to apply market group filter (GET): %s", exc)
 
+        price_fetch_started_at = perf_counter()
         price_data = _fetch_fuzzwork_prices(list(user_assets.keys()))
+        price_fetch_seconds = perf_counter() - price_fetch_started_at
         logger.info(f"SELL DEBUG: Got prices for {len(price_data)} items from Fuzzwork")
         display_type_market_group_path_map = _get_type_market_group_path_map(set(user_assets.keys()))
         display_type_market_group_label_map = _build_type_market_group_label_map(display_type_market_group_path_map)
@@ -6539,18 +6645,32 @@ def material_exchange_sell(request, tokens):
         display_ore_portion_size_map = display_refined_ore_context["ore_portion_size_map"]
         display_mineral_effective_sell_prices = display_refined_ore_context["mineral_effective_sell_prices"]
 
+        # Sellability is asked for the same type many times per render (once per location
+        # tab, then once per raw asset row), so memoize it per pricing profile.
+        sellable_type_cache: dict[tuple[int, str], bool] = {}
+
         def _is_sellable_type(
             type_id: int,
             *,
             override_map: dict | None = None,
             market_group_override_map: dict | None = None,
+            profile_key: str | None = None,
         ) -> bool:
             """Return True when the type has a payout price.
 
             The override maps default to the active location's profile; pass them
             explicitly when counting stock at another location, whose profile can
-            price the same type differently.
+            price the same type differently. ``profile_key`` identifies which profile the
+            passed maps belong to, so memoized results are never shared across profiles.
             """
+            effective_profile_key = (
+                profile_key if profile_key is not None else f"location:{active_sell_profile_name or ''}"
+            )
+            memo_key = (int(type_id), str(effective_profile_key))
+            memoized_result = sellable_type_cache.get(memo_key)
+            if memoized_result is not None:
+                return memoized_result
+
             fuzz_prices = price_data.get(type_id, {})
             jita_buy = Decimal(fuzz_prices.get("buy") or 0)
             jita_sell = Decimal(fuzz_prices.get("sell") or 0)
@@ -6572,7 +6692,9 @@ def material_exchange_sell(request, tokens):
                 ore_portion_size_map=display_ore_portion_size_map,
                 mineral_effective_sell_prices=display_mineral_effective_sell_prices,
             )
-            return buy_price > 0
+            is_sellable = buy_price > 0
+            sellable_type_cache[memo_key] = is_sellable
+            return is_sellable
 
         sell_page_base_url = reverse("indy_hub:material_exchange_sell")
         location_tabs = []
@@ -6608,13 +6730,16 @@ def material_exchange_sell(request, tokens):
             config,
             sell_profile_name=active_sell_profile_name,
         )
+        # The active override maps were just rebound; drop anything memoized against the
+        # previous (pre-profile) maps.
+        sellable_type_cache.clear()
 
         # Keep location navigation available alongside the character tabs.  Each
         # structure can resolve to its own sell profile, so count its stock with
         # that profile's overrides instead of the active location's.
-        location_override_maps_cache: dict[int, tuple[dict, dict]] = {}
+        location_override_maps_cache: dict[int, tuple[dict, dict, str]] = {}
 
-        def _override_maps_for_location(loc_id: int) -> tuple[dict, dict]:
+        def _override_maps_for_location(loc_id: int) -> tuple[dict, dict, str]:
             cached = location_override_maps_cache.get(int(loc_id))
             if cached is not None:
                 return cached
@@ -6631,13 +6756,13 @@ def material_exchange_sell(request, tokens):
                 config,
                 sell_profile_name=profile_name,
             )
-            maps = (loc_override_map, loc_group_override_map)
+            maps = (loc_override_map, loc_group_override_map, str(profile_name or ""))
             location_override_maps_cache[int(loc_id)] = maps
             return maps
 
         for loc_id in sell_structure_ids:
             loc_assets = user_assets_by_location.get(int(loc_id), {})
-            loc_override_map, loc_group_override_map = _override_maps_for_location(int(loc_id))
+            loc_override_map, loc_group_override_map, loc_profile_name = _override_maps_for_location(int(loc_id))
             location_tabs.append(
                 {
                     "id": str(loc_id),
@@ -6649,6 +6774,7 @@ def material_exchange_sell(request, tokens):
                             type_id,
                             override_map=loc_override_map,
                             market_group_override_map=loc_group_override_map,
+                            profile_key=f"location:{loc_profile_name}",
                         )
                     ),
                     "url": f"{sell_page_base_url}?location={loc_id}",
@@ -6670,20 +6796,8 @@ def material_exchange_sell(request, tokens):
                 structure_id=int(selected_location_id),
             )
 
-        try:
-            all_cached_assets, _raw_scope_missing = get_user_assets_cached(
-                request.user,
-                allow_refresh=False,
-            )
-        except Exception:
-            all_cached_assets = []
-
-        excluded_item_ids: set[int] = set()
-        try:
-            if not bool(getattr(config, "allow_fitted_ships", False)):
-                excluded_item_ids = _build_fitted_ship_excluded_item_ids(all_cached_assets)
-        except Exception:
-            excluded_item_ids = set()
+        # `all_cached_assets` / `excluded_item_ids` were resolved once before the
+        # aggregation pass above; both are reused here instead of re-reading the assets.
 
         def _asset_yields_sell_row(asset: dict) -> bool:
             """Mirror the filters _build_sell_material_rows applies to a raw asset."""
@@ -6860,6 +6974,14 @@ def material_exchange_sell(request, tokens):
         display_type_market_group_path_map = _get_type_market_group_path_map(display_type_ids)
         display_type_market_group_label_map = _build_type_market_group_label_map(display_type_market_group_path_map)
 
+        # Resolve every displayed type name in one query; the row builder otherwise falls
+        # back to a per-type lookup for each name it has not seen in this process yet.
+        try:
+            batch_cache_type_names(display_type_ids)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Failed to prewarm type names for the sell page", exc_info=True)
+
+        row_build_started_at = perf_counter()
         materials_with_qty = _build_sell_material_rows(
             assets=display_assets_raw,
             config=config,
@@ -6873,6 +6995,7 @@ def material_exchange_sell(request, tokens):
             type_market_group_label_map=display_type_market_group_label_map,
             character_name_by_id=character_names_map,
         )
+        row_build_seconds = perf_counter() - row_build_started_at
 
         logger.info(
             "SELL DEBUG[user=%s]: Final materials_with_qty count: %s (%s container rows, %s item rows)",
@@ -6882,18 +7005,18 @@ def material_exchange_sell(request, tokens):
             sum(1 for row in materials_with_qty if row.get("row_kind") != "container"),
         )
 
-        if pre_filter_count > 0 and not materials_with_qty and not message_shown:
+        if pre_filter_count > 0 and not materials_with_qty:
             messages.info(
                 request,
                 _("No accepted items available to sell at this location."),
             )
     else:
-        if scope_missing and not message_shown:
+        if scope_missing:
             messages.info(
                 request,
                 _("Refreshing via ESI. Make sure you have granted the assets scope to at least one character."),
             )
-        elif not message_shown:
+        else:
             messages.info(
                 request,
                 _("No items available to sell at this location."),
@@ -6927,6 +7050,18 @@ def material_exchange_sell(request, tokens):
             active_tab="material_hub",
             can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
         )
+    )
+
+    logger.info(
+        "SELL TIMING[user=%s]: total=%.3fs (assets=%.3fs prices=%.3fs rows=%.3fs) rows=%s location=%s character=%s",
+        request.user.id,
+        perf_counter() - view_started_at,
+        assets_load_seconds,
+        price_fetch_seconds,
+        row_build_seconds,
+        len(materials_with_qty),
+        active_location_id or "-",
+        (active_character_tab or "-") if user_assets else "-",
     )
 
     return render(request, "indy_hub/material_exchange/sell.html", context)

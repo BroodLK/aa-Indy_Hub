@@ -84,7 +84,10 @@
                 <span class="me-hub-action-badge">{{ pending_sell_orders|intcomma }} {% trans "pending" %}</span>
                 <p class="me-hub-action-desc">{% trans "Sell your materials to the Hub, prices based on Jita." %}</p>
                 <div class="d-flex flex-wrap justify-content-center gap-2">
-                    <a href="{% url 'indy_hub:material_exchange_sell' %}" class="btn btn-success me-hub-action-btn">
+                    <a href="{% url 'indy_hub:material_exchange_sell' %}"
+                       class="btn btn-success me-hub-action-btn"
+                       data-me-loading="{% trans 'Loading your items' %}"
+                       data-me-loading-detail="{% trans 'Reading your hangars and pricing them. Please wait...' %}">
                         <i class="fas fa-coins me-1"></i>{% trans "Start Selling" %}
                     </a>
                     <button type="button"
@@ -105,7 +108,10 @@
                 <span class="me-hub-action-badge">{{ pending_buy_orders|intcomma }} {% trans "pending" %}</span>
                 <p class="me-hub-action-desc">{% trans "Purchase materials from the Hub stock without going to Jita." %}</p>
                 {% if buy_enabled %}
-                    <a href="{% url 'indy_hub:material_exchange_buy' %}" class="btn btn-info me-hub-action-btn">
+                    <a href="{% url 'indy_hub:material_exchange_buy' %}"
+                       class="btn btn-info me-hub-action-btn"
+                       data-me-loading="{% trans 'Loading hub stock' %}"
+                       data-me-loading-detail="{% trans 'Building the stock list. Please wait...' %}">
                         <i class="fas fa-shopping-bag me-1"></i>{% trans "Browse Stock" %}
                     </a>
                 {% else %}
@@ -438,4 +444,5 @@
 
     </div>
     {% include "indy_hub/material_exchange/includes/sell_estimate_modal.html" %}
+    {% include "indy_hub/material_exchange/includes/page_loading_overlay.html" %}
 {% endblock content %}

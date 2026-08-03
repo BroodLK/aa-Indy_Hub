@@ -1,0 +1,22 @@
+{% load i18n %}
+{% load static %}
+{% comment %}
+Shared navigation loading overlay for the Buyback pages.
+
+Add data-me-loading="Title" (and optionally data-me-loading-detail="Subtitle") to any link,
+button or form that triggers a slow server round-trip; material_exchange_loading.js shows this
+overlay on activation and clears it when the page is restored from history.
+{% endcomment %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_loading.css' %}">
+<div id="mePageLoadingOverlay" class="me-page-loading-overlay d-none" aria-hidden="true">
+    <div class="me-page-loading-dialog" role="status" aria-live="assertive" aria-atomic="true">
+        <span class="spinner-border text-info" aria-hidden="true"></span>
+        <div>
+            <div class="fw-semibold" data-me-loading-title>{% trans "Loading" %}</div>
+            <div class="small text-muted" data-me-loading-detail>
+                {% trans "This can take a few seconds. Please wait..." %}
+            </div>
+        </div>
+    </div>
+</div>
+<script src="{% static 'indy_hub/js/material_exchange_loading.js' %}" defer></script>

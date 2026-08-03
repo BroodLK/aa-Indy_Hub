@@ -1,0 +1,55 @@
+/* Buyback navigation loading overlay.
+ *
+ * Self-contained on purpose: page_loading_overlay.html is included from pages that do not
+ * all load material_exchange.css, so these rules must not depend on its variables.
+ * Mirrors the look of .me-submit-overlay used by the buy page submit spinner.
+ */
+
+.me-page-loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+}
+
+.me-page-loading-dialog {
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    width: min(100%, 420px);
+    padding: 1rem 1.25rem;
+    border-radius: 8px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    background: #f8fafc;
+    color: #0f172a;
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
+}
+
+.me-page-loading-dialog .spinner-border {
+    flex: 0 0 auto;
+}
+
+html[data-theme="darkly"] .me-page-loading-overlay {
+    background: rgba(2, 6, 23, 0.66);
+}
+
+html[data-theme="darkly"] .me-page-loading-dialog {
+    border-color: rgba(148, 163, 184, 0.22);
+    background: rgba(15, 23, 42, 0.95);
+    color: #f8fafc;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .me-page-loading-overlay {
+        backdrop-filter: none;
+    }
+
+    .me-page-loading-dialog .spinner-border {
+        animation-duration: 2s;
+    }
+}

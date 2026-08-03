@@ -153,7 +153,10 @@
                 <ul class="nav nav-pills flex-wrap gap-2">
                     {% for tab in location_tabs %}
                         <li class="nav-item">
-                            <a class="nav-link {% if active_location_id == tab.id %}active{% endif %}" href="{{ tab.url }}">
+                            <a class="nav-link {% if active_location_id == tab.id %}active{% endif %}"
+                               href="{{ tab.url }}"
+                               data-me-loading="{% blocktrans with name=tab.name %}Loading {{ name }}{% endblocktrans %}"
+                               data-me-loading-detail="{% trans 'Pricing the items at this location. Please wait...' %}">
                                 {{ tab.name }}
                                 <span class="badge rounded-pill bg-secondary ms-1">{{ tab.item_count }}</span>
                             </a>
@@ -168,7 +171,10 @@
                 <ul class="nav nav-pills flex-wrap gap-2">
                     {% for tab in character_tabs %}
                         <li class="nav-item">
-                            <a class="nav-link {% if active_character_tab == tab.id %}active{% endif %}" href="{{ tab.url }}">
+                            <a class="nav-link {% if active_character_tab == tab.id %}active{% endif %}"
+                               href="{{ tab.url }}"
+                               data-me-loading="{% blocktrans with name=tab.name %}Loading {{ name }}{% endblocktrans %}"
+                               data-me-loading-detail="{% trans 'Pricing the items for this character. Please wait...' %}">
                                 {{ tab.name }}
                                 <span class="badge rounded-pill bg-secondary ms-1">{{ tab.item_count }}</span>
                             </a>
@@ -229,7 +235,10 @@
                                 </select>
                             </div>
                         </div>
-                        <form method="post" id="sellForm">
+                        <form method="post"
+                              id="sellForm"
+                              data-me-loading="{% trans 'Submitting sell order' %}"
+                              data-me-loading-detail="{% trans 'Validating your items and prices. Please wait...' %}">
                             {% csrf_token %}
                             <input type="hidden" name="sell_location_id" value="{{ active_location_id }}">
                             {% if active_character_tab %}<input type="hidden" name="sell_character_id" value="{{ active_character_tab }}">{% endif %}
@@ -1754,6 +1763,7 @@ document.addEventListener('DOMContentLoaded', function() {
     {% endif %}
 });
     </script>
+    {% include "indy_hub/material_exchange/includes/page_loading_overlay.html" %}
 {% endblock content %}
 
 {% block extra_javascript %}
