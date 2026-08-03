@@ -6517,7 +6517,12 @@ def material_exchange_sell(request, tokens):
                     filtered_user_assets[type_id] = filtered_user_assets.get(type_id, 0) + qty
             user_assets = filtered_user_assets
 
-            logger.info(f"SELL DEBUG: {len(user_assets)} items after market group filter")
+            logger.info(
+                "SELL DEBUG[user=%s]: %s types after market group filter (union of all locations); per-location: %s",
+                request.user.id,
+                len(user_assets),
+                {int(loc): len(loc_assets) for loc, loc_assets in sorted(user_assets_by_location.items())},
+            )
         except Exception as exc:
             logger.warning("Failed to apply market group filter (GET): %s", exc)
 
@@ -6534,7 +6539,18 @@ def material_exchange_sell(request, tokens):
         display_ore_portion_size_map = display_refined_ore_context["ore_portion_size_map"]
         display_mineral_effective_sell_prices = display_refined_ore_context["mineral_effective_sell_prices"]
 
-        def _is_sellable_type(type_id: int) -> bool:
+        def _is_sellable_type(
+            type_id: int,
+            *,
+            override_map: dict | None = None,
+            market_group_override_map: dict | None = None,
+        ) -> bool:
+            """Return True when the type has a payout price.
+
+            The override maps default to the active location's profile; pass them
+            explicitly when counting stock at another location, whose profile can
+            price the same type differently.
+            """
             fuzz_prices = price_data.get(type_id, {})
             jita_buy = Decimal(fuzz_prices.get("buy") or 0)
             jita_sell = Decimal(fuzz_prices.get("sell") or 0)
@@ -6543,8 +6559,12 @@ def material_exchange_sell(request, tokens):
                 type_id=type_id,
                 jita_buy=jita_buy,
                 jita_sell=jita_sell,
-                sell_override_map=sell_override_map,
-                sell_market_group_override_map=sell_market_group_override_map,
+                sell_override_map=sell_override_map if override_map is None else override_map,
+                sell_market_group_override_map=(
+                    sell_market_group_override_map
+                    if market_group_override_map is None
+                    else market_group_override_map
+                ),
                 type_market_group_path_map=display_type_market_group_path_map,
                 sell_container_override=sell_container_override,
                 in_container=bool(sell_container_override is not None),
@@ -6589,34 +6609,113 @@ def material_exchange_sell(request, tokens):
             sell_profile_name=active_sell_profile_name,
         )
 
-        # Keep location navigation available alongside the character tabs.
+        # Keep location navigation available alongside the character tabs.  Each
+        # structure can resolve to its own sell profile, so count its stock with
+        # that profile's overrides instead of the active location's.
+        location_override_maps_cache: dict[int, tuple[dict, dict]] = {}
+
+        def _override_maps_for_location(loc_id: int) -> tuple[dict, dict]:
+            cached = location_override_maps_cache.get(int(loc_id))
+            if cached is not None:
+                return cached
+            profile_name = _resolve_active_profile_name_for_structure_ids(
+                config,
+                mode="sell",
+                structure_ids=[int(loc_id)],
+            )
+            loc_override_map, _loc_buy_override_map = _get_item_price_override_maps(
+                config,
+                sell_profile_name=profile_name,
+            )
+            loc_group_override_map, _loc_buy_group_override_map = _get_market_group_price_override_maps(
+                config,
+                sell_profile_name=profile_name,
+            )
+            maps = (loc_override_map, loc_group_override_map)
+            location_override_maps_cache[int(loc_id)] = maps
+            return maps
+
         for loc_id in sell_structure_ids:
             loc_assets = user_assets_by_location.get(int(loc_id), {})
+            loc_override_map, loc_group_override_map = _override_maps_for_location(int(loc_id))
             location_tabs.append(
                 {
                     "id": str(loc_id),
                     "name": sell_structure_name_map.get(int(loc_id), "") or f"Structure {loc_id}",
-                    "item_count": sum(1 for type_id in loc_assets if _is_sellable_type(type_id)),
+                    "item_count": sum(
+                        1
+                        for type_id in loc_assets
+                        if _is_sellable_type(
+                            type_id,
+                            override_map=loc_override_map,
+                            market_group_override_map=loc_group_override_map,
+                        )
+                    ),
                     "url": f"{sell_page_base_url}?location={loc_id}",
                 }
             )
 
         show_character_tabs = True
 
+        # Resolve the filters the table itself applies before building the character
+        # tabs.  Counting raw assets here would auto-select a character whose only
+        # holdings at this location get filtered out (fitted ship, item outside the
+        # accepted market groups, unpriced type), leaving an empty table at a
+        # location that does have sellable stock.
+        selected_location_allowed_type_ids: set[int] | None = None
+        if selected_location_id:
+            selected_location_allowed_type_ids = _get_allowed_type_ids_for_config(
+                config,
+                "sell",
+                structure_id=int(selected_location_id),
+            )
+
+        try:
+            all_cached_assets, _raw_scope_missing = get_user_assets_cached(
+                request.user,
+                allow_refresh=False,
+            )
+        except Exception:
+            all_cached_assets = []
+
+        excluded_item_ids: set[int] = set()
+        try:
+            if not bool(getattr(config, "allow_fitted_ships", False)):
+                excluded_item_ids = _build_fitted_ship_excluded_item_ids(all_cached_assets)
+        except Exception:
+            excluded_item_ids = set()
+
+        def _asset_yields_sell_row(asset: dict) -> bool:
+            """Mirror the filters _build_sell_material_rows applies to a raw asset."""
+            try:
+                asset_type_id = int(asset.get("type_id") or 0)
+            except (TypeError, ValueError):
+                return False
+            if asset_type_id <= 0 or _asset_quantity(asset) <= 0:
+                return False
+            if excluded_item_ids:
+                try:
+                    asset_item_id = int(asset.get("item_id") or 0)
+                except (TypeError, ValueError):
+                    asset_item_id = 0
+                if asset_item_id > 0 and asset_item_id in excluded_item_ids:
+                    return False
+            if (
+                selected_location_allowed_type_ids is not None
+                and asset_type_id not in selected_location_allowed_type_ids
+            ):
+                return False
+            # Blueprint copies always get a row (priced at 0), so they count too.
+            if _asset_blueprint_variant(asset) == "bpc":
+                return True
+            return _is_sellable_type(asset_type_id)
+
         if show_character_tabs:
             # Build the character tabs from the active location.  The aggregate
             # per-character map spans every configured location, so using it here
             # can select a character that has no assets at the active location.
-            try:
-                cached_assets_for_tabs, scope_missing_for_tabs = get_user_assets_cached(
-                    request.user,
-                    allow_refresh=False,
-                )
-            except Exception:
-                cached_assets_for_tabs = []
-                scope_missing_for_tabs = False
-            character_assets_by_location: dict[int, dict[int, int]] = {}
-            for asset in cached_assets_for_tabs:
+            character_types_by_id: dict[int, set[int]] = {}
+            for asset in all_cached_assets:
                 try:
                     asset_location_id = int(asset.get("location_id") or 0)
                     asset_character_id = int(asset.get("character_id") or 0)
@@ -6625,18 +6724,16 @@ def material_exchange_sell(request, tokens):
                     continue
                 if asset_location_id != int(selected_location_id or 0) or asset_character_id <= 0:
                     continue
-                quantity = _asset_quantity(asset)
-                if quantity > 0 and asset_type_id > 0:
-                    character_assets = character_assets_by_location.setdefault(asset_character_id, {})
-                    character_assets[asset_type_id] = character_assets.get(asset_type_id, 0) + quantity
+                if not _asset_yields_sell_row(asset):
+                    continue
+                character_types_by_id.setdefault(asset_character_id, set()).add(asset_type_id)
 
             sorted_characters = sorted(
-                character_assets_by_location.keys(),
+                character_types_by_id.keys(),
                 key=lambda character_id: character_names_map.get(character_id, str(character_id)).lower(),
             )
             for character_id in sorted_characters:
-                character_assets = character_assets_by_location.get(character_id, {})
-                tab_count = sum(1 for _type_id, qty in character_assets.items() if int(qty or 0) > 0)
+                tab_count = len(character_types_by_id.get(character_id, set()))
                 if tab_count <= 0:
                     continue
                 character_tabs.append(
@@ -6665,6 +6762,20 @@ def material_exchange_sell(request, tokens):
             else:
                 active_character_tab = ""
                 selected_character_id = None
+
+            logger.info(
+                "SELL DEBUG[user=%s]: location=%s (%s, param=%r) sellable_types_here=%s "
+                "profile=%r character=%s (from %s tabs: %s)",
+                request.user.id,
+                selected_location_id,
+                active_location_name,
+                selected_location_param,
+                len(user_assets_by_location.get(int(selected_location_id or 0), {})),
+                active_sell_profile_name,
+                selected_character_id,
+                len(character_tabs),
+                {tab["name"]: tab["item_count"] for tab in character_tabs},
+            )
 
         else:
             for loc_id in sell_structure_ids:
@@ -6698,30 +6809,7 @@ def material_exchange_sell(request, tokens):
             assets_synced_at=assets_last_sync,
         )
 
-        selected_location_allowed_type_ids: set[int] | None = None
-        if selected_location_id:
-            selected_location_allowed_type_ids = _get_allowed_type_ids_for_config(
-                config,
-                "sell",
-                structure_id=int(selected_location_id),
-            )
-
         display_assets_raw: list[dict] = []
-        try:
-            all_cached_assets, _raw_scope_missing = get_user_assets_cached(
-                request.user,
-                allow_refresh=False,
-            )
-        except Exception:
-            all_cached_assets = []
-
-        excluded_item_ids: set[int] = set()
-        try:
-            if not bool(getattr(config, "allow_fitted_ships", False)):
-                excluded_item_ids = _build_fitted_ship_excluded_item_ids(all_cached_assets)
-        except Exception:
-            excluded_item_ids = set()
-
         for asset in all_cached_assets:
             try:
                 asset_location_id = int(asset.get("location_id") or 0)
@@ -6748,6 +6836,19 @@ def material_exchange_sell(request, tokens):
 
             display_assets_raw.append(asset)
 
+        logger.info(
+            "SELL DEBUG[user=%s]: %s raw asset rows feed the table "
+            "(%s at this location before the character filter, %s excluded as fitted-ship parts)",
+            request.user.id,
+            len(display_assets_raw),
+            sum(
+                1
+                for asset in all_cached_assets
+                if str(asset.get("location_id") or "") == str(selected_location_id or "")
+            ),
+            len(excluded_item_ids),
+        )
+
         display_type_ids: set[int] = set(user_assets.keys())
         for asset in display_assets_raw:
             try:
@@ -6773,7 +6874,13 @@ def material_exchange_sell(request, tokens):
             character_name_by_id=character_names_map,
         )
 
-        logger.info(f"SELL DEBUG: Final materials_with_qty count: {len(materials_with_qty)}")
+        logger.info(
+            "SELL DEBUG[user=%s]: Final materials_with_qty count: %s (%s container rows, %s item rows)",
+            request.user.id,
+            len(materials_with_qty),
+            sum(1 for row in materials_with_qty if row.get("row_kind") == "container"),
+            sum(1 for row in materials_with_qty if row.get("row_kind") != "container"),
+        )
 
         if pre_filter_count > 0 and not materials_with_qty and not message_shown:
             messages.info(

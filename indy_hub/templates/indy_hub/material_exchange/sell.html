@@ -163,6 +163,21 @@
             </div>
         {% endif %}
 
+        {% if character_tabs %}
+            <div class="me-character-tabs mb-3">
+                <ul class="nav nav-pills flex-wrap gap-2">
+                    {% for tab in character_tabs %}
+                        <li class="nav-item">
+                            <a class="nav-link {% if active_character_tab == tab.id %}active{% endif %}" href="{{ tab.url }}">
+                                {{ tab.name }}
+                                <span class="badge rounded-pill bg-secondary ms-1">{{ tab.item_count }}</span>
+                            </a>
+                        </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% endif %}
+
         {% if materials %}
             <div class="row g-4">
                 <div class="col-lg-8">
@@ -214,20 +229,6 @@
                                 </select>
                             </div>
                         </div>
-                        {% if character_tabs %}
-                            <div class="me-character-tabs mb-3">
-                                <ul class="nav nav-pills flex-wrap gap-2">
-                                    {% for tab in character_tabs %}
-                                        <li class="nav-item">
-                                            <a class="nav-link {% if active_character_tab == tab.id %}active{% endif %}" href="{{ tab.url }}">
-                                                {{ tab.name }}
-                                                <span class="badge rounded-pill bg-secondary ms-1">{{ tab.item_count }}</span>
-                                            </a>
-                                        </li>
-                                    {% endfor %}
-                                </ul>
-                            </div>
-                        {% endif %}
                         <form method="post" id="sellForm">
                             {% csrf_token %}
                             <input type="hidden" name="sell_location_id" value="{{ active_location_id }}">
