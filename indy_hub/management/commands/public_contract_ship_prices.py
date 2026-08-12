@@ -108,8 +108,15 @@ class Command(BaseCommand):
                 unresolved_locations += 1
             return location_cache[location_id]
 
+        # Group systems by region to scan each region only once
+        region_targets = {}
         for system_name, (system_id, region_id) in SYSTEMS.items():
-            self.stdout.write(f"Scanning {system_name} in region {region_id}...")
+            if region_id not in region_targets:
+                region_targets[region_id] = {}
+            region_targets[region_id][system_id] = system_name
+
+        for region_id, target_systems in region_targets.items():
+            self.stdout.write(f"Scanning region {region_id} for {', '.join(target_systems.values())}...")
             previous_page_signature = None
             for page in range(1, max_pages + 1):
                 try:
@@ -128,14 +135,20 @@ class Command(BaseCommand):
                 self.stdout.write(f"  ESI page {page}: {len(rows)} contracts")
                 for contract in rows:
                     cid = int(_value(contract, "contract_id") or 0)
-                    if cid in seen or _value(contract, "type") != "item_exchange" or _value(contract, "status") != "outstanding":
+                    # Public contracts do not have a 'status' field in the ESI response.
+                    # They are outstanding by definition.
+                    if cid in seen or _value(contract, "type") != "item_exchange":
                         continue
                     seen.add(cid)
                     locations = [int(_value(contract, "start_location_id") or 0), int(_value(contract, "end_location_id") or 0)]
                     resolved_system_ids = {location_system(x) for x in locations if x}
-                    system_match = system_id if system_id in resolved_system_ids else 0
-                    if system_match:
-                        target_matches += 1
+                    matching_system_name = None
+                    for loc_sys_id in resolved_system_ids:
+                        if loc_sys_id in target_systems:
+                            matching_system_name = target_systems[loc_sys_id]
+                            target_matches += 1
+                            break
+
                     try:
                         items = call(items_op, contract_id=cid)
                     except Exception:
@@ -168,7 +181,7 @@ class Command(BaseCommand):
                         if bundle_value:
                             verdict = "Fair Price" if abs(contract_price - bundle_value) <= bundle_value * Decimal(".05") else ("Above Average Price" if contract_price > bundle_value else "Below Average Price")
                         for ship in ships:
-                            result_location = system_name if system_match else "Unknown structure system"
+                            result_location = matching_system_name if matching_system_name else "Other system in region"
                             results.append(f"{ship} - {contract_price:,.0f} ISK - {result_location} - {verdict}")
 
         self.stdout.write("\nFinal list:")
