@@ -10,7 +10,11 @@ from django.core.management.base import BaseCommand, CommandError
 from indy_hub.services.public_contracts import _resolve_operation, _run_openapi_operation, _coerce_openapi_value
 from indy_hub.services.esi_client import shared_client
 
-SYSTEMS = {"F9-FUV": (30002320, 10000027), "9W": (30005137, 10000066)}
+SYSTEMS = {
+    "F9-FUV": (30002320, 10000027),
+    "LXQ2-T": (30002355, 10000027),
+    "9W": (30005137, 10000066),
+}
 CAPITAL_GROUP_IDS = {30, 485, 513, 547, 659, 883}
 
 
