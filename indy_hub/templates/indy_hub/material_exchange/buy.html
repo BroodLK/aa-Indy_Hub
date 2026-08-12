@@ -183,6 +183,16 @@
                         </div>
                         <form method="post" id="purchaseForm">
                             {% csrf_token %}
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold" for="recipientCharacter">{% trans "Contract recipient" %}</label>
+                                <select class="form-select" id="recipientCharacter" name="recipient_character_id" required>
+                                    <option value="">{% trans "Choose a validated character" %}</option>
+                                    {% for character in recipient_characters %}
+                                        <option value="{{ character.id }}">{{ character.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">{% trans "The corporation will address the item exchange contract to this character." %}</div>
+                            </div>
                             <input type="hidden" id="hidden_order_reference" name="order_reference" value="">
                             <input type="hidden"
                                    name="buy_submission_snapshot_token"

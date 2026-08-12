@@ -97,7 +97,7 @@ from indy_hub.services.reprocessing import (
     contract_items_match_with_tolerance,
 )
 from indy_hub.utils.analytics import emit_analytics_event
-from indy_hub.utils.eve import get_type_name
+from indy_hub.utils.eve import get_character_name, get_type_name
 
 logger = get_extension_logger(__name__)
 _WORKFLOW_LOG_APP = "Indy_Hub"
@@ -3135,6 +3135,8 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     ) = _get_buy_order_expected_locations(order, config)
 
     buyer_character_ids = _get_user_character_ids(order.buyer)
+    if order.recipient_character_id:
+        buyer_character_ids = {int(order.recipient_character_id)} & buyer_character_ids
     if not buyer_character_ids:
         logger.warning("Buy order %s: buyer %s has no character", order.id, order.buyer)
         notify_user(
@@ -3384,6 +3386,20 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             expected_location_names=expected_buy_location_names,
         )
         if not criteria_match:
+            expected_recipient_id = int(getattr(order, "recipient_character_id", 0) or 0)
+            actual_assignee_id = int(getattr(contract, "assignee_id", 0) or 0)
+            if expected_recipient_id and actual_assignee_id != expected_recipient_id:
+                expected_name = str(
+                    getattr(order, "recipient_character_name", "") or get_character_name(expected_recipient_id)
+                ).strip()
+                actual_name = str(get_character_name(actual_assignee_id) or actual_assignee_id).strip()
+                recipient_issue = (
+                    f"wrong contract recipient character "
+                    f"(expected {expected_name or expected_recipient_id} [{expected_recipient_id}], "
+                    f"got {actual_name} [{actual_assignee_id}])"
+                )
+                if recipient_issue not in detected_issues:
+                    detected_issues.append(recipient_issue)
             if "contract criteria mismatch" not in detected_issues:
                 detected_issues.append("contract criteria mismatch")
             _remember_issue_contract(contract)

@@ -3235,6 +3235,18 @@ class MaterialExchangeBuyOrder(models.Model):
     )
     buyer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="material_buy_orders")
 
+    recipient_character_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=_("Validated character selected to receive the contract."),
+    )
+    recipient_character_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text=_("Character name captured when the order was created."),
+    )
+
     status = models.CharField(max_length=30, choices=Status.choices, default=Status.DRAFT)
 
     # ESI Contract tracking

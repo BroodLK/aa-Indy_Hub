@@ -7092,6 +7092,17 @@ def material_exchange_buy(request, tokens):
     buy_name_map, buy_locations_label = _get_buy_location_display_context(config)
     buy_submission_snapshot_token = ""
 
+    from allianceauth.authentication.models import CharacterOwnership
+
+    recipient_characters = []
+    for ownership in CharacterOwnership.objects.select_related("character").filter(user=request.user):
+        character = ownership.character
+        if character and getattr(character, "character_id", None):
+            recipient_characters.append(
+                {"id": int(character.character_id), "name": str(character.character_name or character.character_id)}
+            )
+    recipient_characters.sort(key=lambda row: row["name"].lower())
+
     corp_assets_scope_missing = False
     try:
         # Alliance Auth
@@ -7125,6 +7136,11 @@ def material_exchange_buy(request, tokens):
         }
 
         with transaction.atomic():
+            recipient_id_raw = str(request.POST.get("recipient_character_id") or "").strip()
+            recipient = next((row for row in recipient_characters if str(row["id"]) == recipient_id_raw), None)
+            if not recipient:
+                messages.error(request, _("Please select a validated character to receive the contract."))
+                return redirect("indy_hub:material_exchange_buy")
             locked_stock_items = list(
                 config.stock_items.select_for_update().filter(type_id__in=submitted_type_ids, quantity__gt=0)
             )
@@ -7271,6 +7287,8 @@ def material_exchange_buy(request, tokens):
                 order_reference=client_order_ref if client_order_ref else None,
                 source_location_id=selected_buy_location_id,
                 source_location_name=selected_buy_location_name,
+                recipient_character_id=recipient["id"],
+                recipient_character_name=recipient["name"],
             )
 
             # Create items for this order
@@ -7400,6 +7418,7 @@ def material_exchange_buy(request, tokens):
 
     context = {
         "config": config,
+        "recipient_characters": recipient_characters,
         "stock": stock_rows,
         "buy_locations_label": buy_locations_label,
         "stock_refreshing": stock_refreshing,
