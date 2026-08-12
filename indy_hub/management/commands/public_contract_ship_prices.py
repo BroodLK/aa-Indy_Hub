@@ -60,6 +60,7 @@ class Command(BaseCommand):
         type_cache, group_cache, location_cache, seen = {}, {}, {}, set()
         results = []
         structure_failures = 0
+        unresolved_locations = 0
         target_matches = 0
         self.stdout.write("Scanning public contracts with AA's authenticated ESI client...")
 
@@ -81,6 +82,9 @@ class Command(BaseCommand):
                 if location_id >= 1_000_000_000:
                     structure_failures += 1
                 location_cache[location_id] = 0
+            if not location_cache[location_id]:
+                nonlocal unresolved_locations
+                unresolved_locations += 1
             return location_cache[location_id]
 
         for system_name, (system_id, region_id) in SYSTEMS.items():
@@ -141,5 +145,9 @@ class Command(BaseCommand):
                             results.append(f"{ship} - {contract_price:,.0f} ISK - {system_name} - {verdict}")
 
         self.stdout.write("\nFinal list:")
-        self.stdout.write(f"Diagnostics: target contracts={target_matches}, structure lookup failures={structure_failures}")
+        self.stdout.write(
+            f"Diagnostics: target contracts={target_matches}, "
+            f"structure lookup failures={structure_failures}, "
+            f"unresolved locations={unresolved_locations}"
+        )
         self.stdout.write("\n".join(results) if results else "No matching ship contracts found.")
