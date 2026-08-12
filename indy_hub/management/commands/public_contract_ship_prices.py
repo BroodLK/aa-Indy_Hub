@@ -79,7 +79,7 @@ class Command(BaseCommand):
         self.stdout.write("Scanning public contracts with AA's authenticated ESI client...")
 
         def call(operation, **kwargs):
-            if esi_token:
+            if esi_token and "structure_id" in kwargs:
                 kwargs["token"] = esi_token
             payload = _run_openapi_operation(operation, prefer_disable_etag=True, **kwargs)
             return _coerce_openapi_value(payload)
@@ -109,8 +109,9 @@ class Command(BaseCommand):
             for page in range(1, max_pages + 1):
                 try:
                     rows = call(contracts_op, region_id=region_id, page=page)
-                except Exception:
-                    rows = []
+                except Exception as exc:
+                    self.stdout.write(f"  ESI page {page} failed: {type(exc).__name__}: {exc}")
+                    break
                 if not isinstance(rows, list) or not rows:
                     break
                 page_signature = tuple(int(_value(row, "contract_id") or 0) for row in rows)
