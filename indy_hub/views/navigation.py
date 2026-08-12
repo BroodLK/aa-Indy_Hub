@@ -101,6 +101,7 @@ def build_nav_context(
     # Keep Capital Orders visible in the top bar for all Indy Hub users when the
     # route is available; view-level permissions still control actual access.
     capital_orders_nav_url = capital_orders_url
+    public_contract_ship_prices_url = reverse("indy_hub:public_contract_ship_prices") if can_manage_material_hub else None
 
     context: dict[str, str | None] = {
         # New top-level sections
@@ -116,6 +117,7 @@ def build_nav_context(
         "material_hub_nav_class": material_hub_class,
         "capital_orders_nav_url": capital_orders_nav_url,
         "capital_orders_nav_class": capital_orders_class,
+        "public_contract_ship_prices_url": public_contract_ship_prices_url,
         "industry_nav_url": industry_url,
         "industry_nav_class": industry_class,
         "esi_nav_url": esi_url,

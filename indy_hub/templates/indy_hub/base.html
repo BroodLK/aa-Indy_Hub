@@ -213,6 +213,12 @@
             {% translate "Capital Orders" as capital_orders_tab_title %}
             {% include "framework/header/nav-collapse-button.html" with btn_class=capital_orders_nav_class url=capital_orders_nav_url title=capital_orders_tab_title fa_icon="fa-solid fa-ship" icon_on_mobile=True icon_on_desktop=True %}
         {% endif %}
+        {% if public_contract_ship_prices_url %}
+            <a class="nav-link" href="{{ public_contract_ship_prices_url }}">
+                <i class="fa-solid fa-tags me-2"></i>
+                <span class="d-none d-lg-inline">Contract Prices</span>
+            </a>
+        {% endif %}
         {% if stats_nav_url %}
             {% translate "Stats" as stats_tab_title %}
             {% include "framework/header/nav-collapse-button.html" with btn_class=stats_nav_class url=stats_nav_url title=stats_tab_title fa_icon="fa-solid fa-chart-column" icon_on_mobile=True icon_on_desktop=True %}
