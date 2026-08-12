@@ -59,6 +59,8 @@ class Command(BaseCommand):
 
         type_cache, group_cache, location_cache, seen = {}, {}, {}, set()
         results = []
+        structure_failures = 0
+        target_matches = 0
         self.stdout.write("Scanning public contracts with AA's authenticated ESI client...")
 
         def call(operation, **kwargs):
@@ -75,6 +77,9 @@ class Command(BaseCommand):
                 row = call(operation, **({"structure_id": location_id} if location_id >= 1_000_000_000 else {"station_id": location_id}))
                 location_cache[location_id] = int(_value(row, "solar_system_id", "system_id") or 0)
             except Exception:
+                nonlocal structure_failures
+                if location_id >= 1_000_000_000:
+                    structure_failures += 1
                 location_cache[location_id] = 0
             return location_cache[location_id]
 
@@ -102,6 +107,7 @@ class Command(BaseCommand):
                     locations = [int(_value(contract, "start_location_id") or 0), int(_value(contract, "end_location_id") or 0)]
                     if system_id not in {location_system(x) for x in locations if x}:
                         continue
+                    target_matches += 1
                     try:
                         items = call(items_op, contract_id=cid)
                     except Exception:
@@ -135,4 +141,5 @@ class Command(BaseCommand):
                             results.append(f"{ship} - {contract_price:,.0f} ISK - {system_name} - {verdict}")
 
         self.stdout.write("\nFinal list:")
+        self.stdout.write(f"Diagnostics: target contracts={target_matches}, structure lookup failures={structure_failures}")
         self.stdout.write("\n".join(results) if results else "No matching ship contracts found.")
