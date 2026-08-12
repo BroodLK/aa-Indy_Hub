@@ -21,6 +21,7 @@ from .views.hubs import (
     settings_hub,
     test_darkly_theme,
 )
+from .views.public_contract_ship_prices import public_contract_ship_prices
 from .views.industry import (
     all_bp_list,
     bp_accept_copy_request,
@@ -193,6 +194,11 @@ from .views.user import (
 
 app_name = "indy_hub"
 urlpatterns = [
+    path(
+        "material-exchange/public-contract-ship-prices/",
+        public_contract_ship_prices,
+        name="public_contract_ship_prices",
+    ),
     path("", index, name="index"),
     path("test-darkly/", test_darkly_theme, name="test_darkly_theme"),
     path("esi/", token_management, name="esi_hub"),
