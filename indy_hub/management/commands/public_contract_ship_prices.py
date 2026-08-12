@@ -7,7 +7,12 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand, CommandError
 
-from indy_hub.services.public_contracts import _resolve_operation, _run_openapi_operation, _coerce_openapi_value
+from indy_hub.services.public_contracts import (
+    _coerce_openapi_value,
+    _normalize_openapi_rows,
+    _resolve_operation,
+    _run_openapi_operation,
+)
 from indy_hub.services.esi_client import shared_client
 
 SYSTEMS = {
@@ -114,6 +119,7 @@ class Command(BaseCommand):
                     break
                 if not isinstance(rows, list) or not rows:
                     break
+                rows = _normalize_openapi_rows(rows)
                 page_signature = tuple(int(_value(row, "contract_id") or 0) for row in rows)
                 if page_signature == previous_page_signature:
                     self.stdout.write("  ESI repeated the previous page; scan complete.")
@@ -137,7 +143,7 @@ class Command(BaseCommand):
                         continue
                     bundle_value = Decimal("0")
                     ships = []
-                    for item in items if isinstance(items, list) else []:
+                    for item in _normalize_openapi_rows(items):
                         item_rows_seen += 1
                         if not _value(item, "is_included"):
                             continue
