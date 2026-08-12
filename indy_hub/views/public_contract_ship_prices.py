@@ -13,5 +13,10 @@ from indy_hub.decorators import indy_hub_permission_required, token_required
 def public_contract_ship_prices(request, token):
     """Render the report using the requesting manager's AA ESI token."""
     output = StringIO()
-    call_command("public_contract_ship_prices", stdout=output, stderr=output)
+    call_command(
+        "public_contract_ship_prices",
+        character_id=int(getattr(token, "character_id", 0) or 0),
+        stdout=output,
+        stderr=output,
+    )
     return HttpResponse(output.getvalue(), content_type="text/plain; charset=utf-8")

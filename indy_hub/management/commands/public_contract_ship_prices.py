@@ -49,9 +49,17 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--max-pages", type=int, default=2000)
+        parser.add_argument("--character-id", type=int, default=0)
 
     def handle(self, *args, **options):
         max_pages = max(1, options["max_pages"])
+        character_id = int(options.get("character_id") or 0)
+        esi_token = None
+        if character_id:
+            try:
+                esi_token = shared_client._get_token(character_id, "esi-universe.read_structures.v1")
+            except Exception:
+                esi_token = None
         contracts_op = _resolve_operation("Contracts", "get_contracts_public_region_id")
         items_op = _resolve_operation("Contracts", "get_contracts_public_items_contract_id")
         structure_op = _resolve_operation("Universe", "get_universe_structures_structure_id")
@@ -69,6 +77,8 @@ class Command(BaseCommand):
         self.stdout.write("Scanning public contracts with AA's authenticated ESI client...")
 
         def call(operation, **kwargs):
+            if esi_token and "structure_id" in kwargs:
+                kwargs["token"] = esi_token
             payload = _run_openapi_operation(operation, prefer_disable_etag=True, **kwargs)
             return _coerce_openapi_value(payload)
 
@@ -113,9 +123,10 @@ class Command(BaseCommand):
                         continue
                     seen.add(cid)
                     locations = [int(_value(contract, "start_location_id") or 0), int(_value(contract, "end_location_id") or 0)]
-                    if system_id not in {location_system(x) for x in locations if x}:
-                        continue
-                    target_matches += 1
+                    resolved_system_ids = {location_system(x) for x in locations if x}
+                    system_match = system_id if system_id in resolved_system_ids else 0
+                    if system_match:
+                        target_matches += 1
                     try:
                         items = call(items_op, contract_id=cid)
                     except Exception:
@@ -146,7 +157,8 @@ class Command(BaseCommand):
                         if bundle_value:
                             verdict = "Fair Price" if abs(contract_price - bundle_value) <= bundle_value * Decimal(".05") else ("Above Average Price" if contract_price > bundle_value else "Below Average Price")
                         for ship in ships:
-                            results.append(f"{ship} - {contract_price:,.0f} ISK - {system_name} - {verdict}")
+                            result_location = system_name if system_match else "Unknown structure system"
+                            results.append(f"{ship} - {contract_price:,.0f} ISK - {result_location} - {verdict}")
 
         self.stdout.write("\nFinal list:")
         self.stdout.write(
