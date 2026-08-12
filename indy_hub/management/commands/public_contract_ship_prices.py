@@ -74,10 +74,12 @@ class Command(BaseCommand):
         structure_failures = 0
         unresolved_locations = 0
         target_matches = 0
+        item_rows_seen = 0
+        ship_hulls_seen = 0
         self.stdout.write("Scanning public contracts with AA's authenticated ESI client...")
 
         def call(operation, **kwargs):
-            if esi_token and "structure_id" in kwargs:
+            if esi_token:
                 kwargs["token"] = esi_token
             payload = _run_openapi_operation(operation, prefer_disable_etag=True, **kwargs)
             return _coerce_openapi_value(payload)
@@ -135,6 +137,7 @@ class Command(BaseCommand):
                     bundle_value = Decimal("0")
                     ships = []
                     for item in items if isinstance(items, list) else []:
+                        item_rows_seen += 1
                         if not _value(item, "is_included"):
                             continue
                         type_id = int(_value(item, "type_id") or 0)
@@ -151,6 +154,7 @@ class Command(BaseCommand):
                             group_cache[group_id] = call(group_op, group_id=group_id)
                         if _value(group_cache[group_id], "category_id") == 6 or group_id in CAPITAL_GROUP_IDS:
                             ships.append(name)
+                            ship_hulls_seen += 1
                     if ships:
                         contract_price = Decimal(str(_value(contract, "price") or 0)) + Decimal(str(_value(contract, "reward") or 0))
                         verdict = "No reference price"
@@ -164,6 +168,7 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Diagnostics: target contracts={target_matches}, "
             f"structure lookup failures={structure_failures}, "
-            f"unresolved locations={unresolved_locations}"
+            f"unresolved locations={unresolved_locations}, "
+            f"item rows={item_rows_seen}, ship hulls={ship_hulls_seen}"
         )
         self.stdout.write("\n".join(results) if results else "No matching ship contracts found.")
