@@ -10,7 +10,7 @@ from indy_hub.decorators import indy_hub_permission_required, token_required
 
 @indy_hub_permission_required("can_manage_material_hub")
 @token_required(["esi-universe.read_structures.v1"])
-def public_contract_ship_prices(request):
+def public_contract_ship_prices(request, token):
     """Render the report using the requesting manager's AA ESI token."""
     output = StringIO()
     call_command("public_contract_ship_prices", stdout=output, stderr=output)
