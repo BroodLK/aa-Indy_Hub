@@ -194,6 +194,12 @@ from .views.user import (
 
 app_name = "indy_hub"
 urlpatterns = [
+    # Hidden manager-only alias; intentionally not linked from navigation.
+    path(
+        "public-contract-ship-prices/",
+        public_contract_ship_prices,
+        name="public_contract_ship_prices_alias",
+    ),
     path(
         "material-exchange/public-contract-ship-prices/",
         public_contract_ship_prices,
