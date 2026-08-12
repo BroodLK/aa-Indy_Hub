@@ -80,6 +80,7 @@ class Command(BaseCommand):
 
         for system_name, (system_id, region_id) in SYSTEMS.items():
             self.stdout.write(f"Scanning {system_name} in region {region_id}...")
+            previous_page_signature = None
             for page in range(1, max_pages + 1):
                 try:
                     rows = call(contracts_op, region_id=region_id, page=page)
@@ -87,6 +88,11 @@ class Command(BaseCommand):
                     rows = []
                 if not isinstance(rows, list) or not rows:
                     break
+                page_signature = tuple(int(_value(row, "contract_id") or 0) for row in rows)
+                if page_signature == previous_page_signature:
+                    self.stdout.write("  ESI repeated the previous page; scan complete.")
+                    break
+                previous_page_signature = page_signature
                 self.stdout.write(f"  ESI page {page}: {len(rows)} contracts")
                 for contract in rows:
                     cid = int(_value(contract, "contract_id") or 0)
