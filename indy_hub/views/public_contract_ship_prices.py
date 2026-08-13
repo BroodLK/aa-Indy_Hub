@@ -2,11 +2,11 @@
 
 from django.shortcuts import render
 from django.http import HttpResponse, JsonResponse
+from django.core.cache import cache
 from django.views.decorators.http import require_POST
 
 from indy_hub.decorators import indy_hub_permission_required, token_required
 from indy_hub.tasks.public_contracts import run_ship_price_scanner
-from celery.result import AsyncResult
 
 
 from allianceauth.eveonline.models import EveCharacter
@@ -61,29 +61,10 @@ def public_contract_ship_prices_api_start(request):
 def public_contract_ship_prices_api_status(request, task_id):
     """API endpoint to poll for scan task status and results."""
     try:
-        res = AsyncResult(task_id)
-        state = res.status
-        response_data = {
-            "status": state,
-            "task_id": task_id,
-        }
-
-        if state == "PROGRESS":
-            # Celery may briefly expose empty/non-dict metadata while a task
-            # state is being written. Never let that turn polling into 500.
-            info = res.info
-            if isinstance(info, dict):
-                response_data.update(info)
-        elif res.successful():
-            result = res.result
-            if isinstance(result, dict):
-                response_data.update(result)
-            else:
-                response_data["result"] = str(result)
-        elif res.failed():
-            response_data["error"] = str(res.result)
-
-        return JsonResponse(response_data)
+        state = cache.get(f"indy-hub:public-contract-scan:{task_id}")
+        if not isinstance(state, dict):
+            return JsonResponse({"status": "PENDING", "task_id": task_id})
+        return JsonResponse({"task_id": task_id, **state})
     except Exception as exc:
         return JsonResponse(
             {

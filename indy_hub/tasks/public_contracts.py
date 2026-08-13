@@ -2,6 +2,7 @@
 
 # Third Party
 from celery import shared_task
+from django.core.cache import cache
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
@@ -15,6 +16,10 @@ from indy_hub.services.public_contract_scanner import scan_public_contracts
 logger = get_extension_logger(__name__)
 
 
+def _scanner_state(task_id, state):
+    cache.set(f"indy-hub:public-contract-scan:{task_id}", state, timeout=86400)
+
+
 @shared_task(name="indy_hub.tasks.public_contracts.run_ship_price_scanner", bind=True)
 def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
     """Run ship price scanner and update task state with results."""
@@ -23,6 +28,13 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
     results = []
     logs = ["Scanner task started..."]
     
+    progress = {
+        "status": "PROGRESS",
+        "logs": logs,
+        "results_count": 0,
+        "latest_log": logs[0],
+    }
+    _scanner_state(self.request.id, progress)
     self.update_state(
         state="PROGRESS",
         meta={
@@ -36,6 +48,14 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
         logs.append(msg)
         if msg.startswith("FOUND: "):
             results.append(msg[7:])
+        progress = {
+            "status": "PROGRESS",
+            "logs": logs[-20:],
+            "results_count": len(results),
+            "latest_log": msg,
+            "diagnostics": diagnostics,
+        }
+        _scanner_state(self.request.id, progress)
         self.update_state(
             state="PROGRESS",
             meta={
@@ -52,14 +72,17 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
             max_pages=max_pages,
             progress_callback=progress_callback
         )
-        return {
+        completed = {
             "status": "COMPLETED",
             "results": scan_result["results"],
             "diagnostics": scan_result["diagnostics"],
             "logs": logs
         }
+        _scanner_state(self.request.id, completed)
+        return completed
     except Exception as exc:
         logger.exception("Ship price scanner task failed")
+        _scanner_state(self.request.id, {"status": "FAILURE", "error": str(exc)})
         self.update_state(
             state="FAILURE",
             meta={"error": str(exc)}
