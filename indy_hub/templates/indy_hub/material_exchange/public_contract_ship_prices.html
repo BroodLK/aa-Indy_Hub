@@ -114,6 +114,11 @@
                     }
                     
                     if (!response.ok) {
+                        if (response.status === 401 && data.redirect_url) {
+                            setLogs(prev => [...prev, "Session expired or token required. Redirecting..."]);
+                            window.location.href = data.redirect_url;
+                            return;
+                        }
                         throw new Error(data.error || `HTTP error! status: ${response.status}`);
                     }
                     
@@ -182,6 +187,9 @@
                                 {characterName && (
                                     <small className="text-muted ms-3 fw-normal">
                                         Character: <span className="text-primary">{characterName}</span>
+                                        <a href="?new=True" className="ms-2 text-decoration-none" title="Change Character">
+                                            <i className="fa-solid fa-arrows-rotate text-muted" style={{fontSize: '0.7rem'}}></i>
+                                        </a>
                                     </small>
                                 )}
                             </h5>
