@@ -107,7 +107,7 @@
 
                 const formData = new FormData();
                 formData.append('max_pages', maxPages);
-                formData.append('character_id', '{{ character_id }}');
+                formData.append('character_id', selectedCharacterId);
                 formData.append('csrfmiddlewaretoken', csrfToken);
 
                 try {
@@ -370,6 +370,7 @@
         }
         {% endverbatim %}
 
+        const selectedCharacterId = Number("{{ character_id|escapejs }}") || 0;
         const rootElement = document.getElementById('react-root');
         const root = ReactDOM.createRoot(rootElement);
         root.render(
