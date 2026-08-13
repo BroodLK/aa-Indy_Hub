@@ -1,67 +1,10 @@
-"""Print ship public-contract prices in F9-FUV and 9W using AA's ESI client."""
+"""Print ship public-contract prices in F9-FUV, LXQ2-T and 9WVY-F using AA's ESI client."""
 
-import json
-import os
-import urllib.request
-from decimal import Decimal
-
-from django.core.management.base import BaseCommand, CommandError
-
-from indy_hub.services.public_contracts import (
-    _coerce_openapi_value,
-    _normalize_openapi_rows,
-    _resolve_operation,
-    _run_openapi_operation,
-)
-from indy_hub.services.esi_client import shared_client
-
-SYSTEMS = {
-    "F9-FUV": (30002320, 10000027),
-    "LXQ2-T": (30002355, 10000027),
-    "9W": (30005137, 10000066),
-}
-CAPITAL_GROUP_IDS = {30, 485, 513, 547, 659, 883}
-
-
-def _value(row, *keys):
-    for key in keys:
-        if key in row:
-            return row[key]
-        camel = key.split("_")[0] + "".join(part.title() for part in key.split("_")[1:])
-        if camel in row:
-            return row[camel]
-    return None
-
-
-_JANICE_CACHE = {}
-
-
-def _janice(name: str) -> Decimal | None:
-    if name in _JANICE_CACHE:
-        return _JANICE_CACHE[name]
-    request = urllib.request.Request(
-        "https://janice.e-351.com/api/rest/v2/appraisal",
-        data=(name + " 1\n").encode(),
-        headers={
-            "Content-Type": "text/plain",
-            "X-ApiKey": os.getenv("JANICE_API_KEY", ""),
-            "User-Agent": "AA-IndyHub-PublicContractScanner/1.0",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            payload = json.load(response)
-        value = payload.get("adjustedPrice") or payload.get("sell", {}).get("min")
-        res = Decimal(str(value)) if value else None
-        _JANICE_CACHE[name] = res
-        return res
-    except Exception:
-        return None
-
+from django.core.management.base import BaseCommand
+from indy_hub.services.public_contract_scanner import scan_public_contracts
 
 class Command(BaseCommand):
-    help = "Print ship prices from public contracts in F9-FUV and 9W."
+    help = "Print ship prices from public contracts in F9-FUV, LXQ2-T and 9WVY-F."
 
     def add_arguments(self, parser):
         parser.add_argument("--max-pages", type=int, default=2000)
@@ -70,138 +13,31 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         max_pages = max(1, options["max_pages"])
         character_id = int(options.get("character_id") or 0)
-        esi_token = None
-        if character_id:
-            try:
-                esi_token = shared_client._get_token(character_id, "esi-universe.read_structures.v1")
-            except Exception:
-                esi_token = None
-        contracts_op = _resolve_operation("Contracts", "get_contracts_public_region_id")
-        items_op = _resolve_operation("Contracts", "get_contracts_public_items_contract_id")
-        structure_op = _resolve_operation("Universe", "get_universe_structures_structure_id")
-        station_op = _resolve_operation("Universe", "get_universe_stations_station_id")
-        type_op = _resolve_operation("Universe", "get_universe_types_type_id")
-        group_op = _resolve_operation("Universe", "get_universe_groups_group_id")
-        if not all((contracts_op, items_op, type_op, group_op)):
-            raise CommandError("AA ESI client is missing a required public-contract operation.")
 
-        type_cache, group_cache, location_cache, seen = {}, {}, {}, set()
-        results = []
-        structure_failures = 0
-        unresolved_locations = 0
-        target_matches = 0
-        item_rows_seen = 0
-        ship_hulls_seen = 0
-        self.stdout.write("Scanning public contracts with AA's authenticated ESI client...")
+        def progress_callback(msg):
+            if msg.startswith("FOUND: "):
+                pass  # We'll print results at the end
+            else:
+                self.stdout.write(msg)
 
-        def call(operation, **kwargs):
-            if esi_token and "structure_id" in kwargs:
-                kwargs["token"] = esi_token
-            payload = _run_openapi_operation(operation, prefer_disable_etag=True, **kwargs)
-            return _coerce_openapi_value(payload)
+        scan_result = scan_public_contracts(
+            character_id=character_id,
+            max_pages=max_pages,
+            progress_callback=progress_callback
+        )
 
-        def location_system(location_id):
-            if location_id in location_cache:
-                return location_cache[location_id]
-            operation = structure_op if location_id >= 1_000_000_000 else station_op
-            if not operation:
-                return 0
-            try:
-                row = call(operation, **({"structure_id": location_id} if location_id >= 1_000_000_000 else {"station_id": location_id}))
-                location_cache[location_id] = int(_value(row, "solar_system_id", "system_id") or 0)
-            except Exception:
-                nonlocal structure_failures
-                if location_id >= 1_000_000_000:
-                    structure_failures += 1
-                location_cache[location_id] = 0
-            if not location_cache[location_id]:
-                nonlocal unresolved_locations
-                unresolved_locations += 1
-            return location_cache[location_id]
-
-        # Group systems by region to scan each region only once
-        region_targets = {}
-        for system_name, (system_id, region_id) in SYSTEMS.items():
-            if region_id not in region_targets:
-                region_targets[region_id] = {}
-            region_targets[region_id][system_id] = system_name
-
-        for region_id, target_systems in region_targets.items():
-            self.stdout.write(f"Scanning region {region_id} for {', '.join(target_systems.values())}...")
-            previous_page_signature = None
-            for page in range(1, max_pages + 1):
-                try:
-                    rows = call(contracts_op, region_id=region_id, page=page)
-                except Exception as exc:
-                    self.stdout.write(f"  ESI page {page} failed: {type(exc).__name__}: {exc}")
-                    break
-                if not isinstance(rows, list) or not rows:
-                    break
-                rows = _normalize_openapi_rows(rows)
-                page_signature = tuple(int(_value(row, "contract_id") or 0) for row in rows)
-                if page_signature == previous_page_signature:
-                    self.stdout.write("  ESI repeated the previous page; scan complete.")
-                    break
-                previous_page_signature = page_signature
-                self.stdout.write(f"  ESI page {page}: {len(rows)} contracts")
-                for contract in rows:
-                    cid = int(_value(contract, "contract_id") or 0)
-                    # Public contracts do not have a 'status' field in the ESI response.
-                    # They are outstanding by definition.
-                    if cid in seen or _value(contract, "type") != "item_exchange":
-                        continue
-                    seen.add(cid)
-                    locations = [int(_value(contract, "start_location_id") or 0), int(_value(contract, "end_location_id") or 0)]
-                    resolved_system_ids = {location_system(x) for x in locations if x}
-                    matching_system_name = None
-                    for loc_sys_id in resolved_system_ids:
-                        if loc_sys_id in target_systems:
-                            matching_system_name = target_systems[loc_sys_id]
-                            target_matches += 1
-                            break
-
-                    if not matching_system_name:
-                        continue
-
-                    try:
-                        items = call(items_op, contract_id=cid)
-                    except Exception:
-                        self.stdout.write(f"  Contract {cid}: item details unavailable; skipping.")
-                        continue
-                    bundle_value = Decimal("0")
-                    ships = []
-                    for item in _normalize_openapi_rows(items):
-                        item_rows_seen += 1
-                        if not _value(item, "is_included"):
-                            continue
-                        type_id = int(_value(item, "type_id") or 0)
-                        if type_id not in type_cache:
-                            type_cache[type_id] = call(type_op, type_id=type_id)
-                        info = type_cache[type_id]
-                        name = str(_value(info, "name") or type_id)
-                        quantity = max(1, int(_value(item, "quantity") or 1))
-                        price = _janice(name)
-                        if price:
-                            bundle_value += price * quantity
-                        group_id = int(_value(info, "group_id") or 0)
-                        if group_id not in group_cache:
-                            group_cache[group_id] = call(group_op, group_id=group_id)
-                        if _value(group_cache[group_id], "category_id") == 6 or group_id in CAPITAL_GROUP_IDS:
-                            ships.append(name)
-                            ship_hulls_seen += 1
-                    if ships:
-                        contract_price = Decimal(str(_value(contract, "price") or 0)) + Decimal(str(_value(contract, "reward") or 0))
-                        verdict = "No reference price"
-                        if bundle_value:
-                            verdict = "Fair Price" if abs(contract_price - bundle_value) <= bundle_value * Decimal(".05") else ("Above Average Price" if contract_price > bundle_value else "Below Average Price")
-                        for ship in ships:
-                            results.append(f"{ship} - {contract_price:,.0f} ISK - {matching_system_name} - {verdict}")
+        results = scan_result["results"]
+        diagnostics = scan_result["diagnostics"]
 
         self.stdout.write("\nFinal list:")
+        if diagnostics["structure_failures"] > 0 and not scan_result["esi_token_used"]:
+            self.stdout.write("Note: Some structures could not be resolved. Providing --character-id may help resolve 'Location <ID>' entries to system names.")
+        
         self.stdout.write(
-            f"Diagnostics: target contracts={target_matches}, "
-            f"structure lookup failures={structure_failures}, "
-            f"unresolved locations={unresolved_locations}, "
-            f"item rows={item_rows_seen}, ship hulls={ship_hulls_seen}"
+            f"Diagnostics: target contracts={diagnostics['target_matches']}, "
+            f"total contracts={diagnostics['total_contracts']}, "
+            f"structure lookup failures={diagnostics['structure_failures']}, "
+            f"unresolved locations={diagnostics['unresolved_locations']}, "
+            f"item rows={diagnostics['item_rows']}, ship hulls={diagnostics['ship_hulls']}"
         )
         self.stdout.write("\n".join(results) if results else "No matching ship contracts found.")

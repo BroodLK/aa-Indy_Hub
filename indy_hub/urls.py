@@ -21,7 +21,11 @@ from .views.hubs import (
     settings_hub,
     test_darkly_theme,
 )
-from .views.public_contract_ship_prices import public_contract_ship_prices
+from .views.public_contract_ship_prices import (
+    public_contract_ship_prices,
+    public_contract_ship_prices_api_start,
+    public_contract_ship_prices_api_status,
+)
 from .views.industry import (
     all_bp_list,
     bp_accept_copy_request,
@@ -204,6 +208,16 @@ urlpatterns = [
         "material-exchange/public-contract-ship-prices/",
         public_contract_ship_prices,
         name="public_contract_ship_prices",
+    ),
+    path(
+        "material-exchange/public-contract-ship-prices/api/start/",
+        public_contract_ship_prices_api_start,
+        name="public_contract_ship_prices_api_start",
+    ),
+    path(
+        "material-exchange/public-contract-ship-prices/api/status/<str:task_id>/",
+        public_contract_ship_prices_api_status,
+        name="public_contract_ship_prices_api_status",
     ),
     path("", index, name="index"),
     path("test-darkly/", test_darkly_theme, name="test_darkly_theme"),

@@ -36,6 +36,7 @@ from .tasks.notifications import (  # noqa: F401
     notify_recently_completed_jobs,
 )
 from .tasks.public_contracts import (  # noqa: F401
+    run_ship_price_scanner,
     sync_capital_ship_estimates,
     sync_public_jita_contracts,
 )
