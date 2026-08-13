@@ -44,7 +44,7 @@
                         <div class="spinner-border text-primary" role="status">
                             <span class="visually-hidden">Loading...</span>
                         </div>
-                        <p class="mt-2 text-muted">{% trans "Loading React Scanner..." %}</p>
+                        <p class="mt-2 text-muted">{% trans "Loading Scanner" %}</p>
                     </div>
                 </div>
             </div>
@@ -311,7 +311,7 @@
         root.render(
             <ScannerApp 
                 startUrl="{% url 'indy_hub:public_contract_ship_prices_api_start' %}"
-                statusUrlBase="{% url 'indy_hub:public_contract_ship_prices_api_status' task_id='TASK_ID' %}".replace('TASK_ID', '')
+                statusUrlBase={"{% url 'indy_hub:public_contract_ship_prices_api_status' task_id='TASK_ID' %}".replace('TASK_ID', '')}
                 csrfToken="{{ csrf_token }}"
             />
         );
