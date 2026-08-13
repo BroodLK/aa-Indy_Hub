@@ -171,7 +171,10 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     if cid in previous_by_id:
                         terminal_by_id[cid] = contract
                     continue
-                if status != "outstanding":
+                # The public-contract endpoint commonly omits status. In
+                # that response shape, the endpoint itself represents the
+                # outstanding listing. Reject only explicit terminal states.
+                if status and status != "outstanding":
                     continue
                 if cid in seen or ctype not in ("item_exchange", "auction"):
                     continue
@@ -213,7 +216,8 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
             for contract in rows:
                 cid = int(_value(contract, "contract_id") or 0)
                 ctype = _value(contract, "type")
-                if str(_value(contract, "status") or "").lower() != "outstanding":
+                status = str(_value(contract, "status") or "").lower()
+                if status and status != "outstanding":
                     continue
                 if cid in seen or ctype not in ("item_exchange", "auction"):
                     continue
