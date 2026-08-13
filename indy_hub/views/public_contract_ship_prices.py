@@ -60,18 +60,36 @@ def public_contract_ship_prices_api_start(request):
 @indy_hub_permission_required("can_manage_material_hub")
 def public_contract_ship_prices_api_status(request, task_id):
     """API endpoint to poll for scan task status and results."""
-    res = AsyncResult(task_id)
-    
-    response_data = {
-        "status": res.status,
-        "task_id": task_id,
-    }
-    
-    if res.status == "PROGRESS":
-        response_data.update(res.info)
-    elif res.successful():
-        response_data.update(res.result)
-    elif res.failed():
-        response_data["error"] = str(res.result)
-        
-    return JsonResponse(response_data)
+    try:
+        res = AsyncResult(task_id)
+        state = res.status
+        response_data = {
+            "status": state,
+            "task_id": task_id,
+        }
+
+        if state == "PROGRESS":
+            # Celery may briefly expose empty/non-dict metadata while a task
+            # state is being written. Never let that turn polling into 500.
+            info = res.info
+            if isinstance(info, dict):
+                response_data.update(info)
+        elif res.successful():
+            result = res.result
+            if isinstance(result, dict):
+                response_data.update(result)
+            else:
+                response_data["result"] = str(result)
+        elif res.failed():
+            response_data["error"] = str(res.result)
+
+        return JsonResponse(response_data)
+    except Exception as exc:
+        return JsonResponse(
+            {
+                "status": "FAILURE",
+                "task_id": task_id,
+                "error": f"Unable to read task status: {exc}",
+            },
+            status=200,
+        )
