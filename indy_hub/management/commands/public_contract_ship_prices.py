@@ -33,18 +33,29 @@ def _value(row, *keys):
     return None
 
 
+_JANICE_CACHE = {}
+
+
 def _janice(name: str) -> Decimal | None:
+    if name in _JANICE_CACHE:
+        return _JANICE_CACHE[name]
     request = urllib.request.Request(
         "https://janice.e-351.com/api/rest/v2/appraisal",
         data=(name + " 1\n").encode(),
-        headers={"Content-Type": "text/plain", "X-ApiKey": os.getenv("JANICE_API_KEY", "")},
+        headers={
+            "Content-Type": "text/plain",
+            "X-ApiKey": os.getenv("JANICE_API_KEY", ""),
+            "User-Agent": "AA-IndyHub-PublicContractScanner/1.0",
+        },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=10) as response:
             payload = json.load(response)
         value = payload.get("adjustedPrice") or payload.get("sell", {}).get("min")
-        return Decimal(str(value)) if value else None
+        res = Decimal(str(value)) if value else None
+        _JANICE_CACHE[name] = res
+        return res
     except Exception:
         return None
 
@@ -149,6 +160,9 @@ class Command(BaseCommand):
                             target_matches += 1
                             break
 
+                    if not matching_system_name:
+                        continue
+
                     try:
                         items = call(items_op, contract_id=cid)
                     except Exception:
@@ -181,8 +195,7 @@ class Command(BaseCommand):
                         if bundle_value:
                             verdict = "Fair Price" if abs(contract_price - bundle_value) <= bundle_value * Decimal(".05") else ("Above Average Price" if contract_price > bundle_value else "Below Average Price")
                         for ship in ships:
-                            result_location = matching_system_name if matching_system_name else "Other system in region"
-                            results.append(f"{ship} - {contract_price:,.0f} ISK - {result_location} - {verdict}")
+                            results.append(f"{ship} - {contract_price:,.0f} ISK - {matching_system_name} - {verdict}")
 
         self.stdout.write("\nFinal list:")
         self.stdout.write(
