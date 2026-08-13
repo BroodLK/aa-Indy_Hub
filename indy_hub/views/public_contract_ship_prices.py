@@ -39,7 +39,10 @@ def public_contract_ship_prices_api_start(request, token):
     """API endpoint to start the scan task."""
     try:
         character_id = int(getattr(token, "character_id", 0) or 0)
-        max_pages = int(request.POST.get("max_pages", 2000))
+        # Keep interactive scans bounded.  The page defaults to 10, so the
+        # API must not silently fall back to a 2,000-page scan when an older
+        # client omits this field.
+        max_pages = max(1, min(int(request.POST.get("max_pages", 10)), 2000))
         
         task = run_ship_price_scanner.delay(character_id=character_id, max_pages=max_pages)
         return JsonResponse({"task_id": task.id})

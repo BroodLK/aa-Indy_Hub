@@ -71,7 +71,8 @@
             const [diagnostics, setDiagnostics] = useState(null);
             const [error, setError] = useState(null);
             const [maxPages, setMaxPages] = useState(10);
-            
+            const pollStartedAt = useRef(null);
+
             const logsEndRef = useRef(null);
 
             const scrollToBottom = () => {
@@ -101,7 +102,7 @@
                             'X-Requested-With': 'XMLHttpRequest'
                         }
                     });
-                    
+
                     const text = await response.text();
                     let data;
                     try {
@@ -112,7 +113,7 @@
                         }
                         throw new Error(`Invalid JSON response: ${text.substring(0, 100)}...`);
                     }
-                    
+
                     if (!response.ok) {
                         if (response.status === 401 && data.redirect_url) {
                             setLogs(prev => [...prev, "Session expired or token required. Redirecting..."]);
@@ -121,9 +122,10 @@
                         }
                         throw new Error(data.error || `HTTP error! status: ${response.status}`);
                     }
-                    
+
                     if (data.task_id) {
                         setTaskId(data.task_id);
+                        pollStartedAt.current = Date.now();
                         setStatus('SCANNING');
                         setLogs(prev => [...prev, `Task started: ${data.task_id}. Waiting for updates...`]);
                     } else {
@@ -145,10 +147,10 @@
                                     'X-Requested-With': 'XMLHttpRequest'
                                 }
                             });
-                            
+
                             const text = await response.text();
                             if (!response.ok) return;
-                            
+
                             let data;
                             try {
                                 data = JSON.parse(text);
@@ -156,7 +158,7 @@
                                 console.error('Invalid JSON in polling:', e, text.substring(0, 100));
                                 return;
                             }
-                            
+
                             if (data.logs) setLogs(data.logs);
                             if (data.results) setResults(data.results);
                             if (data.diagnostics) setDiagnostics(data.diagnostics);
@@ -167,6 +169,11 @@
                             } else if (data.status === 'FAILURE' || data.status === 'REVOKED') {
                                 setStatus('FAILED');
                                 setError(data.error || 'Task failed or was revoked');
+                                clearInterval(interval);
+                            } else if (data.status === 'PENDING' && pollStartedAt.current &&
+                                       Date.now() - pollStartedAt.current > 60000) {
+                                setStatus('FAILED');
+                                setError('The scanner worker did not start the task within 60 seconds. Please restart the Celery worker and try again.');
                                 clearInterval(interval);
                             }
                         } catch (err) {
@@ -212,18 +219,18 @@
                                 </div>
                                 <h4>Ready to scan</h4>
                                 <p className="text-muted mx-auto mb-4" style={{maxWidth: '500px'}}>
-                                    Scan Fountain, Delve, and Perrigen Falls for public ship contracts. 
+                                    Scan Etherium Reach, and Perrigen Falls for public ship contracts.
                                     Prices are compared against Janice (Jita Buy/Sell) to identify fair or bargain deals.
                                 </p>
                                 <div className="row justify-content-center mb-4">
                                     <div className="col-auto">
                                         <div className="input-group">
                                             <span className="input-group-text">Max Pages</span>
-                                            <input 
-                                                type="number" 
-                                                className="form-control" 
+                                            <input
+                                                type="number"
+                                                className="form-control"
                                                 style={{width: '100px'}}
-                                                value={maxPages} 
+                                                value={maxPages}
                                                 min="1"
                                                 max="2000"
                                                 onChange={(e) => setMaxPages(e.target.value)}
@@ -265,7 +272,7 @@
                                             </div>
                                         )}
                                     </div>
-                                    
+
                                     <div className="results-list" style={{minHeight: '200px'}}>
                                         {results.length === 0 && status === 'COMPLETED' ? (
                                             <div className="alert alert-light border text-center py-4">
@@ -347,7 +354,7 @@
         const rootElement = document.getElementById('react-root');
         const root = ReactDOM.createRoot(rootElement);
         root.render(
-            <ScannerApp 
+            <ScannerApp
                 startUrl="{% url 'indy_hub:public_contract_ship_prices_api_start' %}"
                 statusUrlBase={"{% url 'indy_hub:public_contract_ship_prices_api_status' task_id='TASK_ID' %}".replace('TASK_ID/', '')}
                 csrfToken="{{ csrf_token }}"

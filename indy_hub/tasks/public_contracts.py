@@ -16,9 +16,10 @@ logger = get_extension_logger(__name__)
 
 
 @shared_task(name="indy_hub.tasks.public_contracts.run_ship_price_scanner", bind=True)
-def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 2000):
+def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
     """Run ship price scanner and update task state with results."""
     
+    max_pages = max(1, min(int(max_pages or 10), 2000))
     results = []
     logs = ["Scanner task started..."]
     
