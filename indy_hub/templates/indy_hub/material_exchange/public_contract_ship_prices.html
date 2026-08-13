@@ -60,6 +60,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
     <script type="text/babel">
+        {% verbatim %}
         const { useState, useEffect, useRef } = React;
 
         function ScannerApp({ startUrl, statusUrlBase, csrfToken }) {
@@ -303,6 +304,7 @@
                 </div>
             );
         }
+        {% endverbatim %}
 
         const rootElement = document.getElementById('react-root');
         const root = ReactDOM.createRoot(rootElement);
