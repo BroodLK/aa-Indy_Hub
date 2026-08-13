@@ -19,6 +19,15 @@ SYSTEMS = {
     "LXQ2-T": (30002355, 10000027),
     "9WVY-F": (30005137, 10000066),
 }
+# Authoritative structure IDs supplied by the operator. Public-contract
+# locations can be structure IDs, and matching them directly avoids depending
+# on structure/station resolution before deciding whether a contract belongs
+# to one of the target locations.
+TARGET_LOCATIONS = {
+    1036732971380: "F9-FUV",
+    1051373249547: "LXQ2-T",
+    1051373639126: "9WVY-F",
+}
 CAPITAL_GROUP_IDS = {30, 485, 513, 547, 659, 883}
 
 
@@ -179,7 +188,9 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
 
                 locs = [int(_value(contract, "start_location_id") or 0), int(_value(contract, "end_location_id") or 0)]
                 res_sys_ids = {location_system(x) for x in locs if x}
-                is_target = any(sid in target_systems for sid in res_sys_ids)
+                is_target = any(location_id in TARGET_LOCATIONS for location_id in locs) or any(
+                    sid in target_systems for sid in res_sys_ids
+                )
                 is_potential = is_target or any(sid == 0 for sid in res_sys_ids)
 
                 if not is_potential:
@@ -229,11 +240,21 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                 # Do not present those contracts as matches for the target
                 # systems; they were only fetched so diagnostics can account
                 # for them when a structure token is unavailable.
-                if not any(sid in target_systems for sid in resolved_system_ids):
+                direct_target_name = next(
+                    (TARGET_LOCATIONS[location_id] for location_id in locations if location_id in TARGET_LOCATIONS),
+                    None,
+                )
+                if not direct_target_name and not any(sid in target_systems for sid in resolved_system_ids):
                     continue
                 matching_system_name = None
                 label_system = None
+                if direct_target_name:
+                    matching_system_name = direct_target_name
+                    diagnostics["target_matches"] += 1
+                    label_system = direct_target_name
                 for loc_sys_id in resolved_system_ids:
+                    if matching_system_name:
+                        break
                     if loc_sys_id in target_systems:
                         matching_system_name = target_systems[loc_sys_id]
                         diagnostics["target_matches"] += 1
