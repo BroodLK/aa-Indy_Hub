@@ -1,6 +1,3 @@
-import json
-import os
-import urllib.request
 from decimal import Decimal
 
 from django.apps import apps
@@ -40,44 +37,6 @@ def _value(row, *keys):
         if camel in row:
             return row[camel]
     return None
-
-
-_JANICE_CACHE = {}
-
-
-def _janice_batch(names: list[str]) -> None:
-    missing = [n for n in names if n not in _JANICE_CACHE]
-    if not missing:
-        return
-    for i in range(0, len(missing), 500):
-        chunk = missing[i : i + 500]
-        request = urllib.request.Request(
-            "https://janice.e-351.com/api/rest/v2/appraisal",
-            data="\n".join(chunk).encode(),
-            headers={
-                "Content-Type": "text/plain",
-                "X-ApiKey": os.getenv("JANICE_API_KEY", ""),
-                "User-Agent": "AA-IndyHub-PublicContractScanner/1.0",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                payload = json.load(response)
-            for item in payload.get("items", []):
-                name = item.get("itemType", {}).get("name")
-                if name:
-                    value = item.get("adjustedPrice") or item.get("sell", {}).get("min")
-                    _JANICE_CACHE[name] = Decimal(str(value)) if value else None
-        except Exception:
-            pass
-
-
-def _janice(name: str) -> Decimal | None:
-    if name in _JANICE_CACHE:
-        return _JANICE_CACHE[name]
-    _janice_batch([name])
-    return _JANICE_CACHE.get(name)
 
 
 def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress_callback=None):
@@ -221,9 +180,6 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     except Exception:
                         continue
 
-            all_names = {str(_value(type_cache[tid], "name")) for tid in all_type_ids if tid in type_cache}
-            _janice_batch(list(all_names))
-
             for contract in rows:
                 cid = int(_value(contract, "contract_id") or 0)
                 ctype = _value(contract, "type")
@@ -267,9 +223,9 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                 if not label_system:
                     label_system = f"Location {locations[0]}" if locations and locations[0] else "Unknown"
 
-                bundle_value = Decimal("0")
                 ships = []
                 contents = []
+                non_ship_item_count = 0
                 for item in page_items[cid]:
                     diagnostics["item_rows"] += 1
                     # ESI marks bundle components with is_included=false.
@@ -284,21 +240,21 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     name = str(_value(info, "name") or type_id)
                     quantity = max(1, int(_value(item, "quantity") or 1))
                     contents.append(f"{quantity}x {name}" if quantity != 1 else name)
-                    price = _janice(name)
-                    if price:
-                        bundle_value += price * quantity
                     group_id = int(_value(info, "group_id") or 0)
                     if group_id not in group_cache:
                         continue
                     if _value(group_cache[group_id], "category_id") == 6 or group_id in CAPITAL_GROUP_IDS:
                         ships.append(name)
                         diagnostics["ship_hulls"] += 1
+                    else:
+                        non_ship_item_count += 1
                 if ships:
                     contract_price = Decimal(str(_value(contract, "price") or 0)) + Decimal(str(_value(contract, "reward") or 0))
                     if contract_price < MIN_CONTRACT_PRICE:
                         continue
                     ships = list(dict.fromkeys(ships))
                     ship_label = ", ".join(ships)
+                    fit_label = "Likely Fit" if non_ship_item_count > 5 else "Likely Unfit"
                     nested_contents = [
                         entry for entry in contents
                         if entry.split("x ", 1)[-1] not in ships
@@ -307,7 +263,7 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                         "location": label_system,
                         "location_order": {"F9-FUV": 0, "LXQ2-T": 1, "9WVY-F": 2}.get(label_system, 99),
                         "price": contract_price,
-                        "text": f"{ship_label} - {contract_price:,.0f} ISK - {label_system}",
+                        "text": f"{ship_label} - {contract_price:,.0f} ISK - {label_system} - {fit_label}",
                         "contents": nested_contents,
                     })
                     res_str = result_rows[-1]["text"]
