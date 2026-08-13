@@ -303,7 +303,14 @@
                                                 <p>Searching for ship contracts...</p>
                                             </div>
                                         ) : (
-                                            <pre className="p-3 rounded border bg-dark text-light" style={{whiteSpace: 'pre-wrap', userSelect: 'text'}}>{results.join('\\n')}</pre>
+                                            <textarea
+                                                className="form-control bg-dark text-light border"
+                                                readOnly
+                                                value={results.join('\\n')}
+                                                rows={Math.min(30, Math.max(8, results.length + 1))}
+                                                style={{fontFamily: 'monospace', resize: 'vertical'}}
+                                                aria-label="Discord-formatted contract results"
+                                            />
                                         )}
                                     </div>
                                 </div>
