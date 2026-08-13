@@ -29,6 +29,7 @@ TARGET_LOCATIONS = {
     1051373639126: "9WVY-F",
 }
 CAPITAL_GROUP_IDS = {30, 485, 513, 547, 659, 883}
+MIN_CONTRACT_PRICE = Decimal("500000000")
 
 
 def _value(row, *keys):
@@ -292,13 +293,16 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                         diagnostics["ship_hulls"] += 1
                 if ships:
                     contract_price = Decimal(str(_value(contract, "price") or 0)) + Decimal(str(_value(contract, "reward") or 0))
+                    if contract_price < MIN_CONTRACT_PRICE:
+                        continue
+                    ships = list(dict.fromkeys(ships))
                     verdict = "No reference price"
                     if bundle_value:
                         verdict = "Fair Price" if abs(contract_price - bundle_value) <= bundle_value * Decimal(".05") else ("Above Average Price" if contract_price > bundle_value else "Below Average Price")
-                    for ship in ships:
-                        res_str = f"{ship} - {contract_price:,.0f} ISK - {label_system} - {verdict}"
-                        results.append(res_str)
-                        log(f"FOUND: {res_str}")
+                    ship_label = ", ".join(ships)
+                    res_str = f"{ship_label} - {contract_price:,.0f} ISK - {label_system} - {verdict}"
+                    results.append(res_str)
+                    log(f"FOUND: {res_str}")
 
     return {
         "results": results,
