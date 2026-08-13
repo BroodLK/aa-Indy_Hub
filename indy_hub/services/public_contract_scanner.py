@@ -29,6 +29,17 @@ CAPITAL_GROUP_IDS = {30, 485, 513, 547, 659, 883}
 MIN_CONTRACT_PRICE = Decimal("500000000")
 
 
+def _format_isk(value: Decimal) -> str:
+    if value >= Decimal("1000000000"):
+        number = value / Decimal("1000000000")
+        suffix = "bil"
+    else:
+        number = value / Decimal("1000000")
+        suffix = "mil"
+    formatted = f"{number:.2f}".rstrip("0").rstrip(".")
+    return f"{formatted}{suffix}"
+
+
 def _value(row, *keys):
     for key in keys:
         if key in row:
@@ -224,6 +235,7 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     label_system = f"Location {locations[0]}" if locations and locations[0] else "Unknown"
 
                 ships = []
+                capital_ships = []
                 non_ship_item_count = 0
                 for item in page_items[cid]:
                     diagnostics["item_rows"] += 1
@@ -242,6 +254,8 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                         continue
                     if _value(group_cache[group_id], "category_id") == 6 or group_id in CAPITAL_GROUP_IDS:
                         ships.append(name)
+                        if group_id in CAPITAL_GROUP_IDS:
+                            capital_ships.append(name)
                         diagnostics["ship_hulls"] += 1
                     else:
                         non_ship_item_count += 1
@@ -250,14 +264,16 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     if contract_price < MIN_CONTRACT_PRICE:
                         continue
                     ships = list(dict.fromkeys(ships))
-                    ship_label = ships[0]
-                    nested_ships = ships[1:]
+                    capital_ships = list(dict.fromkeys(capital_ships))
+                    primary_ship = capital_ships[0] if capital_ships else ships[0]
+                    ship_label = primary_ship
+                    nested_ships = [ship for ship in ships if ship != primary_ship]
                     fit_label = "Likely Fit" if non_ship_item_count > 5 else "Likely Unfit"
                     result_rows.append({
                         "location": label_system,
                         "location_order": {"F9-FUV": 0, "LXQ2-T": 1, "9WVY-F": 2}.get(label_system, 99),
                         "price": contract_price,
-                        "text": f"{ship_label} - {contract_price:,.0f} ISK - {label_system} - {fit_label}",
+                        "text": f"{ship_label} - {_format_isk(contract_price)} - {label_system} - {fit_label}",
                         "contents": nested_ships,
                     })
                     res_str = result_rows[-1]["text"]
