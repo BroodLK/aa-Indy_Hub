@@ -72,8 +72,23 @@
             const [error, setError] = useState(null);
             const [maxPages, setMaxPages] = useState(10);
             const pollStartedAt = useRef(null);
+            const taskStorageKey = `indy-hub-public-contract-scan:${characterName || 'default'}`;
 
             const logsEndRef = useRef(null);
+
+            useEffect(() => {
+                try {
+                    const saved = JSON.parse(sessionStorage.getItem(taskStorageKey) || 'null');
+                    if (saved?.taskId) {
+                        setTaskId(saved.taskId);
+                        setStatus('SCANNING');
+                        setLogs(['Reconnected to the running scan...']);
+                        pollStartedAt.current = Date.now();
+                    }
+                } catch (err) {
+                    console.warn('Unable to restore scanner state:', err);
+                }
+            }, [taskStorageKey]);
 
             const scrollToBottom = () => {
                 logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,6 +140,7 @@
 
                     if (data.task_id) {
                         setTaskId(data.task_id);
+                        sessionStorage.setItem(taskStorageKey, JSON.stringify({taskId: data.task_id}));
                         pollStartedAt.current = Date.now();
                         setStatus('SCANNING');
                         setLogs(prev => [...prev, `Task started: ${data.task_id}. Waiting for updates...`]);
@@ -165,10 +181,12 @@
 
                             if (data.status === 'SUCCESS' || data.status === 'COMPLETED') {
                                 setStatus('COMPLETED');
+                                sessionStorage.removeItem(taskStorageKey);
                                 clearInterval(interval);
                             } else if (data.status === 'FAILURE' || data.status === 'REVOKED') {
                                 setStatus('FAILED');
                                 setError(data.error || 'Task failed or was revoked');
+                                sessionStorage.removeItem(taskStorageKey);
                                 clearInterval(interval);
                             } else if (data.status === 'PENDING' && pollStartedAt.current &&
                                        Date.now() - pollStartedAt.current > 60000) {

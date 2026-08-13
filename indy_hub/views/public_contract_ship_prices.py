@@ -44,7 +44,10 @@ def public_contract_ship_prices_api_start(request, token):
         # client omits this field.
         max_pages = max(1, min(int(request.POST.get("max_pages", 10)), 2000))
         
-        task = run_ship_price_scanner.delay(character_id=character_id, max_pages=max_pages)
+        task = run_ship_price_scanner.apply_async(
+            kwargs={"character_id": character_id, "max_pages": max_pages},
+            priority=7,
+        )
         return JsonResponse({"task_id": task.id})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
