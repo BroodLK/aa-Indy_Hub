@@ -81,7 +81,7 @@ def _janice(name: str) -> Decimal | None:
 
 
 def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress_callback=None):
-    results = []
+    result_rows = []
     diagnostics = {
         "target_matches": 0,
         "total_contracts": 0,
@@ -269,6 +269,7 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
 
                 bundle_value = Decimal("0")
                 ships = []
+                contents = []
                 for item in page_items[cid]:
                     diagnostics["item_rows"] += 1
                     # ESI marks bundle components with is_included=false.
@@ -282,6 +283,7 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     info = type_cache[type_id]
                     name = str(_value(info, "name") or type_id)
                     quantity = max(1, int(_value(item, "quantity") or 1))
+                    contents.append(f"{quantity}x {name}" if quantity != 1 else name)
                     price = _janice(name)
                     if price:
                         bundle_value += price * quantity
@@ -296,13 +298,31 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     if contract_price < MIN_CONTRACT_PRICE:
                         continue
                     ships = list(dict.fromkeys(ships))
-                    verdict = "No reference price"
-                    if bundle_value:
-                        verdict = "Fair Price" if abs(contract_price - bundle_value) <= bundle_value * Decimal(".05") else ("Above Average Price" if contract_price > bundle_value else "Below Average Price")
                     ship_label = ", ".join(ships)
-                    res_str = f"{ship_label} - {contract_price:,.0f} ISK - {label_system} - {verdict}"
-                    results.append(res_str)
+                    nested_contents = [
+                        entry for entry in contents
+                        if entry.split("x ", 1)[-1] not in ships
+                    ]
+                    result_rows.append({
+                        "location": label_system,
+                        "location_order": {"F9-FUV": 0, "LXQ2-T": 1, "9WVY-F": 2}.get(label_system, 99),
+                        "price": contract_price,
+                        "text": f"{ship_label} - {contract_price:,.0f} ISK - {label_system}",
+                        "contents": nested_contents,
+                    })
+                    res_str = result_rows[-1]["text"]
                     log(f"FOUND: {res_str}")
+
+    result_rows.sort(key=lambda row: (row["location_order"], -row["price"]))
+    results = []
+    previous_location = None
+    for row in result_rows:
+        if row["location"] != previous_location:
+            results.append(f"### Contracts Available in {row['location']}")
+            previous_location = row["location"]
+        results.append(f"- {row['text']}")
+        if row["contents"]:
+            results.append(f"   - {', '.join(row['contents'])}")
 
     return {
         "results": results,

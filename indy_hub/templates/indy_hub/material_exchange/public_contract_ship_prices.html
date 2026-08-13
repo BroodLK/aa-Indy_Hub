@@ -303,15 +303,7 @@
                                                 <p>Searching for ship contracts...</p>
                                             </div>
                                         ) : (
-                                            <div className="list-group shadow-sm">
-                                                {results.map((res, i) => (
-                                                    <div key={i} className="list-group-item list-group-item-action">
-                                                        <div className="d-flex w-100 justify-content-between">
-                                                            <span className="fw-semibold">{res}</span>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
+                                            <pre className="p-3 rounded border bg-dark text-light" style={{whiteSpace: 'pre-wrap', userSelect: 'text'}}>{results.join('\\n')}</pre>
                                         )}
                                     </div>
                                 </div>
