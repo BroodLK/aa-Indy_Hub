@@ -20,9 +20,18 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 2000):
     """Run ship price scanner and update task state with results."""
     
     results = []
-    logs = []
+    logs = ["Scanner task started..."]
+    
+    self.update_state(
+        state="PROGRESS",
+        meta={
+            "logs": logs,
+            "results_count": 0,
+            "latest_log": logs[0]
+        }
+    )
 
-    def progress_callback(msg):
+    def progress_callback(msg, diagnostics=None):
         logs.append(msg)
         if msg.startswith("FOUND: "):
             results.append(msg[7:])
@@ -31,7 +40,8 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 2000):
             meta={
                 "logs": logs[-20:],  # Keep last 20 log lines
                 "results_count": len(results),
-                "latest_log": msg
+                "latest_log": msg,
+                "diagnostics": diagnostics
             }
         )
 

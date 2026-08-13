@@ -1,5 +1,6 @@
 # indy_hub/decorators.py
 # Standard Library
+import urllib.parse
 from functools import wraps
 
 # Django
@@ -21,6 +22,44 @@ def _normalize_scopes(scopes):
     return list(scopes)
 
 
+def _handle_ajax_token_redirect(request, response, view_called):
+    """
+    Handle ESI decorator responses for AJAX requests.
+    If a token is required, return a 401 JSON with a redirect URL.
+    Ensures that the redirect URL points back to the UI (Referer) rather than the API.
+    """
+    if not view_called and request.headers.get("x-requested-with") == "XMLHttpRequest":
+        # Determine redirect URL
+        if isinstance(response, HttpResponseRedirect):
+            redirect_url = response["Location"]
+            referer = request.headers.get("referer")
+            if referer:
+                try:
+                    parsed = urllib.parse.urlparse(redirect_url)
+                    params = urllib.parse.parse_qs(parsed.query)
+                    if "next" in params:
+                        params["next"] = [referer]
+                        new_query = urllib.parse.urlencode(params, doseq=True)
+                        redirect_url = urllib.parse.urlunparse(
+                            parsed._replace(query=new_query)
+                        )
+                except Exception:
+                    pass
+        else:
+            # It's likely the selection page HTML.
+            # Redirect to the Referer to trigger selection in the browser at the UI level.
+            redirect_url = request.headers.get("referer") or request.get_full_path()
+
+        return JsonResponse(
+            {
+                "error": "ESI token required. Please select a character.",
+                "redirect_url": redirect_url,
+            },
+            status=401,
+        )
+    return None
+
+
 def token_required(scopes=None, new=False):
     """Compatibility wrapper around django-esi's `token_required`."""
 
@@ -39,25 +78,10 @@ def token_required(scopes=None, new=False):
 
             response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
 
-            if (
-                not view_called[0]
-                and request.headers.get("x-requested-with") == "XMLHttpRequest"
-            ):
-                # Determine redirect URL
-                if isinstance(response, HttpResponseRedirect):
-                    redirect_url = response["Location"]
-                else:
-                    # It's likely the selection page HTML.
-                    # Redirect to the current URL to trigger selection in the browser.
-                    redirect_url = request.get_full_path()
+            ajax_response = _handle_ajax_token_redirect(request, response, view_called[0])
+            if ajax_response:
+                return ajax_response
 
-                return JsonResponse(
-                    {
-                        "error": "ESI token required. Please select a character.",
-                        "redirect_url": redirect_url,
-                    },
-                    status=401,
-                )
             return response
 
         return _wrapped
@@ -83,23 +107,10 @@ def tokens_required(scopes=None, new=False):
 
             response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
 
-            if (
-                not view_called[0]
-                and request.headers.get("x-requested-with") == "XMLHttpRequest"
-            ):
-                # Determine redirect URL
-                if isinstance(response, HttpResponseRedirect):
-                    redirect_url = response["Location"]
-                else:
-                    redirect_url = request.get_full_path()
+            ajax_response = _handle_ajax_token_redirect(request, response, view_called[0])
+            if ajax_response:
+                return ajax_response
 
-                return JsonResponse(
-                    {
-                        "error": "ESI tokens required. Please select a character.",
-                        "redirect_url": redirect_url,
-                    },
-                    status=401,
-                )
             return response
 
         return _wrapped
@@ -127,23 +138,10 @@ def single_use_token(scopes=None, new=False):
 
             response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
 
-            if (
-                not view_called[0]
-                and request.headers.get("x-requested-with") == "XMLHttpRequest"
-            ):
-                # Determine redirect URL
-                if isinstance(response, HttpResponseRedirect):
-                    redirect_url = response["Location"]
-                else:
-                    redirect_url = request.get_full_path()
+            ajax_response = _handle_ajax_token_redirect(request, response, view_called[0])
+            if ajax_response:
+                return ajax_response
 
-                return JsonResponse(
-                    {
-                        "error": "ESI token required. Please select a character.",
-                        "redirect_url": redirect_url,
-                    },
-                    status=401,
-                )
             return response
 
         return _wrapped

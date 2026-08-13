@@ -83,7 +83,10 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
 
     def log(msg):
         if progress_callback:
-            progress_callback(msg)
+            try:
+                progress_callback(msg, diagnostics)
+            except TypeError:
+                progress_callback(msg)
 
     esi_token = None
     if character_id:
