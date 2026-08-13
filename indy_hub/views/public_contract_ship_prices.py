@@ -33,12 +33,16 @@ def public_contract_ship_prices(request, token):
 
 
 @indy_hub_permission_required("can_manage_material_hub")
-@token_required(["esi-universe.read_structures.v1"])
 @require_POST
-def public_contract_ship_prices_api_start(request, token):
+def public_contract_ship_prices_api_start(request):
     """API endpoint to start the scan task."""
     try:
-        character_id = int(getattr(token, "character_id", 0) or 0)
+        character_id = int(request.POST.get("character_id", 0) or 0)
+        if character_id and not EveCharacter.objects.filter(
+            character_id=character_id,
+            character_ownership__user=request.user,
+        ).exists():
+            return JsonResponse({"error": "Character is not available to this user."}, status=403)
         # Keep interactive scans bounded.  The page defaults to 10, so the
         # API must not silently fall back to a 2,000-page scan when an older
         # client omits this field.

@@ -107,6 +107,7 @@
 
                 const formData = new FormData();
                 formData.append('max_pages', maxPages);
+                formData.append('character_id', '{{ character_id }}');
                 formData.append('csrfmiddlewaretoken', csrfToken);
 
                 try {
