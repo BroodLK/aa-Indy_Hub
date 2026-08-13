@@ -4,7 +4,7 @@ from functools import wraps
 
 # Django
 from django.contrib import messages
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, JsonResponse
 from django.shortcuts import redirect
 
 # Alliance Auth
@@ -30,17 +30,31 @@ def token_required(scopes=None, new=False):
             # Check for 'new' in request to allow manual character change
             force_new = new or request.GET.get("new") == "True"
             esi_decorator = esi_token_required(scopes=_normalize_scopes(scopes), new=force_new)
-            response = esi_decorator(view_func)(request, *args, **kwargs)
+
+            view_called = [False]
+
+            def _view_wrapper(*v_args, **v_kwargs):
+                view_called[0] = True
+                return view_func(*v_args, **v_kwargs)
+
+            response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
+
             if (
-                isinstance(response, HttpResponseRedirect)
+                not view_called[0]
                 and request.headers.get("x-requested-with") == "XMLHttpRequest"
             ):
-                from django.http import JsonResponse
+                # Determine redirect URL
+                if isinstance(response, HttpResponseRedirect):
+                    redirect_url = response["Location"]
+                else:
+                    # It's likely the selection page HTML.
+                    # Redirect to the current URL to trigger selection in the browser.
+                    redirect_url = request.get_full_path()
 
                 return JsonResponse(
                     {
-                        "error": "ESI token required. Please refresh the page or select a character.",
-                        "redirect_url": response["Location"],
+                        "error": "ESI token required. Please select a character.",
+                        "redirect_url": redirect_url,
                     },
                     status=401,
                 )
@@ -60,17 +74,29 @@ def tokens_required(scopes=None, new=False):
             # Check for 'new' in request to allow manual character change
             force_new = new or request.GET.get("new") == "True"
             esi_decorator = esi_tokens_required(scopes=_normalize_scopes(scopes), new=force_new)
-            response = esi_decorator(view_func)(request, *args, **kwargs)
+
+            view_called = [False]
+
+            def _view_wrapper(*v_args, **v_kwargs):
+                view_called[0] = True
+                return view_func(*v_args, **v_kwargs)
+
+            response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
+
             if (
-                isinstance(response, HttpResponseRedirect)
+                not view_called[0]
                 and request.headers.get("x-requested-with") == "XMLHttpRequest"
             ):
-                from django.http import JsonResponse
+                # Determine redirect URL
+                if isinstance(response, HttpResponseRedirect):
+                    redirect_url = response["Location"]
+                else:
+                    redirect_url = request.get_full_path()
 
                 return JsonResponse(
                     {
-                        "error": "ESI tokens required. Please refresh the page or select a character.",
-                        "redirect_url": response["Location"],
+                        "error": "ESI tokens required. Please select a character.",
+                        "redirect_url": redirect_url,
                     },
                     status=401,
                 )
@@ -92,17 +118,29 @@ def single_use_token(scopes=None, new=False):
             esi_decorator = esi_single_use_token(
                 scopes=_normalize_scopes(scopes), new=force_new
             )
-            response = esi_decorator(view_func)(request, *args, **kwargs)
+
+            view_called = [False]
+
+            def _view_wrapper(*v_args, **v_kwargs):
+                view_called[0] = True
+                return view_func(*v_args, **v_kwargs)
+
+            response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
+
             if (
-                isinstance(response, HttpResponseRedirect)
+                not view_called[0]
                 and request.headers.get("x-requested-with") == "XMLHttpRequest"
             ):
-                from django.http import JsonResponse
+                # Determine redirect URL
+                if isinstance(response, HttpResponseRedirect):
+                    redirect_url = response["Location"]
+                else:
+                    redirect_url = request.get_full_path()
 
                 return JsonResponse(
                     {
-                        "error": "ESI token required. Please refresh the page or select a character.",
-                        "redirect_url": response["Location"],
+                        "error": "ESI token required. Please select a character.",
+                        "redirect_url": redirect_url,
                     },
                     status=401,
                 )
@@ -141,14 +179,10 @@ def indy_hub_access_required(view_func):
     def _wrapped_view(request, *args, **kwargs):
         if not request.user.is_authenticated:
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
-                from django.http import JsonResponse
-
                 return JsonResponse({"error": "Session expired. Please login again."}, status=401)
             return redirect("auth_login_user")
         if not request.user.has_perm("indy_hub.can_access_indy_hub"):
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
-                from django.http import JsonResponse
-
                 return JsonResponse({"error": "Permission denied."}, status=403)
             messages.error(request, "You do not have permission to access Indy Hub.")
             return redirect("indy_hub:index")
@@ -165,13 +199,11 @@ def indy_hub_permission_required(permission_codename):
         def _wrapped_view(request, *args, **kwargs):
             if not request.user.is_authenticated:
                 if request.headers.get('x-requested-with') == 'XMLHttpRequest':
-                    from django.http import JsonResponse
                     return JsonResponse({"error": "Session expired. Please refresh the page."}, status=401)
                 return redirect("auth_login_user")
             full_codename = f"indy_hub.{permission_codename}"
             if not request.user.has_perm(full_codename):
                 if request.headers.get('x-requested-with') == 'XMLHttpRequest':
-                    from django.http import JsonResponse
                     return JsonResponse({"error": "Permission denied."}, status=403)
                 messages.error(request, "You do not have the required Indy Hub permission.")
                 return redirect("indy_hub:index")
