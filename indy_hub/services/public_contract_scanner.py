@@ -224,7 +224,6 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     label_system = f"Location {locations[0]}" if locations and locations[0] else "Unknown"
 
                 ships = []
-                contents = []
                 non_ship_item_count = 0
                 for item in page_items[cid]:
                     diagnostics["item_rows"] += 1
@@ -238,8 +237,6 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                         continue
                     info = type_cache[type_id]
                     name = str(_value(info, "name") or type_id)
-                    quantity = max(1, int(_value(item, "quantity") or 1))
-                    contents.append(f"{quantity}x {name}" if quantity != 1 else name)
                     group_id = int(_value(info, "group_id") or 0)
                     if group_id not in group_cache:
                         continue
@@ -253,18 +250,15 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     if contract_price < MIN_CONTRACT_PRICE:
                         continue
                     ships = list(dict.fromkeys(ships))
-                    ship_label = ", ".join(ships)
+                    ship_label = ships[0]
+                    nested_ships = ships[1:]
                     fit_label = "Likely Fit" if non_ship_item_count > 5 else "Likely Unfit"
-                    nested_contents = [
-                        entry for entry in contents
-                        if entry.split("x ", 1)[-1] not in ships
-                    ]
                     result_rows.append({
                         "location": label_system,
                         "location_order": {"F9-FUV": 0, "LXQ2-T": 1, "9WVY-F": 2}.get(label_system, 99),
                         "price": contract_price,
                         "text": f"{ship_label} - {contract_price:,.0f} ISK - {label_system} - {fit_label}",
-                        "contents": nested_contents,
+                        "contents": nested_ships,
                     })
                     res_str = result_rows[-1]["text"]
                     log(f"FOUND: {res_str}")
