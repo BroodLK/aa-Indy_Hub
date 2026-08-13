@@ -1,6 +1,9 @@
 from decimal import Decimal
+from datetime import timedelta
 
 from django.apps import apps
+from django.core.cache import cache
+from django.utils import timezone
 from allianceauth.eveonline.models import EveCharacter
 
 from indy_hub.services.public_contracts import (
@@ -27,6 +30,8 @@ TARGET_LOCATIONS = {
 }
 CAPITAL_GROUP_IDS = {30, 485, 513, 547, 659, 883}
 MIN_CONTRACT_PRICE = Decimal("500000000")
+SCAN_STATE_TIMEOUT = 7 * 24 * 60 * 60
+GONE_MARK_WINDOW = timedelta(hours=36)
 
 
 def _format_isk(value: Decimal) -> str:
@@ -52,6 +57,10 @@ def _value(row, *keys):
 
 def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress_callback=None):
     result_rows = []
+    state_key = f"indy-hub:public-contract-scan-results:{int(character_id or 0)}"
+    previous_rows = cache.get(state_key) or []
+    previous_by_id = {int(row["contract_id"]): row for row in previous_rows if row.get("contract_id")}
+    terminal_by_id = {}
     diagnostics = {
         "target_matches": 0,
         "total_contracts": 0,
@@ -154,6 +163,16 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
             for contract in rows:
                 cid = int(_value(contract, "contract_id") or 0)
                 ctype = _value(contract, "type")
+                status = str(_value(contract, "status") or "").lower()
+                if status in {"completed", "deleted"}:
+                    # Terminal rows are consulted only to mark a previously
+                    # displayed outstanding contract as gone. They never get
+                    # item details or enter the current result set.
+                    if cid in previous_by_id:
+                        terminal_by_id[cid] = contract
+                    continue
+                if status != "outstanding":
+                    continue
                 if cid in seen or ctype not in ("item_exchange", "auction"):
                     continue
 
@@ -194,6 +213,8 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
             for contract in rows:
                 cid = int(_value(contract, "contract_id") or 0)
                 ctype = _value(contract, "type")
+                if str(_value(contract, "status") or "").lower() != "outstanding":
+                    continue
                 if cid in seen or ctype not in ("item_exchange", "auction"):
                     continue
                 if cid not in page_items:
@@ -270,14 +291,43 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                     nested_ships = [ship for ship in ships if ship != primary_ship]
                     fit_label = "Likely Fit" if non_ship_item_count > 5 else "Likely Unfit"
                     result_rows.append({
+                        "contract_id": cid,
                         "location": label_system,
                         "location_order": {"F9-FUV": 0, "LXQ2-T": 1, "9WVY-F": 2}.get(label_system, 99),
                         "price": contract_price,
                         "text": f"{ship_label} - {_format_isk(contract_price)} - {label_system} - {fit_label}",
                         "contents": nested_ships,
+                        "is_new": cid not in previous_by_id,
+                        "is_gone": False,
                     })
                     res_str = result_rows[-1]["text"]
                     log(f"FOUND: {res_str}")
+
+    current_ids = {row["contract_id"] for row in result_rows}
+    now = timezone.now()
+    for row in result_rows:
+        row["is_new"] = row["contract_id"] not in previous_by_id
+
+    # A missing outstanding row is gone unless its known completion is older
+    # than 36 hours. Deleted/completed ESI rows are used only for this check.
+    for old_id, old_row in previous_by_id.items():
+        if old_id in current_ids:
+            continue
+        contract = terminal_by_id.get(old_id)
+        completed_at = _value(contract, "date_completed") if contract else old_row.get("date_completed")
+        completed_dt = None
+        if completed_at:
+            try:
+                completed_dt = timezone.datetime.fromisoformat(str(completed_at).replace("Z", "+00:00"))
+                if timezone.is_naive(completed_dt):
+                    completed_dt = timezone.make_aware(completed_dt)
+            except (TypeError, ValueError):
+                completed_dt = None
+        if completed_dt is None or now - completed_dt <= GONE_MARK_WINDOW:
+            gone_row = dict(old_row)
+            gone_row["is_gone"] = True
+            gone_row["is_new"] = False
+            result_rows.append(gone_row)
 
     result_rows.sort(key=lambda row: (row["location_order"], -row["price"]))
     results = []
@@ -286,9 +336,14 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
         if row["location"] != previous_location:
             results.append(f"### Contracts Available in {row['location']}")
             previous_location = row["location"]
-        results.append(f"- {row['text']}")
+        prefix = "**NEW** " if row.get("is_new") else ""
+        text = f"~~{row['text']}~~" if row.get("is_gone") else row["text"]
+        results.append(f"- {prefix}{text}")
         if row["contents"]:
-            results.append(f"   - {', '.join(row['contents'])}")
+            contents = ", ".join(row["contents"])
+            results.append(f"   - {contents}")
+
+    cache.set(state_key, result_rows, timeout=SCAN_STATE_TIMEOUT)
 
     return {
         "results": results,
