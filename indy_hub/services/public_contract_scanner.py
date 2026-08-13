@@ -225,6 +225,12 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
 
                 locations = [int(_value(contract, "start_location_id") or 0), int(_value(contract, "end_location_id") or 0)]
                 resolved_system_ids = {location_system(x) for x in locations if x}
+                # A zero system ID means the location could not be resolved.
+                # Do not present those contracts as matches for the target
+                # systems; they were only fetched so diagnostics can account
+                # for them when a structure token is unavailable.
+                if not any(sid in target_systems for sid in resolved_system_ids):
+                    continue
                 matching_system_name = None
                 label_system = None
                 for loc_sys_id in resolved_system_ids:
@@ -243,7 +249,10 @@ def scan_public_contracts(character_id: int = 0, max_pages: int = 2000, progress
                 ships = []
                 for item in page_items[cid]:
                     diagnostics["item_rows"] += 1
-                    if not _value(item, "is_included"):
+                    # ESI marks bundle components with is_included=false.
+                    # Older/mocked responses may omit the field; treat those
+                    # rows as included rather than silently dropping them.
+                    if _value(item, "is_included") is False:
                         continue
                     type_id = int(_value(item, "type_id") or 0)
                     if type_id not in type_cache:
