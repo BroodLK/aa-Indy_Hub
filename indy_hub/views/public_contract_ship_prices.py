@@ -9,15 +9,25 @@ from indy_hub.tasks.public_contracts import run_ship_price_scanner
 from celery.result import AsyncResult
 
 
+from allianceauth.eveonline.models import EveCharacter
+
 @indy_hub_permission_required("can_manage_material_hub")
 @token_required(["esi-universe.read_structures.v1"])
 def public_contract_ship_prices(request, token):
     """Render the React-based dynamic report page."""
+    character_id = int(getattr(token, "character_id", 0) or 0)
+    character_name = "Unknown Character"
+    if character_id:
+        char = EveCharacter.objects.filter(character_id=character_id).first()
+        if char:
+            character_name = char.character_name
+            
     return render(
         request,
         "indy_hub/material_exchange/public_contract_ship_prices.html",
         {
-            "character_id": int(getattr(token, "character_id", 0) or 0),
+            "character_id": character_id,
+            "character_name": character_name,
         }
     )
 
@@ -27,11 +37,14 @@ def public_contract_ship_prices(request, token):
 @require_POST
 def public_contract_ship_prices_api_start(request, token):
     """API endpoint to start the scan task."""
-    character_id = int(getattr(token, "character_id", 0) or 0)
-    max_pages = int(request.POST.get("max_pages", 2000))
-    
-    task = run_ship_price_scanner.delay(character_id=character_id, max_pages=max_pages)
-    return JsonResponse({"task_id": task.id})
+    try:
+        character_id = int(getattr(token, "character_id", 0) or 0)
+        max_pages = int(request.POST.get("max_pages", 2000))
+        
+        task = run_ship_price_scanner.delay(character_id=character_id, max_pages=max_pages)
+        return JsonResponse({"task_id": task.id})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 @indy_hub_permission_required("can_manage_material_hub")

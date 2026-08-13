@@ -78,9 +78,15 @@ def indy_hub_permission_required(permission_codename):
         @wraps(view_func)
         def _wrapped_view(request, *args, **kwargs):
             if not request.user.is_authenticated:
+                if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+                    from django.http import JsonResponse
+                    return JsonResponse({"error": "Session expired. Please refresh the page."}, status=401)
                 return redirect("auth_login_user")
             full_codename = f"indy_hub.{permission_codename}"
             if not request.user.has_perm(full_codename):
+                if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+                    from django.http import JsonResponse
+                    return JsonResponse({"error": "Permission denied."}, status=403)
                 messages.error(request, "You do not have the required Indy Hub permission.")
                 return redirect("indy_hub:index")
             return view_func(request, *args, **kwargs)
