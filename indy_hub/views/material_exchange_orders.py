@@ -360,7 +360,10 @@ def buy_order_detail(request, order_id):
 
     buyer_main_character = _resolve_main_character_name(order.buyer)
     buyer_recipients = _resolve_linked_character_names(order.buyer)
-    contract_check_recipient_label = _format_recipients_for_display(buyer_recipients, fallback=buyer_main_character)
+    selected_recipient = str(order.recipient_character_name or "").strip()
+    contract_check_recipient_label = selected_recipient or _format_recipients_for_display(
+        buyer_recipients, fallback=buyer_main_character
+    )
     order_location_label = _resolve_buy_order_location_label(order)
     contract_check_amount_label = _buy_order_amount_label_for_user(order, request.user)
 
@@ -371,6 +374,7 @@ def buy_order_detail(request, order_id):
         "timeline": timeline,
         "timeline_breadcrumb": timeline_breadcrumb,
         "buyer_main_character": buyer_main_character,
+        "recipient_character_name": selected_recipient or buyer_main_character,
         "contract_check_recipient_label": contract_check_recipient_label,
         "order_location_label": order_location_label,
         "contract_check_amount_label": contract_check_amount_label,
@@ -689,7 +693,8 @@ def buy_order_check_contract(request, order_id):
             status=400,
         )
 
-    buyer_recipients = _resolve_linked_character_names(order.buyer)
+    selected_recipient = str(order.recipient_character_name or "").strip()
+    buyer_recipients = [selected_recipient] if selected_recipient else _resolve_linked_character_names(order.buyer)
     if not buyer_recipients:
         fallback_buyer = _resolve_main_character_name(order.buyer)
         buyer_recipients = [fallback_buyer] if fallback_buyer else []
