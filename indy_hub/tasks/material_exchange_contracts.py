@@ -3151,6 +3151,11 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         return
 
     matching_contract = None
+    # More than one otherwise-valid contract can exist for the same order
+    # reference (for example, if EVE creates a duplicate). Prefer a finished
+    # contract so an active duplicate cannot leave the order stuck in
+    # VALIDATED/AWAITING CONTRACT when the materials were already delivered.
+    finished_matching_contract = None
     active_contract_ref_mismatch = None
     last_items_mismatch_details: str | None = None
     detected_issues: list[str] = []
@@ -3419,11 +3424,15 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 detected_issues.append(price_msg)
             continue
 
-        matching_contract = contract
-        break
+        if str(contract.status or "").strip().lower() in finished_statuses:
+            finished_matching_contract = contract
+            break
+        if matching_contract is None:
+            matching_contract = contract
 
-    if matching_contract:
-        _set_buy_order_validated(matching_contract, override=False)
+    selected_matching_contract = finished_matching_contract or matching_contract
+    if selected_matching_contract:
+        _set_buy_order_validated(selected_matching_contract, override=False)
         return
 
     if active_contract_ref_mismatch:
