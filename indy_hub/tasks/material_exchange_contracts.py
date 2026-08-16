@@ -1769,6 +1769,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
     for order in pending_buy_orders:
         char_ids = _get_user_character_ids(order.buyer)
         pending_character_ids.update(char_ids)
+        # The recipient was selected from the user's linked characters when
+        # the order was created. Keep it in the sync scope even if its token
+        # or ownership record is no longer currently available.
+        if order.recipient_character_id:
+            pending_character_ids.add(int(order.recipient_character_id))
 
     logger.info(
         _contract_sync_log(
@@ -3136,7 +3141,10 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
 
     buyer_character_ids = _get_user_character_ids(order.buyer)
     if order.recipient_character_id:
-        buyer_character_ids = {int(order.recipient_character_id)} & buyer_character_ids
+        # recipient_character_id is validated when the order is submitted and
+        # may refer to an alt without a currently valid token. Do not require
+        # it to also be present in the transient token/ownership lookup.
+        buyer_character_ids = {int(order.recipient_character_id)}
     if not buyer_character_ids:
         logger.warning("Buy order %s: buyer %s has no character", order.id, order.buyer)
         notify_user(
