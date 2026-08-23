@@ -164,6 +164,7 @@ _SELL_ORDER_COMPLETION_SOURCE_STATUSES = (
 _BUY_ORDER_VALIDATION_SOURCE_STATUSES = (
     MaterialExchangeBuyOrder.Status.DRAFT,
     MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
+    MaterialExchangeBuyOrder.Status.ANOMALY,
 )
 _ORDER_CREATED_NOTIFY_LOCK_TTL_SECONDS = 60
 _ORDER_CREATED_NOTIFY_SENT_TTL_SECONDS = 60 * 60 * 24 * 30
@@ -2184,6 +2185,7 @@ def validate_material_exchange_buy_orders():
         status__in=[
             MaterialExchangeBuyOrder.Status.DRAFT,
             MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
+            MaterialExchangeBuyOrder.Status.ANOMALY,
         ],
     )
 
@@ -3484,8 +3486,10 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     ).strip()
 
     notes_changed = order.notes != new_notes
+    if issues:
+        order.status = MaterialExchangeBuyOrder.Status.ANOMALY
     order.notes = new_notes
-    order.save(update_fields=["notes", "updated_at"])
+    order.save(update_fields=["status", "notes", "updated_at"])
 
     now = timezone.now()
     immediate_issue_alert_sent = False

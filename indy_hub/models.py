@@ -3223,6 +3223,7 @@ class MaterialExchangeBuyOrder(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", _("Order Created - Awaiting Contract")
         AWAITING_VALIDATION = "awaiting_validation", _("Awaiting Auth Validation")
+        ANOMALY = "anomaly", _("Anomaly - Waiting User/Admin Action")
         VALIDATED = "validated", _("Validated - Awaiting User Accept")
         COMPLETED = "completed", _("Completed")
         REJECTED = "rejected", _("Rejected")
