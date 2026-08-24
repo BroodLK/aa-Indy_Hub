@@ -66,6 +66,23 @@ class ContractCheckParsingTests(SimpleTestCase):
             ],
         )
 
+    def test_parse_contract_items_supports_quantity_before_numeric_item_name(self) -> None:
+        parsed_items, parsed_labels = parse_contract_items(
+            "3 100K Bounty SCC Encrypted Bond\n"
+            "5\t10K Bounty SCC Encrypted Bond\n"
+            "12 10M Bounty SCC Encrypted Bond\n"
+            "8 1M Bounty SCC Encrypted Bond\n"
+        )
+        self.assertEqual(
+            summarize_counter(parsed_items, parsed_labels),
+            [
+                "10K Bounty SCC Encrypted Bond x 5",
+                "10M Bounty SCC Encrypted Bond x 12",
+                "100K Bounty SCC Encrypted Bond x 3",
+                "1M Bounty SCC Encrypted Bond x 8",
+            ],
+        )
+
     def test_parse_contract_items_handles_compact_ingame_export_stream(self) -> None:
         compact_items = (
             "9th Tier Overseer's Personal Effects x 110MN Afterburner II x 1"

@@ -270,6 +270,12 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
 
         tab_parts = [part.strip() for part in line.split("\t") if part.strip()]
         if len(tab_parts) >= 2:
+            # Some contract exports put the quantity before the item name.
+            # This matters for names such as ``100K Bounty ...`` because the
+            # leading number is part of the canonical name, not the quantity.
+            leading_quantity = parse_positive_quantity(tab_parts[0])
+            if leading_quantity is not None and _record_item(" ".join(tab_parts[1:]), leading_quantity):
+                continue
             tab_quantity = next(
                 (quantity for part in tab_parts[1:] if (quantity := parse_positive_quantity(part)) is not None),
                 None,
@@ -292,6 +298,16 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
                 parsed_segment = True
         if parsed_segment:
             continue
+
+        # Plain-text exports can use ``<quantity> <item name>``.  Only accept
+        # this form when the remainder starts with a known item, preventing
+        # numeric-leading item names from being mistaken for quantities.
+        leading_match = re.match(r"^([0-9][0-9,.' ]*)\s+(.+)$", line)
+        if leading_match:
+            leading_quantity = parse_positive_quantity(leading_match.group(1))
+            if leading_quantity is not None and _looks_like_known_numeric_item_name_start(leading_match.group(2)):
+                if _record_item(leading_match.group(2), leading_quantity):
+                    continue
 
         fallback_segments.append(line)
 
