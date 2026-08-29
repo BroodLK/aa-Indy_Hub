@@ -1926,7 +1926,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
 
             # Only fetch items for relevant contracts that don't have cached items
             # Check if items exist to handle failed fetch attempts
-            has_items = ESIContractItem.objects.filter(contract=contract).exists()
+            has_items = ESIContractItem.objects.filter(
+                contract=contract,
+                type_id__gt=0,
+                quantity__gt=0,
+            ).exists()
             should_fetch_items = (
                 contract_type == "item_exchange"
                 and (is_relevant_to_pending_order or is_recent_outstanding)
@@ -3100,7 +3104,6 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             f"- Location(s): {expected_sell_locations_label}\n"
             f"- Price: {order.total_price:,.0f} ISK\n"
             f"- Items: {', '.join(item.type_name for item in order.items.all())}"
-            + (f"\nLast checked issue: {last_price_issue}" if last_price_issue else "")
         )
 
         # Only notify on first pending status (when notes change significantly)
@@ -4165,10 +4168,18 @@ def _contract_items_match_order_db(contract, order):
     # For sell orders, the seller gives the hub the included items. For buy
     # orders, the user gives the hub the requested (not included) items.
     items_are_included = not isinstance(order, MaterialExchangeBuyOrder)
-    contract_items = contract.items.filter(is_included=items_are_included)
+    contract_items = contract.items.filter(
+        is_included=items_are_included,
+        type_id__gt=0,
+        quantity__gt=0,
+    )
     if not contract_items.exists():
         _refresh_contract_items_for_validation(contract)
-        contract_items = contract.items.filter(is_included=items_are_included)
+        contract_items = contract.items.filter(
+            is_included=items_are_included,
+            type_id__gt=0,
+            quantity__gt=0,
+        )
         if not contract_items.exists():
             contract_status = str(getattr(contract, "status", "") or "").strip().lower()
             if contract_status == "outstanding":
