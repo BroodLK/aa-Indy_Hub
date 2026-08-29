@@ -480,6 +480,32 @@ def _normalize_esi_mapping(payload, *, context: str) -> dict | None:
     """Return a dict from an ESI payload or None if unsupported."""
     if isinstance(payload, dict):
         return payload
+
+    # django-esi may return typed response objects whose serializer exposes
+    # default values even when the object attributes contain the API data.
+    # Read the contract-item fields directly before accepting that serialized
+    # representation, while retaining support for normal dictionaries.
+    item_fields = (
+        "record_id",
+        "type_id",
+        "item_id",
+        "quantity",
+        "raw_quantity",
+        "is_included",
+        "is_singleton",
+    )
+    attribute_payload = {
+        field: getattr(payload, field)
+        for field in item_fields
+        if hasattr(payload, field)
+    }
+    if attribute_payload and (
+        attribute_payload.get("type_id")
+        or attribute_payload.get("item_id")
+        or attribute_payload.get("quantity")
+    ):
+        return attribute_payload
+
     for attr in ("model_dump", "dict", "to_dict"):
         converter = getattr(payload, attr, None)
         if callable(converter):
