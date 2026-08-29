@@ -2916,7 +2916,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     + (f"\n\n{price_details_block}" if price_details_block else "")
                     + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
                 ),
-                level="warning",
+                level="error",
                 link=admin_link,
             )
 
@@ -3520,7 +3520,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             config,
             _("Buy Order Contract Issue Detected"),
             _(anomaly_message),
-            level="warning",
+            level="error",
             link=(
                 f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
                 f"?next=/indy_hub/material-exchange/%23admin-panel"
@@ -3569,7 +3569,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             config,
             _("Buy Order Pending: contract mismatch"),
             _(pending_message),
-            level="warning",
+            level="error",
             link=(
                 f"/indy_hub/material-exchange/my-orders/buy/{order.id}/"
                 f"?next=/indy_hub/material-exchange/%23admin-panel"

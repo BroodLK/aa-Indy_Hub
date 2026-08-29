@@ -1303,11 +1303,11 @@ def sell_order_delete(request, order_id):
             send_discord_webhook(
                 webhook.webhook_url,
                 "Sell Order Deleted",
-                "A sell order was deleted by its user.",
+                f"A sell order was deleted by {request.user.username}.",
                 level="warning",
                 link="/indy_hub/material-exchange/my-orders/",
                 mention_everyone=bool(getattr(webhook, "ping_here", False)),
-                embed_title="[Buyback] Sell Order Deleted",
+                embed_title="Buyback Sell Order Deleted",
             )
         order.delete()
         messages.success(
