@@ -177,7 +177,7 @@ def _build_discord_embed(
     embed = Embed(
         title=title.strip(),
         description=body.strip(),
-        color=DISCORD_EMBED_COLORS.get(level, DISCORD_EMBED_COLORS["info"]),
+        color=DISCORD_EMBED_COLORS.get(LEVELS.get(level, level), DISCORD_EMBED_COLORS["info"]),
     )
     embed.timestamp = timezone.now()
     if url:
@@ -242,7 +242,9 @@ def _build_discord_webhook_payload(
         "title": embed_title or title_text,
         "description": description,
         "color": (
-            embed_color if embed_color is not None else DISCORD_EMBED_COLORS.get(level, DISCORD_EMBED_COLORS["info"])
+            embed_color
+            if embed_color is not None
+            else DISCORD_EMBED_COLORS.get(LEVELS.get(level, level), DISCORD_EMBED_COLORS["info"])
         ),
         "timestamp": timezone.now().isoformat(),
     }
