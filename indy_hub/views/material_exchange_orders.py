@@ -24,9 +24,10 @@ from ..decorators import indy_hub_permission_required
 from ..models import (
     MaterialExchangeBuyOrder,
     MaterialExchangeSellOrder,
+    NotificationWebhook,
     NotificationWebhookMessage,
 )
-from ..notifications import delete_discord_webhook_message
+from ..notifications import delete_discord_webhook_message, send_discord_webhook
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_corporation_name
 from ..utils.material_exchange_contract_check import (
@@ -1297,6 +1298,17 @@ def sell_order_delete(request, order_id):
 
     if request.method == "POST":
         order_ref = order.order_reference
+        webhook = NotificationWebhook.get_material_exchange_webhook()
+        if webhook and webhook.webhook_url:
+            send_discord_webhook(
+                webhook.webhook_url,
+                "Sell Order Deleted",
+                "A sell order was deleted by its user.",
+                level="warning",
+                link="/indy_hub/material-exchange/my-orders/",
+                mention_everyone=bool(getattr(webhook, "ping_here", False)),
+                embed_title="[Buyback] Sell Order Deleted",
+            )
         order.delete()
         messages.success(
             request,

@@ -4160,10 +4160,9 @@ def _contract_items_match_order_db(contract, order):
             if contract_status == "outstanding":
                 logger.info(
                     "Contract %s has no included item rows yet while outstanding; "
-                    "allowing pre-acceptance validation fallback",
+                    "refusing validation until contract items are available",
                     getattr(contract, "contract_id", None),
                 )
-                return True
             logger.warning(
                 "Contract %s has no included item rows available for validation; refusing item-match fallback",
                 getattr(contract, "contract_id", None),
