@@ -4158,25 +4158,27 @@ def _matches_buy_order_criteria_db(
 
 
 def _contract_items_match_order_db(contract, order):
-    """Check if contract included items match order quantities by type.
+    """Check if the contract's exchanged items match order quantities by type.
 
     Containers are excluded from the comparison.
     """
-    # Only validate included items (not requested)
-    included_items = contract.items.filter(is_included=True)
-    if not included_items.exists():
+    # For sell orders, the seller gives the hub the included items. For buy
+    # orders, the user gives the hub the requested (not included) items.
+    items_are_included = not isinstance(order, MaterialExchangeBuyOrder)
+    contract_items = contract.items.filter(is_included=items_are_included)
+    if not contract_items.exists():
         _refresh_contract_items_for_validation(contract)
-        included_items = contract.items.filter(is_included=True)
-        if not included_items.exists():
+        contract_items = contract.items.filter(is_included=items_are_included)
+        if not contract_items.exists():
             contract_status = str(getattr(contract, "status", "") or "").strip().lower()
             if contract_status == "outstanding":
                 logger.info(
-                    "Contract %s has no included item rows yet while outstanding; "
+                    "Contract %s has no expected item rows yet while outstanding; "
                     "refusing validation until contract items are available",
                     getattr(contract, "contract_id", None),
                 )
             logger.warning(
-                "Contract %s has no included item rows available for validation; refusing item-match fallback",
+                "Contract %s has no expected item rows available for validation; refusing item-match fallback",
                 getattr(contract, "contract_id", None),
             )
             return False
@@ -4188,7 +4190,7 @@ def _contract_items_match_order_db(contract, order):
         expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(order_item.quantity)
 
     actual_by_type: dict[int, int] = {}
-    for contract_item in included_items:
+    for contract_item in contract_items:
         type_id = int(contract_item.type_id)
 
         # Skip containers - they shouldn't affect item matching
