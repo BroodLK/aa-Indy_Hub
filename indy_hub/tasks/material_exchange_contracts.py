@@ -1959,11 +1959,23 @@ def _sync_contracts_for_corporation(corporation_id: int):
                         )
                         if not item_payload:
                             continue
+                        type_id = item_payload.get("type_id", item_payload.get("item_id", 0))
+                        quantity = item_payload.get("quantity", 0)
+                        if int(type_id or 0) <= 0 or int(quantity or 0) <= 0:
+                            logger.warning(
+                                _contract_sync_log(
+                                    "Skipping invalid contract item for %s: type_id=%s quantity=%s"
+                                ),
+                                contract_id,
+                                type_id,
+                                quantity,
+                            )
+                            continue
                         ESIContractItem.objects.create(
                             contract=contract,
                             record_id=item_payload.get("record_id", 0),
-                            type_id=item_payload.get("type_id", 0),
-                            quantity=item_payload.get("quantity", 0),
+                            type_id=type_id,
+                            quantity=quantity,
                             raw_quantity=item_payload.get("raw_quantity"),
                             is_included=item_payload.get("is_included", False),
                             is_singleton=item_payload.get("is_singleton", False),
@@ -4236,11 +4248,21 @@ def _refresh_contract_items_for_validation(contract) -> bool:
             )
             if not item_payload:
                 continue
+            type_id = item_payload.get("type_id", item_payload.get("item_id", 0))
+            quantity = item_payload.get("quantity", 0)
+            if int(type_id or 0) <= 0 or int(quantity or 0) <= 0:
+                logger.warning(
+                    "Skipping invalid refreshed contract item for %s: type_id=%s quantity=%s",
+                    contract_id,
+                    type_id,
+                    quantity,
+                )
+                continue
             ESIContractItem.objects.create(
                 contract=contract,
                 record_id=item_payload.get("record_id", 0),
-                type_id=item_payload.get("type_id", 0),
-                quantity=item_payload.get("quantity", 0),
+                type_id=type_id,
+                quantity=quantity,
                 raw_quantity=item_payload.get("raw_quantity"),
                 is_included=item_payload.get("is_included", False),
                 is_singleton=item_payload.get("is_singleton", False),
