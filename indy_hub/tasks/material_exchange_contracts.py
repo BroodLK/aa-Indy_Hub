@@ -4407,7 +4407,18 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
     Containers and their contents are excluded from surplus calculations.
     """
     order_items = list(order.items.all())
-    included_items = list(contract.items.filter(is_included=True))
+    # Mirror _contract_items_match_order_db: sell orders compare against the
+    # items the issuer gives (is_included=True), buy orders against the items
+    # the issuer requests (is_included=False). Using the wrong side reports the
+    # entire order as missing plus the whole contract as surplus.
+    items_are_included = not isinstance(order, MaterialExchangeBuyOrder)
+    included_items = list(
+        contract.items.filter(
+            is_included=items_are_included,
+            type_id__gt=0,
+            quantity__gt=0,
+        )
+    )
 
     if not order_items and not included_items:
         return {}, {}, {}

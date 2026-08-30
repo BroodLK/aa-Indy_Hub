@@ -12,6 +12,7 @@ from indy_hub.utils.material_exchange_contract_check import (
     build_expected_items,
     parse_contract_export,
     parse_contract_items,
+    split_quantity_and_remainder,
     summarize_counter,
 )
 
@@ -76,9 +77,11 @@ class ContractCheckParsingTests(SimpleTestCase):
         self.assertEqual(
             summarize_counter(parsed_items, parsed_labels),
             [
+                # summarize_counter sorts on the normalized key, so "100k..."
+                # sorts before "10k..." ('0' < 'k').
+                "100K Bounty SCC Encrypted Bond x 3",
                 "10K Bounty SCC Encrypted Bond x 5",
                 "10M Bounty SCC Encrypted Bond x 12",
-                "100K Bounty SCC Encrypted Bond x 3",
                 "1M Bounty SCC Encrypted Bond x 8",
             ],
         )
@@ -120,6 +123,44 @@ class ContractCheckParsingTests(SimpleTestCase):
         self.assertIn("10M Bounty SCC Encrypted Bond x 3", summary)
         self.assertIn("Trigger Unit x 7930", summary)
         self.assertNotIn("M Bounty SCC Encrypted Bond x 3", summary)
+
+    def test_parse_contract_items_splits_qty_before_numeric_item_in_stream(self) -> None:
+        """A space between the quantity and a digit-leading item name is a
+        boundary, not thousands grouping (``... x 17 100K Bounty ...``)."""
+        compact_items = (
+            "100K Bounty SCC Encrypted Bond x 17 10K Bounty SCC Encrypted Bond x 33 "
+            "10M Bounty SCC Encrypted Bond x 13 1M Bounty SCC Encrypted Bond x 35 "
+            "Alloyed Tritanium Bar x 440"
+        )
+        parsed_items, parsed_labels = parse_contract_items(compact_items)
+        summary = summarize_counter(parsed_items, parsed_labels)
+
+        self.assertEqual(
+            summary,
+            [
+                "100K Bounty SCC Encrypted Bond x 17",
+                "10K Bounty SCC Encrypted Bond x 33",
+                "10M Bounty SCC Encrypted Bond x 13",
+                "1M Bounty SCC Encrypted Bond x 35",
+                "Alloyed Tritanium Bar x 440",
+            ],
+        )
+
+    def test_split_quantity_keeps_thousands_grouping(self) -> None:
+        """The boundary fix must not break genuine grouped quantities."""
+        self.assertEqual(split_quantity_and_remainder(" 10 000 Tritanium x 5"), (10000, " Tritanium x 5"))
+        self.assertEqual(split_quantity_and_remainder(" 1 234 567 Tritanium x 5"), (1234567, " Tritanium x 5"))
+
+    def test_split_quantity_prefers_known_numeric_item_boundary(self) -> None:
+        """Glued streams must not be split mid-name into ``1`` + ``7100K ...``."""
+        self.assertEqual(
+            split_quantity_and_remainder(" 17 100K Bounty SCC Encrypted Bond x 33"),
+            (17, " 100K Bounty SCC Encrypted Bond x 33"),
+        )
+        self.assertEqual(
+            split_quantity_and_remainder(" 17100K Bounty SCC Encrypted Bond x 33"),
+            (17, "100K Bounty SCC Encrypted Bond x 33"),
+        )
 
     def test_parse_contract_items_keeps_numeric_items_from_allowlist(self) -> None:
         compact_items = "Intact Shield Emitter x 310,000 Skill Points x 1" "Trigger Unit x 7930"

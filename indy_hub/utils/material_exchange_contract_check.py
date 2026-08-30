@@ -160,6 +160,13 @@ def split_quantity_and_remainder(raw_tail: str) -> tuple[int | None, str]:
             continue
         if char in ",.' " and index + 1 < len(stripped_tail):
             if stripped_tail[index + 1].isdigit():
+                # A space between digits is normally thousands grouping
+                # (``10 000``), but it is also the boundary in front of item
+                # names that start with a digit (``17 100K Bounty ...``).
+                # Absorbing it there glues the quantity to the name prefix and
+                # corrupts both.
+                if char == " " and _looks_like_known_numeric_item_name_start(stripped_tail[index + 1 :]):
+                    break
                 index += 1
                 continue
         break
@@ -180,16 +187,24 @@ def split_quantity_and_remainder(raw_tail: str) -> tuple[int | None, str]:
     if not digits_only:
         return full_quantity, remainder
 
-    for split_index in range(1, len(digits_only) + 1):
-        candidate_qty = parse_positive_quantity(digits_only[:split_index])
-        if candidate_qty is None:
-            continue
-        candidate_remainder = f"{digits_only[split_index:]}{remainder}"
-        if not candidate_remainder:
-            return candidate_qty, candidate_remainder
-        stripped_remainder = candidate_remainder.lstrip()
-        if looks_like_item_start(stripped_remainder):
-            return candidate_qty, candidate_remainder
+    # Try to land on a *known* numeric-leading item name before falling back to
+    # the looser boundary heuristics. Without that ordering a glued stream such
+    # as ``17100K Bounty ...`` splits into ``1`` + ``7100K Bounty ...``, because
+    # the corrupted ``7100K`` still satisfies the generic numeric-prefix shape.
+    for boundary_detector in (
+        _looks_like_known_numeric_item_name_start,
+        looks_like_item_start,
+    ):
+        for split_index in range(1, len(digits_only) + 1):
+            candidate_qty = parse_positive_quantity(digits_only[:split_index])
+            if candidate_qty is None:
+                continue
+            candidate_remainder = f"{digits_only[split_index:]}{remainder}"
+            if not candidate_remainder:
+                return candidate_qty, candidate_remainder
+            stripped_remainder = candidate_remainder.lstrip()
+            if boundary_detector(stripped_remainder):
+                return candidate_qty, candidate_remainder
 
     return full_quantity, remainder
 
