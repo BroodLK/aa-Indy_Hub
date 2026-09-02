@@ -4191,9 +4191,10 @@ def _contract_items_match_order_db(contract, order):
 
     Containers are excluded from the comparison.
     """
-    # For sell orders, the seller gives the hub the included items. For buy
-    # orders, the user gives the hub the requested (not included) items.
-    items_are_included = not isinstance(order, MaterialExchangeBuyOrder)
+    # A buy order is a member buying from the hub, so the hub's contract
+    # includes the items being delivered. A sell order is the inverse: the
+    # member's contract requests the items and the hub receives them.
+    items_are_included = isinstance(order, MaterialExchangeBuyOrder)
     contract_items = contract.items.filter(
         is_included=items_are_included,
         type_id__gt=0,
@@ -4407,11 +4408,10 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
     Containers and their contents are excluded from surplus calculations.
     """
     order_items = list(order.items.all())
-    # Mirror _contract_items_match_order_db: sell orders compare against the
-    # items the issuer gives (is_included=True), buy orders against the items
-    # the issuer requests (is_included=False). Using the wrong side reports the
-    # entire order as missing plus the whole contract as surplus.
-    items_are_included = not isinstance(order, MaterialExchangeBuyOrder)
+    # Mirror _contract_items_match_order_db: buy orders compare against the
+    # items the hub delivers (is_included=True), while sell orders compare
+    # against the items the hub requests (is_included=False).
+    items_are_included = isinstance(order, MaterialExchangeBuyOrder)
     included_items = list(
         contract.items.filter(
             is_included=items_are_included,
