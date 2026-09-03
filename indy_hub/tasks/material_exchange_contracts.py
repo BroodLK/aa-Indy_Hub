@@ -4191,10 +4191,10 @@ def _contract_items_match_order_db(contract, order):
 
     Containers are excluded from the comparison.
     """
-    # A buy order is a member buying from the hub, so the hub's contract
-    # includes the items being delivered. A sell order is the inverse: the
-    # member's contract requests the items and the hub receives them.
-    items_are_included = isinstance(order, MaterialExchangeBuyOrder)
+    # ESI marks items offered in an item-exchange contract as included.  Both
+    # directions use the included side for the traded item: the hub offers
+    # items for buy orders, while the member offers items for sell orders.
+    items_are_included = True
     contract_items = contract.items.filter(
         is_included=items_are_included,
         type_id__gt=0,
@@ -4342,15 +4342,22 @@ def _refresh_contract_items_for_validation(contract) -> bool:
 
 
 def _is_item_inside_container(contract_item) -> bool:
-    """Check if a contract item is inside a container based on raw_quantity.
+    """Check if a contract item is inside a container.
 
-    In ESI contract items, items inside containers have raw_quantity of -1 or -2.
+    ``raw_quantity`` is negative for singleton items as well as nested
+    container contents.  Blueprint originals/copies are singleton items, so
+    a negative raw quantity alone must not exclude them from validation.
+    ``-2`` is the nested-container marker used by ESI; retain the legacy
+    fallback for records that do not expose the singleton flag.
     """
+    if bool(getattr(contract_item, "is_singleton", False)):
+        return False
+
     raw_qty = getattr(contract_item, "raw_quantity", None)
     if raw_qty is None:
         return False
     try:
-        return int(raw_qty) < 0
+        return int(raw_qty) == -2
     except (TypeError, ValueError):
         return False
 
@@ -4408,10 +4415,9 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
     Containers and their contents are excluded from surplus calculations.
     """
     order_items = list(order.items.all())
-    # Mirror _contract_items_match_order_db: buy orders compare against the
-    # items the hub delivers (is_included=True), while sell orders compare
-    # against the items the hub requests (is_included=False).
-    items_are_included = isinstance(order, MaterialExchangeBuyOrder)
+    # Mirror _contract_items_match_order_db: the traded items are the items
+    # offered in the contract (is_included=True) in either direction.
+    items_are_included = True
     included_items = list(
         contract.items.filter(
             is_included=items_are_included,

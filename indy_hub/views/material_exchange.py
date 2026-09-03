@@ -7159,7 +7159,18 @@ def material_exchange_buy(request, tokens):
                 type_id = int(stock_item.type_id)
                 reserved_qty = int(locked_reserved_quantities.get(type_id, 0) or 0)
                 current_reserved_by_type[type_id] = reserved_qty
-                current_available_by_type[type_id] = max(int(stock_item.quantity) - reserved_qty, 0)
+                # A type can have multiple stock rows (for example, one per
+                # source structure).  Reservations are type-wide, so sum all
+                # stacks first and subtract the reservation once.
+                current_available_by_type[type_id] = current_available_by_type.get(type_id, 0) + int(
+                    stock_item.quantity
+                )
+
+            for type_id, reserved_qty in current_reserved_by_type.items():
+                current_available_by_type[type_id] = max(
+                    current_available_by_type.get(type_id, 0) - reserved_qty,
+                    0,
+                )
 
             buy_stock_snapshot = _get_buy_stock_snapshot_for_submission(
                 config=config,
