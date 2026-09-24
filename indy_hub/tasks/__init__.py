@@ -35,6 +35,7 @@ def _import_task_submodules() -> None:
     from . import mining_polls  # noqa: F401
     from . import notifications  # noqa: F401
     from . import public_contracts  # noqa: F401
+    from . import reprocessing  # noqa: F401
     from . import user  # noqa: F401
 
 

@@ -25,10 +25,14 @@
             </div>
         </div>
 
-        {% include "indy_hub/partials/page_header.html" with icon_class="fas fa-tools" title=bp_name subtitle=_("Production workspace") back_url=back_url back_label=_("Back") header_controls=craft_header_controls %}
+        {% include "indy_hub/partials/page_header.html" with icon_class="fas fa-tools" title=bp_name subtitle=_("Production Simulator") header_controls=craft_header_controls only %}
 
         <div class="d-flex justify-content-end mb-3">
             <span id="simulationStatus" class="badge bg-secondary d-none"></span>
+            <div class="btn-group btn-group-sm" role="group" aria-label="{% trans 'Share controls' %}">
+                <button type="button" class="btn btn-outline-primary" id="copySimulationLinkBtn">{% trans "Copy share link" %}</button>
+                <button type="button" class="btn btn-outline-secondary" id="clearSimulationLinkBtn">{% trans "Reset share state" %}</button>
+            </div>
         </div>
 
         <div id="bpTabs-loading" class="border border-warning-subtle bg-warning-subtle rounded-3 p-4 mb-4">
@@ -167,19 +171,6 @@
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link"
-                                id="run-optimized-tab-btn"
-                                data-bs-toggle="tab"
-                                data-bs-target="#run-optimized-pane"
-                                type="button"
-                                role="tab"
-                                aria-controls="run-optimized-pane"
-                                data-tab-name="run_optimized">
-                            <i class="fas fa-chart-line"></i>
-                            <span>{% trans "Run optimized" %}</span>
-                        </button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link"
                                 id="how-to-tab-btn"
                                 data-bs-toggle="tab"
                                 data-bs-target="#how-to-pane"
@@ -192,18 +183,26 @@
                         </button>
                     </li>
                 </ul>
+                <p class="small text-muted mt-2 mb-3">
+                    <i class="fas fa-sync-alt me-1" aria-hidden="true"></i>
+                    {% trans "Changing the blueprint or core production settings reloads this workspace so materials, skills, and estimates can be refreshed before the calculation continues." %}
+                </p>
 
                 <div class="tab-content craft-tab-content" id="craftMainTabsContent">
                     <!-- ========== PLAN TAB (V2) ========== -->
                     <div class="tab-pane fade show active" id="plan-pane" role="tabpanel" aria-labelledby="plan-tab-btn">
+                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "Decide what to Produce and what to Buy for this blueprint tree, and see the margin that choice gives." %}</p>
                         <div class="craft-quick-stats mb-4">
                             <div class="craft-stat-card">
                                 <div class="craft-stat-icon bg-primary">
                                     <i class="fas fa-scroll"></i>
                                 </div>
                                 <div class="craft-stat-content">
-                                    <div class="craft-stat-label">{% trans "Blueprints" %}</div>
+                                    <div class="craft-stat-label">{% trans "Blueprints in plan" %}</div>
                                     <div class="craft-stat-value" id="totalBlueprintsCount">-</div>
+                                    <div class="craft-stat-help small text-muted">
+                                        {% trans "Blueprints this plan needs, including sub-components you chose to produce." %}
+                                    </div>
                                 </div>
                             </div>
                             <div class="craft-stat-card">
@@ -211,8 +210,11 @@
                                     <i class="fas fa-cubes"></i>
                                 </div>
                                 <div class="craft-stat-content">
-                                    <div class="craft-stat-label">{% trans "Unique Materials" %}</div>
+                                    <div class="craft-stat-label">{% trans "Material types" %}</div>
                                     <div class="craft-stat-value" id="totalMaterialsCount">-</div>
+                                    <div class="craft-stat-help small text-muted">
+                                        {% trans "Distinct items you need to buy or produce, not the total quantity." %}
+                                    </div>
                                 </div>
                             </div>
                             <div class="craft-stat-card">
@@ -355,12 +357,13 @@
 
                     <!-- ========== BUY TAB (V2) ========== -->
                     <div class="tab-pane fade" id="buy-pane" role="tabpanel" aria-labelledby="buy-tab-btn">
+                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "Price every material, add taxes and shipping, then build the shopping list of what you still need to buy." %}</p>
                         <div class="alert alert-warning d-flex align-items-center mb-4" id="missingPricesAlert" style="display: none !important;">
                             <i class="fas fa-exclamation-triangle fa-lg me-3"></i>
                             <div class="flex-grow-1">
                                 <strong>{% trans "Missing Prices" %}</strong>
                                 <p class="mb-0 small">
-                                    <span id="missingPricesCount">0</span> {% trans "items are missing price data. Load Fuzzwork prices or enter them manually." %}
+                                    <span id="missingPricesCount">0</span> {% trans "items are missing price data. Load market estimates or enter them manually." %}
                                 </p>
                             </div>
                             <button class="btn btn-sm btn-warning" id="loadFuzzworkFromAlert">
@@ -403,26 +406,24 @@
                         </div>
 
                         <section class="craft-section mb-4">
+                            <div class="alert alert-info d-flex gap-2 align-items-start mb-3">
+                                <i class="fas fa-info-circle mt-1" aria-hidden="true"></i>
+                                <div>
+                                    <strong>{% trans "How Buy works" %}</strong>
+                                    <p class="mb-0 small">{% trans "Estimate is the fallback market or derived value. Real Price is your entered or observed transaction price, and calculations use it when supplied. Choose shipping, review taxes and fees, then compute the shopping list. Surplus is shown separately and is not counted as profit." %}</p>
+                                </div>
+                            </div>
                             <div class="craft-financial-table-header">
                                 <h4 class="text-sm fw-semibold mb-0">
                                     <i class="fas fa-list-ul me-2"></i>{% trans "Purchase Planner" %}
                                 </h4>
                                 <div class="craft-financial-actions">
-                                    <div class="input-group input-group-sm me-2" id="importFeesRouteGroup" style="min-width: 320px;">
-                                        <span class="input-group-text" title="{% trans 'aa-freight route' %}">
-                                            <i class="fas fa-route"></i>
-                                        </span>
-                                        <select class="form-select" id="importFeesRouteSelect">
-                                            <option value="">{% trans "Shipping rate" %}</option>
-                                            {% for route in freight_routes %}<option value="{{ route.pricing_id }}">{{ route.route_label }}</option>{% endfor %}
-                                        </select>
-                                    </div>
                                     <button id="convertMineralsToOreBtn"
                                             type="button"
                                             class="btn btn-outline-primary btn-sm"
-                                            title="{% trans 'Convert minerals to compressed ore' %}"
+                                            title="{% trans 'Use compressed ore equivalent for these minerals' %}"
                                             style="display: none">
-                                        <i class="fas fa-cubes me-1"></i>{% trans "Convert to Compressed Ore" %}
+                                        <i class="fas fa-cubes me-1"></i>{% trans "Use compressed ore equivalent" %}
                                     </button>
                                     <button id="resetCompressedOresBtn"
                                             type="button"
@@ -434,17 +435,17 @@
                                     <button id="calculateIndustryFeesBtn"
                                             type="button"
                                             class="btn btn-outline-warning btn-sm"
-                                            title="{% trans 'Calculate industry fees from current planner state' %}">
-                                        <i class="fas fa-receipt me-1"></i>{% trans "Calculate Fees" %}
+                                            title="{% trans 'Re-calculate industry job taxes and fees from the current planner state' %}">
+                                        <i class="fas fa-receipt me-1"></i>{% trans "Re-calculate taxes" %}
                                     </button>
-                                    <button id="exportPurchaseCSV" type="button" class="btn btn-outline-success btn-sm" title="{% trans 'Export to CSV' %}">
-                                        <i class="fas fa-file-csv me-1"></i>{% trans "Export" %}
+                                    <button id="exportPurchaseCSV" type="button" class="btn btn-outline-success btn-sm" title="{% trans 'Download every Purchase Planner row (item, quantity, estimate, real price, total cost, margin) as CSV' %}">
+                                        <i class="fas fa-file-csv me-1"></i>{% trans "Export CSV" %}
                                     </button>
-                                    <button id="resetManualPricesBtn" type="button" class="btn btn-outline-secondary btn-sm" title="{% trans 'Reset overrides' %}">
-                                        <i class="fas fa-undo-alt"></i>
+                                    <button id="resetManualPricesBtn" type="button" class="btn btn-outline-secondary btn-sm" title="{% trans 'Remove every Real Price you entered so rows fall back to the Estimate' %}">
+                                        <i class="fas fa-undo-alt me-1" aria-hidden="true"></i>{% trans "Clear real-price overrides" %}
                                     </button>
-                                    <button id="loadFuzzworkBtn" type="button" class="btn btn-outline-info btn-sm" title="{% trans 'Load Fuzzwork prices' %}">
-                                        <i class="fas fa-cloud-download-alt me-1"></i>{% trans "Fuzzwork" %}
+                                    <button id="loadFuzzworkBtn" type="button" class="btn btn-outline-info btn-sm" title="{% trans 'Load market estimates' %}">
+                                        <i class="fas fa-cloud-download-alt me-1"></i>{% trans "Load estimates" %}
                                     </button>
                                 </div>
                             </div>
@@ -455,7 +456,7 @@
                                         <tr>
                                             <th class="col-item">{% trans "Item" %}</th>
                                             <th class="text-end col-qty">{% trans "Qty" %}</th>
-                                            <th class="text-end col-fuzzwork">{% trans "Fuzzwork" %}</th>
+                                            <th class="text-end col-fuzzwork">{% trans "Estimate" %}</th>
                                             <th class="text-end col-real">{% trans "Real Price" %}</th>
                                             <th class="text-end col-total">{% trans "Total Cost" %}</th>
                                             <th class="text-end col-margin">{% trans "Margin" %}</th>
@@ -494,7 +495,8 @@
                                                            value="0.00">
                                                 </td>
                                                 <td class="text-end text-xs total-cost fw-semibold">0</td>
-                                                <td class="text-end text-xs item-margin">-</td>
+                                                <td class="text-end text-xs item-margin text-muted"
+                                                title="{% trans 'No margin for this row: there is no separate market price to compare this cost against.' %}">—</td>
                                             </tr>
                                         {% endfor %}
                                         <tr id="shippingCostRow">
@@ -568,7 +570,8 @@
                                                        value="0.00">
                                             </td>
                                             <td class="text-end text-xs total-revenue fw-semibold">0</td>
-                                            <td class="text-end text-xs">-</td>
+                                            <td class="text-end text-xs text-muted"
+                                                title="{% trans 'Overall margin is shown in the summary above and in the Net Profit row below.' %}">—</td>
                                         </tr>
                                     </tbody>
                                     <tfoot class="table-light">
@@ -629,6 +632,26 @@
                                 </div>
                             </div>
 
+                        </section>
+
+                        <section class="craft-section">
+                            <div class="craft-section-header-with-actions">
+                                <h3 class="craft-section-title">
+                                    <i class="fas fa-truck text-info"></i> {% trans "Shipping" %}
+                                </h3>
+                                <div class="input-group input-group-sm" id="importFeesRouteGroup" style="min-width: 320px;">
+                                    <span class="input-group-text" title="{% trans 'aa-freight route' %}">
+                                        <i class="fas fa-route"></i>
+                                    </span>
+                                    <select class="form-select" id="importFeesRouteSelect">
+                                        <option value="">{% trans "Shipping rate" %}</option>
+                                        {% for route in freight_routes %}<option value="{{ route.pricing_id }}">{{ route.route_label }}</option>{% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <p class="small text-muted">
+                                {% trans "Choosing a shipping rate adds a freight quote to the Purchase Planner as a Shipping row and to the cost totals. Override it with the Shipping real-price field to use the fee you actually expect to pay." %}
+                            </p>
                             <div id="shippingFeeBreakdownSection" class="mt-3 d-none">
                                 <div class="d-flex justify-content-between align-items-center mb-2">
                                     <h5 class="mb-0 text-sm fw-semibold">
@@ -671,17 +694,21 @@
                             <div class="craft-section-header-with-actions">
                                 <h3 class="craft-section-title">
                                     <i class="fas fa-shopping-cart text-warning"></i> {% trans "Shopping List" %}
+                                    <span class="badge bg-info-subtle text-info-emphasis px-3 py-2 ms-2 align-middle"
+                                          title="{% trans 'Distinct items you still need to buy after owned stock is subtracted.' %}">
+                                        {% trans "Items needed" %}: <span id="shoppingItemsNeededCount">0</span>
+                                    </span>
                                 </h3>
                                 <div>
                                     <button id="copyShoppingClipboard"
                                             class="btn btn-outline-primary btn-sm me-2"
-                                            title="{% trans 'Copy item + quantity to clipboard' %}">
+                                            title="{% trans 'Copy each item name and quantity to buy, tab-separated (EVE multibuy format)' %}">
                                         <i class="fas fa-clipboard me-1"></i>{% trans "Copy" %}
                                     </button>
-                                    <button id="exportShoppingCSV" class="btn btn-outline-success btn-sm me-2">
+                                    <button id="exportShoppingCSV" class="btn btn-outline-success btn-sm me-2" title="{% trans 'Download the Shopping List table as CSV' %}">
                                         <i class="fas fa-file-csv me-1"></i>{% trans "Export" %}
                                     </button>
-                                    <button id="exportOwnedRemainder" class="btn btn-outline-secondary btn-sm me-2">
+                                    <button id="exportOwnedRemainder" class="btn btn-outline-secondary btn-sm me-2" title="{% trans 'Copy the owned items and quantities this plan does not use, tab-separated' %}">
                                         <i class="fas fa-box-open me-1"></i>{% trans "Copy Leftovers" %}
                                     </button>
                                     <button id="compute-needed" class="btn btn-outline-warning btn-sm">
@@ -690,11 +717,52 @@
                                 </div>
                             </div>
 
+                            <ol class="craft-step-guide small text-muted mt-2 mb-2 ps-3">
+                                <li>{% trans "Choose one material source: paste what you own, or designate a materials bay." %}</li>
+                                <li>{% trans "Review prices above; press Re-calculate taxes if fees or assumptions changed." %}</li>
+                                <li>{% trans "Press Compute to build the list of what you still need to buy." %}</li>
+                                <li>{% trans "Then copy or export the list, or copy the leftovers." %}</li>
+                            </ol>
+                            <p class="small text-muted mb-2">
+                                {% trans "Copy puts each item name and quantity to buy on its own line, tab-separated, ready to paste into EVE's multibuy. Export downloads this table (item, needed, owned, buy, surplus, unit price, total) as CSV. Copy Leftovers copies the owned items and quantities this plan does not use." %}
+                            </p>
                             <div class="card border-0 bg-body-tertiary mt-2 mb-3">
                                 <div class="card-body py-3">
                                     <label for="ownedMaterialsInput" class="form-label fw-semibold mb-2">
                                         <i class="fas fa-box-open me-1"></i>{% trans "Owned Materials (optional)" %}
                                     </label>
+                                    <div class="row g-2 align-items-end mb-2">
+                                        <div class="col-md-5">
+                                            <label for="materialsSourceMode" class="form-label small mb-1">{% trans "Material source" %}</label>
+                                            <select id="materialsSourceMode" class="form-select form-select-sm">
+                                                <option value="manual">{% trans "Manual text input" %}</option>
+                                                <option value="designated_bay">{% trans "Designated materials bay" %}</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-7 small text-muted" id="materialsSourceStatus">
+                                            {% trans "Manual quantities are used for this calculation. A designated bay requires validated, refreshed asset data." %}
+                                        </div>
+                                    </div>
+                                    <div id="materialsSourceLocationWrap" class="mb-2 d-none">
+                                        <label for="materialsSourceLocation" class="form-label small mb-1">{% trans "Cached asset location" %}</label>
+                                        <select id="materialsSourceLocation" class="form-select form-select-sm">
+                                            <option value="">{% trans "Loading cached locations…" %}</option>
+                                        </select>
+                                        <div class="mt-2 d-none">
+                                            <label for="materialsSourceContainer" class="form-label small mb-1">{% trans "Container" %}</label>
+                                            <select id="materialsSourceContainer" class="form-select form-select-sm">
+                                                <option value="">{% trans "Whole location (all containers)" %}</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-text">
+                                            {% trans "Personal assets have no corporation hangar divisions, so only the location and its containers can be selected here." %}
+                                        </div>
+                                        <div class="d-flex flex-wrap gap-2 mt-2">
+                                            <button type="button" class="btn btn-outline-primary btn-sm" id="refreshMaterialsSourceBtn">{% trans "Load cached quantities" %}</button>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="queueMaterialsSourceRefreshBtn">{% trans "Refresh asset cache" %}</button>
+                                        </div>
+                                        <div class="form-text" id="materialsSourceFreshness"></div>
+                                    </div>
                                     <textarea id="ownedMaterialsInput"
                                               class="form-control form-control-sm"
                                               rows="6"
@@ -711,7 +779,10 @@
                                     <thead class="table-light">
                                         <tr>
                                             <th>{% trans "Item" %}</th>
-                                            <th class="text-end">{% trans "Qty" %}</th>
+                                            <th class="text-end">{% trans "Needed" %}</th>
+                                            <th class="text-end">{% trans "Owned" %}</th>
+                                            <th class="text-end">{% trans "Buy" %}</th>
+                                            <th class="text-end">{% trans "Surplus" %}</th>
                                             <th class="text-end">{% trans "Unit Price" %}</th>
                                             <th class="text-end">{% trans "Total" %}</th>
                                         </tr>
@@ -720,69 +791,19 @@
                                     </tbody>
                                     <tfoot class="table-light">
                                         <tr>
-                                            <th colspan="3" class="text-end text-xs">{% trans "Total Shopping Cost" %}</th>
+                                            <th colspan="6" class="text-end text-xs">{% trans "Total Shopping Cost" %}</th>
                                             <th class="text-end text-xs purchase-total fw-semibold">0</th>
                                         </tr>
                                     </tfoot>
                                 </table>
-                            </div>
-                        </section>
-                    </div>
-
-                    <!-- ========== RUN OPTIMIZED TAB (V2) ========== -->
-                    <div class="tab-pane fade" id="run-optimized-pane" role="tabpanel" aria-labelledby="run-optimized-tab-btn">
-                        <section class="craft-section">
-                            <div class="craft-section-header-with-actions">
-                                <h3 class="craft-section-title">
-                                    <i class="fas fa-chart-line text-primary"></i> {% trans "Optimized profitability by runs" %}
-                                </h3>
-                            </div>
-
-                            <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
-                                <div class="form-check form-switch me-2">
-                                    <input class="form-check-input" type="checkbox" id="runOptimizedUseDashboardDecisions" checked>
-                                    <label class="form-check-label small" for="runOptimizedUseDashboardDecisions">
-                                        {% trans "Use current Buy/Prod switches (dashboard-aligned)" %}
-                                    </label>
-                                </div>
-
-                                <div class="input-group input-group-sm" style="max-width: 260px;">
-                                    <span class="input-group-text">{% trans "Search up to" %}</span>
-                                    <input type="number" class="form-control" id="runOptimizedSearchMaxRuns" min="1" step="1">
-                                    <span class="input-group-text">{% trans "runs" %}</span>
-                                </div>
-
-                                <button class="btn btn-sm btn-outline-primary" type="button" id="runOptimizedFindBestBtn">
-                                    <i class="fas fa-bullseye me-1"></i>{% trans "Find optimal runs" %}
-                                </button>
-
-                                <div class="small text-muted ms-auto" id="runOptimizedBestResult"></div>
-                            </div>
-
-                            <details class="border rounded-3 bg-body p-2 mb-2" id="runOptimizedBestConfigDetails" style="display:none;">
-                                <summary class="small fw-semibold">{% trans "Best configuration details" %}</summary>
-                                <div class="mt-2 d-flex flex-wrap gap-2 align-items-center">
-                                    <button class="btn btn-sm btn-outline-secondary" type="button" id="runOptimizedCopyBestConfig">
-                                        <i class="fas fa-copy me-1"></i>{% trans "Copy" %}
-                                    </button>
-                                    <span class="small text-muted" id="runOptimizedBestConfigHint"></span>
-                                </div>
-                                <pre class="small mt-2 mb-0" id="runOptimizedBestConfigPre" style="white-space: pre-wrap;"></pre>
-                            </details>
-
-                            <div class="alert alert-info mb-3" id="run-optimized-status">
-                                {% trans "Open this tab to compute profitability across runs." %}
-                            </div>
-
-                            <div class="bg-body border rounded-3 p-3">
-                                <canvas id="runOptimizedChart" height="240" style="width: 100%;"></canvas>
-                                <div class="mt-2 small text-muted" id="runOptimizedPointsList"></div>
+                                <div id="neededBuybackStatus" class="small text-muted mt-2 d-none" aria-live="polite"></div>
                             </div>
                         </section>
                     </div>
 
                     <!-- ========== BUILD TAB (V2 - ENHANCED) ========== -->
                     <div class="tab-pane fade" id="build-pane" role="tabpanel" aria-labelledby="build-tab-btn">
+                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "Assign manufacturing slots per character and schedule the Produce items; optionally track the live jobs." %}</p>
                         <!-- Character Slots Configuration -->
                         <section class="craft-section mb-4">
                             <div class="craft-section-header-with-actions">
@@ -794,10 +815,6 @@
                             <div class="alert alert-info small mb-3">
                                 <i class="fas fa-info-circle me-1"></i>
                                 {% trans "Industry slots calculated from your characters' Mass Production and Advanced Mass Production skills." %}
-                            </div>
-
-                            <div id="slotsContainer" class="mb-3">
-                                <!-- Slots loaded from API will be displayed here -->
                             </div>
 
                             <div class="border rounded-3 bg-body-tertiary p-3 mb-3">
@@ -1011,9 +1028,40 @@
                                 </div>
                             </div>
 
-                            <div id="ganttChartContainer" class="craft-gantt-surface border rounded p-3" style="overflow-x: auto; min-height: 300px;">
+                            <p class="small text-muted mb-2">
+                                {% trans "Hover or focus a job for its item, run range, character, and timing. The Runs By Job table below provides the same schedule in a screen-reader and narrow-screen friendly format." %}
+                            </p>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="scheduleTrackingOptIn">
+                                <label class="form-check-label small" for="scheduleTrackingOptIn">
+                                    {% trans "Enable optional live job matching for this schedule" %}
+                                </label>
+                                <div class="form-text">{% trans "This uses your synced ESI industry jobs when available. It may be stale or unavailable and never replaces the planned schedule." %}</div>
+                            </div>
+                            <div class="border rounded-3 bg-body-tertiary p-3 mb-3" id="scheduleTrackingControls">
+                                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                                    <div>
+                                        <div class="fw-semibold">{% trans "Live job check" %}</div>
+                                        <div class="small text-muted">{% trans "Select characters working on this project, then refresh the cached industry jobs." %}</div>
+                                    </div>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="resnapshotScheduleTrackingBtn" disabled
+                                                title="{% trans 'Track the schedule shown now instead of the one stored when you opted in' %}">
+                                            <i class="fas fa-camera me-1" aria-hidden="true"></i>{% trans "Track current schedule" %}
+                                        </button>
+                                        <button type="button" class="btn btn-sm btn-outline-primary" id="refreshScheduleTrackingBtn" disabled>
+                                            <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh job status" %}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div id="scheduleTrackingCharacters" class="d-flex flex-wrap gap-3 mt-2"></div>
+                                <div id="scheduleTrackingStatus" class="small text-muted mt-2" role="status">{% trans "Calculate and save a schedule to enable live matching." %}</div>
+                                <div id="scheduleTrackingCountdown" class="small text-muted" aria-live="off"></div>
+                            </div>
+                            <div id="ganttChartContainer" class="craft-gantt-surface border rounded p-3" role="region" aria-label="{% trans 'Production schedule graph' %}" tabindex="0" style="overflow-x: auto; min-height: 300px;">
                                 <div id="ganttChart"></div>
                             </div>
+                            <div id="ganttLegend" class="craft-gantt-legend mt-2" hidden></div>
                         </section>
 
                         <section class="craft-section mb-4" id="slotRunSummarySection" style="display: none;">
@@ -1021,6 +1069,9 @@
                                 <h3 class="craft-section-title">
                                     <i class="fas fa-layer-group text-primary"></i> {% trans "Runs By Job" %}
                                 </h3>
+                                <p class="small text-muted mb-0">
+                                    {% trans "One row per scheduled job chunk — the same schedule the graph shows, in text form." %}
+                                </p>
                             </div>
 
                             <div class="table-responsive">
@@ -1028,11 +1079,16 @@
                                     <thead class="table-light">
                                         <tr>
                                             <th>{% trans "Job" %}</th>
-                                            <th>{% trans "Character" %}</th>
-                                            <th class="text-end">{% trans "Slots Used" %}</th>
+                                            <th class="text-end">{% trans "Chunk" %}</th>
+                                            <th>{% trans "Lane" %}</th>
                                             <th class="text-end">{% trans "Runs" %}</th>
-                                            <th>{% trans "Distribution" %}</th>
-                                            <th>{% trans "Window" %}</th>
+                                            <th>{% trans "Start" %}</th>
+                                            <th>{% trans "End" %}</th>
+                                            <th class="text-end">{% trans "Duration" %}</th>
+                                            <th>{% trans "Status" %}</th>
+                                            <th class="text-end" title="{% trans 'Observed duration minus planned duration, once live tracking has run.' %}">
+                                                {% trans "vs plan" %}
+                                            </th>
                                         </tr>
                                     </thead>
                                     <tbody id="slotRunSummaryBody">
@@ -1063,6 +1119,7 @@
 
                     <!-- ========== CONFIGURE TAB (V2) ========== -->
                     <div class="tab-pane fade" id="configure-pane" role="tabpanel" aria-labelledby="configure-tab-btn">
+                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "Set ME/TE, the build structure and fee model, and which owned or bought blueprint copies cover each item." %}</p>
                         <section class="craft-section mb-4">
                             <h3 class="craft-section-title">
                                 <i class="fas fa-magic text-primary"></i> {% trans "Quick Presets" %}
@@ -1186,6 +1243,7 @@
                                                     Sotiyo (1%)
                                                 </option>
                                             </select>
+                                            <div id="buildStructureCacheNote" class="form-text small d-none" aria-live="polite"></div>
                                             <input type="hidden"
                                                    id="buildStructureIdInput"
                                                    value="{{ build_environment.structure_id|default:'' }}"
@@ -1399,6 +1457,29 @@
                                     </div>
                                 </div>
                             </div>
+                        </section>
+
+                        <section class="craft-section mb-3" id="bpcSourceSection">
+                            <h3 class="craft-section-title">
+                                <i class="fas fa-warehouse text-secondary"></i> {% trans "Blueprint Source" %}
+                            </h3>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-7">
+                                    <label for="bpcSourceSelect" class="form-label small mb-1">{% trans "Count owned BPCs/BPOs from" %}</label>
+                                    <select id="bpcSourceSelect" class="form-select form-select-sm">
+                                        <option value="all">{% trans "All eligible locations" %}</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-5">
+                                    <button id="applyBpcSourceBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>
+                                        <i class="fas fa-sync-alt me-1" aria-hidden="true"></i>{% trans "Apply and reload" %}
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="bpcSourceStatus" class="small mt-2" aria-live="polite"></div>
+                            <p class="small text-muted mb-0 mt-1">
+                                {% trans "Only blueprints in the chosen location or container count as owned coverage. Locations come from your cached asset data, not a live ESI read. Applying reloads the page because coverage is calculated on the server; your choice is saved as a personal default and is never included in share links." %}
+                            </p>
                         </section>
 
                         <section class="craft-section">
@@ -1622,6 +1703,7 @@
 
                     <!-- ========== BUY BPCS TAB (V2) ========== -->
                     <div class="tab-pane fade" id="buy-bpcs-pane" role="tabpanel" aria-labelledby="buy-bpcs-tab-btn">
+                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "Find public Jita contracts for blueprint copies you are missing, with how fresh each offer is." %}</p>
                         <section class="craft-section mb-3">
                             <div class="craft-section-header-with-actions">
                                 <h3 class="craft-section-title">
@@ -1652,6 +1734,7 @@
                             <i class="fas fa-exclamation-triangle me-2"></i>
                             {% trans "Public contract data here is a delayed snapshot from local cache and is not real-time. Use it as trend guidance only, and verify availability/pricing in-game before buying." %}
                         </div>
+                        <div id="buyBpcsFreshness" class="small mb-3 d-none" aria-live="polite"></div>
                         <div id="buyBpcsStatus" class="alert alert-info mb-3 d-none"></div>
                         <div id="buyBpcsEmptyState" class="alert alert-success d-none">
                             <i class="fas fa-check-circle me-2"></i>{% trans "No missing BPC runs for current Produce items." %}
@@ -1661,6 +1744,7 @@
 
                     <!-- ========== HOW TO TAB (V2) ========== -->
                     <div class="tab-pane fade" id="how-to-pane" role="tabpanel" aria-labelledby="how-to-tab-btn">
+                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "A short guide to each tab and the order to use them in." %}</p>
                         <section class="craft-section mb-3">
                             <h3 class="craft-section-title">
                                 <i class="fas fa-compass text-secondary"></i> {% trans "Quick Links" %}
@@ -1673,6 +1757,7 @@
                                 <a class="btn btn-outline-info btn-sm" href="#howto-build">{% trans "Build" %}</a>
                                 <a class="btn btn-outline-secondary btn-sm" href="#howto-bpcs">{% trans "BPCs" %}</a>
                                 <a class="btn btn-outline-dark btn-sm" href="#howto-optimize">{% trans "Optimize & Save" %}</a>
+                                <a class="btn btn-outline-warning btn-sm" href="#howto-estimates">{% trans "Estimates" %}</a>
                             </div>
                         </section>
 
@@ -1701,13 +1786,52 @@
                                         <li class="mb-2">
                                             {% trans "Buy tab: load prices, review shipping and industry fees, optionally convert minerals to compressed ore, then compute the shopping list and subtract owned materials." %}
                                         </li>
-                                        <li class="mb-2">
+                                        <li>
                                             {% trans "Build tab: choose how many free manufacturing slots to allocate per character, then calculate the schedule for the items currently set to Produce." %}
                                         </li>
-                                        <li>
-                                            {% trans "Run optimized tab: scan for profitable run counts, inspect the best configuration, and copy the result when you want to compare another scenario." %}
-                                        </li>
                                     </ol>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="craft-section mb-3">
+                            <h3 class="craft-section-title" id="howto-estimates">
+                                <i class="fas fa-triangle-exclamation text-warning"></i> {% trans "Which Numbers Are Estimates" %}
+                            </h3>
+                            <div class="card border-0 bg-body-tertiary">
+                                <div class="card-body">
+                                    <p class="mb-2">
+                                        {% trans "Almost every figure here is a projection, not a quote. Treat the following as estimates and confirm anything you are about to commit ISK to:" %}
+                                    </p>
+                                    <ul class="mb-2 ps-3">
+                                        <li class="mb-2">
+                                            <strong>{% trans "Estimate column" %}</strong>
+                                            {% trans "market prices pulled from an external source and cached. Real Price is your own entered or observed value, and calculations prefer it whenever you supply one." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            <strong>{% trans "Capital prices" %}</strong>
+                                            {% trans "items with no usable market price fall back to a derived capital estimate, shown with its source and the time it was last calculated." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            <strong>{% trans "Industry fees and taxes" %}</strong>
+                                            {% trans "based on the fee model in Configure and the cost indices at the time you pressed Re-calculate. They are not evergreen; re-run them when assumptions change." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            <strong>{% trans "Shipping quotes" %}</strong>
+                                            {% trans "derived from the selected route's rate card. Override with the real fee you expect to pay." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            <strong>{% trans "Schedule times" %}</strong>
+                                            {% trans "modelled from your skills, ME/TE and slot choices. They assume jobs start immediately and run uninterrupted, so real completion is usually later." %}
+                                        </li>
+                                        <li>
+                                            <strong>{% trans "Compressed ore and reprocessing" %}</strong>
+                                            {% trans "depend on a cached refine yield and ore prices that may be days old." %}
+                                        </li>
+                                    </ul>
+                                    <p class="mb-0 small text-muted">
+                                        {% trans "Anything drawn from cached ESI or market data shows when it was last refreshed. If a refresh fails the previous value is kept rather than blanked, and it is labelled as stale." %}
+                                    </p>
                                 </div>
                             </div>
                         </section>
@@ -1726,7 +1850,17 @@
                                             {% trans "Use Apply selection to all instances of that item when the same component appears in more than one branch and you want one consistent decision." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "Optimize checks current pricing and flips eligible items toward the better margin path, but you should still review the result before buying or scheduling." %}
+                                            <strong>{% trans "What Optimize does" %}</strong>
+                                            {% trans "It maximises the margin shown on this plan: profit divided by the final product's sale value." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            {% trans "How it decides: for every craftable item it compares the cost of buying it outright against the cost of producing it from its own inputs, working bottom-up from raw materials so a component's cost already reflects the cheaper choice made beneath it. It then flips switches while that improves the displayed margin." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            {% trans "Its inputs are the current run count, your ME/TE values, your BPC coverage, and whatever prices are loaded right now. Change any of those and the recommendation can change, so re-run it after loading estimates or editing real prices." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            {% trans "Surplus from over-production is reported separately and is never counted as profit. Review the result before buying or scheduling." %}
                                         </li>
                                         <li class="mb-2">
                                             {% trans "The Materials panel groups current demand after plan choices are applied, so it is the quickest place to sanity-check whether a plan change actually reduced the raw inputs you expect." %}
@@ -1759,10 +1893,13 @@
                                             {% trans "The Configure Build Environment is the material and fee model. System name resolves system ID and index automatically, structure selection sets structure bonuses, and installed manufacturing rigs apply by domain." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "The Industry Fee Model feeds Buy tab fee calculation. Enable it here, then use Calculate Fees in Buy when you want the current manufacturing fee breakdown." %}
+                                            {% trans "The Industry Fee Model feeds Buy tab fee calculation. Enable it here, then use Re-calculate taxes in Buy when you want the current manufacturing fee breakdown." %}
                                         </li>
                                         <li>
                                             {% trans "Edits are saved locally as you work. Material and BPC previews can refresh live, but the full recalculated configuration is applied when you leave the Configure tab." %}
+                                        </li>
+                                        <li class="mt-2">
+                                            {% trans "Blueprint Source limits owned BPC/BPO coverage to one location or container from your cached assets. Applying it reloads the page, is remembered as your personal default, and is never part of a share link. Your last build system and structure are remembered the same way; the structure list is cached corporation data, labelled with its refresh time." %}
                                         </li>
                                     </ul>
                                 </div>
@@ -1777,25 +1914,32 @@
                                 <div class="card-body">
                                     <ul class="mb-0 ps-3">
                                         <li class="mb-2">
-                                            {% trans "Purchase Planner tracks material buy cost, final product sell value, margin, industry fees, shipping, and any surplus value generated by over-coverage." %}
+                                            {% trans "Purchase Planner tracks material buy cost, final product sell value, margin, industry fees, shipping, and surplus quantities from over-coverage. Surplus is informational and is not counted as profit." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "Load Fuzzwork to seed prices, then use Real Price and final sale price fields as your manual overrides. Reset overrides clears the manual layer without removing Fuzzwork data." %}
+                                            {% trans "Load market estimates to fill the fallback column, then use Real Price and final sale price fields as manual overrides. Clearing overrides removes only the manual layer." %}
                                         </li>
                                         <li class="mb-2">
                                             {% trans "Selecting a shipping rate enables automatic freight quotes and a one-way contract breakdown. The Shipping real-price field lets you replace the quote with the actual fee you expect to pay." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "Calculate Fees uses the Configure fee model and shows a per-produced-item manufacturing fee breakdown. If your assumptions change, run it again because fees are not treated as evergreen." %}
+                                            {% trans "Re-calculate taxes uses the Configure fee model and shows a per-produced-item manufacturing fee breakdown. If your assumptions change, run it again because fees are not treated as evergreen." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "Convert to Compressed Ore appears only when mineral rows are present. Apply swaps those minerals for compressed ore lines in the planner; Reset to Minerals restores the original mineral rows." %}
+                                            {% trans "Use compressed ore equivalent appears only when mineral rows are present. Applying it swaps those minerals for compressed ore lines; Reset to Minerals restores the original rows." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "Compute builds the Shopping List from the current planner state. Paste Owned Materials as Item Name [tab] Quantity to subtract stock you already hold." %}
+                                            <strong>{% trans "Before you press Compute" %}</strong>
+                                            {% trans "in this order: load estimates (or enter real prices); choose your material source; re-calculate taxes if your assumptions changed. Compute then builds the Shopping List from that state." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            {% trans "Pick exactly one material source. Manual text input expects Item Name [tab] Quantity. A designated materials bay uses your cached asset data instead, and Compute will refuse until that data has been refreshed and access-checked, so that stale or unreadable assets are never silently treated as zero stock." %}
+                                        </li>
+                                        <li class="mb-2">
+                                            {% trans "Items the hub buyback has in stock get a Buyback button. It shows availability and price, and Create buyback order opens a confirmation where you choose quantity and recipient. The order goes through the normal buyback approval; until it completes, its quantity shows as Reserved (pending), never as owned." %}
                                         </li>
                                         <li>
-                                            {% trans "Shopping List excludes BPC contract rows and stays focused on items you still need to source. Both Purchase Planner and Shopping List support copy/export." %}
+                                            {% trans "Shopping List excludes BPC contract rows and stays focused on items you still need to source. Purchase Planner Export CSV downloads every planner row; Shopping List Copy gives item and quantity to buy in multibuy format, Export downloads the list as CSV, and Copy Leftovers gives the owned items the plan does not use." %}
                                         </li>
                                     </ul>
                                 </div>
@@ -1827,6 +1971,9 @@
                                         <li>
                                             {% trans "If no items are set to Produce, Build stays informational only. Start by switching the relevant components to Produce in Plan." %}
                                         </li>
+                                        <li class="mt-2">
+                                            {% trans "Live job check is opt-in. Pick the characters working on the project; each refresh matches their ESI industry jobs to the saved plan by character, product or blueprint, runs and time window, never by name alone. Jobs show as running, delayed (finishing later than planned), completed, cancelled or not matched. If job data is stale or your token lacks the industry jobs scope, the status says so and the plan is left unchanged. While the page is open, it re-checks automatically at a bounded interval; Track current schedule restarts matching from the schedule shown now." %}
+                                        </li>
                                     </ul>
                                 </div>
                             </div>
@@ -1854,6 +2001,9 @@
                                         <li>
                                             {% trans "Configure cards also support direct copy requests from shared-copy inventory. Missing-run validation will prefill requested runs when a shortfall is detected." %}
                                         </li>
+                                        <li class="mt-2">
+                                            {% trans "Each offer shows when it was listed and when it expires. The snapshot badge says whether the data is current, cached (older than the refresh interval) or from a refresh that failed, with the last ESI refresh time and local cache age. Selected contracts that expire or disappear from the snapshot are removed from your plan, with a notice." %}
+                                        </li>
                                     </ul>
                                 </div>
                             </div>
@@ -1861,16 +2011,16 @@
 
                         <section class="craft-section">
                             <h3 class="craft-section-title" id="howto-optimize">
-                                <i class="fas fa-chart-line text-dark"></i> {% trans "Run Optimization And Saves" %}
+                                <i class="fas fa-chart-line text-dark"></i> {% trans "Optimize And Saves" %}
                             </h3>
                             <div class="card border-0 bg-body-tertiary">
                                 <div class="card-body">
                                     <ul class="mb-0 ps-3">
                                         <li class="mb-2">
-                                            {% trans "Run optimized charts profitability across run counts and can search past the visible samples up to your chosen max runs." %}
+                                            {% trans "Optimize on the Plan tab is the single optimizer: for the run count you entered it chooses Buy or Produce for each component to maximise margin, using the same real prices and estimates as the Buy tab. Industry fees and surplus value are not part of that comparison." %}
                                         </li>
                                         <li class="mb-2">
-                                            {% trans "Leave dashboard-aligned mode on when you want the optimization to honor your current Buy/Prod choices. The copied best-configuration block is there for comparison and sharing, not as a hidden second planner." %}
+                                            {% trans "Run count is your decision. To compare run counts, change Runs and read the updated margin; the former Run optimized tab was retired because it ignored fees, bought BPC costs and owned stock, so its answer could disagree with the Buy totals." %}
                                         </li>
                                         <li class="mb-2">
                                             {% trans "The workspace autosaves local draft state per blueprint and simulation scope, including tabs, BPC selections, slot allocations, and other active UI choices." %}
@@ -1890,6 +2040,56 @@
     </div>
 
     <!-- MODALS -->
+    <!-- Buyback order confirmation (opened from a Shopping List row) -->
+    <div class="modal fade" id="buybackOrderModal" tabindex="-1" aria-labelledby="buybackOrderModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="buybackOrderModalLabel">
+                        <i class="fas fa-store me-2" aria-hidden="true"></i>{% trans "Create buyback order" %}
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{% trans 'Close' %}"></button>
+                </div>
+                <div class="modal-body">
+                    <dl class="row small mb-3">
+                        <dt class="col-5">{% trans "Item" %}</dt>
+                        <dd class="col-7" data-buyback-field="item"></dd>
+                        <dt class="col-5">{% trans "Unit price" %}</dt>
+                        <dd class="col-7"><span data-buyback-field="price"></span> <span class="text-muted">(<span data-buyback-field="source"></span>)</span></dd>
+                        <dt class="col-5">{% trans "Available" %}</dt>
+                        <dd class="col-7" data-buyback-field="available"></dd>
+                        <dt class="col-5">{% trans "Pick-up location" %}</dt>
+                        <dd class="col-7" data-buyback-field="location"></dd>
+                    </dl>
+                    <div class="mb-3">
+                        <label for="buybackOrderQuantity" class="form-label">{% trans "Quantity" %}</label>
+                        <input type="number" min="1" step="1" class="form-control" id="buybackOrderQuantity">
+                        <div class="form-text">{% trans "Defaults to the quantity still to buy, capped at what the hub has unreserved." %}</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="buybackOrderRecipient" class="form-label">{% trans "Contract recipient" %}</label>
+                        <select class="form-select" id="buybackOrderRecipient"></select>
+                    </div>
+                    <div class="d-flex justify-content-between small mb-3">
+                        <span>{% trans "Estimated total" %}</span>
+                        <strong data-buyback-field="total"></strong>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="buybackOrderConfirm">
+                        <label class="form-check-label small" for="buybackOrderConfirm">
+                            {% trans "I confirm the quantity and recipient. The order goes to the buyback team for approval like any other buy order; it counts as reserved here, not owned, until the order workflow completes." %}
+                        </label>
+                    </div>
+                    <div class="alert alert-danger small mt-3 mb-0 d-none" role="alert" data-buyback-field="error"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+                    <button type="button" class="btn btn-success" id="buybackOrderSubmit" disabled>{% trans "Submit order" %}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="modal fade"
          id="convertMineralsModal"
          tabindex="-1"
@@ -2049,7 +2249,7 @@
         window.BLUEPRINT_DATA = window.BLUEPRINT_DATA || {};
     }
 
-    // Optional debug mode for verbose console logging (used by Craft BP + Run optimized).
+    // Optional debug mode for verbose console logging (used by Craft BP).
     // Enable by appending &indy_debug=1 (or &debug=1) to the URL.
     // Note: be tolerant of malformed URLs (e.g. a second '?indy_debug=1' appended).
     try {
@@ -2078,6 +2278,345 @@
     <script src="{% static 'indy_hub/js/craft_bp_active_tab.js' %}"></script>
     <script src="{% static 'indy_hub/js/craft_bp.js' %}"></script>
     <script src="{% static 'indy_hub/js/craft_bp_inline.js' %}"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const copyButton = document.getElementById('copySimulationLinkBtn');
+            const clearButton = document.getElementById('clearSimulationLinkBtn');
+            const status = document.getElementById('simulationStatus');
+            const setStatus = (message, kind) => {
+                if (!status) return;
+                status.className = `badge bg-${kind || 'secondary'}`;
+                status.textContent = message;
+                status.classList.remove('d-none');
+            };
+            const preferenceUrl = '{% url "indy_hub:production_simulation_preferences" %}';
+            const materialSourcesUrl = '{% url "indy_hub:production_material_sources" %}';
+            const materialSourceAssetsUrl = '{% url "indy_hub:production_material_source_assets" %}';
+            const materialSourceRefreshUrl = '{% url "indy_hub:refresh_production_material_sources" %}';
+            const bpcSourcesUrl = '{% url "indy_hub:production_bpc_sources" %}';
+            const query = new URLSearchParams(window.location.search);
+            // Layering: user preferences are defaults; a saved simulation (sim)
+            // restores its own complete snapshot, so it is left untouched; a
+            // shared link (share) never carries private choices, so only the
+            // viewer's private preferences are applied under it.
+            const applyLastBuildLocation = (state) => {
+                // The URL wins when it names a system; otherwise fall back to the
+                // last system/structure this user chose. The structure is only
+                // selected if the server lists it for this user and system, so a
+                // stored ID is never treated as proof of access.
+                if (query.has('build_system') || query.has('build_system_id')) return;
+                const systemIdInput = document.getElementById('buildSystemIdInput');
+                const systemInput = document.getElementById('buildSystemInput');
+                const structureIdInput = document.getElementById('buildStructureIdInput');
+                if (!systemIdInput || !state.lastSystemId) return;
+                if ((systemInput && systemInput.value.trim()) || systemIdInput.value) return;
+                systemIdInput.value = String(state.lastSystemId);
+                if (structureIdInput && state.lastStructureId) structureIdInput.value = String(state.lastStructureId);
+                if (typeof window.syncBuildEnvironmentFromSystem === 'function') window.syncBuildEnvironmentFromSystem({ markChanged: false });
+            };
+            const loadUserPreferences = async () => {
+                if (query.has('sim')) return;
+                const privateOnly = query.has('share');
+                try {
+                    const response = await fetch(preferenceUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    if (!response.ok) return;
+                    const payload = await response.json();
+                    const state = payload?.state || {};
+                    const materialsSourceEl = document.getElementById('materialsSourceMode');
+                    if (materialsSourceEl && ['manual', 'designated_bay'].includes(state.materialsSourceMode)) materialsSourceEl.value = state.materialsSourceMode;
+                    const locationSelectEl = document.getElementById('materialsSourceLocation');
+                    if (locationSelectEl && state.materialsSourceLocationId) locationSelectEl.dataset.preferredLocation = String(state.materialsSourceLocationId);
+                    applyLastBuildLocation(state);
+                    if (privateOnly) return;
+                    const tracking = document.getElementById('scheduleTrackingOptIn');
+                    if (tracking && typeof state.scheduleTrackingOptIn === 'boolean') tracking.checked = state.scheduleTrackingOptIn;
+                    // Fees now default on server-side, so an explicit opt-out
+                    // has to be re-applied here or it would not survive a reload.
+                    const feesEnabled = document.getElementById('industryFeeEnabledInput');
+                    if (feesEnabled && typeof state.taxesEnabled === 'boolean') {
+                        feesEnabled.checked = state.taxesEnabled;
+                        feesEnabled.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    if (state.activeTab && typeof window.showCraftMainTab === 'function') window.showCraftMainTab(state.activeTab);
+                } catch (error) {
+                    // Preferences are optional; the simulator keeps local defaults.
+                }
+            };
+            const tracking = document.getElementById('scheduleTrackingOptIn');
+            const materialsSource = document.getElementById('materialsSourceMode');
+            const materialsSourceStatus = document.getElementById('materialsSourceStatus');
+            const locationWrap = document.getElementById('materialsSourceLocationWrap');
+            const locationSelect = document.getElementById('materialsSourceLocation');
+            const freshness = document.getElementById('materialsSourceFreshness');
+            const refreshMaterialsSourceBtn = document.getElementById('refreshMaterialsSourceBtn');
+            const queueMaterialsSourceRefreshBtn = document.getElementById('queueMaterialsSourceRefreshBtn');
+            const updateLocationVisibility = () => locationWrap?.classList.toggle('d-none', materialsSource?.value !== 'designated_bay');
+            const esc = (value) => (window.escapeHtml ? window.escapeHtml(String(value)) : String(value).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])));
+            // Server-supplied freshness budget. The client used to hardcode 24h,
+            // which is far more permissive than the rest of the project.
+            let materialsSourceMaxAgeMs = 0;
+            let materialsSourceRows = [];
+            const containerSelect = document.getElementById('materialsSourceContainer');
+            const describeSourceFreshness = (source) => {
+                if (!source || !source.last_synced) return '{% trans "No cached asset data for this location yet." %}';
+                const when = new Date(source.last_synced).toLocaleString();
+                const nameNote = source.name_is_placeholder
+                    ? ` {% trans "Location name has not been resolved yet." %}`
+                    : '';
+                return source.is_stale
+                    ? `{% trans "Cached asset data is stale. Last refresh:" %} ${when}.${nameNote}`
+                    : `{% trans "Last cached refresh:" %} ${when}.${nameNote}`;
+            };
+            const renderContainerOptions = (source) => {
+                if (!containerSelect) return;
+                const containers = Array.isArray(source?.containers) ? source.containers : [];
+                containerSelect.innerHTML = [`<option value="">{% trans "Whole location (all containers)" %}</option>`]
+                    .concat(containers.map((c) => `<option value="${esc(c.item_id)}">${esc(c.name)}</option>`))
+                    .join('');
+                containerSelect.parentElement?.classList.toggle('d-none', containers.length === 0);
+            };
+            const syncSelectedSource = () => {
+                const selected = materialsSourceRows.find((source) => String(source.location_id) === String(locationSelect?.value));
+                if (freshness) freshness.textContent = describeSourceFreshness(selected);
+                renderContainerOptions(selected);
+                return selected;
+            };
+            const loadMaterialSources = async () => {
+                if (!locationSelect) return;
+                try {
+                    const response = await fetch(materialSourcesUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    const payload = await response.json();
+                    materialsSourceRows = Array.isArray(payload?.sources) ? payload.sources : [];
+                    materialsSourceMaxAgeMs = Math.max(0, Number(payload?.max_age_seconds) || 0) * 1000;
+                    locationSelect.innerHTML = materialsSourceRows.length
+                        ? materialsSourceRows.map((source) => {
+                            const flags = Array.isArray(source.location_flags) && source.location_flags.length
+                                ? ` · ${source.location_flags.map((flag) => esc(flag)).join(', ')}` : '';
+                            // Show the resolved name, not the raw ID.
+                            return `<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${flags}</option>`;
+                        }).join('')
+                        : `<option value="">{% trans "No cached asset locations available" %}</option>`;
+                    if (locationSelect.dataset.preferredLocation) locationSelect.value = locationSelect.dataset.preferredLocation;
+                    syncSelectedSource();
+                } catch (error) {
+                    locationSelect.innerHTML = `<option value="">{% trans "Unable to load cached locations" %}</option>`;
+                }
+            };
+            updateLocationVisibility();
+            loadMaterialSources().then(() => revalidateDesignatedBay());
+            const updateMaterialsSourceStatus = () => {
+                if (!materialsSourceStatus) return;
+                materialsSourceStatus.textContent = materialsSource?.value === 'designated_bay'
+                    ? '{% trans "Asset refresh and access validation are required before a designated bay can affect quantities." %}'
+                    : '{% trans "Manual quantities are used for this calculation." %}';
+            };
+            materialsSource?.addEventListener('change', updateMaterialsSourceStatus);
+            updateMaterialsSourceStatus();
+            const savePreference = async (state) => {
+                try {
+                    await fetch(preferenceUrl, {
+                        method: 'PUT',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' },
+                        body: JSON.stringify({ state }),
+                    });
+                } catch (error) {
+                    setStatus('{% trans "Preference could not be saved." %}', 'warning');
+                }
+            };
+            tracking?.addEventListener('change', () => savePreference({ scheduleTrackingOptIn: tracking.checked }));
+            const feesEnabledInput = document.getElementById('industryFeeEnabledInput');
+            feesEnabledInput?.addEventListener('change', () => savePreference({ taxesEnabled: feesEnabledInput.checked }));
+            materialsSource?.addEventListener('change', () => { updateLocationVisibility(); savePreference({ materialsSourceMode: materialsSource.value }); });
+            locationSelect?.addEventListener('change', () => { syncSelectedSource(); savePreference({ materialsSourceLocationId: locationSelect.value }); });
+            containerSelect?.addEventListener('change', () => { const el = ownedMaterialsInput(); if (el) el.dataset.sourceLoaded = ''; });
+            // BPC/BPO coverage source. The server already applied the saved (or
+            // URL) choice when rendering; this only offers the options, explains
+            // what is active, and saves + reloads on Apply.
+            const bpcSourceSelect = document.getElementById('bpcSourceSelect');
+            const bpcSourceStatus = document.getElementById('bpcSourceStatus');
+            const applyBpcSourceBtn = document.getElementById('applyBpcSourceBtn');
+            const activeBpcSource = (window.BLUEPRINT_DATA && window.BLUEPRINT_DATA.bpc_source) || { token: 'all' };
+            const renderBpcSourceStatus = () => {
+                if (!bpcSourceStatus) return;
+                if (activeBpcSource.rejected) {
+                    bpcSourceStatus.className = 'small mt-2 text-warning';
+                    bpcSourceStatus.textContent = '{% trans "Your saved blueprint source has no cached blueprints any more, so all eligible locations are counted." %}';
+                    return;
+                }
+                if (!activeBpcSource.token || activeBpcSource.token === 'all') {
+                    bpcSourceStatus.className = 'small mt-2 text-muted';
+                    bpcSourceStatus.textContent = '{% trans "Counting owned blueprints in every eligible location." %}';
+                    return;
+                }
+                const when = activeBpcSource.last_synced ? new Date(activeBpcSource.last_synced).toLocaleString() : '{% trans "unknown" %}';
+                bpcSourceStatus.className = 'small mt-2 text-muted';
+                bpcSourceStatus.textContent = `{% trans "Counting only blueprints in" %} ${activeBpcSource.location_name || activeBpcSource.location_id}${activeBpcSource.container_item_id ? ' {% trans "(one container)" %}' : ''}. {% trans "Cached asset data, last refreshed" %} ${when}.`;
+            };
+            const loadBpcSources = async () => {
+                if (!bpcSourceSelect) return;
+                try {
+                    const response = await fetch(bpcSourcesUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    const payload = response.ok ? await response.json() : {};
+                    const sources = Array.isArray(payload?.sources) ? payload.sources : [];
+                    const options = [`<option value="all">{% trans "All eligible locations" %}</option>`];
+                    sources.forEach((source) => {
+                        const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
+                        options.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
+                        (Array.isArray(source.containers) ? source.containers : []).forEach((container) => {
+                            options.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
+                        });
+                    });
+                    bpcSourceSelect.innerHTML = options.join('');
+                } catch (error) {
+                    // Keep "All eligible locations" only.
+                }
+                const token = String(activeBpcSource.token || 'all');
+                if (Array.from(bpcSourceSelect.options).some((option) => option.value === token)) bpcSourceSelect.value = token;
+                if (applyBpcSourceBtn) applyBpcSourceBtn.disabled = true;
+            };
+            bpcSourceSelect?.addEventListener('change', () => {
+                if (applyBpcSourceBtn) applyBpcSourceBtn.disabled = bpcSourceSelect.value === String(activeBpcSource.token || 'all');
+            });
+            applyBpcSourceBtn?.addEventListener('click', async () => {
+                applyBpcSourceBtn.disabled = true;
+                await savePreference({ bpcSource: bpcSourceSelect.value });
+                const url = new URL(window.location.href);
+                // The saved preference now drives coverage; drop any URL override.
+                url.searchParams.delete('bpc_source');
+                window.location.assign(url.toString());
+            });
+            renderBpcSourceStatus();
+            loadBpcSources();
+
+            // Remember the last build system/structure (private; never shared).
+            // The system ID is filled in asynchronously once the name resolves,
+            // so save a moment after the user's change rather than immediately.
+            let buildLocationSaveTimer = null;
+            const scheduleBuildLocationSave = () => {
+                window.clearTimeout(buildLocationSaveTimer);
+                buildLocationSaveTimer = window.setTimeout(() => {
+                    const systemId = document.getElementById('buildSystemIdInput')?.value || '';
+                    const structureSelectEl = document.getElementById('buildStructureSelect');
+                    const structureId = structureSelectEl && structureSelectEl.value !== 'none'
+                        ? (document.getElementById('buildStructureIdInput')?.value || '')
+                        : '';
+                    if (systemId) savePreference({ lastSystemId: systemId, lastStructureId: structureId });
+                }, 2000);
+            };
+            document.getElementById('buildSystemInput')?.addEventListener('change', scheduleBuildLocationSave);
+            document.getElementById('buildStructureSelect')?.addEventListener('change', scheduleBuildLocationSave);
+
+            function ownedMaterialsInput() {
+                return document.getElementById('ownedMaterialsInput');
+            }
+
+            const loadCachedQuantities = async ({ silent = false } = {}) => {
+                const locationId = locationSelect?.value;
+                const ownedInput = ownedMaterialsInput();
+                if (!locationId || !ownedInput) return false;
+                const typeIds = Array.from(document.querySelectorAll('[data-type-id]'))
+                    .map((element) => Number(element.dataset.typeId) || 0)
+                    .filter((value, index, values) => value > 0 && values.indexOf(value) === index)
+                    .slice(0, 500);
+                const params = new URLSearchParams({ location_id: String(locationId), type_ids: typeIds.join(',') });
+                if (containerSelect?.value) params.set('container_item_id', containerSelect.value);
+                try {
+                    const response = await fetch(`${materialSourceAssetsUrl}?${params.toString()}`, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload?.error || 'asset_refresh_failed');
+                    const usableAssets = (payload.assets || []).filter((asset) => Number(asset.quantity) > 0);
+                    if (!usableAssets.length) {
+                        // Never silently treat an empty or unreadable source as zero stock.
+                        ownedInput.dataset.sourceLoaded = 'unavailable';
+                        if (freshness) freshness.textContent = '{% trans "No matching cached quantities were found. This source will not be treated as zero inventory." %}';
+                        if (!silent) setStatus('{% trans "No usable cached quantities were found. Choose manual input or refresh the asset cache before computing." %}', 'warning');
+                        return false;
+                    }
+                    // Staleness comes from the server's own budget, not a client guess.
+                    if (payload.is_stale) {
+                        ownedInput.dataset.sourceLoaded = 'stale';
+                        if (freshness) freshness.textContent = `{% trans "Cached quantities are stale. Last refresh:" %} ${payload.last_synced ? new Date(payload.last_synced).toLocaleString() : '?'}`;
+                        if (!silent) setStatus('{% trans "Cached quantities are stale. Refresh the asset cache or use manual input before computing." %}', 'warning');
+                        return false;
+                    }
+                    ownedInput.value = usableAssets.map((asset) => `${asset.type_name || asset.type_id}\t${Math.floor(Number(asset.quantity))}`).join('\n');
+                    ownedInput.dataset.sourceLoaded = 'validated';
+                    if (freshness) freshness.textContent = payload.last_synced
+                        ? `{% trans "Last cached refresh:" %} ${new Date(payload.last_synced).toLocaleString()}`
+                        : '{% trans "No matching cached quantities found." %}';
+                    ownedInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    if (!silent) setStatus('{% trans "Cached quantities loaded. Review them before computing." %}', 'success');
+                    return true;
+                } catch (error) {
+                    if (!silent) setStatus('{% trans "Cached quantities could not be loaded." %}', 'warning');
+                    return false;
+                }
+            };
+
+            refreshMaterialsSourceBtn?.addEventListener('click', async () => {
+                refreshMaterialsSourceBtn.disabled = true;
+                try {
+                    await loadCachedQuantities();
+                } finally {
+                    refreshMaterialsSourceBtn.disabled = false;
+                }
+            });
+
+            // A designated bay would otherwise block Compute after every reload,
+            // because sourceLoaded lives only in the DOM. Re-validate quietly when
+            // the cache is fresh; stale or unavailable still needs a user decision.
+            const revalidateDesignatedBay = async () => {
+                if (materialsSource?.value !== 'designated_bay') return;
+                const ownedInput = ownedMaterialsInput();
+                if (!ownedInput || ownedInput.dataset.sourceLoaded === 'validated') return;
+                await loadCachedQuantities({ silent: true });
+            };
+
+            queueMaterialsSourceRefreshBtn?.addEventListener('click', async () => {
+                queueMaterialsSourceRefreshBtn.disabled = true;
+                try {
+                    const response = await fetch(materialSourceRefreshUrl, {
+                        method: 'POST', credentials: 'same-origin',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || '' },
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) throw new Error(payload?.error || 'asset_refresh_queue_failed');
+                    setStatus('{% trans "Asset cache refresh queued. Load cached quantities again when it completes." %}', 'info');
+                } catch (error) {
+                    setStatus('{% trans "Asset cache refresh could not be queued." %}', 'warning');
+                } finally {
+                    queueMaterialsSourceRefreshBtn.disabled = false;
+                }
+            });
+            loadUserPreferences();
+            if (new URLSearchParams(window.location.search).has('share')) {
+                if (window.CraftBP?.restoreShareUrl?.()) {
+                    setStatus('{% trans "Shared scenario loaded with your local data." %}', 'info');
+                } else {
+                    setStatus('{% trans "This share link is invalid or targets a different blueprint." %}', 'warning');
+                }
+            }
+            copyButton?.addEventListener('click', async function () {
+                const result = window.CraftBP?.updateShareUrl ? window.CraftBP.updateShareUrl() : null;
+                if (!result) {
+                    setStatus('{% trans "This scenario is too large to fit in a share link, even without prices and ME/TE. Save it as a simulation instead." %}', 'warning');
+                    return;
+                }
+                try { await navigator.clipboard.writeText(window.location.href); } catch (error) { /* URL remains visible */ }
+                if (result.dropped && result.dropped.length) {
+                    // Say what had to be left out rather than silently refusing.
+                    setStatus(`{% trans "Share link copied and updated, without:" %} ${result.dropped.join(', ')}`, 'warning');
+                } else {
+                    setStatus('{% trans "Share link copied and updated." %}', 'success');
+                }
+            });
+            clearButton?.addEventListener('click', function () {
+                window.CraftBP?.clearShareUrl?.();
+                setStatus('{% trans "Share state removed." %}', 'secondary');
+            });
+        });
+    </script>
 
     <script>
 document.addEventListener('DOMContentLoaded', function() {
@@ -2503,6 +3042,14 @@ document.addEventListener('DOMContentLoaded', function() {
     const exportOwnedRemainderBtn = document.getElementById('exportOwnedRemainder');
     const copyShoppingClipboardBtn = document.getElementById('copyShoppingClipboard');
 
+    // Cell text without decorations marked data-export-ignore (for example the
+    // buyback and pending-order badges), so exports carry only the data.
+    function exportCellText(cell) {
+        const clone = cell.cloneNode(true);
+        clone.querySelectorAll('[data-export-ignore]').forEach((el) => el.remove());
+        return clone.textContent.trim();
+    }
+
     function exportTableToCSV(tableId, filename) {
         const table = document.querySelector(tableId);
         if (!table) return;
@@ -2511,7 +3058,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const csv = rows.map(row => {
             const cells = Array.from(row.querySelectorAll('th, td'));
             return cells.map(cell => {
-                const text = cell.textContent.trim().replace(/"/g, '""');
+                const text = exportCellText(cell).replace(/"/g, '""');
                 return `"${text}"`;
             }).join(',');
         }).join('\n');
@@ -2592,8 +3139,13 @@ document.addEventListener('DOMContentLoaded', function() {
             const cells = row.querySelectorAll('td');
             if (cells.length < 2) return;
 
-            const name = cells[0].textContent.trim();
-            const rawQty = cells[1].getAttribute('data-qty') || cells[1].textContent.trim();
+            const name = exportCellText(cells[0]);
+            // Copy the quantity still to be bought, never the gross "Needed" figure.
+            // Select by attribute so inserting columns cannot silently change the meaning.
+            const qtyCell = row.querySelector('[data-qty-buy]') || row.querySelector('[data-qty]');
+            const rawQty = qtyCell
+                ? (qtyCell.getAttribute('data-qty-buy') || qtyCell.getAttribute('data-qty') || qtyCell.textContent.trim())
+                : '';
             const parsedQty = parseClipboardQuantity(rawQty);
             const qty = parsedQty === null ? '' : formatClipboardQuantity(parsedQty);
 
@@ -2723,9 +3275,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateQuickStats() {
         const bpCount = document.querySelectorAll('.craft-bp-card, .craft-config-item').length;
         document.getElementById('totalBlueprintsCount').textContent = bpCount || '-';
-
-        const matCount = document.querySelectorAll('.craft-item-row').length;
-        document.getElementById('totalMaterialsCount').textContent = matCount || '-';
+        // totalMaterialsCount is written by updateMaterialsTabFromState() from
+        // canonical state; scraping the DOM here read nodes that had already
+        // been replaced, so it always showed '-'.
     }
 
     updateQuickStats();
@@ -2867,7 +3419,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function showTab(tabBtn) {
         if (!tabBtn) return;
 
-        // Prefer Bootstrap's Tab API so that shown.bs.tab events fire (needed by other JS like Run optimized)
+        // Prefer Bootstrap's Tab API so that shown.bs.tab events fire (other tab JS listens for them)
         if (window.bootstrap && window.bootstrap.Tab && typeof window.bootstrap.Tab.getOrCreateInstance === 'function') {
             window.bootstrap.Tab.getOrCreateInstance(tabBtn).show();
             return;

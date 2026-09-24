@@ -280,11 +280,36 @@
     });
 
     materialsMap.forEach((_, typeId) => {
-        pricesMap.set(typeId, { fuzzwork: 0, real: 0, sale: 0 });
+        pricesMap.set(typeId, { fuzzwork: 0, real: 0, sale: 0, estimate: 0 });
     });
 
     if (payload.product_type_id && !pricesMap.has(payload.product_type_id)) {
-        pricesMap.set(payload.product_type_id, { fuzzwork: 0, real: 0, sale: 0 });
+        pricesMap.set(payload.product_type_id, { fuzzwork: 0, real: 0, sale: 0, estimate: 0 });
+    }
+
+    // Derived estimates (capital-ship prices) for items with no usable market
+    // price. Provenance is kept alongside the value so the Buy tab can label
+    // the source and age instead of presenting it as a market figure.
+    const priceEstimateMeta = new Map();
+    Object.entries(payload.price_estimates || {}).forEach(([rawTypeId, meta]) => {
+        const typeId = Number(rawTypeId);
+        const price = Number(meta && meta.price);
+        if (!typeId || !Number.isFinite(price) || price <= 0) {
+            return;
+        }
+        if (!pricesMap.has(typeId)) {
+            pricesMap.set(typeId, { fuzzwork: 0, real: 0, sale: 0, estimate: 0 });
+        }
+        pricesMap.get(typeId).estimate = price;
+        priceEstimateMeta.set(typeId, {
+            source: String(meta.source || 'estimate'),
+            updatedAt: meta.updated_at || null,
+            contractCount: Math.max(0, Math.floor(Number(meta.contract_count) || 0)),
+        });
+    });
+
+    function getPriceEstimateMeta(typeId) {
+        return priceEstimateMeta.get(Number(typeId)) || null;
     }
 
     function ensureSimulationGlobals() {
@@ -719,14 +744,21 @@
         const record = pricesMap.get(numericId);
 
         // Optional preference:
-        // - 'buy': prioritize real > fuzzwork (never sale)
-        // - 'sale': prioritize sale > fuzzwork > real
+        // - 'buy': prioritize real > fuzzwork > estimate (never sale)
+        // - 'sale': prioritize sale > fuzzwork > estimate > real
+        //
+        // `estimate` is a derived fallback (e.g. the capital-ship price
+        // estimate) for items with no usable market price. It sits strictly
+        // below fuzzwork and never displaces a user-entered real price.
         if (preference === 'buy') {
             if (record.real > 0) {
                 return { value: record.real, source: 'real' };
             }
             if (record.fuzzwork > 0) {
                 return { value: record.fuzzwork, source: 'fuzzwork' };
+            }
+            if (record.estimate > 0) {
+                return { value: record.estimate, source: 'estimate' };
             }
             return { value: 0, source: 'default' };
         }
@@ -736,6 +768,9 @@
             }
             if (record.fuzzwork > 0) {
                 return { value: record.fuzzwork, source: 'fuzzwork' };
+            }
+            if (record.estimate > 0) {
+                return { value: record.estimate, source: 'estimate' };
             }
             if (record.real > 0) {
                 return { value: record.real, source: 'real' };
@@ -749,6 +784,9 @@
         if (record.fuzzwork > 0) {
             return { value: record.fuzzwork, source: 'fuzzwork' };
         }
+        if (record.estimate > 0) {
+            return { value: record.estimate, source: 'estimate' };
+        }
         if (record.sale > 0) {
             return { value: record.sale, source: 'sale' };
         }
@@ -761,7 +799,7 @@
             return;
         }
         if (!pricesMap.has(numericId)) {
-            pricesMap.set(numericId, { fuzzwork: 0, real: 0, sale: 0 });
+            pricesMap.set(numericId, { fuzzwork: 0, real: 0, sale: 0, estimate: 0 });
         }
         const record = pricesMap.get(numericId);
         record[priceType] = Number(value) || 0;
@@ -802,6 +840,7 @@
         getOwnedAllocation,
     getProductionCycles: buildProductionCycles,
         getPrice,
+        getPriceEstimateMeta,
         setPrice,
         setConfig,
         getConfig,
@@ -822,6 +861,7 @@
             tree: treeMap,
             switches: switchesMap,
             prices: pricesMap,
+            priceEstimates: priceEstimateMeta,
             tabs: tabsState,
             config: configState,
             meta: metaState

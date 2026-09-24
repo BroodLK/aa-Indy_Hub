@@ -77,6 +77,10 @@ from ..services.asset_cache import (
     resolve_structure_names,
 )
 from ..services.esi_client import ESIClientError, ESITokenError, shared_client
+from ..services.material_exchange_buy_orders import (
+    create_buy_order,
+    get_recipient_characters,
+)
 from ..tasks.material_exchange import (
     ESI_DOWN_COOLDOWN_SECONDS,
     ME_STOCK_SYNC_CACHE_VERSION,
@@ -7092,16 +7096,7 @@ def material_exchange_buy(request, tokens):
     buy_name_map, buy_locations_label = _get_buy_location_display_context(config)
     buy_submission_snapshot_token = ""
 
-    from allianceauth.authentication.models import CharacterOwnership
-
-    recipient_characters = []
-    for ownership in CharacterOwnership.objects.select_related("character").filter(user=request.user):
-        character = ownership.character
-        if character and getattr(character, "character_id", None):
-            recipient_characters.append(
-                {"id": int(character.character_id), "name": str(character.character_name or character.character_id)}
-            )
-    recipient_characters.sort(key=lambda row: row["name"].lower())
+    recipient_characters = get_recipient_characters(request.user)
 
     corp_assets_scope_missing = False
     try:
@@ -7121,201 +7116,28 @@ def material_exchange_buy(request, tokens):
         # Parse submitted quantities from the form. Do not iterate over `stock_items` here:
         # doing so can silently drop items if stock changed (quantity=0) or an item is no
         # longer visible due to filters.
-        submitted_entries = _parse_submitted_buy_item_quantities(request.POST)
-        if not submitted_entries:
-            messages.error(
-                request,
-                _("Please enter a quantity greater than 0 for at least one item."),
-            )
+        result = create_buy_order(
+            user=request.user,
+            config=config,
+            submitted_entries=_parse_submitted_buy_item_quantities(request.POST),
+            recipient_character_id=request.POST.get("recipient_character_id"),
+            # Order reference is generated client-side in JavaScript.
+            order_reference=request.POST.get("order_reference", ""),
+            snapshot_token=request.POST.get("buy_submission_snapshot_token", ""),
+            buy_name_map=buy_name_map,
+            recipient_characters=recipient_characters,
+        )
+        if not result.ok:
+            for error in result.errors:
+                messages.error(request, error.message)
             return redirect("indy_hub:material_exchange_buy")
-
-        submitted_type_ids = {
-            int(submitted_entry.get("type_id") or 0)
-            for submitted_entry in submitted_entries
-            if int(submitted_entry.get("type_id") or 0) > 0
-        }
-
-        with transaction.atomic():
-            recipient_id_raw = str(request.POST.get("recipient_character_id") or "").strip()
-            recipient = next((row for row in recipient_characters if str(row["id"]) == recipient_id_raw), None)
-            if not recipient:
-                messages.error(request, _("Please select a validated character to receive the contract."))
-                return redirect("indy_hub:material_exchange_buy")
-            locked_stock_items = list(
-                config.stock_items.select_for_update().filter(type_id__in=submitted_type_ids, quantity__gt=0)
-            )
-            locked_reserved_quantities = (
-                _get_reserved_buy_quantities(
-                    config=config,
-                    type_ids=submitted_type_ids,
-                    stock_synced_at=config.last_stock_sync,
-                )
-                if submitted_type_ids
-                else {}
-            )
-            current_available_by_type: dict[int, int] = {}
-            current_reserved_by_type: dict[int, int] = {}
-            for stock_item in locked_stock_items:
-                type_id = int(stock_item.type_id)
-                reserved_qty = int(locked_reserved_quantities.get(type_id, 0) or 0)
-                current_reserved_by_type[type_id] = reserved_qty
-                # A type can have multiple stock rows (for example, one per
-                # source structure).  Reservations are type-wide, so sum all
-                # stacks first and subtract the reservation once.
-                current_available_by_type[type_id] = current_available_by_type.get(type_id, 0) + int(
-                    stock_item.quantity
-                )
-
-            for type_id, reserved_qty in current_reserved_by_type.items():
-                current_available_by_type[type_id] = max(
-                    current_available_by_type.get(type_id, 0) - reserved_qty,
-                    0,
-                )
-
-            buy_stock_snapshot = _get_buy_stock_snapshot_for_submission(
-                config=config,
-                submitted_type_ids=submitted_type_ids,
-                reserved_quantities=locked_reserved_quantities,
-                submission_snapshot_token=request.POST.get("buy_submission_snapshot_token", ""),
-                user_id=int(request.user.id),
-            )
-            stock_row_by_index = buy_stock_snapshot["stock_row_by_index"]
-
-            items_to_create = []
-            errors = []
-            total_cost = Decimal("0")
-            selected_source_structure_groups: list[list[int]] = []
-            row_refresh_error = _(
-                "One or more selected items no longer match the current stock view. Refresh the page and try again."
-            )
-            for submitted_entry in submitted_entries:
-                try:
-                    type_id = int(submitted_entry.get("type_id") or 0)
-                    qty = int(submitted_entry.get("quantity") or 0)
-                    row_index = int(submitted_entry.get("row_index") or -1)
-                except (TypeError, ValueError):
-                    continue
-                if type_id <= 0 or qty <= 0 or row_index < 0:
-                    continue
-
-                row_data = stock_row_by_index.get(int(row_index))
-                if not row_data:
-                    errors.append(row_refresh_error)
-                    continue
-
-                row_type_id = int(row_data.get("type_id") or 0)
-                requested_variant = str(submitted_entry.get("blueprint_variant") or "").strip().lower()
-                blueprint_variant = requested_variant if requested_variant in {"bpc", "bpo"} else ""
-                row_variant = str(row_data.get("blueprint_variant") or "").strip().lower()
-                row_in_container = bool(str(row_data.get("container_path") or "").strip())
-                requested_in_container = bool(submitted_entry.get("in_container"))
-                if row_type_id != int(type_id):
-                    errors.append(row_refresh_error)
-                    continue
-                if (blueprint_variant or row_variant) and blueprint_variant != row_variant:
-                    errors.append(row_refresh_error)
-                    continue
-                if requested_in_container != row_in_container:
-                    errors.append(row_refresh_error)
-                    continue
-
-                display_type_name = str(row_data.get("display_type_name") or get_type_name(type_id))
-                snapshot_available_qty = int(row_data.get("available_quantity") or 0)
-                current_available_qty = int(current_available_by_type.get(type_id, 0) or 0)
-                available_qty = min(snapshot_available_qty, current_available_qty)
-                reserved_qty = int(
-                    current_reserved_by_type.get(type_id, row_data.get("reserved_quantity") or 0) or 0
-                )
-                if qty > available_qty:
-                    errors.append(
-                        _(
-                            f"Insufficient unlocked stock for {display_type_name}. "
-                            f"Available now: {available_qty:,}, reserved in open orders: {reserved_qty:,}, requested: {qty:,}"
-                        )
-                    )
-                    continue
-
-                if row_variant == "bpc":
-                    unit_price = Decimal("0")
-                else:
-                    unit_price = Decimal(row_data.get("display_sell_price_to_member") or 0)
-                    if unit_price <= 0:
-                        errors.append(_(f"{display_type_name} has no valid market price."))
-                        continue
-                total_price = unit_price * qty
-                total_cost += total_price
-                row_source_structure_ids = _normalize_source_structure_ids(row_data.get("source_structure_ids") or [])
-                selected_source_structure_groups.append(row_source_structure_ids)
-
-                items_to_create.append(
-                    {
-                        "type_id": type_id,
-                        "type_name": display_type_name,
-                        "quantity": qty,
-                        "unit_price": unit_price,
-                        "total_price": total_price,
-                        "stock_available_at_creation": int(available_qty),
-                    }
-                )
-
-            if errors:
-                for err in errors:
-                    messages.error(request, err)
-                # Prevent creating a partial order with an unexpected (lower) total.
-                return redirect("indy_hub:material_exchange_buy")
-
-            if not items_to_create and not errors:
-                messages.error(
-                    request,
-                    _("Please enter a quantity greater than 0 for at least one item."),
-                )
-                return redirect("indy_hub:material_exchange_buy")
-
-            if len(selected_source_structure_groups) > 1 and not _selected_buy_source_groups_share_source_location(
-                selected_source_structure_groups
-            ):
-                messages.error(
-                    request,
-                    _(
-                        "Selected items must come from one buy location. Deselect items from other stations and try again."
-                    ),
-                )
-                return redirect("indy_hub:material_exchange_buy")
-
-            selected_buy_location_id, selected_buy_location_name = _resolve_selected_buy_source_location_from_groups(
-                selected_source_structure_groups,
-                buy_name_map=buy_name_map,
-            )
-
-            # Get order reference from client (generated in JavaScript)
-            client_order_ref = request.POST.get("order_reference", "").strip()
-
-            # Create ONE order with ALL items
-            order = MaterialExchangeBuyOrder.objects.create(
-                config=config,
-                buyer=request.user,
-                status=MaterialExchangeBuyOrder.Status.DRAFT,
-                order_reference=client_order_ref if client_order_ref else None,
-                source_location_id=selected_buy_location_id,
-                source_location_name=selected_buy_location_name,
-                recipient_character_id=recipient["id"],
-                recipient_character_name=recipient["name"],
-            )
-
-            # Create items for this order
-            for item_data in items_to_create:
-                MaterialExchangeBuyOrderItem.objects.create(order=order, **item_data)
-
-            rounded_total_cost = total_cost.quantize(Decimal("1"), rounding=ROUND_CEILING)
-            order.rounded_total_price = rounded_total_cost
-            order.save(update_fields=["rounded_total_price", "updated_at"])
 
         # Admin notifications are handled by the post_save signal + async task
 
         messages.success(
             request,
             _(
-                f"Created buy order #{order.id} with {len(items_to_create)} item(s). Total cost: {rounded_total_cost:,.0f} ISK. Awaiting admin approval."
+                f"Created buy order #{result.order.id} with {result.item_count} item(s). Total cost: {result.rounded_total_cost:,.0f} ISK. Awaiting admin approval."
             ),
         )
         return redirect("indy_hub:material_exchange_index")

@@ -60,3 +60,4 @@ runtests.py
 NOTES.local.md
 .github/copilot-instructions.md
 /indy_hub/static/indy_hub/css/figl-theme-overrides.css
+/scripts/scan_eve_chatlogs.py

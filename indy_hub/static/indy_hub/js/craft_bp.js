@@ -31,6 +31,15 @@ const CRAFT_BPC_CONTRACT_STATE = {
     coverageSignature: '',
     lastFetchAtMs: 0,
     cacheTtlSeconds: 1800,
+    cachedAt: '',
+    expiresAt: '',
+    lastSynced: '',
+    isCached: false,
+    refreshFailed: false,
+    lastFailureAt: '',
+    refreshQueued: false,
+    snapshotLoaded: false,
+    droppedSelections: [],
     cacheTimerHandle: null,
 };
 const CRAFT_BPC_CONTRACT_REQUEST_TIMEOUT_MS = 180000;
@@ -69,13 +78,6 @@ const CRAFT_SELECTION_SCOPE = {
     blueprintTypeId: 0,
     simulationId: null,
     draftId: '',
-};
-const CRAFT_RUN_OPTIMIZED_STATE = {
-    curveResults: [],
-    bestPoint: null,
-    bestLabel: '',
-    statusText: '',
-    statusClass: '',
 };
 
 const __ = (typeof window !== 'undefined' && typeof window.gettext === 'function') ? window.gettext.bind(window) : (msg => msg);
@@ -637,9 +639,16 @@ function getKnownOfferForBlueprintContract(blueprintTypeId, contractId) {
         };
     }
 
+    if (CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(numericBlueprintTypeId)
+        && !CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(numericBlueprintTypeId)) {
+        return null;
+    }
     const selectedOfferMap = CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.get(numericBlueprintTypeId);
     if (selectedOfferMap instanceof Map && selectedOfferMap.has(numericContractId)) {
         const selectedOffer = selectedOfferMap.get(numericContractId);
+        if (isBpcOfferExpired(selectedOffer)) {
+            return null;
+        }
         return {
             ...selectedOffer,
             blueprint_type_id: numericBlueprintTypeId,
@@ -1474,6 +1483,7 @@ function collectBuildScheduleStateSnapshot() {
     return {
         schedule: cloneCraftUiJsonValue(buildScheduleData, null),
         zoomLevel: Number(ganttZoomLevel) || 1,
+        tracking: collectScheduleTrackingStateSnapshot(),
     };
 }
 
@@ -1483,6 +1493,7 @@ function applyBuildScheduleStateSnapshot(snapshot) {
     }
     ganttZoomLevel = Math.max(0.3, Math.min(Number(snapshot.zoomLevel) || 1, 3));
     buildScheduleData = cloneCraftUiJsonValue(snapshot.schedule, null);
+    applyScheduleTrackingStateSnapshot(snapshot.tracking);
     if (buildScheduleData && typeof displayBuildSchedule === 'function') {
         displayBuildSchedule(buildScheduleData);
     }
@@ -1555,68 +1566,6 @@ function applyMineralConversionStateSnapshot(snapshot) {
     }
 }
 
-function collectRunOptimizedStateSnapshot() {
-    return {
-        curveResults: cloneCraftUiJsonValue(CRAFT_RUN_OPTIMIZED_STATE.curveResults, []),
-        bestPoint: cloneCraftUiJsonValue(CRAFT_RUN_OPTIMIZED_STATE.bestPoint, null),
-        bestLabel: String(CRAFT_RUN_OPTIMIZED_STATE.bestLabel || ''),
-        statusText: String(CRAFT_RUN_OPTIMIZED_STATE.statusText || ''),
-        statusClass: String(CRAFT_RUN_OPTIMIZED_STATE.statusClass || ''),
-        detailsOpen: Boolean(document.getElementById('runOptimizedBestConfigDetails')?.open),
-    };
-}
-
-function applyRunOptimizedStateSnapshot(snapshot) {
-    if (!snapshot || typeof snapshot !== 'object') {
-        return;
-    }
-    CRAFT_RUN_OPTIMIZED_STATE.curveResults = Array.isArray(snapshot.curveResults)
-        ? cloneCraftUiJsonValue(snapshot.curveResults, [])
-        : [];
-    CRAFT_RUN_OPTIMIZED_STATE.bestPoint = snapshot.bestPoint ? cloneCraftUiJsonValue(snapshot.bestPoint, null) : null;
-    CRAFT_RUN_OPTIMIZED_STATE.bestLabel = String(snapshot.bestLabel || '');
-    CRAFT_RUN_OPTIMIZED_STATE.statusText = String(snapshot.statusText || '');
-    CRAFT_RUN_OPTIMIZED_STATE.statusClass = String(snapshot.statusClass || '');
-
-    const canvas = document.getElementById('runOptimizedChart');
-    if (canvas && CRAFT_RUN_OPTIMIZED_STATE.curveResults.length > 0 && typeof renderRunOptimizedChart === 'function') {
-        renderRunOptimizedChart(canvas, CRAFT_RUN_OPTIMIZED_STATE.curveResults);
-    }
-
-    const pointsListEl = document.getElementById('runOptimizedPointsList');
-    if (pointsListEl) {
-        const items = CRAFT_RUN_OPTIMIZED_STATE.curveResults
-            .slice()
-            .sort((a, b) => (Number(a?.runs) || 0) - (Number(b?.runs) || 0))
-            .map((row) => {
-                const runs = Number(row?.runs) || 0;
-                const margin = Number.isFinite(Number(row?.margin)) ? Number(row.margin) : 0;
-                return `<span class="badge text-bg-light border me-1 mb-1">${runs}: ${margin.toFixed(1)}%</span>`;
-            })
-            .join('');
-        pointsListEl.innerHTML = items || '';
-    }
-
-    renderBestRunSummary(
-        document.getElementById('runOptimizedBestResult'),
-        CRAFT_RUN_OPTIMIZED_STATE.bestPoint,
-        CRAFT_RUN_OPTIMIZED_STATE.bestLabel || __('Best within chart')
-    );
-    if (typeof renderBestRunConfigDetails === 'function') {
-        renderBestRunConfigDetails(CRAFT_RUN_OPTIMIZED_STATE.bestPoint);
-        const detailsEl = document.getElementById('runOptimizedBestConfigDetails');
-        if (detailsEl) {
-            detailsEl.open = Boolean(snapshot.detailsOpen);
-        }
-    }
-
-    const statusEl = document.getElementById('run-optimized-status');
-    if (statusEl && CRAFT_RUN_OPTIMIZED_STATE.statusText) {
-        statusEl.className = CRAFT_RUN_OPTIMIZED_STATE.statusClass || 'alert alert-info mb-3';
-        statusEl.textContent = CRAFT_RUN_OPTIMIZED_STATE.statusText;
-    }
-}
-
 function collectIndustryFeeStateSnapshot() {
     return {
         signature: String(CRAFT_INDUSTRY_FEE_STATE.signature || ''),
@@ -1656,6 +1605,9 @@ function applyIndustryFeeStateSnapshot(snapshot) {
 
 function collectFullUiState() {
     const ownedMaterialsInput = document.getElementById('ownedMaterialsInput');
+    const trackingOptIn = document.getElementById('scheduleTrackingOptIn');
+    const materialsSourceMode = document.getElementById('materialsSourceMode');
+    const materialsSourceLocation = document.getElementById('materialsSourceLocation');
     return {
         version: CRAFT_FULL_UI_STATE_VERSION,
         blueprintTab: getActiveBlueprintTabId(),
@@ -1667,17 +1619,307 @@ function collectFullUiState() {
         manualFinancial: collectManualFinancialStateSnapshot(),
         customPrices: collectCustomPriceStateSnapshot(),
         ownedMaterialsText: ownedMaterialsInput ? String(ownedMaterialsInput.value || '') : '',
+        materialsSourceMode: materialsSourceMode ? String(materialsSourceMode.value || 'manual') : 'manual',
+        materialsSourceLocationId: materialsSourceLocation ? String(materialsSourceLocation.value || '') : '',
         computedNeededRows: collectComputedNeededRowsSnapshot(),
         buildPlannerSlots: serializeBuildPlannerSlotAssignments(),
         buildSchedule: collectBuildScheduleStateSnapshot(),
+        scheduleTracking: { optIn: Boolean(trackingOptIn?.checked) },
+        // Private to this user and simulation; never part of share state.
+        buybackOrders: collectBuybackOrdersSnapshot(),
         importFees: collectImportFeesStateSnapshot(),
         industryFees: collectIndustryFeeStateSnapshot(),
         mineralConversion: collectMineralConversionStateSnapshot(),
-        runOptimized: collectRunOptimizedStateSnapshot(),
         treeDetailsOpen: collectTreeDetailsState(),
         configureAccordionOpenIds: collectConfigureAccordionState(),
         savedAt: new Date().toISOString(),
     };
+}
+
+const CRAFT_SHARE_SCHEMA_VERSION = 1;
+const CRAFT_SHARE_MAX_BLUEPRINT_CONFIGS = 200;
+const CRAFT_SHARE_MAX_RUNS = 1000000;
+// Tab names a link may open; mirrors CRAFT_MAIN_TABS on the server.
+const CRAFT_SHARE_TABS = ['plan', 'buy', 'build', 'configure', 'buy_bpcs', 'how_to'];
+// Scenario assumptions that are safe to share: they describe the plan, not the
+// sharer. Deliberately absent: the fee system ID, structure and rigs (the
+// sharer's private build location) and slot assignments (per character).
+const CRAFT_SHARE_INPUT_ALLOWLIST = {
+    industryFeeEnabledInput: 'checkbox',
+    industryFeeFacilityTaxInput: 'number',
+    industryFeeSecurityInput: 'text',
+    industryFeeStructureTypeIdInput: 'text',
+    industryFeeSystemCostBonusInput: 'number',
+    buildScheduleMode: 'text',
+    buildScheduleTargetDays: 'number',
+};
+
+function sanitizeShareableInputs(entries) {
+    const safe = [];
+    (Array.isArray(entries) ? entries : []).forEach((entry) => {
+        const id = String(entry?.id || '');
+        const kind = Object.prototype.hasOwnProperty.call(CRAFT_SHARE_INPUT_ALLOWLIST, id)
+            ? CRAFT_SHARE_INPUT_ALLOWLIST[id]
+            : null;
+        if (!kind || safe.some((existing) => existing.id === id)) {
+            return;
+        }
+        if (kind === 'checkbox') {
+            safe.push({ id, type: 'checkbox', checked: Boolean(entry.checked) });
+            return;
+        }
+        const raw = entry?.value == null ? '' : String(entry.value).slice(0, 32);
+        if (kind === 'number') {
+            const numeric = Number(raw);
+            if (raw !== '' && (!Number.isFinite(numeric) || numeric < 0 || numeric > 1000000)) {
+                return;
+            }
+        } else if (!/^[A-Za-z0-9_.-]*$/.test(raw)) {
+            return;
+        }
+        safe.push({ id, type: kind, value: raw });
+    });
+    return safe;
+}
+
+function sanitizeSharedPrices(prices) {
+    return (Array.isArray(prices) ? prices : [])
+        .map((price) => ({
+            item_type_id: Math.floor(Number(price?.item_type_id ?? price?.itemTypeId) || 0),
+            unit_price: Number(price?.unit_price ?? price?.unitPrice),
+            is_sale_price: Boolean(price?.is_sale_price ?? price?.isSalePrice),
+        }))
+        .filter((price) => price.item_type_id > 0 && Number.isFinite(price.unit_price) && price.unit_price >= 0)
+        .slice(0, 500);
+}
+
+/**
+ * Build the shareable ME/TE payload from an explicit allowlist.
+ *
+ * Only mainME, mainTE and the per-blueprint ME/TE map may travel in a URL.
+ * getCurrentMETEConfig() also returns buildEnvironment (selected structure ID
+ * and rig keys) and industryFee, which are private to the viewer and must never
+ * be serialized. The per-blueprint "use owned BPC/BPO" flag is excluded too:
+ * it reveals what the sharer owns, and a viewer's coverage must come from the
+ * viewer's own blueprints. Enumerate what is safe rather than pattern-matching.
+ */
+function collectShareableMeTe(configure) {
+    const source = configure && typeof configure === 'object' ? configure : {};
+    const clampMe = (value) => Math.max(0, Math.min(10, Math.floor(Number(value) || 0)));
+    const clampTe = (value) => Math.max(0, Math.min(20, Math.floor(Number(value) || 0)));
+
+    const blueprintConfigs = {};
+    const rawConfigs = source.blueprintConfigs && typeof source.blueprintConfigs === 'object'
+        ? source.blueprintConfigs
+        : {};
+    Object.keys(rawConfigs).slice(0, CRAFT_SHARE_MAX_BLUEPRINT_CONFIGS).forEach((rawTypeId) => {
+        const typeId = Math.floor(Number(rawTypeId) || 0);
+        if (typeId <= 0) {
+            return;
+        }
+        const entry = rawConfigs[rawTypeId];
+        if (!entry || typeof entry !== 'object') {
+            return;
+        }
+        const safeEntry = {};
+        if (entry.me !== undefined) safeEntry.me = clampMe(entry.me);
+        if (entry.te !== undefined) safeEntry.te = clampTe(entry.te);
+        if (Object.keys(safeEntry).length) {
+            blueprintConfigs[String(typeId)] = safeEntry;
+        }
+    });
+
+    return {
+        mainME: clampMe(source.mainME),
+        mainTE: clampTe(source.mainTE),
+        blueprintConfigs,
+    };
+}
+
+/** Re-validate a decoded me_te payload before it is applied to the DOM. */
+function sanitizeSharedMeTe(value) {
+    if (!value || typeof value !== 'object') {
+        return null;
+    }
+    return collectShareableMeTe(value);
+}
+
+function collectCraftShareState() {
+    const full = collectFullUiState();
+    const staticInputs = full.staticInputs && typeof full.staticInputs === 'object' ? full.staticInputs : {};
+    const configure = full.configure && typeof full.configure === 'object' ? full.configure : {};
+    const routeId = Math.floor(Number(full.importFees?.selectedRoutePricingId) || 0);
+    return {
+        v: CRAFT_SHARE_SCHEMA_VERSION,
+        blueprint_type_id: Math.floor(Number(getCurrentBlueprintTypeId()) || 0),
+        runs: Math.max(1, Math.min(CRAFT_SHARE_MAX_RUNS, Math.floor(Number(staticInputs.runs || document.getElementById('runsInput')?.value) || 1))),
+        tab: CRAFT_SHARE_TABS.includes(full.craftMainTab) ? full.craftMainTab : 'plan',
+        buy: Array.isArray(full.buyTypeIds) ? full.buyTypeIds.map((id) => Math.floor(Number(id))).filter((id) => id > 0) : [],
+        me_te: collectShareableMeTe(configure),
+        prices: sanitizeSharedPrices(full.customPrices),
+        inputs: sanitizeShareableInputs(full.staticInputs),
+        shipping: routeId > 0 ? { route: routeId } : null,
+        display: {
+            tree_open: Array.isArray(full.treeDetailsOpen) ? full.treeDetailsOpen.slice(0, 200) : [],
+            configure_open: Array.isArray(full.configureAccordionOpenIds) ? full.configureAccordionOpenIds.slice(0, 100) : [],
+        },
+    };
+}
+
+function encodeCraftShareState(state) {
+    const json = JSON.stringify(state);
+    const bytes = new TextEncoder().encode(json);
+    let binary = '';
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function decodeCraftShareState(encoded) {
+    if (!encoded || String(encoded).length > 12000) return null;
+    try {
+        const padded = String(encoded).replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - String(encoded).length % 4) % 4);
+        const bytes = Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+        const state = JSON.parse(new TextDecoder().decode(bytes));
+        if (!state || state.v !== CRAFT_SHARE_SCHEMA_VERSION || !Number.isInteger(state.blueprint_type_id) || state.blueprint_type_id < 1) return null;
+        // Decode is at least as strict as encode: a hand-edited or tampered
+        // link is normalized, never trusted.
+        state.runs = Math.max(1, Math.min(CRAFT_SHARE_MAX_RUNS, Math.floor(Number(state.runs) || 1)));
+        state.tab = CRAFT_SHARE_TABS.includes(state.tab) ? state.tab : 'plan';
+        state.buy = Array.isArray(state.buy) ? state.buy.filter((id) => Number.isInteger(id) && id > 0).slice(0, 5000) : [];
+        state.prices = sanitizeSharedPrices(state.prices);
+        state.inputs = sanitizeShareableInputs(state.inputs);
+        const routeId = Math.floor(Number(state.shipping?.route) || 0);
+        state.shipping = routeId > 0 ? { route: routeId } : null;
+        state.display = {
+            tree_open: Array.isArray(state.display?.tree_open) ? state.display.tree_open.map(Boolean).slice(0, 200) : [],
+            configure_open: Array.isArray(state.display?.configure_open)
+                ? state.display.configure_open.filter((id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id)).slice(0, 100)
+                : [],
+        };
+        // Re-run the allowlist on decode so a hand-edited link cannot smuggle
+        // buildEnvironment/industryFee keys back into the configure snapshot.
+        state.me_te = sanitizeSharedMeTe(state.me_te);
+        return state;
+    } catch (error) {
+        return null;
+    }
+}
+
+// Kept well below the ~2000-char floor some proxies impose on paths but above
+// what a normal scenario needs; the decoder tolerates a little more (12000).
+const CRAFT_SHARE_MAX_ENCODED_LENGTH = 9000;
+
+/**
+ * Shed optional parts of the share payload, least valuable first, until it fits.
+ *
+ * Compressing instead would mean CompressionStream, which is async (this is
+ * called synchronously from click handlers) and unavailable on older browsers.
+ * Shedding is deterministic and lets us tell the user exactly what was left out.
+ * Buy/Produce decisions are never shed — they are the point of the link.
+ */
+function buildCraftShareEncoding() {
+    const state = collectCraftShareState();
+    const steps = [
+        {
+            label: __('expanded sections'),
+            shed: (target) => {
+                target.display = { tree_open: [], configure_open: [] };
+            },
+        },
+        {
+            label: __('tax, shipping and schedule assumptions'),
+            shed: (target) => {
+                target.inputs = [];
+                target.shipping = null;
+            },
+        },
+        {
+            label: __('price overrides'),
+            shed: (target) => {
+                target.prices = [];
+            },
+        },
+        {
+            label: __('per-blueprint ME/TE'),
+            shed: (target) => {
+                if (target.me_te) {
+                    target.me_te.blueprintConfigs = {};
+                }
+            },
+        },
+    ];
+
+    let encoded = encodeCraftShareState(state);
+    const dropped = [];
+    for (const step of steps) {
+        if (encoded.length <= CRAFT_SHARE_MAX_ENCODED_LENGTH) {
+            break;
+        }
+        step.shed(state);
+        dropped.push(step.label);
+        encoded = encodeCraftShareState(state);
+    }
+
+    if (encoded.length > CRAFT_SHARE_MAX_ENCODED_LENGTH) {
+        return null;
+    }
+    return { encoded, dropped };
+}
+
+/**
+ * Rewrite the address bar with the current safe state.
+ *
+ * Returns {dropped: string[]} on success or null when even the minimal payload
+ * is too long. The full state is rebuilt from scratch on every call, so a
+ * previously shared setting can never be silently lost from the link.
+ */
+function updateCraftShareUrl() {
+    const result = buildCraftShareEncoding();
+    if (!result) {
+        return null;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('share', result.encoded);
+    url.searchParams.delete('sim');
+    url.searchParams.delete('draft');
+    window.history.replaceState(window.history.state, '', url.toString());
+    return { dropped: result.dropped };
+}
+
+function clearCraftShareUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('share');
+    window.history.replaceState(window.history.state, '', url.toString());
+}
+
+function restoreCraftShareState() {
+    const encoded = getCurrentQueryParam('share');
+    const state = decodeCraftShareState(encoded);
+    if (!state) return false;
+    if (state.blueprint_type_id !== Math.floor(Number(getCurrentBlueprintTypeId()) || 0)) return false;
+    // Runs go through applyFullUiState's staticInputs so the write happens
+    // inside the restoreInProgress window. Dispatching a synthetic 'change' on
+    // #runsInput instead fired markMETEChanges, which flagged phantom pending
+    // config edits and scheduled an 80ms refresh that landed *after* the
+    // restore and clobbered the decisions it had just applied.
+    // Only safe scenario fields are applied. Private configuration (build
+    // location, owned BPC use, materials source, characters) stays the
+    // viewer's own, from their preferences and inventory.
+    applyFullUiState({
+        staticInputs: [{ id: 'runsInput', value: String(state.runs) }, ...state.inputs],
+        buyTypeIds: state.buy,
+        craftMainTab: state.tab,
+        configure: state.me_te || undefined,
+        customPrices: state.prices,
+        importFees: state.shipping ? { selectedRoutePricingId: state.shipping.route } : undefined,
+        treeDetailsOpen: state.display?.tree_open || [],
+        configureAccordionOpenIds: state.display?.configure_open || [],
+    });
+    // One deliberate refresh once the restore has settled.
+    if (typeof refreshTabsAfterStateChange === 'function') {
+        refreshTabsAfterStateChange({ forceNeeded: true, keepComputedNeeded: true });
+    }
+    return true;
 }
 
 function applyFullUiState(snapshot, options = {}) {
@@ -1734,8 +1976,21 @@ function applyFullUiState(snapshot, options = {}) {
 
         applyImportFeesStateSnapshot(snapshot.importFees);
         applyBuildScheduleStateSnapshot(snapshot.buildSchedule);
+        const trackingOptIn = document.getElementById('scheduleTrackingOptIn');
+        if (trackingOptIn && snapshot.scheduleTracking && typeof snapshot.scheduleTracking === 'object') {
+            trackingOptIn.checked = snapshot.scheduleTracking.optIn === true;
+        }
+        const materialsSourceMode = document.getElementById('materialsSourceMode');
+        if (materialsSourceMode && ['manual', 'designated_bay'].includes(String(snapshot.materialsSourceMode || ''))) {
+            materialsSourceMode.value = String(snapshot.materialsSourceMode);
+        }
+        const materialsSourceLocation = document.getElementById('materialsSourceLocation');
+        if (materialsSourceLocation && snapshot.materialsSourceLocationId) {
+            materialsSourceLocation.dataset.preferredLocation = String(snapshot.materialsSourceLocationId);
+            materialsSourceLocation.value = String(snapshot.materialsSourceLocationId);
+        }
         applyMineralConversionStateSnapshot(snapshot.mineralConversion);
-        applyRunOptimizedStateSnapshot(snapshot.runOptimized);
+        applyBuybackOrdersSnapshot(snapshot.buybackOrders);
         applyTreeDetailsState(snapshot.treeDetailsOpen);
         applyConfigureAccordionState(snapshot.configureAccordionOpenIds);
 
@@ -1897,6 +2152,10 @@ window.CraftBP = {
     collectFullUiState: function() {
         return collectFullUiState();
     },
+    collectShareState: collectCraftShareState,
+    updateShareUrl: updateCraftShareUrl,
+    clearShareUrl: clearCraftShareUrl,
+    restoreShareUrl: restoreCraftShareState,
 
     applyFullUiState: function(state, options = {}) {
         return applyFullUiState(state, options);
@@ -1984,7 +2243,6 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof updateBuildTabFromState === 'function') {
         updateBuildTabFromState();
     }
-    initializeRunOptimizedTab();
     // Financial calculations will be initialized via CraftBP.init()
 });
 
@@ -2264,7 +2522,8 @@ function setTreeModeForAll(mode) {
 
 async function optimizeProfitabilityConfig() {
     // Heuristic optimizer: choose Buy vs Prod per craftable node by comparing
-    // buy cost vs best sub-tree production cost (including surplus credit).
+    // Compare buy cost with the best sub-tree production cost. Surplus is
+    // reported separately and does not increase profit.
     // Uses current run count + ME/TE because those are already baked into materials_tree quantities.
 
     const tree = window.BLUEPRINT_DATA?.materials_tree;
@@ -2558,8 +2817,6 @@ async function optimizeProfitabilityConfig() {
             }
 
             const cycles = Math.max(1, Math.ceil(needed / rec.producedPerCycle));
-            const produced = cycles * rec.producedPerCycle;
-            const surplus = Math.max(0, produced - needed);
 
             let inputsCost = 0;
             rec.inputsPerCycle.forEach((perCycleQty, childId) => {
@@ -2572,9 +2829,9 @@ async function optimizeProfitabilityConfig() {
                 inputsCost += childUnit * childQtyTotal;
             });
 
-            const sellUnit = getSellUnitPrice(typeId);
-            const credit = (sellUnit > 0 ? sellUnit : 0) * surplus;
-            const prodTotal = inputsCost - credit;
+            // Surplus value is informational only (it is excluded from profit),
+            // so it must not make producing look cheaper than buying.
+            const prodTotal = inputsCost;
             const prodUnit = needed > 0 ? (prodTotal / needed) : Number.POSITIVE_INFINITY;
 
             // Choose best mode for this demand snapshot.
@@ -2652,8 +2909,9 @@ async function optimizeProfitabilityConfig() {
             });
 
             const sellUnit = getSellUnitPrice(typeId);
+            // Reported for information; not credited against production cost.
             const surplusCredit = (sellUnit > 0 ? sellUnit : 0) * surplus;
-            const prodTotal = inputsCost - surplusCredit;
+            const prodTotal = inputsCost;
             const prodUnit = needed > 0 ? (prodTotal / needed) : Number.POSITIVE_INFINITY;
 
             let mode;
@@ -2707,9 +2965,9 @@ async function optimizeProfitabilityConfig() {
     const aggregateDecisions = decisions;
 
     // --- Margin-first refinement ---
-    // The global optimizer above minimizes net production cost (incl. surplus credit) per node.
+    // The global optimizer above minimizes production cost per node.
     // The user expectation is: optimize for best displayed margin (profit / revenue).
-    // We therefore evaluate the same model used by the financial tab (financial items + final sale + surplus)
+    // We therefore evaluate the same model used by the financial tab (financial items + final sale).
     // and greedily flip switches when it improves margin.
     function computeDisplayedMarginSnapshot() {
         const api = window.SimulationAPI;
@@ -2732,7 +2990,7 @@ async function optimizeProfitabilityConfig() {
             if (unitPrice > 0) costTotal += unitPrice * qty;
         });
 
-        // Revenue: final product + surplus credit.
+        // Revenue is the final product sale; surplus remains informational.
         let revenueTotal = 0;
 
         try {
@@ -2772,7 +3030,6 @@ async function optimizeProfitabilityConfig() {
             // ignore
         }
 
-        revenueTotal += surplusRevenue;
         const profit = revenueTotal - costTotal;
         const margin = revenueTotal > 0 ? (profit / revenueTotal) : Number.NEGATIVE_INFINITY;
         return { margin, profit, revenue: revenueTotal, cost: costTotal, surplusRevenue };
@@ -2935,1539 +3192,7 @@ async function optimizeProfitabilityConfig() {
     }
 }
 
-// ==============================
-// Run optimized tab (profitability vs runs)
-// ==============================
-
-function getPriceSnapshotFromSimulation(typeIds) {
-    const state = (window.SimulationAPI && typeof window.SimulationAPI.getState === 'function')
-        ? window.SimulationAPI.getState()
-        : null;
-    const prices = state && state.prices ? state.prices : null;
-    const snapshot = new Map();
-
-    if (prices instanceof Map && prices.size > 0) {
-        prices.forEach((value, key) => {
-            snapshot.set(Number(key), {
-                fuzzwork: Number(value?.fuzzwork) || 0,
-                real: Number(value?.real) || 0,
-                sale: Number(value?.sale) || 0,
-            });
-        });
-        return snapshot;
-    }
-
-    if (prices && typeof prices === 'object' && Object.keys(prices).length > 0) {
-        Object.keys(prices).forEach((key) => {
-            const id = Number(key);
-            if (!id) return;
-            const value = prices[key] || {};
-            snapshot.set(id, {
-                fuzzwork: Number(value?.fuzzwork) || 0,
-                real: Number(value?.real) || 0,
-                sale: Number(value?.sale) || 0,
-            });
-        });
-        return snapshot;
-    }
-
-    // Fallback: some pages keep prices in SimulationAPI internals without exposing state.prices.
-    // Build a minimal snapshot from getPrice() for the typeIds we care about.
-    const ids = Array.isArray(typeIds) ? typeIds : [];
-    const api = window.SimulationAPI;
-    if (api && typeof api.getPrice === 'function') {
-        ids.forEach((tid) => {
-            const id = Number(tid);
-            if (!Number.isFinite(id) || id <= 0) return;
-            const buyInfo = api.getPrice(id, 'buy');
-            const saleInfo = api.getPrice(id, 'sale');
-            const buy = buyInfo && typeof buyInfo.value === 'number' ? buyInfo.value : 0;
-            const sale = saleInfo && typeof saleInfo.value === 'number' ? saleInfo.value : 0;
-            snapshot.set(id, {
-                fuzzwork: Number(buy) || 0,
-                real: Number(buy) || 0,
-                sale: Number(sale) || 0,
-            });
-        });
-    }
-
-    return snapshot;
-}
-
-function collectTypeIdsFromMaterialsTree(nodes, out = new Set()) {
-    (Array.isArray(nodes) ? nodes : []).forEach((node) => {
-        const tid = Number(node?.type_id || node?.typeId) || 0;
-        if (tid > 0) out.add(String(tid));
-        const kids = node && (node.sub_materials || node.subMaterials);
-        if (Array.isArray(kids) && kids.length) {
-            collectTypeIdsFromMaterialsTree(kids, out);
-        }
-    });
-    return out;
-}
-
-function getCurrentDecisionsFromDom() {
-    const decisions = new Map();
-    const treeTab = document.getElementById('tab-tree');
-    if (!treeTab) return decisions;
-
-    treeTab.querySelectorAll('input.mat-switch[data-type-id]').forEach((sw) => {
-        const id = Number(sw.getAttribute('data-type-id')) || 0;
-        if (!id) return;
-        if (sw.dataset.fixedMode === 'useless' || sw.dataset.userState === 'useless') return;
-        decisions.set(id, sw.checked ? 'prod' : 'buy');
-    });
-    return decisions;
-}
-
-function syncSimulationSwitchStatesFromDom() {
-    const api = window.SimulationAPI;
-    if (!api || typeof api.setSwitchState !== 'function') return;
-
-    const treeTab = document.getElementById('tab-tree');
-    if (!treeTab) return;
-
-    treeTab.querySelectorAll('input.mat-switch[data-type-id]').forEach((sw) => {
-        const id = Number(sw.getAttribute('data-type-id')) || 0;
-        if (!id) return;
-        if (sw.dataset.fixedMode === 'useless' || sw.dataset.userState === 'useless') {
-            api.setSwitchState(id, 'useless');
-            return;
-        }
-        api.setSwitchState(id, sw.checked ? 'prod' : 'buy');
-    });
-}
-
-function getCurrentDecisionsFromSimulationOrDom() {
-    const api = window.SimulationAPI;
-    if (api && typeof api.getSwitchState === 'function') {
-        const decisions = new Map();
-        const treeTab = document.getElementById('tab-tree');
-        if (!treeTab) return getCurrentDecisionsFromDom();
-
-        treeTab.querySelectorAll('input.mat-switch[data-type-id]').forEach((sw) => {
-            const id = Number(sw.getAttribute('data-type-id')) || 0;
-            if (!id) return;
-            const state = api.getSwitchState(id);
-            if (state === 'buy' || state === 'prod' || state === 'useless') {
-                decisions.set(id, state);
-            }
-        });
-
-        // If SimulationAPI doesn't have any states yet, fall back to DOM.
-        if (decisions.size > 0) return decisions;
-    }
-
-    return getCurrentDecisionsFromDom();
-}
-
-function generateRunScenarios(maxRuns) {
-    const maxValue = Math.max(1, Number(maxRuns) || 1);
-
-    // Evenly spaced scenarios:
-    // - Target ~10 points across the range
-    // - Examples: 100 -> step 10, 1000 -> step 100
-    const targetPoints = 10;
-    const step = Math.max(1, Math.round(maxValue / targetPoints));
-    const runs = [1];
-    for (let v = step; v < maxValue; v += step) {
-        runs.push(v);
-    }
-    if (!runs.includes(maxValue)) {
-        runs.push(maxValue);
-    }
-
-    return Array.from(new Set(runs))
-        .map((v) => Math.max(1, Math.floor(Number(v) || 1)))
-        .sort((a, b) => a - b);
-}
-
-function buildCraftPayloadUrlForRuns(testRuns) {
-    let base = window.BLUEPRINT_DATA?.urls?.craft_bp_payload;
-    let bpTypeId = Number(window.BLUEPRINT_DATA?.bp_type_id || window.BLUEPRINT_DATA?.bpTypeId || window.BLUEPRINT_DATA?.type_id || window.BLUEPRINT_DATA?.typeId || 0);
-
-    // If the backend provided a craft_bp_payload URL, it is the most reliable source of the
-    // blueprint type id; parse it so we don't depend on potentially mutated JS state.
-    if (base) {
-        const match = String(base).match(/\/craft-bp-payload\/(\d+)\//);
-        if (match && match[1]) {
-            const parsed = Number(match[1]);
-            if (Number.isFinite(parsed) && parsed > 0) {
-                bpTypeId = parsed;
-            }
-        }
-    }
-
-    // Fallback: construct endpoint if missing.
-    if (!base && bpTypeId > 0) {
-        base = `/indy_hub/api/craft-bp-payload/${bpTypeId}/`;
-    }
-
-    if (!base) {
-        craftBPDebugLog('[RunOptimized] Missing craft_bp_payload base URL (urls.craft_bp_payload). bpTypeId=', bpTypeId);
-        return null;
-    }
-
-    const url = new URL(base, window.location.origin);
-    // IMPORTANT:
-    // Run optimized must use the same ME/TE configuration that the server used to render
-    // the current dashboard payload. Otherwise we can end up with a mismatch where
-    // localStorage-restored per-blueprint ME/TE inputs (not yet applied) affect Run optimized
-    // API payloads but not the dashboard totals.
-    const currentParams = new URLSearchParams(window.location.search || '');
-
-    const rootME = currentParams.has('me')
-        ? Number(currentParams.get('me'))
-        : (window.BLUEPRINT_DATA?.me ?? 0);
-    const rootTE = currentParams.has('te')
-        ? Number(currentParams.get('te'))
-        : (window.BLUEPRINT_DATA?.te ?? 0);
-
-    url.searchParams.set('runs', String(Math.max(1, Number(testRuns) || 1)));
-    url.searchParams.set('me', String(rootME));
-    url.searchParams.set('te', String(rootTE));
-
-    // Propagate debug flag to backend so it can include _debug info in the JSON.
-    if (window.INDY_HUB_DEBUG) {
-        url.searchParams.set('indy_debug', '1');
-    }
-
-    // Only propagate per-blueprint overrides if they are already part of the page URL.
-    // (Those are the overrides the backend actually applied to compute window.BLUEPRINT_DATA.)
-    for (const [key, value] of currentParams.entries()) {
-        if (key.startsWith('me_') || key.startsWith('te_')) {
-            url.searchParams.set(key, String(value));
-        }
-    }
-
-    const finalUrl = url.toString();
-    craftBPDebugLog('[RunOptimized] craft_bp_payload URL built', finalUrl);
-    return finalUrl;
-}
-
-async function fetchBlueprintPayloadForRuns(testRuns) {
-    window.__indyHubRunOptimizedCache = window.__indyHubRunOptimizedCache || {};
-    const cache = window.__indyHubRunOptimizedCache;
-    const url = buildCraftPayloadUrlForRuns(testRuns);
-    if (!url) {
-        throw new Error('Missing craft_bp_payload URL');
-    }
-
-    // Cache by full URL (runs + ME/TE + blueprint configs + debug flag), not only by runs.
-    const key = String(url);
-    if (cache[key]) {
-        return cache[key];
-    }
-
-    const response = await fetch(url, {
-        headers: { 'Accept': 'application/json' },
-        credentials: 'same-origin',
-    });
-    if (!response.ok) {
-        throw new Error(`craft_bp_payload failed: ${response.status}`);
-    }
-    const json = await response.json();
-
-    craftBPDebugLog('[RunOptimized] craft_bp_payload response', {
-        requestUrl: url,
-        responseUrl: response.url,
-        type_id: json?.type_id,
-        bp_type_id: json?.bp_type_id,
-        product_type_id: json?.product_type_id,
-        me: json?.me,
-        te: json?.te,
-        num_runs: json?.num_runs,
-        final_product_qty: json?.final_product_qty,
-        materials_tree_roots: Array.isArray(json?.materials_tree) ? json.materials_tree.length : null,
-        recipe_map_keys: (json?.recipe_map && typeof json.recipe_map === 'object') ? Object.keys(json.recipe_map).length : null,
-        _debug: json?._debug ?? null,
-    });
-
-    cache[key] = json;
-    return json;
-}
-
-function computeOptimizedProfitabilityForPayload(payload, pricesSnapshot, options = {}) {
-    const tree = Array.isArray(payload?.materials_tree) ? payload.materials_tree : [];
-    const productTypeId = Number(payload?.product_type_id) || 0;
-    const finalProductQty = Math.max(0, Math.ceil(Number(payload?.final_product_qty) || 0));
-
-    // Prefer live SimulationAPI prices when available so Run optimized uses
-    // the same buy/sale logic as the dashboard (real/fuzzwork overrides).
-    const simulationApi = window.SimulationAPI;
-
-    function getPriceRecord(typeId) {
-        return pricesSnapshot.get(Number(typeId)) || { fuzzwork: 0, real: 0, sale: 0 };
-    }
-
-    function getBuyUnitPrice(typeId) {
-        if (simulationApi && typeof simulationApi.getPrice === 'function') {
-            const info = simulationApi.getPrice(typeId, 'buy');
-            const v = info && typeof info.value === 'number' ? info.value : 0;
-            if (v > 0) return v;
-        }
-        const record = getPriceRecord(typeId);
-        const real = Number(record.real) || 0;
-        if (real > 0) return real;
-        const fuzz = Number(record.fuzzwork) || 0;
-        if (fuzz > 0) return fuzz;
-        return 0;
-    }
-
-    function getSellUnitPrice(typeId) {
-        if (simulationApi && typeof simulationApi.getPrice === 'function') {
-            const info = simulationApi.getPrice(typeId, 'sale');
-            const v = info && typeof info.value === 'number' ? info.value : 0;
-            if (v > 0) return v;
-        }
-        const record = getPriceRecord(typeId);
-        const sale = Number(record.sale) || 0;
-        if (sale > 0) return sale;
-        const fuzz = Number(record.fuzzwork) || 0;
-        if (fuzz > 0) return fuzz;
-        const real = Number(record.real) || 0;
-        if (real > 0) return real;
-        return 0;
-    }
-
-    function getBuyUnitPriceOrInf(typeId) {
-        const p = getBuyUnitPrice(typeId);
-        return p > 0 ? p : Number.POSITIVE_INFINITY;
-    }
-
-    function readChildren(node) {
-        const kids = node && (node.sub_materials || node.subMaterials);
-        return Array.isArray(kids) ? kids : [];
-    }
-
-    function readTypeId(node) {
-        return Number(node?.type_id || node?.typeId) || 0;
-    }
-
-    function readQty(node) {
-        const q = Number(node?.quantity ?? node?.qty ?? 0);
-        return Number.isFinite(q) ? Math.max(0, Math.ceil(q)) : 0;
-    }
-
-    function readProducedPerCycle(node) {
-        const p = Number(node?.produced_per_cycle ?? node?.producedPerCycle ?? 0);
-        return Number.isFinite(p) ? Math.max(0, Math.ceil(p)) : 0;
-    }
-
-    // Dashboard-aligned model: cost = bought items (leaf + craftables switched to BUY)
-    // revenue = final product sale + surplus credit computed from pooled cycles per craftable type.
-    function computeDisplayedMarginFromTreeTraversal(currentDecisions) {
-        const leafNeeds = new Map();
-        const buyCraftables = new Map();
-        const prodCraftables = new Map();
-        const producedPerCycleByType = new Map();
-
-        function addToCounter(map, typeId, qty) {
-            if (!typeId || qty <= 0) return;
-            map.set(typeId, (map.get(typeId) || 0) + qty);
-        }
-
-        const walk = (nodes, blockedByBuyAncestor = false) => {
-            (Array.isArray(nodes) ? nodes : []).forEach((node) => {
-                if (blockedByBuyAncestor) return;
-                const typeId = readTypeId(node);
-                if (!typeId) return;
-
-                const qty = readQty(node);
-                const children = readChildren(node);
-                const craftable = children.length > 0;
-
-                const ppc = readProducedPerCycle(node);
-                if (ppc > 0 && !producedPerCycleByType.has(typeId)) {
-                    producedPerCycleByType.set(typeId, ppc);
-                }
-
-                if (craftable) {
-                    const state = currentDecisions.get(typeId) || 'prod';
-                    if (state === 'useless') return;
-                    if (state === 'buy') {
-                        addToCounter(buyCraftables, typeId, qty);
-                        return;
-                    }
-                    addToCounter(prodCraftables, typeId, qty);
-                    walk(children, false);
-                    return;
-                }
-
-                addToCounter(leafNeeds, typeId, qty);
-            });
-        };
-
-        walk(tree, false);
-
-        let cost = 0;
-        leafNeeds.forEach((qty, typeId) => {
-            const unit = getBuyUnitPrice(typeId);
-            if (unit > 0) cost += unit * qty;
-        });
-        buyCraftables.forEach((qty, typeId) => {
-            const unit = getBuyUnitPrice(typeId);
-            if (unit > 0) cost += unit * qty;
-        });
-
-        let surplusRevenue = 0;
-        prodCraftables.forEach((totalNeeded, typeId) => {
-            const ppc = producedPerCycleByType.get(typeId) || 0;
-            if (!(ppc > 0) || !(totalNeeded > 0)) return;
-            const cycles = Math.max(1, Math.ceil(totalNeeded / ppc));
-            const totalProduced = cycles * ppc;
-            const surplus = Math.max(0, totalProduced - totalNeeded);
-            if (surplus <= 0) return;
-            const unit = getSellUnitPrice(typeId);
-            if (unit > 0) surplusRevenue += unit * surplus;
-        });
-
-        const productUnitSale = productTypeId ? getSellUnitPrice(productTypeId) : 0;
-        const finalRev = (productUnitSale > 0 && finalProductQty > 0) ? (productUnitSale * finalProductQty) : 0;
-        const revenue = finalRev + surplusRevenue;
-        const profit = revenue - cost;
-        const margin = revenue > 0 ? (profit / revenue) : Number.NEGATIVE_INFINITY;
-        return { margin, profit, revenue, cost, surplusRevenue };
-    }
-
-    // If we were provided explicit decisions (e.g. current dashboard switches),
-    // skip optimization and just compute the displayed margin for those decisions.
-    if (options && options.decisions instanceof Map) {
-        const snap = computeDisplayedMarginFromTreeTraversal(options.decisions);
-        const marginPct = Number.isFinite(snap.margin) ? (snap.margin * 100) : 0;
-        return {
-            runs: Number(payload?.num_runs) || 1,
-            cost: snap.cost,
-            revenue: snap.revenue,
-            profit: snap.profit,
-            margin: marginPct,
-        };
-    }
-
-    const occurrencesByType = new Map();
-    const nameByType = new Map();
-    (function collect(nodes) {
-        (Array.isArray(nodes) ? nodes : []).forEach((node) => {
-            const id = readTypeId(node);
-            if (id) {
-                const typeName = node?.type_name || node?.typeName || '';
-                if (typeName && !nameByType.has(id)) nameByType.set(id, typeName);
-            }
-            const children = readChildren(node);
-            if (id && children.length > 0) {
-                if (!occurrencesByType.has(id)) occurrencesByType.set(id, []);
-                occurrencesByType.get(id).push(node);
-            }
-            if (children.length > 0) {
-                collect(children);
-            }
-        });
-    })(tree);
-
-    const recipes = new Map();
-    const backendRecipeMap = payload?.recipe_map || payload?.recipeMap;
-    if (backendRecipeMap && typeof backendRecipeMap === 'object' && Object.keys(backendRecipeMap).length > 0) {
-        Object.entries(backendRecipeMap).forEach(([typeIdStr, recipe]) => {
-            const typeId = Number(typeIdStr);
-            if (!Number.isFinite(typeId) || !recipe) return;
-
-            const producedPerCycle = Number(recipe?.produced_per_cycle ?? recipe?.producedPerCycle ?? 0);
-            if (!Number.isFinite(producedPerCycle) || producedPerCycle <= 0) return;
-
-            const inputsPerCycle = new Map();
-            const inputs = recipe?.inputs_per_cycle ?? recipe?.inputsPerCycle ?? [];
-            (Array.isArray(inputs) ? inputs : []).forEach((inp) => {
-                const childTypeId = Number(inp?.type_id ?? inp?.typeId ?? 0);
-                const perCycleQty = Number(inp?.quantity ?? inp?.qty ?? 0);
-                if (!Number.isFinite(childTypeId) || childTypeId <= 0) return;
-                if (!Number.isFinite(perCycleQty) || perCycleQty <= 0) return;
-                inputsPerCycle.set(childTypeId, perCycleQty);
-            });
-            if (inputsPerCycle.size === 0) return;
-
-            recipes.set(typeId, { producedPerCycle, inputsPerCycle });
-        });
-    } else {
-        // Legacy fallback: infer a recipe from a single occurrence (less precise if a craftable appears multiple times).
-        occurrencesByType.forEach((nodes, typeId) => {
-            let best = null;
-            let bestCycles = 0;
-            nodes.forEach((n) => {
-                const ppc = readProducedPerCycle(n);
-                const needed = readQty(n);
-                if (!ppc || !needed) return;
-                const cycles = Math.max(1, Math.ceil(needed / ppc));
-                if (cycles >= bestCycles) {
-                    bestCycles = cycles;
-                    best = n;
-                }
-            });
-            if (!best) return;
-
-            const ppc = readProducedPerCycle(best);
-            const needed = readQty(best);
-            if (!ppc || !needed) return;
-            const cycles = Math.max(1, Math.ceil(needed / ppc));
-
-            const inputsPerCycle = new Map();
-            readChildren(best).forEach((child) => {
-                const childTypeId = readTypeId(child);
-                if (!childTypeId) return;
-                const childQty = readQty(child);
-                if (!childQty) return;
-                inputsPerCycle.set(childTypeId, childQty / cycles);
-            });
-            recipes.set(typeId, { producedPerCycle: ppc, inputsPerCycle });
-        });
-    }
-
-    const craftables = new Set(recipes.keys());
-    const decisions = new Map();
-    craftables.forEach((id) => decisions.set(id, 'prod'));
-
-    function summarizeDecisions(decisionsMap) {
-        const buy = [];
-        const prod = [];
-
-        if (!(decisionsMap instanceof Map)) {
-            return { craftablesCount: 0, buyCount: 0, prodCount: 0, buy, prod };
-        }
-
-        decisionsMap.forEach((state, typeId) => {
-            const id = Number(typeId) || 0;
-            if (!id) return;
-            const name = nameByType.get(id) || '';
-            const entry = { typeId: id, typeName: name };
-            if (state === 'buy') buy.push(entry);
-            else prod.push(entry);
-        });
-
-        const byName = (a, b) => String(a.typeName || '').localeCompare(String(b.typeName || ''), undefined, { sensitivity: 'base' });
-        buy.sort(byName);
-        prod.sort(byName);
-
-        return {
-            craftablesCount: decisionsMap.size,
-            buyCount: buy.length,
-            prodCount: prod.length,
-            buy,
-            prod,
-        };
-    }
-
-    const rootDemand = new Map();
-    tree.forEach((rootNode) => {
-        const id = readTypeId(rootNode);
-        if (!id) return;
-        const q = readQty(rootNode);
-        if (!q) return;
-        rootDemand.set(id, (rootDemand.get(id) || 0) + q);
-    });
-
-    const edges = new Map();
-    const indegree = new Map();
-    craftables.forEach((id) => {
-        edges.set(id, new Set());
-        indegree.set(id, 0);
-    });
-    recipes.forEach((rec, parentId) => {
-        rec.inputsPerCycle.forEach((_, childId) => {
-            if (!edges.has(parentId)) edges.set(parentId, new Set());
-            edges.get(parentId).add(childId);
-            if (craftables.has(childId)) {
-                indegree.set(childId, (indegree.get(childId) || 0) + 1);
-            }
-        });
-    });
-
-    const queue = [];
-    indegree.forEach((deg, id) => { if (deg === 0) queue.push(id); });
-    const topo = [];
-    while (queue.length) {
-        const id = queue.shift();
-        topo.push(id);
-        (edges.get(id) || new Set()).forEach((childId) => {
-            if (!craftables.has(childId)) return;
-            const nextDeg = (indegree.get(childId) || 0) - 1;
-            indegree.set(childId, nextDeg);
-            if (nextDeg === 0) queue.push(childId);
-        });
-    }
-
-    function computeDemand(currentDecisions) {
-        const demand = new Map(rootDemand);
-        topo.forEach((typeId) => {
-            if (!craftables.has(typeId)) return;
-            if ((currentDecisions.get(typeId) || 'prod') !== 'prod') return;
-            const needed = demand.get(typeId) || 0;
-            if (needed <= 0) return;
-            const rec = recipes.get(typeId);
-            if (!rec || !rec.producedPerCycle) return;
-            const cycles = Math.max(1, Math.ceil(needed / rec.producedPerCycle));
-            rec.inputsPerCycle.forEach((perCycleQty, childId) => {
-                const add = Math.max(0, Math.ceil((perCycleQty * cycles) - 1e-9));
-                if (add <= 0) return;
-                demand.set(childId, (demand.get(childId) || 0) + add);
-            });
-        });
-        return demand;
-    }
-
-    function computeBestUnitCosts(demand, currentDecisions) {
-        const bestUnitCost = new Map();
-        const chosenMode = new Map();
-        const reverseTopo = topo.slice().reverse();
-
-        reverseTopo.forEach((typeId) => {
-            const needed = demand.get(typeId) || 0;
-            if (!craftables.has(typeId) || needed <= 0) return;
-
-            const buyUnit = getBuyUnitPriceOrInf(typeId);
-            const buyTotal = buyUnit * needed;
-
-            const rec = recipes.get(typeId);
-            if (!rec || !rec.producedPerCycle) {
-                bestUnitCost.set(typeId, buyUnit > 0 ? buyUnit : 0);
-                chosenMode.set(typeId, 'buy');
-                return;
-            }
-
-            const cycles = Math.max(1, Math.ceil(needed / rec.producedPerCycle));
-            const produced = cycles * rec.producedPerCycle;
-            const surplus = Math.max(0, produced - needed);
-
-            let inputsCost = 0;
-            rec.inputsPerCycle.forEach((perCycleQty, childId) => {
-                const childQtyTotal = Math.max(0, Math.ceil((perCycleQty * cycles) - 1e-9));
-                if (childQtyTotal <= 0) return;
-                const childIsCraftable = craftables.has(childId);
-                const childUnit = childIsCraftable
-                    ? (bestUnitCost.get(childId) ?? getBuyUnitPriceOrInf(childId))
-                    : getBuyUnitPriceOrInf(childId);
-                inputsCost += childUnit * childQtyTotal;
-            });
-
-            const sellUnit = getSellUnitPrice(typeId);
-            const credit = (sellUnit > 0 ? sellUnit : 0) * surplus;
-            const prodTotal = inputsCost - credit;
-            const prodUnit = needed > 0 ? (prodTotal / needed) : Number.POSITIVE_INFINITY;
-
-            let mode;
-            if (!Number.isFinite(prodTotal) && !Number.isFinite(buyTotal)) {
-                mode = currentDecisions.get(typeId) || 'prod';
-            } else {
-                mode = (prodTotal <= buyTotal) ? 'prod' : 'buy';
-            }
-            chosenMode.set(typeId, mode);
-            bestUnitCost.set(typeId, mode === 'prod' ? prodUnit : buyUnit);
-        });
-
-        craftables.forEach((typeId) => {
-            if (!chosenMode.has(typeId)) {
-                chosenMode.set(typeId, currentDecisions.get(typeId) || 'prod');
-            }
-        });
-
-        return { chosenMode };
-    }
-
-    function stabilizeBottomUp(decisionsMap) {
-        let totalChanged = 0;
-        for (let iter = 0; iter < 6; iter += 1) {
-            const demand = computeDemand(decisionsMap);
-            const { chosenMode } = computeBestUnitCosts(demand, decisionsMap);
-            let changed = 0;
-            chosenMode.forEach((mode, typeId) => {
-                const prev = decisionsMap.get(typeId) || 'prod';
-                if (prev !== mode) {
-                    decisionsMap.set(typeId, mode);
-                    changed += 1;
-                }
-            });
-            totalChanged += changed;
-            if (changed === 0) break;
-        }
-        return totalChanged;
-    }
-
-    // Helper: compute the "displayed" margin (as in the KPI dashboard) for a given decision set
-    function computeDisplayedMargin(currentDecisions) {
-        const demand = computeDemand(currentDecisions);
-
-        let cost = 0;
-        demand.forEach((qty, typeId) => {
-            const id = Number(typeId) || 0;
-            if (!id) return;
-
-            const isCraftable = craftables.has(id);
-            if (isCraftable) {
-                if ((currentDecisions.get(id) || 'prod') !== 'buy') {
-                    return;
-                }
-            }
-
-            const unit = getBuyUnitPrice(id);
-            if (unit > 0) {
-                cost += unit * qty;
-            }
-        });
-
-        let surplusRev = 0;
-        craftables.forEach((typeId) => {
-            if ((currentDecisions.get(typeId) || 'prod') !== 'prod') return;
-            const needed = demand.get(typeId) || 0;
-            if (needed <= 0) return;
-            const rec = recipes.get(typeId);
-            if (!rec || !rec.producedPerCycle) return;
-            const cycles = Math.max(1, Math.ceil(needed / rec.producedPerCycle));
-            const produced = cycles * rec.producedPerCycle;
-            const surplus = Math.max(0, produced - needed);
-            if (surplus <= 0) return;
-            const unit = getSellUnitPrice(typeId);
-            if (unit > 0) surplusRev += unit * surplus;
-        });
-
-        const productUnitSale = productTypeId ? getSellUnitPrice(productTypeId) : 0;
-        const finalRev = (productUnitSale > 0 && finalProductQty > 0) ? (productUnitSale * finalProductQty) : 0;
-        const revenue = finalRev + surplusRev;
-        const profit = revenue - cost;
-        const margin = revenue > 0 ? (profit / revenue) : Number.NEGATIVE_INFINITY;
-
-        return { margin, profit, revenue, cost, surplusRevenue: surplusRev };
-    }
-
-    // Margin-first refinement: greedily flip switches (more iterations) to maximize displayed margin
-    function greedyImproveMargin(decisionsMap, startingSnap) {
-        const candidates = Array.from(craftables.keys());
-        let best = startingSnap;
-        const epsilon = 1e-9;
-        let improved = false;
-
-        for (let iter = 0; iter < 10; iter += 1) {
-            let bestType = null;
-            let bestNewState = null;
-            let bestNew = null;
-            let bestGain = 0;
-
-            candidates.forEach((typeId) => {
-                const current = decisionsMap.get(typeId) || 'prod';
-                if (current !== 'buy' && current !== 'prod') return;
-                const trial = current === 'buy' ? 'prod' : 'buy';
-
-                decisionsMap.set(typeId, trial);
-                const snap = computeDisplayedMargin(decisionsMap);
-                const gain = snap.margin - best.margin;
-                decisionsMap.set(typeId, current);
-
-                if (gain > bestGain + epsilon) {
-                    bestGain = gain;
-                    bestType = typeId;
-                    bestNewState = trial;
-                    bestNew = snap;
-                }
-            });
-
-            if (!bestType || !bestNewState || !bestNew || bestGain <= epsilon) {
-                break;
-            }
-
-            decisionsMap.set(bestType, bestNewState);
-            best = bestNew;
-            improved = true;
-        }
-
-        return { best, improved };
-    }
-
-    // Multi-pass: bottom-up then greedy, until stable or max passes
-    let bestSnapshot = computeDisplayedMargin(decisions);
-    let bestDecisions = new Map(decisions);
-    for (let pass = 0; pass < 5; pass += 1) {
-        const changedBottomUp = stabilizeBottomUp(decisions);
-        const snapAfterBottomUp = computeDisplayedMargin(decisions);
-        const { best, improved } = greedyImproveMargin(decisions, snapAfterBottomUp);
-        bestSnapshot = best;
-        bestDecisions = new Map(decisions);
-        if (changedBottomUp === 0 && !improved) {
-            break;
-        }
-    }
-
-    // Use the best margin-first result after passes
-    const marginPct = Number.isFinite(bestSnapshot.margin) ? (bestSnapshot.margin * 100) : 0;
-    return {
-        runs: Number(payload?.num_runs) || 1,
-        cost: bestSnapshot.cost,
-        revenue: bestSnapshot.revenue,
-        profit: bestSnapshot.profit,
-        margin: marginPct, // Convert to percentage (clamped for display)
-        config: summarizeDecisions(bestDecisions),
-    };
-}
-
-function renderRunOptimizedChart(canvas, points) {
-    if (!canvas || !canvas.getContext || !Array.isArray(points) || points.length === 0) {
-        return;
-    }
-
-    const normalizedPoints = points
-        .map((p) => {
-            const runs = Math.max(1, Number(p?.runs) || 1);
-            const rawMargin = Number(p?.margin);
-            const margin = Number.isFinite(rawMargin) ? rawMargin : 0;
-            return { runs, margin };
-        })
-        .sort((a, b) => a.runs - b.runs);
-
-    const dpr = window.devicePixelRatio || 1;
-    const cssWidth = canvas.clientWidth || 600;
-    const cssHeight = canvas.getAttribute('height') ? Number(canvas.getAttribute('height')) : 240;
-    canvas.width = Math.floor(cssWidth * dpr);
-    canvas.height = Math.floor(cssHeight * dpr);
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    const padding = 40;
-    const w = cssWidth;
-    const h = cssHeight;
-
-    const xs = normalizedPoints.map((p) => p.runs);
-    const ys = normalizedPoints.map((p) => p.margin);
-    const minX = Math.min.apply(null, xs);
-    const maxX = Math.max.apply(null, xs);
-
-    // Force margin axis to 0–100% for consistent readability.
-    // (Negative or >100% margins will be clipped to the chart bounds.)
-    const minY = 0;
-    const maxY = 100;
-
-    function xToPx(x) {
-        const safeX = Math.max(1, Number(x) || 1);
-        const t = (maxX - minX) > 0 ? ((safeX - minX) / (maxX - minX)) : 0.5;
-        return padding + t * (w - padding * 2);
-    }
-
-    function yToPx(y) {
-        const safeY = Math.max(minY, Math.min(maxY, Number(y) || 0));
-        const t = (maxY - minY) > 0 ? ((safeY - minY) / (maxY - minY)) : 0.5;
-        return (h - padding) - t * (h - padding * 2);
-    }
-
-    // Clear
-    ctx.clearRect(0, 0, w, h);
-
-    // Axes
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(padding, padding);
-    ctx.lineTo(padding, h - padding);
-    ctx.lineTo(w - padding, h - padding);
-    ctx.stroke();
-
-    // Y ticks
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
-    const yTicks = 4;
-    for (let i = 0; i <= yTicks; i += 1) {
-        const v = minY + (i / yTicks) * (maxY - minY);
-        const y = yToPx(v);
-        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
-        ctx.beginPath();
-        ctx.moveTo(padding, y);
-        ctx.lineTo(w - padding, y);
-        ctx.stroke();
-        ctx.fillText(`${v.toFixed(1)}%`, 6, y + 4);
-    }
-
-    // X ticks (evenly spaced)
-    const xTickSet = new Set();
-    xTickSet.add(minX);
-    xTickSet.add(maxX);
-
-    const targetXTicks = 10;
-    const xStep = Math.max(1, Math.round(maxX / targetXTicks));
-    for (let v = xStep; v < maxX; v += xStep) {
-        if (v >= minX) {
-            xTickSet.add(v);
-        }
-    }
-    // Always label scenario points so users see what was computed.
-    normalizedPoints.forEach((p) => xTickSet.add(p.runs));
-
-    const xTicks = Array.from(xTickSet).sort((a, b) => a - b);
-    ctx.font = '11px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    let lastLabelX = -Infinity;
-    xTicks.forEach((v) => {
-        const x = xToPx(v);
-
-        // Vertical grid line
-        ctx.strokeStyle = 'rgba(0,0,0,0.06)';
-        ctx.beginPath();
-        ctx.moveTo(x, padding);
-        ctx.lineTo(x, h - padding);
-        ctx.stroke();
-
-        // Tick mark
-        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-        ctx.beginPath();
-        ctx.moveTo(x, h - padding);
-        ctx.lineTo(x, h - padding + 5);
-        ctx.stroke();
-
-        // Label (skip if too close to previous to avoid clutter)
-        if ((x - lastLabelX) >= 28 || v === minX || v === maxX) {
-            const label = String(v);
-            const tw = ctx.measureText(label).width;
-            ctx.fillText(label, x - (tw / 2), h - 12);
-            lastLabelX = x;
-        }
-    });
-
-    // Line
-    ctx.strokeStyle = '#0d6efd';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    normalizedPoints.forEach((p, idx) => {
-        const x = xToPx(p.runs);
-        const y = yToPx(p.margin);
-        if (idx === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-
-    // Points
-    ctx.fillStyle = '#0d6efd';
-    normalizedPoints.forEach((p) => {
-        const x = xToPx(p.runs);
-        const y = yToPx(p.margin);
-        ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
-        ctx.fill();
-    });
-
-    // Margin labels per computed point
-    ctx.font = '10px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
-    ctx.textBaseline = 'middle';
-    normalizedPoints.forEach((p) => {
-        const x = xToPx(p.runs);
-        const y = yToPx(p.margin);
-        const label = `${Number(p.margin).toFixed(1)}%`;
-        // Simple outline for readability
-        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-        ctx.lineWidth = 3;
-        ctx.strokeText(label, x + 6, y - 10);
-        ctx.fillStyle = 'rgba(13,110,253,0.95)';
-        ctx.fillText(label, x + 6, y - 10);
-        ctx.fillStyle = '#0d6efd';
-    });
-
-    // X axis label
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif';
-    ctx.fillText('runs', padding, padding - 10);
-}
-
-function pickBestRunPoint(points) {
-    if (!Array.isArray(points) || points.length === 0) return null;
-    let best = null;
-    points.forEach((p) => {
-        const runs = Number(p?.runs) || 0;
-        const margin = Number(p?.margin);
-        const revenue = Number(p?.revenue);
-        const profit = Number(p?.profit);
-        if (!(runs > 0)) return;
-        if (!Number.isFinite(margin)) return;
-        if (!Number.isFinite(revenue) || revenue <= 0) return;
-        if (!best) {
-            best = p;
-            return;
-        }
-        const bestMargin = Number(best?.margin);
-        if (margin > bestMargin + 1e-9) {
-            best = p;
-            return;
-        }
-        // Tie-break: prefer higher profit if margins are equal-ish.
-        if (Math.abs(margin - bestMargin) <= 1e-6) {
-            const bestProfit = Number(best?.profit);
-            if (Number.isFinite(profit) && Number.isFinite(bestProfit) && profit > bestProfit) {
-                best = p;
-            }
-        }
-    });
-    return best;
-}
-
-function buildRunSearchCandidates(maxRuns) {
-    const maxValue = Math.max(1, Number(maxRuns) || 1);
-    const set = new Set();
-
-    const addRange = (start, end, step) => {
-        const s = Math.max(1, Math.floor(Number(start) || 1));
-        const e = Math.max(1, Math.floor(Number(end) || 1));
-        const st = Math.max(1, Math.floor(Number(step) || 1));
-        for (let r = s; r <= e; r += st) {
-            set.add(r);
-        }
-    };
-
-    // Dense sampling for small run counts (rounding effects are strongest here).
-    if (maxValue <= 250) {
-        addRange(1, maxValue, 1);
-        return Array.from(set).sort((a, b) => a - b);
-    }
-
-    addRange(1, Math.min(50, maxValue), 1);
-    addRange(60, Math.min(500, maxValue), 10);
-    addRange(600, Math.min(2000, maxValue), 50);
-
-    if (maxValue > 2000) {
-        const step = Math.max(100, Math.round(maxValue / 60));
-        addRange(2500, maxValue, step);
-    }
-
-    set.add(maxValue);
-    return Array.from(set).sort((a, b) => a - b);
-}
-
-function renderBestRunSummary(bestEl, bestPoint, label) {
-    if (!bestEl) return;
-    if (!bestPoint) {
-        bestEl.textContent = '';
-        return;
-    }
-    const runs = Number(bestPoint?.runs) || 0;
-    const margin = Number(bestPoint?.margin);
-    const profit = Number(bestPoint?.profit);
-    const revenue = Number(bestPoint?.revenue);
-
-    if (!(runs > 0) || !Number.isFinite(margin)) {
-        bestEl.textContent = '';
-        return;
-    }
-
-    const parts = [];
-    if (label) parts.push(`<span class="text-muted">${label}:</span>`);
-    parts.push(`<span class="badge text-bg-primary">${__('Best')} ${margin.toFixed(1)}% @ ${runs} runs</span>`);
-    if (Number.isFinite(profit) && Number.isFinite(revenue) && revenue > 0) {
-        parts.push(`<span class="text-muted">${__('Profit')} ${formatPrice(profit)}</span>`);
-    }
-    bestEl.innerHTML = parts.join(' ');
-}
-
-function renderBestRunConfigDetails(bestPoint) {
-    const detailsEl = document.getElementById('runOptimizedBestConfigDetails');
-    const preEl = document.getElementById('runOptimizedBestConfigPre');
-    const hintEl = document.getElementById('runOptimizedBestConfigHint');
-    const copyBtn = document.getElementById('runOptimizedCopyBestConfig');
-
-    if (!detailsEl || !preEl) return;
-
-    const cfg = bestPoint && bestPoint.config;
-    if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.buy)) {
-        detailsEl.style.display = 'none';
-        preEl.textContent = '';
-        if (hintEl) hintEl.textContent = '';
-        return;
-    }
-
-    const runs = Number(bestPoint?.runs) || 0;
-    const margin = Number(bestPoint?.margin);
-
-    const lines = [];
-    lines.push(`runs: ${runs}`);
-    if (Number.isFinite(margin)) lines.push(`margin_pct: ${margin.toFixed(4)}`);
-    lines.push(`craftables_total: ${Number(cfg.craftablesCount) || 0}`);
-    lines.push(`buy_count: ${Number(cfg.buyCount) || 0}`);
-    lines.push(`prod_count: ${Number(cfg.prodCount) || 0}`);
-    lines.push('');
-    lines.push('BUY:');
-    cfg.buy.forEach((e) => {
-        const id = Number(e?.typeId) || 0;
-        const name = String(e?.typeName || '').trim();
-        lines.push(`- ${id}${name ? `  ${name}` : ''}`);
-    });
-
-    preEl.textContent = lines.join('\n');
-    detailsEl.style.display = '';
-    if (hintEl) {
-        hintEl.textContent = __('This is the best per-run optimized Buy/Prod configuration for the selected runs value.');
-    }
-
-    if (copyBtn && !copyBtn.__indyHubBound) {
-        copyBtn.__indyHubBound = true;
-        copyBtn.addEventListener('click', async () => {
-            const text = preEl.textContent || '';
-            try {
-                if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-                    await navigator.clipboard.writeText(text);
-                    return;
-                }
-            } catch (e) {
-                // ignore
-            }
-            try {
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
-            } catch (e) {
-                // ignore
-            }
-        });
-    }
-}
-
-async function findOptimalRuns({
-    searchMaxRuns,
-    pricesSnapshot,
-    mode,
-    decisions,
-    statusEl,
-}) {
-    const maxValue = Math.max(1, Math.floor(Number(searchMaxRuns) || 1));
-    const candidates = buildRunSearchCandidates(maxValue);
-    const results = [];
-
-    const computeForPayload = (payload) => {
-        if (mode === 'dashboard' && decisions instanceof Map) {
-            return computeOptimizedProfitabilityForPayload(payload, pricesSnapshot, { decisions });
-        }
-        return computeOptimizedProfitabilityForPayload(payload, pricesSnapshot);
-    };
-
-    for (let i = 0; i < candidates.length; i += 1) {
-        const runs = candidates[i];
-        if (statusEl) {
-            statusEl.textContent = __(`Searching best runs: ${i + 1}/${candidates.length} (runs=${runs})…`);
-        }
-        const payload = await fetchBlueprintPayloadForRuns(runs);
-        const snap = computeForPayload(payload);
-        results.push(snap);
-    }
-
-    // Local refinement around the best candidate (±50 runs) when the range is large.
-    const bestCoarse = pickBestRunPoint(results);
-    if (bestCoarse && maxValue > 250) {
-        const center = Math.max(1, Math.floor(Number(bestCoarse.runs) || 1));
-        const start = Math.max(1, center - 50);
-        const end = Math.min(maxValue, center + 50);
-        const refineRuns = [];
-        for (let r = start; r <= end; r += 1) refineRuns.push(r);
-
-        for (let i = 0; i < refineRuns.length; i += 1) {
-            const runs = refineRuns[i];
-            if (statusEl) {
-                statusEl.textContent = __(`Refining: ${i + 1}/${refineRuns.length} (runs=${runs})…`);
-            }
-            const payload = await fetchBlueprintPayloadForRuns(runs);
-            const snap = computeForPayload(payload);
-            results.push(snap);
-        }
-    }
-
-    return { best: pickBestRunPoint(results), samples: results.length };
-}
-
-function initializeRunOptimizedTab() {
-    const tabBtn = document.getElementById('run-optimized-tab-btn');
-    if (!tabBtn) return;
-
-    let inFlight = false;
-    let initialized = false;
-
-    // Persist state across tab shows so click handlers can reuse it.
-    const state = {
-        pricesSnapshot: null,
-        ids: null,
-        decisions: null,
-        mode: 'dashboard',
-        ui: {},
-        computeAndRenderCurve: null,
-    };
-    tabBtn.addEventListener('shown.bs.tab', async function () {
-
-        const modeToggleEl = document.getElementById('runOptimizedUseDashboardDecisions');
-        const searchMaxRunsEl = document.getElementById('runOptimizedSearchMaxRuns');
-        const findBestBtn = document.getElementById('runOptimizedFindBestBtn');
-        const bestResultEl = document.getElementById('runOptimizedBestResult');
-
-        state.ui = { modeToggleEl, searchMaxRunsEl, findBestBtn, bestResultEl };
-
-        function getRunOptimizedMode() {
-            return (modeToggleEl && modeToggleEl.checked) ? 'dashboard' : 'optimize';
-        }
-
-        async function computeAndRenderCurve() {
-            if (inFlight) return;
-            inFlight = true;
-
-            const statusEl = document.getElementById('run-optimized-status');
-            const canvas = document.getElementById('runOptimizedChart');
-
-            craftBPDebugLog('[RunOptimized] Tab shown');
-            craftBPDebugLog('[RunOptimized] URL', window.location && window.location.href);
-            craftBPDebugLog('[RunOptimized] SimulationAPI available?', Boolean(window.SimulationAPI));
-            craftBPDebugLog('[RunOptimized] SimulationAPI methods', {
-                getPrice: typeof window.SimulationAPI?.getPrice,
-                setPrice: typeof window.SimulationAPI?.setPrice,
-                refreshFromDom: typeof window.SimulationAPI?.refreshFromDom,
-                getState: typeof window.SimulationAPI?.getState,
-                getFinancialItems: typeof window.SimulationAPI?.getFinancialItems,
-            });
-
-            const mode = getRunOptimizedMode();
-            state.mode = mode;
-
-            try {
-                if (statusEl) {
-                    statusEl.className = 'alert alert-info mb-3';
-                    statusEl.textContent = __('Loading prices and computing profitability curve…');
-                }
-
-                // Ensure we have fuzzwork buy prices available.
-                const currentTree = window.BLUEPRINT_DATA?.materials_tree;
-                const productTypeId = Number(window.BLUEPRINT_DATA?.product_type_id || window.BLUEPRINT_DATA?.productTypeId || CRAFT_BP?.productTypeId) || 0;
-
-                const ids = Array.from(collectTypeIdsFromMaterialsTree(currentTree || []));
-                if (productTypeId) ids.push(String(productTypeId));
-                state.ids = ids;
-
-                craftBPDebugLog('[RunOptimized] productTypeId', productTypeId);
-                craftBPDebugLog('[RunOptimized] IDs count', ids.length);
-                craftBPDebugLog('[RunOptimized] IDs sample (first 25)', ids.slice(0, 25));
-                craftBPDebugLog('[RunOptimized] fuzzworkUrl (CRAFT_BP)', CRAFT_BP.fuzzworkUrl);
-                craftBPDebugLog('[RunOptimized] fuzzworkUrl (BLUEPRINT_DATA)', window.BLUEPRINT_DATA?.urls?.fuzzwork_price || window.BLUEPRINT_DATA?.fuzzwork_price_url);
-
-                if (typeof fetchAllPrices === 'function' && ids.length > 0 && window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
-                    craftBPDebugLog('[RunOptimized] Fetching Fuzzwork prices…');
-                    const prices = await fetchAllPrices(ids);
-
-                    const priceKeys = prices && typeof prices === 'object' ? Object.keys(prices) : [];
-                    craftBPDebugLog('[RunOptimized] Fuzzwork prices keys', priceKeys.length);
-                    if (productTypeId) {
-                        const k = String(productTypeId);
-                        craftBPDebugLog('[RunOptimized] Fuzzwork product raw price', prices[k] ?? prices[String(parseInt(k, 10))]);
-                    }
-
-                    let missingCount = 0;
-                    let zeroCount = 0;
-                    ids.forEach((tid) => {
-                        const raw = prices[tid] ?? prices[String(parseInt(tid, 10))];
-                        if (raw === undefined || raw === null) {
-                            missingCount += 1;
-                            return;
-                        }
-                        const p = parseFloat(raw);
-                        if (!(p > 0)) {
-                            zeroCount += 1;
-                        }
-                    });
-                    craftBPDebugLog('[RunOptimized] Fuzzwork missing count', missingCount, 'zero/non-positive count', zeroCount);
-
-                    ids.forEach((tid) => {
-                        const raw = prices[tid] ?? prices[String(parseInt(tid, 10))];
-                        const price = raw != null ? (parseFloat(raw) || 0) : 0;
-                        if (price > 0) {
-                            window.SimulationAPI.setPrice(tid, 'fuzzwork', price);
-                        }
-                    });
-
-                    // Ensure final product has a sell price fallback when not explicitly set.
-                    if (productTypeId) {
-                        const finalKey = String(productTypeId);
-                        const rawFinal = prices[finalKey] ?? prices[String(parseInt(finalKey, 10))];
-                        const finalPrice = rawFinal != null ? (parseFloat(rawFinal) || 0) : 0;
-                        if (finalPrice > 0 && typeof window.SimulationAPI.getPrice === 'function') {
-                            const existingSale = window.SimulationAPI.getPrice(productTypeId, 'sale');
-                            const existingSaleValue = existingSale && typeof existingSale.value === 'number' ? existingSale.value : 0;
-                            if (!(existingSaleValue > 0)) {
-                                window.SimulationAPI.setPrice(productTypeId, 'sale', finalPrice);
-                            }
-                        }
-                    }
-                }
-
-                const pricesSnapshot = getPriceSnapshotFromSimulation(ids);
-                state.pricesSnapshot = pricesSnapshot;
-
-                craftBPDebugLog('[RunOptimized] Snapshot size', pricesSnapshot instanceof Map ? pricesSnapshot.size : null);
-                if (productTypeId) {
-                    craftBPDebugLog('[RunOptimized] Snapshot product record', pricesSnapshot.get(Number(productTypeId)));
-                    if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
-                        craftBPDebugLog('[RunOptimized] SimulationAPI product buy/sale', {
-                            buy: window.SimulationAPI.getPrice(productTypeId, 'buy'),
-                            sale: window.SimulationAPI.getPrice(productTypeId, 'sale'),
-                        });
-                    }
-                }
-
-                const maxRuns = Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 1);
-                const scenarios = generateRunScenarios(maxRuns);
-
-                craftBPDebugLog('[RunOptimized] maxRuns', maxRuns);
-                craftBPDebugLog('[RunOptimized] scenarios', scenarios);
-
-                // Default search upper bound.
-                if (searchMaxRunsEl && !String(searchMaxRunsEl.value || '').trim()) {
-                    const suggested = Math.min(10000, Math.max(maxRuns, maxRuns * 10));
-                    searchMaxRunsEl.value = String(suggested);
-                }
-
-                // Keep SimulationAPI switch state aligned with the DOM without touching prices.
-                syncSimulationSwitchStatesFromDom();
-                const decisions = getCurrentDecisionsFromSimulationOrDom();
-                state.decisions = decisions;
-
-                const results = [];
-                for (let i = 0; i < scenarios.length; i += 1) {
-                    const runs = scenarios[i];
-                    if (statusEl) {
-                        statusEl.textContent = __(`Computing ${i + 1}/${scenarios.length} (runs=${runs})…`);
-                    }
-
-                    const payload = await fetchBlueprintPayloadForRuns(runs);
-                    craftBPDebugLog('[RunOptimized] payload received', {
-                        type_id: payload?.type_id,
-                        bp_type_id: payload?.bp_type_id,
-                        runs: payload?.num_runs,
-                        product_type_id: payload?.product_type_id,
-                        final_product_qty: payload?.final_product_qty,
-                        recipe_map_keys: payload?.recipe_map ? Object.keys(payload.recipe_map).length : 0,
-                        materials_tree_roots: Array.isArray(payload?.materials_tree) ? payload.materials_tree.length : 0,
-                    });
-
-                    const snap = (mode === 'dashboard')
-                        ? computeOptimizedProfitabilityForPayload(payload, pricesSnapshot, { decisions })
-                        : computeOptimizedProfitabilityForPayload(payload, pricesSnapshot);
-                    results.push(snap);
-
-                    craftBPDebugLog('[RunOptimized] scenario result', {
-                        runs: snap?.runs,
-                        cost: snap?.cost,
-                        revenue: snap?.revenue,
-                        profit: snap?.profit,
-                        marginPct: snap?.margin,
-                    });
-                }
-
-                // Debug: compare dashboard margin vs maxRuns point margin only in dashboard-aligned mode.
-                if (mode === 'dashboard' && window.INDY_HUB_DEBUG && window.SimulationAPI && typeof window.SimulationAPI.getFinancialItems === 'function') {
-                    try {
-                        const api = window.SimulationAPI;
-                        const productTypeIdDbg = Number(window.BLUEPRINT_DATA?.product_type_id || window.BLUEPRINT_DATA?.productTypeId || CRAFT_BP?.productTypeId) || 0;
-
-                        let costTotal = 0;
-                        const items = api.getFinancialItems() || [];
-                        items.forEach((item) => {
-                            const typeId = Number(item.typeId ?? item.type_id) || 0;
-                            if (!typeId || (productTypeIdDbg && typeId === productTypeIdDbg)) return;
-                            const qty = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0))) || 0;
-                            if (!qty) return;
-                            const unit = api.getPrice(typeId, 'buy');
-                            const unitPrice = unit && typeof unit.value === 'number' ? unit.value : 0;
-                            if (unitPrice > 0) costTotal += unitPrice * qty;
-                        });
-
-                        let revenueTotal = 0;
-                        try {
-                            const finalRow = document.getElementById('finalProductRow');
-                            const finalQtyEl = finalRow ? finalRow.querySelector('[data-qty]') : null;
-                            const rawFinalQty = finalQtyEl ? (finalQtyEl.getAttribute('data-qty') || finalQtyEl.dataset?.qty) : null;
-                            const finalQty = Math.max(0, Math.ceil(Number(rawFinalQty))) || 0;
-                            if (productTypeIdDbg && finalQty > 0) {
-                                const unit = api.getPrice(productTypeIdDbg, 'sale');
-                                const unitPrice = unit && typeof unit.value === 'number' ? unit.value : 0;
-                                if (unitPrice > 0) revenueTotal += unitPrice * finalQty;
-                            }
-                        } catch (e) {
-                            // ignore
-                        }
-
-                        let surplusRevenue = 0;
-                        const cycles = (typeof api.getProductionCycles === 'function') ? (api.getProductionCycles() || []) : [];
-                        if (Array.isArray(cycles) && cycles.length) {
-                            cycles.forEach((entry) => {
-                                const typeId = Number(entry.typeId || entry.type_id || 0) || 0;
-                                const surplusQty = Number(entry.surplus) || 0;
-                                if (!typeId || surplusQty <= 0) return;
-                                if (productTypeIdDbg && typeId === productTypeIdDbg) return;
-                                const unit = api.getPrice(typeId, 'sale');
-                                const unitPrice = unit && typeof unit.value === 'number' ? unit.value : 0;
-                                if (unitPrice > 0) surplusRevenue += unitPrice * surplusQty;
-                            });
-                        }
-                        revenueTotal += surplusRevenue;
-
-                        const dashboardMargin = revenueTotal > 0 ? ((revenueTotal - costTotal) / revenueTotal) * 100 : 0;
-                        const maxRunsPoint = results.find((r) => Number(r?.runs) === Number(maxRuns));
-
-                        const domSummaryMargin = document.getElementById('financialSummaryMargin')?.textContent || null;
-                        const domQuickMargin = document.getElementById('quickMargin')?.textContent || null;
-                        const domHeroMargin = document.getElementById('heroMargin')?.textContent || null;
-                        craftBPDebugLog('[RunOptimized] dashboard vs maxRuns point', {
-                            maxRuns,
-                            dashboard: { marginPct: dashboardMargin, revenue: revenueTotal, cost: costTotal, surplusRevenue },
-                            point: maxRunsPoint || null,
-                            dom: { financialSummaryMargin: domSummaryMargin, quickMargin: domQuickMargin, heroMargin: domHeroMargin },
-                        });
-
-                        try {
-                            console.log('[RunOptimized] dashboard vs maxRuns point JSON', JSON.stringify({
-                                maxRuns,
-                                dashboard: { marginPct: dashboardMargin, revenue: revenueTotal, cost: costTotal, surplusRevenue },
-                                point: maxRunsPoint || null,
-                                dom: { financialSummaryMargin: domSummaryMargin, quickMargin: domQuickMargin, heroMargin: domHeroMargin },
-                            }));
-                        } catch (e) {
-                            // ignore
-                        }
-                    } catch (e) {
-                        craftBPDebugLog('[RunOptimized] dashboard compare failed', e);
-                    }
-                }
-
-                renderRunOptimizedChart(canvas, results);
-
-                // Render a compact list of computed points (runs -> margin %)
-                const pointsListEl = document.getElementById('runOptimizedPointsList');
-                if (pointsListEl) {
-                    const items = results
-                        .slice()
-                        .sort((a, b) => (Number(a?.runs) || 0) - (Number(b?.runs) || 0))
-                        .map((r) => {
-                            const runs = Number(r?.runs) || 0;
-                            const margin = Number.isFinite(Number(r?.margin)) ? Number(r.margin) : 0;
-                            return `<span class="badge text-bg-light border me-1 mb-1">${runs}: ${margin.toFixed(1)}%</span>`;
-                        })
-                        .join('');
-
-                    pointsListEl.innerHTML = items || '';
-                }
-
-                // Show best run within displayed points.
-                const bestPointWithinChart = pickBestRunPoint(results);
-                renderBestRunSummary(bestResultEl, bestPointWithinChart, __('Best within chart'));
-                CRAFT_RUN_OPTIMIZED_STATE.curveResults = cloneCraftUiJsonValue(results, []);
-                CRAFT_RUN_OPTIMIZED_STATE.bestPoint = cloneCraftUiJsonValue(bestPointWithinChart, null);
-                CRAFT_RUN_OPTIMIZED_STATE.bestLabel = __('Best within chart');
-
-                // Hint if flat 0.
-                const productTypeIdForHint = Number(window.BLUEPRINT_DATA?.product_type_id || window.BLUEPRINT_DATA?.productTypeId || CRAFT_BP?.productTypeId) || 0;
-                const api = window.SimulationAPI;
-                const unitSale = (api && typeof api.getPrice === 'function') ? api.getPrice(productTypeIdForHint, 'sale') : null;
-                const unitSaleValue = unitSale && typeof unitSale.value === 'number' ? unitSale.value : 0;
-                const anyNonZero = results.some(r => Number(r?.margin) !== 0);
-
-                if (statusEl) {
-                    if (!anyNonZero && productTypeIdForHint && unitSaleValue <= 0) {
-                        statusEl.className = 'alert alert-warning mb-3';
-                        statusEl.textContent = __('Profitability curve is flat because the final product sell price is 0. Set a Sale price (or load prices) and retry.');
-                    } else {
-                        statusEl.className = 'alert alert-success mb-3';
-                        statusEl.textContent = (mode === 'dashboard')
-                            ? __('Profitability curve computed (dashboard-aligned).')
-                            : __('Profitability curve computed (re-optimized per run).');
-                    }
-                    CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
-                    CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
-                }
-                scheduleCraftUiStateSave();
-            } catch (e) {
-                console.error('[IndyHub] Run optimized failed', e);
-                const statusEl = document.getElementById('run-optimized-status');
-                if (statusEl) {
-                    statusEl.className = 'alert alert-warning mb-3';
-                    statusEl.textContent = __('Failed to compute profitability curve.');
-                    CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
-                    CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
-                }
-                scheduleCraftUiStateSave();
-            } finally {
-                inFlight = false;
-            }
-        }
-
-        // Keep a reference to the latest compute function so one-time handlers can call it.
-        state.computeAndRenderCurve = computeAndRenderCurve;
-
-        if (!initialized) {
-            // Recompute curve when the mode toggle changes.
-            if (modeToggleEl) {
-                modeToggleEl.addEventListener('change', () => {
-                    state.computeAndRenderCurve?.();
-                });
-            }
-
-            // Find optimal runs beyond the chart range.
-            if (findBestBtn) {
-                findBestBtn.addEventListener('click', async () => {
-                    if (inFlight) return;
-
-                    const statusEl = document.getElementById('run-optimized-status');
-                    const modeToggle = state.ui?.modeToggleEl;
-                    const mode = (modeToggle && modeToggle.checked) ? 'dashboard' : 'optimize';
-
-                    // Make sure we have a price snapshot.
-                    if (!state.pricesSnapshot) {
-                        await state.computeAndRenderCurve?.();
-                    }
-
-                    const maxValue = Math.max(1, Math.floor(Number(state.ui?.searchMaxRunsEl?.value || 0) || 1));
-                    const decisions = (mode === 'dashboard')
-                        ? (state.decisions || getCurrentDecisionsFromSimulationOrDom())
-                        : null;
-
-                    try {
-                        if (statusEl) {
-                            statusEl.className = 'alert alert-info mb-3';
-                            statusEl.textContent = __(`Searching optimal runs up to ${maxValue}…`);
-                        }
-
-                        const res = await findOptimalRuns({
-                            searchMaxRuns: maxValue,
-                            pricesSnapshot: state.pricesSnapshot,
-                            mode,
-                            decisions,
-                            statusEl,
-                        });
-
-                        renderBestRunSummary(state.ui?.bestResultEl, res.best, __(`Best up to ${maxValue}`));
-                        renderBestRunConfigDetails(res.best);
-                        CRAFT_RUN_OPTIMIZED_STATE.bestPoint = cloneCraftUiJsonValue(res.best, null);
-                        CRAFT_RUN_OPTIMIZED_STATE.bestLabel = __(`Best up to ${maxValue}`);
-                        if (statusEl) {
-                            statusEl.className = 'alert alert-success mb-3';
-                            statusEl.textContent = __(`Optimal runs found (samples=${res.samples}).`);
-                            CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
-                            CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
-                        }
-                        scheduleCraftUiStateSave();
-                    } catch (e) {
-                        console.error('[IndyHub] Run optimized best-runs search failed', e);
-                        if (statusEl) {
-                            statusEl.className = 'alert alert-warning mb-3';
-                            statusEl.textContent = __('Failed to search optimal runs.');
-                            CRAFT_RUN_OPTIMIZED_STATE.statusClass = statusEl.className;
-                            CRAFT_RUN_OPTIMIZED_STATE.statusText = statusEl.textContent;
-                        }
-                        scheduleCraftUiStateSave();
-                    }
-                });
-            }
-
-            initialized = true;
-        }
-
-            await computeAndRenderCurve();
-        });
-    }
-
-    /**
+/**
  * Collect current buy/craft decisions from the tree
  */
 function getCurrentBuyCraftDecisions() {
@@ -4760,6 +3485,22 @@ function initializeFinancialCalculations() {
     }
     syncIndustryFeeManualControls();
 
+    // Load the fee estimate when the Buy tab is first shown. Called without
+    // `force` on purpose: ensureIndustryFeeEstimateUpToDate already dedupes an
+    // in-flight request, short-circuits when the estimate matches the current
+    // signature, throttles retries after an error, and no-ops entirely when
+    // fees are disabled or there are no jobs. So this is idempotent across
+    // repeated tab switches and needs no flag of its own. It also calls
+    // recalcFinancials() itself, so do not wrap it in one.
+    const buyTabButton = document.getElementById('buy-tab-btn');
+    if (buyTabButton) {
+        buyTabButton.addEventListener('shown.bs.tab', () => {
+            if (typeof ensureIndustryFeeEstimateUpToDate === 'function') {
+                ensureIndustryFeeEstimateUpToDate();
+            }
+        });
+    }
+
     const resetBtn = document.getElementById('resetManualPricesBtn');
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
@@ -4796,6 +3537,14 @@ function initializeFinancialCalculations() {
     const computeButton = document.getElementById('compute-needed');
     if (computeButton) {
         computeButton.addEventListener('click', () => {
+            const sourceMode = document.getElementById('materialsSourceMode')?.value || 'manual';
+            const ownedInput = document.getElementById('ownedMaterialsInput');
+            if (sourceMode === 'designated_bay' && ownedInput?.dataset.sourceLoaded !== 'validated') {
+                const message = __('A designated materials bay is selected, but refreshed and access-validated asset data is not available yet. Choose Manual text input or refresh the bay before computing.');
+                window.CraftBP?.pushStatus?.(message, 'warning');
+                document.getElementById('materialsSourceStatus')?.replaceChildren(document.createTextNode(message));
+                return;
+            }
             CRAFT_COMPUTED_NEEDED_ROWS = null;
             invalidateOwnedAllocation();
             refreshTabsAfterStateChange({ forceNeeded: true });
@@ -5346,9 +4095,10 @@ function renderSystemStructureOptions(structures, environment) {
             : null;
 
         CRAFT_BUILD_SYSTEM_STATE.structuresById.set(structureId, row);
+        const cachedSuffix = row?.is_cached ? ` - ${__('cached')}` : '';
         options.push({
             value: `structure:${structureId}`,
-            label: typeName ? `${labelName} (${typeName})` : labelName,
+            label: `${typeName ? `${labelName} (${typeName})` : labelName}${cachedSuffix}`,
             structureId,
             structureType: structureType || 'none',
             structureTypeId,
@@ -5358,6 +4108,23 @@ function renderSystemStructureOptions(structures, environment) {
             facilityTax,
         });
     });
+
+    const structureCacheNote = document.getElementById('buildStructureCacheNote');
+    if (structureCacheNote) {
+        const cachedTimes = (Array.isArray(structures) ? structures : [])
+            .map((row) => Date.parse(String(row?.cached_at || '')) || 0)
+            .filter((value) => value > 0);
+        if (cachedTimes.length > 0) {
+            const oldest = new Date(Math.min(...cachedTimes)).toISOString();
+            structureCacheNote.textContent = `${__('Structure names and types are cached corporation data, not a live ESI read. Oldest refresh')}: ${formatIsoDateTime(oldest)}.`;
+            structureCacheNote.classList.remove('d-none');
+        } else if ((Array.isArray(structures) ? structures : []).length > 0) {
+            structureCacheNote.textContent = __('Structure names and types are cached corporation data, not a live ESI read.');
+            structureCacheNote.classList.remove('d-none');
+        } else {
+            structureCacheNote.classList.add('d-none');
+        }
+    }
 
     structureSelect.innerHTML = '';
     options.forEach((optionData) => {
@@ -5644,7 +4411,12 @@ function parseIndustryFeeConfigFromUrl() {
             return Number.isFinite(numeric) ? numeric : null;
         };
 
-        parsed.enabled = ['1', 'true', 'yes', 'on'].includes(String(params.get('industry_fee_enabled') || '').trim().toLowerCase());
+        // Fees default on (matching the server); only an explicit falsy value
+        // in the URL turns them off, not the mere absence of the key.
+        const rawEnabled = params.get('industry_fee_enabled');
+        parsed.enabled = rawEnabled === null
+            ? true
+            : !['0', 'false', 'no', 'off'].includes(String(rawEnabled).trim().toLowerCase());
         parsed.structure_type_id = parseMaybeNumber(params.get('industry_fee_structure_type_id'));
         parsed.security = String(params.get('industry_fee_security') || 'HIGH_SEC').trim().toUpperCase();
         parsed.system_id = parseMaybeNumber(params.get('industry_fee_system_id'));
@@ -6375,7 +5147,7 @@ function renderIndustryFeeBreakdown(context = null) {
     if (!isCurrent) {
         statusEl.textContent = CRAFT_INDUSTRY_FEE_STATE.loading
             ? __('Calculating fees...')
-            : __('Fees are stale. Click "Calculate Fees".');
+            : __('Fees are stale. Click "Re-calculate taxes".');
         return;
     }
     if (hasErrors) {
@@ -6499,7 +5271,7 @@ function syncIndustryFeeManualControls() {
         return;
     }
 
-    button.innerHTML = `<i class="fas fa-receipt me-1"></i>${escapeHtml(__('Calculate Fees'))}`;
+    button.innerHTML = `<i class="fas fa-receipt me-1"></i>${escapeHtml(__('Re-calculate taxes'))}`;
     button.setAttribute('title', __('Calculate industry fees for current planner state.'));
 }
 
@@ -6981,8 +5753,6 @@ function recalcFinancials() {
         surplusWrapperEl.classList.toggle('d-none', !(surplusRevenue > 0));
     }
 
-    revTotal += surplusRevenue;
-
     const industryFeeContext = getCurrentIndustryFeeContext();
     const industryFeeTotal = getIndustryFeeTotalCost(industryFeeContext);
     const industryFeesCurrent = isIndustryFeeEstimateCurrent(industryFeeContext);
@@ -7072,7 +5842,7 @@ function recalcFinancials() {
         } else if (CRAFT_INDUSTRY_FEE_STATE.loading) {
             summaryIndustryFeesEl.setAttribute('title', __('Industry fee calculation in progress...'));
         } else if (isStaleManual) {
-            summaryIndustryFeesEl.setAttribute('title', __('Industry fees are not calculated for this configuration. Click "Calculate Fees".'));
+            summaryIndustryFeesEl.setAttribute('title', __('Industry fees are not calculated for this configuration. Click "Re-calculate taxes".'));
         } else {
             summaryIndustryFeesEl.removeAttribute('title');
         }
@@ -7363,6 +6133,39 @@ function populatePrices(allInputs, prices) {
     }
 }
 
+/**
+ * Flag an Estimate input whose value is a derived fallback, not a market price.
+ *
+ * Capital ships often have no usable market price; the server supplies a
+ * derived estimate plus its provenance. Say so on the cell rather than letting
+ * it read as a market figure.
+ */
+function applyDerivedEstimateMarker(input, typeId) {
+    if (!input) {
+        return;
+    }
+    const api = window.SimulationAPI;
+    const meta = (api && typeof api.getPriceEstimateMeta === 'function')
+        ? api.getPriceEstimateMeta(typeId)
+        : null;
+    // Auto estimates come from the blueprint's material costs; when the hull
+    // needs a bought copy, public BPC contract prices are included too.
+    let sourceLabel = __('derived from blueprint and material costs');
+    if (meta && meta.source === 'capital_manual') {
+        sourceLabel = __('set by an administrator');
+    } else if (meta && meta.contractCount > 0) {
+        sourceLabel = `${__('derived from blueprint material costs plus public BPC contract prices')}, ${meta.contractCount} ${__('contracts')}`;
+    }
+    const age = meta && meta.updatedAt
+        ? ` ${__('Last calculated')}: ${formatIsoDateTime(meta.updatedAt)}.`
+        : ` ${__('No calculation timestamp is recorded for this value.')}`;
+    input.classList.add('craft-price-derived-estimate');
+    input.setAttribute(
+        'title',
+        `${__('No market price for this item. This is an estimate')} (${sourceLabel}).${age}`
+    );
+}
+
 function buildFinancialRow(item, pricesMap) {
     const rowKind = String(item.rowKind || 'material').toLowerCase() === 'bpc' ? 'bpc' : 'material';
     const rowKey = String(item.rowKey || `${rowKind}:${item.typeId}`);
@@ -7388,20 +6191,27 @@ function buildFinancialRow(item, pricesMap) {
     const row = document.createElement('tr');
     row.setAttribute('data-type-id', String(item.typeId));
     row.setAttribute('data-row-kind', rowKind);
+    // The Margin column is only meaningful for a row with a market alternative
+    // to compare against. BPC contracts carry a fixed contract price,
+    // missing-BPC rows are priced at 0, and compressed-ore rows set
+    // real == estimate, so an em dash is the honest value for all of them.
+    const marginTooltip = isBpc
+        ? __('A purchased blueprint copy has no resale margin; it is a cost input to production.')
+        : __('No margin for this row: there is no separate market price to compare this cost against.');
     row.setAttribute('data-row-key', rowKey);
     row.setAttribute('data-manual-financial', isManualFinancial ? 'true' : 'false');
     row.classList.toggle('table-warning', isBpc);
 
     row.innerHTML = `
         <td class="fw-semibold">
-            <div class="d-flex align-items-center gap-3 craft-planner-item-flex">
-                <img src="https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32" alt="${escapeHtml(itemTypeName)}" class="rounded" style="width:28px;height:28px;background:#f3f4f6;" onerror="this.style.display='none';">
+            <div class="d-flex align-items-center gap-2 craft-planner-item-flex">
+                <img src="https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32" alt="${escapeHtml(itemTypeName)}" class="eve-type-icon eve-type-icon--28" onerror="this.style.display='none';">
                 <span class="craft-planner-item-name-wrap">
                     <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 craft-planner-item-name">${escapeHtml(itemTypeName)}</span>${rowTagHtml}
                 </span>
             </div>
         </td>
-        <td class="text-end craft-financial-qty-cell" data-qty="${payableQty}" data-qty-pay="${payableQty}" data-qty-required="${requiredQty}" data-qty-owned="${ownedQty}">
+        <td class="text-end text-xs craft-financial-qty-cell" data-qty="${payableQty}" data-qty-pay="${payableQty}" data-qty-required="${requiredQty}" data-qty-owned="${ownedQty}">
             <span class="badge ${qtyBadgeClass}">${formatInteger(payableQty)}</span>
             <div class="text-muted text-xs mt-1 financial-owned-note ${showOwnedNote ? '' : 'd-none'}">
                 ${escapeHtml(__('Owned'))}: ${formatInteger(ownedQty)} / ${escapeHtml(__('Need'))}: ${formatInteger(requiredQty)}
@@ -7413,7 +6223,8 @@ function buildFinancialRow(item, pricesMap) {
         <td class="text-end">
             <input type="text" inputmode="decimal" class="form-control form-control-sm real-price text-end" data-type-id="${item.typeId}" value="0.00">
         </td>
-        <td class="text-end total-cost">0</td>
+        <td class="text-end text-xs total-cost fw-semibold">0</td>
+        <td class="text-end text-xs item-margin text-muted" title="${escapeHtml(marginTooltip)}" aria-label="${escapeHtml(marginTooltip)}">—</td>
     `;
 
     const fuzzInput = row.querySelector('.fuzzwork-price');
@@ -7422,8 +6233,18 @@ function buildFinancialRow(item, pricesMap) {
     bindCraftPriceInputFormatting(realInput);
 
     const priceEntry = isBpc ? {} : (pricesMap.get(item.typeId) || {});
-    const fuzzPrice = isBpc ? 0 : Number(priceEntry.fuzzwork || 0);
+    // When there is no market price, fall back to a derived estimate (capital
+    // ships have no usable market). Marked so the Estimate column does not
+    // present a derived number as if it came from the market.
+    const marketPrice = isBpc ? 0 : Number(priceEntry.fuzzwork || 0);
+    const derivedEstimate = isBpc ? 0 : Number(priceEntry.estimate || 0);
+    const usesDerivedEstimate = marketPrice <= 0 && derivedEstimate > 0;
+    const fuzzPrice = usesDerivedEstimate ? derivedEstimate : marketPrice;
     const realPrice = isBpc ? 0 : Number(priceEntry.real || 0);
+
+    if (usesDerivedEstimate) {
+        applyDerivedEstimateMarker(fuzzInput, item.typeId);
+    }
 
     if (isBpc) {
         setCraftPriceInputValue(fuzzInput, 0);
@@ -8687,6 +7508,10 @@ function renderBuildPlannerSlotControls(rows) {
             row.usedSlots,
             row.skillsMissing,
             CRAFT_BUILD_PLANNER_STATE.slotAssignments.get(row.characterId) || 0,
+        ]).concat([
+            // Cards show per-character job counts, so a new schedule re-renders.
+            buildScheduleData && Array.isArray(buildScheduleData.jobs) ? buildScheduleData.jobs.length : 0,
+            buildScheduleData ? Number(buildScheduleData.total_parallel_time_seconds) || 0 : 0,
         ])
     );
 
@@ -8699,6 +7524,22 @@ function renderBuildPlannerSlotControls(rows) {
     if (!Array.isArray(rows) || rows.length === 0) {
         container.innerHTML = '';
         return;
+    }
+
+    // Jobs and completion per character from the last calculated schedule, so
+    // each card leads with what matters: who, how many free slots, how much
+    // work is assigned and when it finishes.
+    const scheduleByCharacter = new Map();
+    if (buildScheduleData && Array.isArray(buildScheduleData.jobs)) {
+        const characterBySlot = new Map((buildScheduleData.slots || []).map((slot) => [slot.slot_id, Number(slot.character_id) || 0]));
+        buildScheduleData.jobs.forEach((job) => {
+            const characterId = characterBySlot.get(job.assigned_slot) || 0;
+            if (!characterId) return;
+            const entry = scheduleByCharacter.get(characterId) || { jobs: 0, endSeconds: 0 };
+            entry.jobs += 1;
+            entry.endSeconds = Math.max(entry.endSeconds, Number(job.end_time_seconds) || 0);
+            scheduleByCharacter.set(characterId, entry);
+        });
     }
 
     container.innerHTML = rows.map((row) => {
@@ -8720,18 +7561,23 @@ function renderBuildPlannerSlotControls(rows) {
             statusText = `${__('Free now')}: ${formatInteger(availableSlots)}`;
         }
 
+        const scheduled = scheduleByCharacter.get(row.characterId);
+        const scheduleLine = scheduled
+            ? `${formatInteger(scheduled.jobs)} ${__('job(s) assigned')} · ${__('done in')} ${formatTimeDuration(scheduled.endSeconds)}`
+            : '';
+
         return `
             <div class="craft-build-slot-card${disabled ? ' is-unavailable' : ''}">
-                <div class="d-flex align-items-start justify-content-between gap-3">
+                <div class="d-flex align-items-start justify-content-between gap-2">
                     <div class="min-w-0">
                         <div class="fw-semibold text-truncate">${escapeHtml(row.name)}</div>
-                        <div class="small text-muted mt-1">${escapeHtml(statusText)}</div>
+                        ${scheduleLine ? `<div class="small text-muted">${escapeHtml(scheduleLine)}</div>` : ''}
                     </div>
-                    <span class="badge ${availableSlots > 0 ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}">
-                        ${formatInteger(availableSlots)}
+                    <span class="badge ${availableSlots > 0 ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary'}" title="${escapeHtml(__('Free manufacturing slots now'))}">
+                        ${formatInteger(availableSlots)} ${escapeHtml(__('free'))}
                     </span>
                 </div>
-                <div class="input-group input-group-sm mt-3">
+                <div class="input-group input-group-sm mt-2">
                     <span class="input-group-text">${escapeHtml(__('Use'))}</span>
                     <input
                         type="number"
@@ -8745,6 +7591,10 @@ function renderBuildPlannerSlotControls(rows) {
                     >
                     <span class="input-group-text">/ ${formatInteger(planningCap)}</span>
                 </div>
+                <details class="small text-muted mt-1">
+                    <summary>${escapeHtml(__('Slot details'))}</summary>
+                    ${escapeHtml(statusText)}
+                </details>
             </div>
         `;
     }).join('');
@@ -9275,6 +8125,55 @@ function pruneSelectedContractsToCurrentProductionPlan() {
     }
 }
 
+function isBpcOfferExpired(offer, nowMs = Date.now()) {
+    const expiryMs = Date.parse(String(offer?.expires_at || '')) || 0;
+    return expiryMs > 0 && expiryMs <= nowMs;
+}
+
+// Selected contracts are restored from storage and saved simulations, so they
+// may have been accepted, withdrawn or expired since. Drop any that have
+// expired, or that a successfully loaded snapshot for their blueprint no longer
+// lists, so they never count toward coverage or cost. Returns dropped IDs.
+function revalidateSelectedBpcContracts() {
+    const dropped = [];
+    const affectedBlueprintTypeIds = [];
+    Array.from(CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.entries()).forEach(([blueprintTypeIdRaw, offerMap]) => {
+        const blueprintTypeId = Number(blueprintTypeIdRaw) || 0;
+        if (!(offerMap instanceof Map)) {
+            return;
+        }
+        const liveKnown = CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.has(blueprintTypeId)
+            && !CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(blueprintTypeId);
+        const liveIds = liveKnown
+            ? new Set((CRAFT_BPC_CONTRACT_STATE.offersByBlueprintType.get(blueprintTypeId) || [])
+                .map((offer) => Number(offer?.contract_id) || 0))
+            : null;
+        let changed = false;
+        Array.from(offerMap.entries()).forEach(([contractIdRaw, offer]) => {
+            const contractId = Number(contractIdRaw) || 0;
+            if (isBpcOfferExpired(offer) || (liveIds && !liveIds.has(contractId))) {
+                offerMap.delete(contractIdRaw);
+                dropped.push(contractId);
+                changed = true;
+            }
+        });
+        if (offerMap.size === 0) {
+            CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.delete(blueprintTypeIdRaw);
+        }
+        if (changed) {
+            affectedBlueprintTypeIds.push(blueprintTypeId);
+        }
+    });
+    if (dropped.length > 0) {
+        affectedBlueprintTypeIds.forEach((blueprintTypeId) => syncConfigureCardFromSelectedContracts(blueprintTypeId));
+        CRAFT_BPC_CONTRACT_STATE.droppedSelections = Array.from(
+            new Set([...(CRAFT_BPC_CONTRACT_STATE.droppedSelections || []), ...dropped])
+        );
+        saveSelectedBpcContractsToStorage();
+    }
+    return Array.from(new Set(dropped));
+}
+
 function getCraftBpcContractsUrl() {
     return String(window.BLUEPRINT_DATA?.urls?.craft_bpc_contracts || '').trim();
 }
@@ -9345,6 +8244,14 @@ async function fetchBuyBpcOffersForBlueprints(blueprintTypeIds, { force = false 
     const expiresAt = String(payload?.expires_at || '').trim();
     const fetchedAt = String(payload?.fetched_at || '').trim();
     const isCached = Boolean(payload?.is_cached);
+    CRAFT_BPC_CONTRACT_STATE.cachedAt = cachedAt;
+    CRAFT_BPC_CONTRACT_STATE.expiresAt = expiresAt;
+    CRAFT_BPC_CONTRACT_STATE.lastSynced = String(payload?.last_synced || '').trim();
+    CRAFT_BPC_CONTRACT_STATE.isCached = isCached;
+    CRAFT_BPC_CONTRACT_STATE.refreshFailed = Boolean(payload?.refresh_failed);
+    CRAFT_BPC_CONTRACT_STATE.lastFailureAt = String(payload?.last_failure_at || '').trim();
+    CRAFT_BPC_CONTRACT_STATE.refreshQueued = Boolean(payload?.refresh_queued);
+    CRAFT_BPC_CONTRACT_STATE.snapshotLoaded = true;
     let errorCount = 0;
 
     idsToFetch.forEach((blueprintTypeId) => {
@@ -9475,6 +8382,12 @@ function formatBuyBpcsCacheCountdown(totalSeconds) {
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatIsoDateTime(value) {
+    const parsed = new Date(String(value || ''));
+    if (Number.isNaN(parsed.getTime())) return String(value || '');
+    return parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
 function getBuyBpcsCacheRemainingSeconds() {
     const ttlSeconds = Math.max(0, Number(CRAFT_BPC_CONTRACT_STATE.cacheTtlSeconds) || 0);
     const lastFetchAtMs = Number(CRAFT_BPC_CONTRACT_STATE.lastFetchAtMs) || 0;
@@ -9510,6 +8423,63 @@ function ensureBuyBpcsCacheTimerTicker() {
     CRAFT_BPC_CONTRACT_STATE.cacheTimerHandle = window.setInterval(() => {
         renderBuyBpcsCacheTimer();
     }, 1000);
+}
+
+function formatBuyBpcsAge(totalSeconds) {
+    const safeSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    if (safeSeconds < 60) {
+        return __('less than a minute');
+    }
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function buyBpcsTimeTag(isoValue) {
+    const value = String(isoValue || '');
+    return `<time datetime="${escapeHtml(value)}" title="${escapeHtml(value)}">${escapeHtml(formatIsoDateTime(value))}</time>`;
+}
+
+// One of: 'none' (nothing loaded yet), 'failed' (the last refresh failed after
+// the snapshot shown), 'current' (within the cache TTL) or 'cached' (older).
+function getBuyBpcsSnapshotState() {
+    if (!CRAFT_BPC_CONTRACT_STATE.snapshotLoaded || !CRAFT_BPC_CONTRACT_STATE.lastSynced) {
+        return CRAFT_BPC_CONTRACT_STATE.refreshFailed ? 'failed' : 'none';
+    }
+    if (CRAFT_BPC_CONTRACT_STATE.refreshFailed) {
+        return 'failed';
+    }
+    return CRAFT_BPC_CONTRACT_STATE.isCached ? 'current' : 'cached';
+}
+
+function renderBuyBpcsFreshness() {
+    const el = document.getElementById('buyBpcsFreshness');
+    if (!el) {
+        return;
+    }
+    const state = getBuyBpcsSnapshotState();
+    const lastSynced = CRAFT_BPC_CONTRACT_STATE.lastSynced;
+    const ageSeconds = lastSynced ? Math.max(0, (Date.now() - (Date.parse(lastSynced) || Date.now())) / 1000) : 0;
+    const labels = {
+        none: [__('No contract snapshot loaded yet'), 'secondary'],
+        current: [__('Current snapshot'), 'success'],
+        cached: [__('Cached snapshot (older than the refresh interval)'), 'warning'],
+        failed: [__('Last refresh failed'), 'danger'],
+    };
+    const [label, variant] = labels[state];
+    const parts = [`<span class="badge text-bg-${variant}" data-bpc-snapshot-state="${state}">${escapeHtml(label)}</span>`];
+    if (lastSynced) {
+        parts.push(`${escapeHtml(__('Last ESI refresh'))}: ${buyBpcsTimeTag(lastSynced)}`);
+        parts.push(`${escapeHtml(__('Local cache age'))}: ${escapeHtml(formatBuyBpcsAge(ageSeconds))}`);
+    }
+    if (state === 'failed' && CRAFT_BPC_CONTRACT_STATE.lastFailureAt) {
+        parts.push(`${escapeHtml(__('Failed at'))}: ${buyBpcsTimeTag(CRAFT_BPC_CONTRACT_STATE.lastFailureAt)}${lastSynced ? ` - ${escapeHtml(__('showing the last successful snapshot'))}` : ''}`);
+    }
+    if (CRAFT_BPC_CONTRACT_STATE.refreshQueued) {
+        parts.push(escapeHtml(__('A background refresh is queued')));
+    }
+    el.innerHTML = parts.join(' <span class="text-muted">&middot;</span> ');
+    el.classList.toggle('d-none', false);
 }
 
 function recordBuyBpcsFetchTimestamp(cacheTtlSeconds = null, fetchedAtIso = '') {
@@ -9712,10 +8682,18 @@ function renderBuyBpcsTab() {
             const contractId = Number(offer.contract_id) || 0;
             const isSelected = selectedIds.has(contractId);
             const tr = document.createElement('tr');
+            const offerExpiry = Date.parse(String(offer.expires_at || '')) || 0;
+            const offerIssued = Date.parse(String(offer.issued_at || '')) || 0;
+            const snapshotState = getBuyBpcsSnapshotState();
+            const offerStatus = offerExpiry && offerExpiry <= Date.now()
+                ? __('Expired')
+                : (snapshotState === 'current' ? __('Current offer') : __('Cached offer'));
             tr.innerHTML = `
                 <td class="small">
                     <strong>#${contractId}</strong>
                     ${offer.title ? `<span class="text-muted"> - ${escapeHtml(offer.title)}</span>` : ''}
+                    <div class="text-muted">${escapeHtml(offerStatus)}${offerIssued ? ` · ${escapeHtml(__('listed'))} ${buyBpcsTimeTag(offer.issued_at)}` : ''}</div>
+                    ${offer.expires_at ? `<div class="text-muted">${escapeHtml(__('expires'))}: <time datetime="${escapeHtml(offer.expires_at)}" title="${escapeHtml(offer.expires_at)}">${escapeHtml(formatIsoDateTime(offer.expires_at))}</time></div>` : ''}
                 </td>
                 <td class="text-end">${formatPrice(Number(offer.price_total) || 0)}</td>
                 <td class="text-end">${formatInteger(Number(offer.runs) || 0)}</td>
@@ -9771,11 +8749,20 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
         if (fetchResult?.fetched) {
             recordBuyBpcsFetchTimestamp(fetchResult.cacheTtlSeconds, fetchResult.cachedAt);
         }
+        if (revalidateSelectedBpcContracts().length > 0) {
+            refreshTabsAfterStateChange({ forceNeeded: true });
+        }
         const fetchErrorCount = Number(fetchResult?.errorCount) || 0;
         const existingErrorCount = blueprintTypeIds.filter(
             (blueprintTypeId) => CRAFT_BPC_CONTRACT_STATE.fetchErrorsByBlueprintType.has(blueprintTypeId)
         ).length;
-        if ((fetchErrorCount + existingErrorCount) > 0) {
+        const droppedSelections = CRAFT_BPC_CONTRACT_STATE.droppedSelections || [];
+        if (droppedSelections.length > 0) {
+            setBuyBpcsStatus(
+                `${__('Removed selected contracts that expired or are no longer listed')}: ${droppedSelections.map((id) => `#${id}`).join(', ')}`,
+                'warning'
+            );
+        } else if ((fetchErrorCount + existingErrorCount) > 0) {
             setBuyBpcsStatus(
                 __('Some blueprint contract lookups failed. Check server logs for craft_bpc_contracts/public_contracts details.'),
                 'warning'
@@ -9800,6 +8787,7 @@ async function refreshBuyBpcsOffers({ force = false } = {}) {
         setBuyBpcsStatus(__('Unable to load public Jita contracts right now.'), 'warning');
     } finally {
         CRAFT_BPC_CONTRACT_STATE.loading = false;
+        renderBuyBpcsFreshness();
         renderBuyBpcsTab();
     }
 }
@@ -9839,6 +8827,16 @@ function initializeBuyBpcsTab() {
 
     renderConfigureBoughtBpcsSection();
     renderBuyBpcsTab();
+    renderBuyBpcsFreshness();
+
+    // Restored selections are revalidated on load, not only when the tab is
+    // opened. Expired ones are dropped synchronously, before the rest of page
+    // init computes coverage; the live snapshot check follows asynchronously
+    // and refreshes the tabs itself if it drops anything.
+    if (CRAFT_BPC_CONTRACT_STATE.selectedByBlueprintType.size > 0) {
+        revalidateSelectedBpcContracts();
+        refreshBuyBpcsOffers({ force: false });
+    }
 }
 
 function updateFinancialTabFromState() {
@@ -10359,6 +9357,10 @@ function updateMaterialsTabFromState() {
 
     if (groups.size === 0) {
         container.innerHTML = '';
+        const emptyCountEl = document.getElementById('totalMaterialsCount');
+        if (emptyCountEl) {
+            emptyCountEl.textContent = '-';
+        }
         if (emptyState) {
             emptyState.style.display = '';
         }
@@ -10370,15 +9372,6 @@ function updateMaterialsTabFromState() {
 
     sortedGroups.forEach(([groupName, groupItems]) => {
         groupItems.sort((a, b) => a.typeName.localeCompare(b.typeName, undefined, { sensitivity: 'base' }));
-        const usageTargets = new Set();
-        groupItems.forEach((item) => {
-            const targets = usageByType.get(Number(item.typeId) || 0);
-            if (!targets) {
-                return;
-            }
-            targets.forEach((name) => usageTargets.add(name));
-        });
-        const usageSummary = formatUsageSummaryText(usageTargets);
 
         const rowsHtml = groupItems.map(item => `
             <tr data-type-id="${item.typeId}">
@@ -10395,21 +9388,26 @@ function updateMaterialsTabFromState() {
             </tr>
         `).join('');
 
+        // Root carries .craft-group-card and the body carries .craft-group-items
+        // so the Expand/Collapse all controls and their CSS actually apply to
+        // the cards this function renders.
+        const countLabel = __('Distinct material types in this category');
         const card = document.createElement('div');
-        card.className = 'card shadow-sm mb-4';
+        card.className = 'craft-group-card card shadow-sm mb-4';
         card.innerHTML = `
-            <div class="card-header d-flex align-items-center justify-content-between bg-body-secondary">
-                <div class="me-2">
-                    <div class="fw-semibold">
-                        <i class="fas fa-layer-group text-primary me-2"></i>${escapeHtml(groupName)}
-                    </div>
-                    <div class="small text-muted mt-1">
-                        <i class="fas fa-gears me-1"></i>${escapeHtml(usageSummary)}
-                    </div>
+            <div class="card-header craft-group-header d-flex align-items-center justify-content-between bg-body-secondary"
+                 role="button" tabindex="0" aria-expanded="true">
+                <div class="me-2 fw-semibold">
+                    <i class="fas fa-layer-group text-primary me-2" aria-hidden="true"></i>${escapeHtml(groupName)}
                 </div>
-                <span class="badge bg-primary-subtle text-primary fw-semibold">${groupItems.length}</span>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="badge bg-primary-subtle text-primary fw-semibold"
+                          title="${escapeHtml(countLabel)}"
+                          aria-label="${escapeHtml(`${groupItems.length} — ${countLabel}`)}">${groupItems.length}</span>
+                    <i class="fas fa-chevron-down craft-group-toggle text-muted" aria-hidden="true"></i>
+                </div>
             </div>
-            <div class="card-body p-0">
+            <div class="craft-group-items card-body p-0">
                 <div class="table-responsive">
                     <table class="table table-hover table-sm align-middle mb-0">
                         <thead class="table-light">
@@ -10424,8 +9422,27 @@ function updateMaterialsTabFromState() {
                 </div>
             </div>
         `;
+        const header = card.querySelector('.craft-group-header');
+        const toggleGroup = () => {
+            const collapsed = card.classList.toggle('collapsed');
+            header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        };
+        header.addEventListener('click', toggleGroup);
+        header.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleGroup();
+            }
+        });
         container.appendChild(card);
     });
+
+    // Owned here rather than in the template: this is the only place that knows
+    // the distinct-type count, and it reruns on every state change.
+    const materialsCountEl = document.getElementById('totalMaterialsCount');
+    if (materialsCountEl) {
+        materialsCountEl.textContent = aggregated.size ? formatInteger(aggregated.size) : '-';
+    }
 
     if (emptyState) {
         emptyState.style.display = 'none';
@@ -10770,10 +9787,16 @@ function buildNeededPurchasesState() {
             typeId,
             name,
             qty: 0,
+            requiredQuantity: 0,
+            ownedQuantity: 0,
+            surplus: 0,
             marketGroup,
             unitPrice: Number(plannerItem && plannerItem.unitPrice) || 0,
         };
         existing.qty += qty;
+        existing.requiredQuantity += Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? qty) || 0));
+        existing.ownedQuantity += Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
+        existing.surplus += Math.max(0, Math.ceil(Number(item.surplus) || 0));
         if (!existing.name && name) {
             existing.name = name;
         }
@@ -10803,6 +9826,16 @@ function computeNeededPurchases() {
         return;
     }
 
+    // Rows are rebuilt below; dispose their popovers first so none is left
+    // floating detached from its (removed) badge.
+    if (window.bootstrap && bootstrap.Popover) {
+        tbody.querySelectorAll('.craft-buyback-badge').forEach((badge) => {
+            const popover = bootstrap.Popover.getInstance(badge);
+            if (popover) {
+                popover.dispose();
+            }
+        });
+    }
     tbody.innerHTML = '';
     if (totalEl) {
         totalEl.textContent = formatPrice(0);
@@ -10883,20 +9916,55 @@ function computeNeededPurchases() {
             const unit = storedUnitPrice > 0 ? storedUnitPrice : apiUnit;
             const line = (unit > 0 ? unit : 0) * item.qty;
             totalCost += line;
+            const needed = Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.qty) || 0));
+            const owned = Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
+            const surplus = Math.max(0, Math.ceil(Number(item.surplus) || 0));
 
             const tr = document.createElement('tr');
+            tr.dataset.typeId = String(Number(item.typeId) || 0);
+            // Icons and text carry the meaning, not colour alone. Surplus is
+            // deliberately styled as informational because it is excluded from
+            // profit; a zero value is muted so the eye goes to real numbers.
+            const zero = (value) => (value > 0 ? '' : ' text-muted opacity-50');
             tr.innerHTML = `
-                <td>${escapeHtml(item.name || String(item.typeId))}</td>
-                <td class="text-end" data-qty="${item.qty}">${formatInteger(item.qty)}</td>
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        <img src="https://images.evetech.net/types/${item.typeId}/icon?size=32" alt="" class="eve-type-icon eve-type-icon--28" onerror="this.style.display='none';">
+                        <span>${escapeHtml(item.name || String(item.typeId))}</span>
+                        <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1" data-export-ignore></span>
+                    </div>
+                </td>
+                <td class="text-end craft-needed-qty${zero(needed)}" data-qty-needed="${needed}">
+                    ${formatInteger(needed)}
+                </td>
+                <td class="text-end craft-owned-qty${zero(owned)}" data-qty-owned="${owned}">
+                    ${owned > 0 ? `<i class="fas fa-box-open me-1" aria-hidden="true"></i>` : ''}${formatInteger(owned)}
+                </td>
+                <td class="text-end" data-qty="${item.qty}" data-qty-buy="${item.qty}">
+                    <span class="badge bg-primary text-white craft-buy-qty" aria-label="${escapeHtml(__('To buy'))}: ${formatInteger(item.qty)}">
+                        <i class="fas fa-cart-plus me-1" aria-hidden="true"></i>${formatInteger(item.qty)}
+                    </span>
+                </td>
+                <td class="text-end craft-surplus-qty${zero(surplus)}" data-qty-surplus="${surplus}">
+                    ${surplus > 0 ? `<i class="fas fa-arrow-up-right-dots me-1" aria-hidden="true"></i>` : ''}${formatInteger(surplus)}
+                </td>
                 <td class="text-end">${formatPrice(unit)}</td>
-                <td class="text-end">${formatPrice(line)}</td>
+                <td class="text-end fw-semibold">${formatPrice(line)}</td>
             `;
             tbody.appendChild(tr);
         });
 
+        // rowsToDisplay.length is the "items still to buy" count; it was already
+        // computed here and thrown away.
+        const neededCountEl = document.getElementById('shoppingItemsNeededCount');
+        if (neededCountEl) {
+            neededCountEl.textContent = formatInteger(rowsToDisplay.length);
+        }
+
         if (totalEl) {
             totalEl.textContent = formatPrice(totalCost);
         }
+        decorateNeededRowsWithBuyback(rowsToDisplay);
         if (typeof scheduleImportFeesRecalculation === 'function') {
             scheduleImportFeesRecalculation({ syncActual: true });
         }
@@ -10905,6 +9973,400 @@ function computeNeededPurchases() {
         }
     });
 }
+
+// ==================== BUYBACK ORDERS FROM THE SHOPPING LIST ====================
+//
+// Needed items the hub's buyback has in stock get a badge that opens a popover
+// and then a confirmation modal. Orders go through the buyback's own order
+// service (server side); here we only track which simulator-created orders are
+// still pending. Pending quantity is shown on its own and never added to Owned:
+// the order workflow, not the simulator, decides when goods exist.
+
+const CRAFT_BUYBACK_STATE = {
+    availability: null,
+    availabilityKey: '',
+    fetchedAtMs: 0,
+    loading: null,
+    orders: [],
+};
+const CRAFT_BUYBACK_AVAILABILITY_TTL_MS = 60000;
+
+function getBuybackStorageKey() {
+    const blueprintTypeId = Number(window.BLUEPRINT_DATA?.type_id || window.BLUEPRINT_DATA?.bp_type_id || 0) || 0;
+    return `indyHubSimBuybackOrders:${blueprintTypeId}`;
+}
+
+function normalizeBuybackOrders(raw) {
+    return (Array.isArray(raw) ? raw : [])
+        .map((entry) => ({
+            order_id: Number(entry?.order_id) || 0,
+            type_id: Number(entry?.type_id) || 0,
+            quantity: Math.max(0, Math.floor(Number(entry?.quantity) || 0)),
+            reference: String(entry?.reference || '').slice(0, 64),
+            progress: ['pending', 'delivered', 'failed'].includes(entry?.progress) ? entry.progress : 'pending',
+            status_label: String(entry?.status_label || '').slice(0, 120),
+            detail_url: String(entry?.detail_url || '').startsWith('/') ? String(entry.detail_url) : '',
+        }))
+        .filter((entry) => entry.order_id > 0 && entry.type_id > 0 && entry.quantity > 0)
+        .slice(0, 50);
+}
+
+function saveBuybackOrders() {
+    try {
+        window.localStorage.setItem(getBuybackStorageKey(), JSON.stringify(CRAFT_BUYBACK_STATE.orders));
+    } catch (error) {
+        // Storage can be full or disabled; the saved simulation still has it.
+    }
+}
+
+function loadBuybackOrdersFromStorage() {
+    try {
+        CRAFT_BUYBACK_STATE.orders = normalizeBuybackOrders(
+            JSON.parse(window.localStorage.getItem(getBuybackStorageKey()) || '[]')
+        );
+    } catch (error) {
+        CRAFT_BUYBACK_STATE.orders = [];
+    }
+}
+
+function collectBuybackOrdersSnapshot() {
+    return cloneCraftUiJsonValue(CRAFT_BUYBACK_STATE.orders, []);
+}
+
+function applyBuybackOrdersSnapshot(snapshot) {
+    if (!Array.isArray(snapshot)) {
+        return;
+    }
+    CRAFT_BUYBACK_STATE.orders = normalizeBuybackOrders(snapshot);
+    saveBuybackOrders();
+}
+
+function getPendingBuybackQuantity(typeId) {
+    return CRAFT_BUYBACK_STATE.orders
+        .filter((entry) => entry.type_id === Number(typeId) && entry.progress === 'pending')
+        .reduce((total, entry) => total + entry.quantity, 0);
+}
+
+async function fetchBuybackAvailability(typeIds, { force = false } = {}) {
+    const endpoint = String(window.BLUEPRINT_DATA?.urls?.buyback_availability || '').trim();
+    if (!endpoint) {
+        return null;
+    }
+    const ids = Array.from(new Set(typeIds.map((id) => Number(id) || 0).filter((id) => id > 0))).sort((a, b) => a - b);
+    const orderIds = CRAFT_BUYBACK_STATE.orders.map((entry) => entry.order_id);
+    const key = `${ids.join(',')}|${orderIds.join(',')}`;
+    const fresh = Date.now() - CRAFT_BUYBACK_STATE.fetchedAtMs < CRAFT_BUYBACK_AVAILABILITY_TTL_MS;
+    if (!force && CRAFT_BUYBACK_STATE.availability && CRAFT_BUYBACK_STATE.availabilityKey === key && fresh) {
+        return CRAFT_BUYBACK_STATE.availability;
+    }
+    if (CRAFT_BUYBACK_STATE.loading && CRAFT_BUYBACK_STATE.availabilityKey === key) {
+        return CRAFT_BUYBACK_STATE.loading;
+    }
+    const url = new URL(endpoint, window.location.origin);
+    url.searchParams.set('type_ids', ids.join(','));
+    if (orderIds.length > 0) {
+        url.searchParams.set('order_ids', orderIds.join(','));
+    }
+    CRAFT_BUYBACK_STATE.availabilityKey = key;
+    CRAFT_BUYBACK_STATE.loading = fetch(url.toString(), { credentials: 'same-origin' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload) => {
+            if (payload) {
+                CRAFT_BUYBACK_STATE.availability = payload;
+                CRAFT_BUYBACK_STATE.fetchedAtMs = Date.now();
+                reconcileBuybackOrders(payload.orders);
+            }
+            return payload;
+        })
+        .catch(() => null)
+        .finally(() => {
+            CRAFT_BUYBACK_STATE.loading = null;
+        });
+    return CRAFT_BUYBACK_STATE.loading;
+}
+
+// Authoritative order data wins: failed orders are dropped, delivered ones are
+// relabelled but still not counted as owned, and orders the server no longer
+// returns for this user are forgotten.
+function reconcileBuybackOrders(serverOrders) {
+    if (!Array.isArray(serverOrders)) {
+        return;
+    }
+    const byId = new Map(serverOrders.map((order) => [Number(order?.id) || 0, order]));
+    const next = [];
+    CRAFT_BUYBACK_STATE.orders.forEach((entry) => {
+        const order = byId.get(entry.order_id);
+        if (!order || order.progress === 'failed') {
+            return;
+        }
+        next.push({ ...entry, progress: order.progress, status_label: String(order.status_label || '') });
+    });
+    CRAFT_BUYBACK_STATE.orders = normalizeBuybackOrders(next);
+    saveBuybackOrders();
+}
+
+function describeBuybackItem(item) {
+    const priceSource = item.price_source === 'buyback_override' ? __('hub price override') : __('hub market price');
+    return `${formatInteger(item.available_quantity)} ${__('available')} - ${formatPrice(Number(item.unit_price) || 0)} ${__('each')} (${priceSource})`;
+}
+
+async function decorateNeededRowsWithBuyback(rows) {
+    const tbody = document.querySelector('#needed-table tbody');
+    const statusEl = document.getElementById('neededBuybackStatus');
+    if (!tbody) {
+        return;
+    }
+    const typeIds = rows.map((row) => Number(row.typeId) || 0).filter((id) => id > 0);
+    if (typeIds.length === 0 && CRAFT_BUYBACK_STATE.orders.length === 0) {
+        return;
+    }
+    const payload = await fetchBuybackAvailability(typeIds);
+    if (!payload) {
+        return;
+    }
+    const items = payload.items && typeof payload.items === 'object' ? payload.items : {};
+    tbody.querySelectorAll('tr[data-type-id]').forEach((tr) => {
+        const typeId = Number(tr.dataset.typeId) || 0;
+        const slot = tr.querySelector('.craft-buyback-slot');
+        if (!slot) {
+            return;
+        }
+        const parts = [];
+        const pending = getPendingBuybackQuantity(typeId);
+        if (pending > 0) {
+            parts.push(`<span class="badge text-bg-secondary craft-buyback-pending" title="${escapeHtml(__('Ordered from buyback; not counted as owned until you receive it'))}"><i class="fas fa-hourglass-half me-1" aria-hidden="true"></i>${escapeHtml(__('Reserved (pending)'))}: ${formatInteger(pending)}</span>`);
+        }
+        const item = payload.enabled ? items[String(typeId)] : null;
+        if (item) {
+            parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}</button>`);
+        }
+        slot.innerHTML = parts.join(' ');
+        const badge = slot.querySelector('.craft-buyback-badge');
+        if (badge && item && window.bootstrap && bootstrap.Popover) {
+            const content = `
+                <div class="small">
+                    <div>${escapeHtml(describeBuybackItem(item))}</div>
+                    ${item.location_label ? `<div class="text-muted">${escapeHtml(__('Pick-up'))}: ${escapeHtml(item.location_label)}</div>` : ''}
+                    ${payload.stock_stale ? `<div class="text-warning">${escapeHtml(__('Stock data may be out of date'))}</div>` : ''}
+                    <button type="button" class="btn btn-sm btn-success mt-2" data-buyback-open-modal="${typeId}">${escapeHtml(__('Create buyback order'))}</button>
+                </div>`;
+            // Content is built from escaped values only, so sanitizing (which
+            // would strip the button) is not needed.
+            bootstrap.Popover.getOrCreateInstance(badge, {
+                title: __('Available in buyback'),
+                content,
+                html: true,
+                sanitize: false,
+                trigger: 'click',
+                placement: 'auto',
+            });
+        }
+    });
+    if (statusEl) {
+        const lines = [];
+        if (CRAFT_BUYBACK_STATE.lastCreatedMessage) {
+            lines.push(CRAFT_BUYBACK_STATE.lastCreatedMessage);
+        }
+        if (payload.enabled && Object.keys(items).length > 0) {
+            lines.push(`${__('Buyback stock checked')}${payload.last_stock_sync ? ` (${__('synced')} ${formatIsoDateTime(payload.last_stock_sync)})` : ''}.`);
+        }
+        const delivered = CRAFT_BUYBACK_STATE.orders.filter((entry) => entry.progress === 'delivered');
+        if (delivered.length > 0) {
+            lines.push(__('Some buyback orders are complete. Refresh your materials source to count them as owned.'));
+        }
+        statusEl.textContent = lines.join(' ');
+        statusEl.classList.toggle('d-none', lines.length === 0);
+    }
+}
+
+function newBuybackClientRequestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, '');
+    }
+    return `${Date.now()}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function openBuybackOrderModal(typeId) {
+    const payload = CRAFT_BUYBACK_STATE.availability;
+    const item = payload && payload.items ? payload.items[String(typeId)] : null;
+    const modalEl = document.getElementById('buybackOrderModal');
+    if (!item || !modalEl || !window.bootstrap) {
+        return;
+    }
+    const neededRow = (CRAFT_COMPUTED_NEEDED_ROWS || []).find((row) => row.typeId === Number(typeId));
+    const suggested = Math.max(1, Math.min(item.available_quantity, Math.ceil(Number(neededRow?.quantity) || 1)));
+    modalEl.dataset.typeId = String(typeId);
+    modalEl.dataset.clientRequestId = newBuybackClientRequestId();
+    modalEl.querySelector('[data-buyback-field="item"]').textContent = item.type_name || String(typeId);
+    modalEl.querySelector('[data-buyback-field="price"]').textContent = formatPrice(Number(item.unit_price) || 0);
+    modalEl.querySelector('[data-buyback-field="source"]').textContent = item.price_source === 'buyback_override'
+        ? __('Hub price override')
+        : __('Hub market price');
+    modalEl.querySelector('[data-buyback-field="available"]').textContent = formatInteger(item.available_quantity);
+    modalEl.querySelector('[data-buyback-field="location"]').textContent = item.location_label || __('Hub buy location');
+    const qtyInput = modalEl.querySelector('#buybackOrderQuantity');
+    qtyInput.max = String(item.available_quantity);
+    qtyInput.value = String(suggested);
+    const recipientSelect = modalEl.querySelector('#buybackOrderRecipient');
+    recipientSelect.innerHTML = `<option value="">${escapeHtml(__('Choose a character'))}</option>`
+        + (payload.recipients || []).map((row) => `<option value="${Number(row.id) || 0}">${escapeHtml(row.name)}</option>`).join('');
+    modalEl.querySelector('#buybackOrderConfirm').checked = false;
+    const errorEl = modalEl.querySelector('[data-buyback-field="error"]');
+    errorEl.textContent = '';
+    errorEl.classList.add('d-none');
+    updateBuybackOrderTotal();
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+}
+
+function updateBuybackOrderTotal() {
+    const modalEl = document.getElementById('buybackOrderModal');
+    const item = CRAFT_BUYBACK_STATE.availability?.items?.[String(modalEl?.dataset.typeId || '')];
+    if (!modalEl || !item) {
+        return;
+    }
+    const qty = Math.max(0, Math.floor(Number(modalEl.querySelector('#buybackOrderQuantity').value) || 0));
+    modalEl.querySelector('[data-buyback-field="total"]').textContent = formatPrice(qty * (Number(item.unit_price) || 0));
+    const recipient = modalEl.querySelector('#buybackOrderRecipient').value;
+    const confirmed = modalEl.querySelector('#buybackOrderConfirm').checked;
+    modalEl.querySelector('#buybackOrderSubmit').disabled = !(qty > 0 && qty <= item.available_quantity && recipient && confirmed);
+}
+
+const BUYBACK_ERROR_MESSAGES = {
+    price_changed: 'The buyback price changed since it was shown. The new price is loaded; review and confirm again.',
+    insufficient_stock: 'Not enough unreserved stock is left for this quantity.',
+    stale_row: 'Buyback stock changed. Availability has been reloaded; try again.',
+    duplicate_submission: 'This order is already being submitted.',
+    buyback_disabled: 'Buyback is currently disabled.',
+    buy_orders_disabled: 'Buy orders are currently disabled for this hub.',
+    invalid_recipient: 'Choose one of your validated characters as the recipient.',
+};
+
+async function submitBuybackOrder() {
+    const modalEl = document.getElementById('buybackOrderModal');
+    const typeId = Number(modalEl?.dataset.typeId || 0);
+    const item = CRAFT_BUYBACK_STATE.availability?.items?.[String(typeId)];
+    const endpoint = String(window.BLUEPRINT_DATA?.urls?.buyback_order || '').trim();
+    if (!modalEl || !item || !endpoint) {
+        return;
+    }
+    const submitBtn = modalEl.querySelector('#buybackOrderSubmit');
+    const errorEl = modalEl.querySelector('[data-buyback-field="error"]');
+    const quantity = Math.floor(Number(modalEl.querySelector('#buybackOrderQuantity').value) || 0);
+    submitBtn.disabled = true;
+    errorEl.classList.add('d-none');
+    let response = null;
+    let body = {};
+    try {
+        response = await fetch(endpoint, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({
+                type_id: typeId,
+                quantity,
+                row_index: item.row_index,
+                expected_unit_price: item.unit_price,
+                recipient_character_id: Number(modalEl.querySelector('#buybackOrderRecipient').value) || 0,
+                client_request_id: modalEl.dataset.clientRequestId,
+            }),
+        });
+        body = await response.json().catch(() => ({}));
+    } catch (error) {
+        body = { message: __('Network error. Your order was not confirmed; check My Orders before retrying.') };
+    }
+    if (response && response.ok && body.success && body.order) {
+        const order = body.order;
+        if (!CRAFT_BUYBACK_STATE.orders.some((entry) => entry.order_id === Number(order.id))) {
+            CRAFT_BUYBACK_STATE.orders.push({
+                order_id: Number(order.id),
+                type_id: typeId,
+                quantity,
+                reference: order.reference,
+                progress: order.progress,
+                status_label: order.status_label,
+                detail_url: order.detail_url,
+            });
+            CRAFT_BUYBACK_STATE.orders = normalizeBuybackOrders(CRAFT_BUYBACK_STATE.orders);
+            saveBuybackOrders();
+        }
+        bootstrap.Modal.getOrCreateInstance(modalEl).hide();
+        CRAFT_BUYBACK_STATE.fetchedAtMs = 0;
+        computeNeededPurchases();
+        CRAFT_BUYBACK_STATE.lastCreatedMessage = `${__('Buyback order created')}: ${order.reference} (${order.status_label}). ${__('It shows as reserved until the order workflow completes.')}`;
+        return;
+    }
+    if (response && response.status === 401 && body.redirect) {
+        window.location.href = body.redirect;
+        return;
+    }
+    const code = String(body.error || '');
+    errorEl.textContent = BUYBACK_ERROR_MESSAGES[code] ? __(BUYBACK_ERROR_MESSAGES[code]) : String(body.message || __('The order could not be created.'));
+    errorEl.classList.remove('d-none');
+    // A refusal is final for this attempt; a fresh key lets the user retry.
+    modalEl.dataset.clientRequestId = newBuybackClientRequestId();
+    if (['price_changed', 'insufficient_stock', 'stale_row'].includes(code)) {
+        const refreshed = await fetchBuybackAvailability(
+            (CRAFT_COMPUTED_NEEDED_ROWS || []).map((row) => row.typeId),
+            { force: true }
+        );
+        const freshItem = refreshed?.items?.[String(typeId)];
+        if (freshItem) {
+            modalEl.querySelector('[data-buyback-field="price"]').textContent = formatPrice(Number(freshItem.unit_price) || 0);
+            modalEl.querySelector('[data-buyback-field="available"]').textContent = formatInteger(freshItem.available_quantity);
+            modalEl.querySelector('#buybackOrderQuantity').max = String(freshItem.available_quantity);
+            modalEl.querySelector('#buybackOrderConfirm').checked = false;
+        } else {
+            errorEl.textContent = __('This item is no longer available in buyback.');
+        }
+    }
+    updateBuybackOrderTotal();
+}
+
+function initializeBuybackOrders() {
+    loadBuybackOrdersFromStorage();
+    // Click-triggered popovers do not close on Escape by themselves; keyboard
+    // users need a way out that returns focus to the badge.
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || !window.bootstrap || !bootstrap.Popover) {
+            return;
+        }
+        document.querySelectorAll('.craft-buyback-badge[aria-describedby]').forEach((badge) => {
+            const popover = bootstrap.Popover.getInstance(badge);
+            if (popover) {
+                popover.hide();
+                badge.focus();
+            }
+        });
+    });
+    document.addEventListener('click', (event) => {
+        const opener = event.target.closest('[data-buyback-open-modal]');
+        if (!opener) {
+            return;
+        }
+        const typeId = Number(opener.getAttribute('data-buyback-open-modal')) || 0;
+        document.querySelectorAll('.craft-buyback-badge').forEach((badge) => {
+            const popover = window.bootstrap && bootstrap.Popover ? bootstrap.Popover.getInstance(badge) : null;
+            if (popover) {
+                popover.hide();
+            }
+        });
+        openBuybackOrderModal(typeId);
+    });
+    const modalEl = document.getElementById('buybackOrderModal');
+    if (modalEl) {
+        ['input', 'change'].forEach((eventName) => modalEl.addEventListener(eventName, updateBuybackOrderTotal));
+        const submitBtn = modalEl.querySelector('#buybackOrderSubmit');
+        if (submitBtn) {
+            submitBtn.addEventListener('click', submitBuybackOrder);
+        }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', initializeBuybackOrders);
 
 /**
  * Set configuration values from Django template
@@ -11443,6 +10905,225 @@ function getCookie(name) {
 
 let buildScheduleData = null;
 let ganttZoomLevel = 1.0;
+let scheduleTrackingState = { characterIds: [], lastResult: null, jobsLastSynced: null, freshness: null };
+// Bounded client auto-refresh; the server also throttles each character.
+const SCHEDULE_TRACKING_MIN_AUTO_REFRESH_SECONDS = 300;
+const scheduleTrackingTimer = { handle: null, nextAtMs: 0, intervalSeconds: 900 };
+
+function collectScheduleTrackingStateSnapshot() {
+    return cloneCraftUiJsonValue(scheduleTrackingState, { characterIds: [], lastResult: null });
+}
+
+function applyScheduleTrackingStateSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    scheduleTrackingState = {
+        characterIds: Array.isArray(snapshot.characterIds)
+            ? snapshot.characterIds.map((id) => Number(id) || 0).filter((id) => id > 0)
+            : [],
+        lastResult: snapshot.lastResult && typeof snapshot.lastResult === 'object'
+            ? cloneCraftUiJsonValue(snapshot.lastResult, null) : null,
+        // Kept so a reload still says how old the ESI data was.
+        jobsLastSynced: typeof snapshot.jobsLastSynced === 'string' ? snapshot.jobsLastSynced : null,
+        freshness: snapshot.freshness && typeof snapshot.freshness === 'object'
+            ? cloneCraftUiJsonValue(snapshot.freshness, null) : null,
+    };
+    renderScheduleTrackingControls();
+}
+
+function describeTrackingFreshness(freshness) {
+    if (!freshness || !freshness.state) return '';
+    if (freshness.state === 'unavailable') {
+        return __('Live tracking is unavailable: none of the selected characters has a token with the industry jobs scope. The schedule is unchanged.');
+    }
+    if (freshness.state === 'stale') {
+        return freshness.reason === 'never_synced'
+            ? __('No ESI job data has been synced for these characters yet, so statuses may be missing.')
+            : __('ESI job data is stale; statuses may be out of date until the next sync.');
+    }
+    return '';
+}
+
+function stopScheduleTrackingAutoRefresh() {
+    if (scheduleTrackingTimer.handle) {
+        window.clearInterval(scheduleTrackingTimer.handle);
+        scheduleTrackingTimer.handle = null;
+    }
+    scheduleTrackingTimer.nextAtMs = 0;
+    const countdown = document.getElementById('scheduleTrackingCountdown');
+    if (countdown) countdown.textContent = '';
+}
+
+// One timer per page, only while opted in with characters selected and the
+// page visible. It re-uses the manual refresh path, which the server throttles.
+function armScheduleTrackingAutoRefresh(intervalSeconds) {
+    const optedIn = Boolean(document.getElementById('scheduleTrackingOptIn')?.checked);
+    if (!optedIn || !scheduleTrackingState.characterIds.length || scheduleTrackingState.freshness?.state === 'unavailable') {
+        stopScheduleTrackingAutoRefresh();
+        return;
+    }
+    scheduleTrackingTimer.intervalSeconds = Math.max(
+        SCHEDULE_TRACKING_MIN_AUTO_REFRESH_SECONDS,
+        Math.floor(Number(intervalSeconds) || scheduleTrackingTimer.intervalSeconds)
+    );
+    scheduleTrackingTimer.nextAtMs = Date.now() + scheduleTrackingTimer.intervalSeconds * 1000;
+    if (scheduleTrackingTimer.handle) return;
+    scheduleTrackingTimer.handle = window.setInterval(() => {
+        const countdown = document.getElementById('scheduleTrackingCountdown');
+        const remainingMs = scheduleTrackingTimer.nextAtMs - Date.now();
+        if (countdown) {
+            countdown.textContent = remainingMs > 0
+                ? `${__('Next automatic check in')} ${formatBuyBpcsCacheCountdown(remainingMs / 1000)}`
+                : '';
+        }
+        if (remainingMs <= 0 && document.visibilityState === 'visible') {
+            scheduleTrackingTimer.nextAtMs = Date.now() + scheduleTrackingTimer.intervalSeconds * 1000;
+            refreshScheduleTracking({ automatic: true });
+        }
+    }, 1000);
+}
+
+
+function renderScheduleTrackingControls({ keepStatus = false } = {}) {
+    const container = document.getElementById('scheduleTrackingCharacters');
+    const button = document.getElementById('refreshScheduleTrackingBtn');
+    const status = document.getElementById('scheduleTrackingStatus');
+    if (!container) return;
+    const hasSchedule = Boolean(buildScheduleData && Array.isArray(buildScheduleData.jobs) && buildScheduleData.jobs.length);
+    const optedIn = Boolean(document.getElementById('scheduleTrackingOptIn')?.checked);
+    container.innerHTML = characterSlots.map((character) => {
+        const id = Number(character.character_id) || 0;
+        const checked = scheduleTrackingState.characterIds.includes(id) ? ' checked' : '';
+        return `<label class="form-check form-check-inline small"><input class="form-check-input schedule-tracking-character" type="checkbox" value="${id}"${checked}${(!id || !optedIn) ? ' disabled' : ''}> <span class="form-check-label">${escapeHtml(character.character_name || String(id))}</span></label>`;
+    }).join('');
+    container.querySelectorAll('.schedule-tracking-character').forEach((input) => input.addEventListener('change', () => {
+        scheduleTrackingState.characterIds = Array.from(container.querySelectorAll('.schedule-tracking-character:checked')).map((el) => Number(el.value)).filter((id) => id > 0);
+        scheduleCraftUiStateSave();
+    }));
+    if (button) button.disabled = !(hasSchedule && optedIn && scheduleTrackingState.characterIds.length);
+    // keepStatus lets a caller leave its own message (queued sync, error) in
+    // place; re-rendering the checkboxes must not silently erase it.
+    if (!keepStatus && status && scheduleTrackingState.lastResult?.refreshed_at) {
+        const tracking = scheduleTrackingState.lastResult;
+        const counts = tracking.counts || {};
+        // Name each state rather than lumping everything into "matched": a
+        // cancelled or unmatched job is not the same news as a running one.
+        const labels = {
+            running: __('running'),
+            delayed: __('delayed'),
+            completed: __('completed'),
+            cancelled: __('cancelled'),
+            unmatched: __('not matched'),
+        };
+        const detail = ['running', 'delayed', 'completed', 'cancelled', 'unmatched']
+            .filter((key) => counts[key])
+            .map((key) => `${counts[key]} ${labels[key]}`)
+            .join(', ');
+        const parts = [
+            `${tracking.matched || 0} ${__('job(s) matched')}${detail ? ` (${detail})` : ''}.`,
+            `${__('Reconciled')}: ${formatIsoDateTime(tracking.refreshed_at)}.`,
+        ];
+        // Two different clocks: when we last reconciled, and how old the ESI
+        // job data being reconciled actually is.
+        if (scheduleTrackingState.jobsLastSynced) {
+            parts.push(`${__('ESI jobs last synced')}: ${formatIsoDateTime(scheduleTrackingState.jobsLastSynced)}.`);
+        } else {
+            parts.push(__('No synced ESI job data yet for the selected characters.'));
+        }
+        const freshnessNote = describeTrackingFreshness(scheduleTrackingState.freshness);
+        if (freshnessNote) {
+            parts.push(freshnessNote);
+        }
+        status.textContent = parts.join(' ');
+        status.classList.toggle('text-warning', Boolean(freshnessNote));
+        status.classList.toggle('text-muted', !freshnessNote);
+    }
+    const resnapshotBtn = document.getElementById('resnapshotScheduleTrackingBtn');
+    if (resnapshotBtn) resnapshotBtn.disabled = !(hasSchedule && optedIn && scheduleTrackingState.characterIds.length);
+    if (!optedIn) {
+        stopScheduleTrackingAutoRefresh();
+    } else if (hasSchedule && scheduleTrackingState.lastResult && !scheduleTrackingTimer.handle) {
+        // A restored, opted-in simulation resumes its bounded auto-refresh.
+        armScheduleTrackingAutoRefresh();
+    }
+}
+
+/** Human-readable duration for a cooldown hint. */
+function formatRetryHint(seconds) {
+    const total = Math.max(0, Number(seconds) || 0);
+    if (total <= 0) return '';
+    if (total < 60) return `${total}s`;
+    return `${Math.ceil(total / 60)}m`;
+}
+
+async function refreshScheduleTracking({ automatic = false, resetAnchor = false } = {}) {
+    const status = document.getElementById('scheduleTrackingStatus');
+    const button = document.getElementById('refreshScheduleTrackingBtn');
+    const previousCompleted = new Set(
+        (scheduleTrackingState.lastResult?.results || [])
+            .filter((row) => row?.status === 'completed')
+            .map((row) => Number(row.index))
+    );
+    const simulationId = Number(new URLSearchParams(window.location.search).get('sim')) || Number(window.BLUEPRINT_DATA?.simulation_id) || 0;
+    if (!simulationId) { if (status) status.textContent = __('Save this simulation before refreshing live job status.'); return; }
+    if (button) button.disabled = true;
+    // An automatic check keeps the last status visible instead of flashing it.
+    if (status && !automatic) status.textContent = __('Checking cached industry jobs...');
+    try {
+        const trackingUrl = String(window.BLUEPRINT_DATA?.urls?.schedule_tracking_refresh || '/indy_hub/api/production-schedule-tracking/refresh/');
+        const response = await fetch(trackingUrl, {
+            method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken')},
+            body: JSON.stringify({simulation_id: simulationId, opt_in: true, character_ids: scheduleTrackingState.characterIds, schedule: buildScheduleData, reset_anchor: Boolean(resetAnchor)}),
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+            throw new Error(data.message || data.error || __('Unable to refresh job status.'));
+        }
+        scheduleTrackingState.lastResult = data.tracking || null;
+        scheduleTrackingState.jobsLastSynced = data.jobs_last_synced || null;
+        scheduleTrackingState.freshness = data.freshness || null;
+        scheduleCraftUiStateSave();
+        renderScheduleTrackingControls();
+        armScheduleTrackingAutoRefresh(data.auto_refresh_seconds);
+        // A chunk that just completed changes what is still to build; refresh
+        // the dependent views. Canonical price state and planner choices are
+        // untouched because this re-derives from state rather than the DOM.
+        const newlyCompleted = (data.tracking?.results || []).some(
+            (row) => row?.status === 'completed' && !previousCompleted.has(Number(row.index))
+        );
+        if (newlyCompleted && typeof updateBuildTabFromState === 'function') {
+            updateBuildTabFromState();
+        }
+        // The planned schedule is never touched by a tracking refresh; repaint
+        // so the bars pick up their new status colours.
+        if (buildScheduleData && typeof renderGanttChart === 'function') {
+            renderGanttChart(buildScheduleData);
+            renderSlotRunSummary(buildScheduleData);
+        }
+
+        const notes = [];
+        if (Array.isArray(data.ignored_character_ids) && data.ignored_character_ids.length) {
+            notes.push(__('Some selected characters are not linked to this account and were ignored.'));
+        }
+        if (Array.isArray(data.cooldown_character_ids) && data.cooldown_character_ids.length) {
+            const hint = formatRetryHint(data.retry_seconds);
+            notes.push(hint
+                ? `${__('Some characters were refreshed recently; try again in')} ${hint}.`
+                : __('Some characters were refreshed recently and were not queued again.'));
+        }
+        if (Array.isArray(data.scheduled_character_ids) && data.scheduled_character_ids.length) {
+            notes.push(__('A fresh ESI sync was queued; refresh again when it completes.'));
+        }
+        if (notes.length && status) {
+            status.textContent += ` ${notes.join(' ')}`;
+        }
+    } catch (error) {
+        // Leave the planned schedule intact and say why live data is missing.
+        if (status) {
+            status.textContent = `${error.message || __('Live job status is currently unavailable.')} ${__('The planned schedule below is unchanged.')}`;
+        }
+        renderScheduleTrackingControls({ keepStatus: true });
+    }
+}
 
 // Initialize build schedule functionality
 function initBuildSchedule() {
@@ -11451,6 +11132,8 @@ function initBuildSchedule() {
     const zoomOutBtn = document.getElementById('ganttZoomOut');
     const modeSelect = document.getElementById('buildScheduleMode');
     const targetDaysInput = document.getElementById('buildScheduleTargetDays');
+    const trackingOptIn = document.getElementById('scheduleTrackingOptIn');
+    const trackingButton = document.getElementById('refreshScheduleTrackingBtn');
 
     if (calculateBtn) {
         calculateBtn.addEventListener('click', calculateBuildSchedule);
@@ -11487,6 +11170,15 @@ function initBuildSchedule() {
             scheduleCraftUiStateSave();
         });
     }
+
+    trackingOptIn?.addEventListener('change', () => { renderScheduleTrackingControls(); scheduleCraftUiStateSave(); });
+    trackingButton?.addEventListener('click', () => refreshScheduleTracking());
+    document.getElementById('resnapshotScheduleTrackingBtn')?.addEventListener('click', () => {
+        // Replace the stored plan (and its start time) with the schedule shown
+        // now, e.g. after recalculating. Matching restarts from this snapshot.
+        refreshScheduleTracking({ resetAnchor: true });
+    });
+    renderScheduleTrackingControls();
 
     updateBuildScheduleModeControls();
 }
@@ -11588,6 +11280,8 @@ async function calculateBuildSchedule() {
         // Store and display schedule
         buildScheduleData = data.schedule;
         displayBuildSchedule(data.schedule);
+        // Character cards summarise per-character jobs from this schedule.
+        renderBuildPlannerSlotControls(getBuildPlannerCharacterRows());
         scheduleCraftUiStateSave();
 
     } catch (error) {
@@ -11750,7 +11444,7 @@ async function loadCharacterSlots() {
         }
 
         characterSlots = data.characters || [];
-        renderSlots();
+        renderScheduleTrackingControls();
         if (typeof updateBuildTabFromState === 'function') {
             updateBuildTabFromState();
         }
@@ -11762,84 +11456,28 @@ async function loadCharacterSlots() {
 }
 
 function renderSlotsError(errorMessage) {
-    const container = document.getElementById('slotsContainer');
+    // Reported in the planner grid now that the duplicate #slotsContainer
+    // panel is gone; that grid is the one control users act on.
+    const container = document.getElementById('buildSlotCharacters');
     const noSlotsMsg = document.getElementById('noSlotsMessage');
 
     if (container) {
-        container.innerHTML = `
-            <div class="alert alert-warning">
-                <i class="fas fa-exclamation-triangle me-2"></i>
-                ${errorMessage}
-            </div>
-        `;
+        container.replaceChildren();
+        const alert = document.createElement('div');
+        alert.className = 'alert alert-warning d-flex align-items-start mb-0';
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-triangle-exclamation me-2 mt-1';
+        icon.setAttribute('aria-hidden', 'true');
+        alert.appendChild(icon);
+        const text = document.createElement('div');
+        text.textContent = String(errorMessage || '');
+        alert.appendChild(text);
+        container.appendChild(alert);
     }
 
     if (noSlotsMsg) {
         noSlotsMsg.style.display = 'none';
     }
-}
-
-function renderSlots() {
-    const container = document.getElementById('slotsContainer');
-    const noSlotsMsg = document.getElementById('noSlotsMessage');
-
-    if (!container) return;
-
-    // Show/hide empty message
-    if (noSlotsMsg) {
-        noSlotsMsg.style.display = characterSlots.length === 0 ? '' : 'none';
-    }
-
-    if (characterSlots.length === 0) {
-        container.innerHTML = '';
-        return;
-    }
-
-    container.innerHTML = '';
-
-    characterSlots.forEach(char => {
-        const availableManufacturing = Number(
-            char.available_manufacturing_slots ?? char.manufacturing_slots ?? 0
-        ) || 0;
-        const totalManufacturing = Number(
-            char.total_manufacturing_slots ?? char.manufacturing_slots ?? 0
-        ) || 0;
-        const usedManufacturing = Number(
-            char.used_manufacturing_slots ?? Math.max(0, totalManufacturing - availableManufacturing)
-        ) || 0;
-        const slotDiv = document.createElement('div');
-        slotDiv.className = 'card mb-2';
-        slotDiv.innerHTML = `
-            <div class="card-body p-3">
-                <div class="row g-2 align-items-center">
-                    <div class="col-md-5">
-                        <div class="d-flex align-items-center">
-                            <i class="fas fa-user-circle fa-2x text-primary me-2"></i>
-                            <div>
-                                <div class="fw-semibold">${escapeHtml(char.character_name)}</div>
-                                <div class="small text-muted">Character ID: ${char.character_id}</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="col-md-2 text-center">
-                        <div class="small text-muted mb-1">Manufacturing</div>
-                        <div class="badge bg-primary">${availableManufacturing} free</div>
-                        <div class="small text-muted mt-1">${usedManufacturing} busy / ${totalManufacturing} total</div>
-                    </div>
-                    <div class="col-md-2 text-center">
-                        <div class="small text-muted mb-1">Reactions</div>
-                        <div class="badge bg-info">${char.reaction_slots} slots</div>
-                    </div>
-                    <div class="col-md-2 text-center">
-                        <div class="small text-muted mb-1">Research</div>
-                        <div class="badge bg-secondary">${char.research_slots} slots</div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        container.appendChild(slotDiv);
-    });
 }
 
 function gatherSlotsDataForSchedule() {
@@ -11945,43 +11583,171 @@ function displayBuildSchedule(schedule) {
     renderSlotRunSummary(schedule);
 }
 
+// Status -> CSS token + label. Colour never carries meaning alone: every bar
+// also gets its status in the tooltip and in the Runs By Job table, and the
+// legend names each one.
+const CRAFT_GANTT_STATUSES = {
+    planned: { token: '--gantt-planned', label: () => __('Planned') },
+    running: { token: '--gantt-running', label: () => __('Running') },
+    delayed: { token: '--gantt-delayed', label: () => __('Delayed') },
+    completed: { token: '--gantt-completed', label: () => __('Completed') },
+    cancelled: { token: '--gantt-cancelled', label: () => __('Cancelled') },
+    unmatched: { token: '--gantt-unmatched', label: () => __('Not matched') },
+};
+
+/** Tracking result row for a planned chunk object (matched by its index). */
+function getGanttTrackingRow(job) {
+    const results = scheduleTrackingState?.lastResult?.results;
+    const jobs = buildScheduleData && Array.isArray(buildScheduleData.jobs) ? buildScheduleData.jobs : [];
+    const index = jobs.indexOf(job);
+    if (!Array.isArray(results) || index < 0) {
+        return null;
+    }
+    return results.find((entry) => Number(entry?.index) === index) || null;
+}
+
+/** Live tracking status for a planned chunk, by its index in schedule.jobs. */
+function getGanttJobStatus(jobIndex) {
+    const results = scheduleTrackingState?.lastResult?.results;
+    if (!Array.isArray(results)) {
+        return 'planned';
+    }
+    const row = results.find((entry) => Number(entry?.index) === Number(jobIndex));
+    if (!row) {
+        return 'planned';
+    }
+    if (['running', 'delayed', 'completed', 'cancelled'].includes(row.status)) {
+        return row.status;
+    }
+    return row.status === 'unmatched' ? 'unmatched' : 'planned';
+}
+
+function ganttStatusColor(status) {
+    const spec = CRAFT_GANTT_STATUSES[status] || CRAFT_GANTT_STATUSES.planned;
+    return `var(${spec.token})`;
+}
+
+/** The single tooltip node, reused across re-renders. */
+function getGanttTooltip() {
+    let tip = document.getElementById('craftGanttTooltip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'craftGanttTooltip';
+        tip.className = 'craft-gantt-tooltip';
+        tip.setAttribute('role', 'tooltip');
+        tip.hidden = true;
+        document.body.appendChild(tip);
+    }
+    return tip;
+}
+
+function hideGanttTooltip() {
+    const tip = document.getElementById('craftGanttTooltip');
+    if (tip) {
+        tip.hidden = true;
+    }
+}
+
+/**
+ * Fill and position the tooltip for one or more jobs sharing an interval.
+ *
+ * Content is built with textContent: item and character names come from the
+ * SDE and the API and are untrusted.
+ */
+function showGanttTooltip(entries, anchorRect) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+        hideGanttTooltip();
+        return;
+    }
+    const tip = getGanttTooltip();
+    tip.replaceChildren();
+
+    entries.forEach((entry, index) => {
+        if (index > 0) {
+            tip.appendChild(document.createElement('hr'));
+        }
+        const heading = document.createElement('div');
+        heading.className = 'fw-semibold mb-1';
+        heading.textContent = entry.title;
+        tip.appendChild(heading);
+
+        const list = document.createElement('dl');
+        entry.rows.forEach(([label, value]) => {
+            const dt = document.createElement('dt');
+            dt.textContent = label;
+            const dd = document.createElement('dd');
+            dd.textContent = value;
+            list.appendChild(dt);
+            list.appendChild(dd);
+        });
+        tip.appendChild(list);
+    });
+
+    tip.hidden = false;
+    const tipRect = tip.getBoundingClientRect();
+    let left = anchorRect.left + (anchorRect.width / 2) - (tipRect.width / 2);
+    left = Math.max(8, Math.min(left, window.innerWidth - tipRect.width - 8));
+    let top = anchorRect.top - tipRect.height - 8;
+    if (top < 8) {
+        top = anchorRect.bottom + 8;
+    }
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+}
+
+/** Tooltip content for one scheduled chunk. */
+function describeGanttJob(job, slot, status) {
+    const start = formatScheduleMoment(job.start_time_seconds);
+    const end = formatScheduleMoment(job.end_time_seconds);
+    const rows = [
+        [__('Runs'), formatInteger(job.runs_required)],
+        [__('Lane'), String(slot?.slot_name || slot?.character_name || __('Unassigned'))],
+        [__('Start'), start.text],
+        [__('End'), end.text],
+        [__('Duration'), String(job.total_time_formatted || formatTimeDuration(job.total_time_seconds))],
+        [__('Status'), (CRAFT_GANTT_STATUSES[status] || CRAFT_GANTT_STATUSES.planned).label()],
+    ];
+    const trackingRow = getGanttTrackingRow(job);
+    if (trackingRow && trackingRow.reason && status === 'unmatched') {
+        rows.push([__('Why not matched'), String(trackingRow.reason)]);
+    }
+    if (trackingRow && Number.isFinite(Number(trackingRow.duration_delta_seconds)) && trackingRow.duration_delta_seconds !== null) {
+        const delta = Number(trackingRow.duration_delta_seconds);
+        rows.push([__('Actual vs planned'), `${delta >= 0 ? '+' : '-'}${formatTimeDuration(Math.abs(delta))}`]);
+    }
+    if ((Number(job.chunk_count) || 1) > 1) {
+        // chunk_index/chunk_count are what the backend actually emits; the old
+        // tooltip read run_start/run_end, which it never produces.
+        rows.splice(1, 0, [__('Chunk'), `${formatInteger(job.chunk_index)} / ${formatInteger(job.chunk_count)}`]);
+    }
+    if (job.activity_name) {
+        rows.push([__('Activity'), String(job.activity_name)]);
+    }
+    return {
+        title: String(job.job_label || job.item_name || __('Production job')),
+        rows,
+    };
+}
+
 function renderGanttChart(schedule) {
     if (!schedule) return;
 
     const container = document.getElementById('ganttChart');
     if (!container) return;
 
-    const jobs = schedule.jobs;
-    const slots = schedule.slots;
-    const maxTime = schedule.total_parallel_time_seconds;
+    const jobs = Array.isArray(schedule.jobs) ? schedule.jobs : [];
+    const slots = Array.isArray(schedule.slots) ? schedule.slots : [];
 
     if (jobs.length === 0) {
-        container.innerHTML = '<p class="text-muted">No jobs to display</p>';
+        container.replaceChildren();
+        const empty = document.createElement('p');
+        empty.className = 'text-muted mb-0';
+        empty.textContent = __('No jobs to display');
+        container.appendChild(empty);
+        hideGanttTooltip();
         return;
     }
 
-    const isDarkTheme = String(document.documentElement?.getAttribute('data-theme') || '').trim().toLowerCase() === 'darkly';
-    const chartColors = isDarkTheme
-        ? {
-            surface: '#1f2937',
-            rowA: '#111827',
-            rowB: '#182132',
-            labelPanel: '#0f172a',
-            axis: '#334155',
-            axisText: '#cbd5e1',
-            labelText: '#f8fafc',
-        }
-        : {
-            surface: '#f8fafc',
-            rowA: '#ffffff',
-            rowB: '#f1f5f9',
-            labelPanel: '#e2e8f0',
-            axis: '#cbd5e1',
-            axisText: '#475569',
-            labelText: '#0f172a',
-        };
-
-    // Calculate dimensions
     const baseWidth = 1000;
     const timelineWidth = Math.max(420, baseWidth * ganttZoomLevel);
     const labelWidth = 150;
@@ -11990,66 +11756,177 @@ function renderGanttChart(schedule) {
     const rowHeight = 40;
     const headerHeight = 32;
     const chartHeight = (slots.length * rowHeight) + headerHeight;
-    const safeMaxTime = Math.max(1, Number(maxTime) || 0);
+    const safeMaxTime = Math.max(1, Number(schedule.total_parallel_time_seconds) || 0);
 
-    // Create SVG
-    let svg = `<svg width="${chartWidth}" height="${chartHeight}" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12px;">`;
-    svg += `<rect x="0" y="0" width="${chartWidth}" height="${chartHeight}" fill="${chartColors.surface}" rx="8"/>`;
-
-    // Time scale
+    // Derive the scale from timelineWidth, never baseWidth * zoom: the 420
+    // floor means the two stop agreeing below about 0.42 zoom.
     const pixelsPerSecond = timelineWidth / safeMaxTime;
     const timelineStartX = labelWidth + leadingGap;
 
-    // Draw time axis
-    const timeMarkers = calculateTimeMarkers(maxTime);
-    svg += `<g class="time-axis">`;
+    let svg = `<svg width="${chartWidth}" height="${chartHeight}" font-size="12">`;
+    svg += `<rect x="0" y="0" width="${chartWidth}" height="${chartHeight}" fill="var(--gantt-surface)" rx="8"/>`;
+
+    // Clamped, so a zero-length plan cannot produce a degenerate axis.
+    const timeMarkers = calculateTimeMarkers(safeMaxTime);
+    svg += '<g class="time-axis">';
     timeMarkers.forEach(marker => {
         const x = timelineStartX + (marker.seconds * pixelsPerSecond);
-        svg += `<line x1="${x}" y1="0" x2="${x}" y2="${chartHeight}" stroke="${chartColors.axis}" stroke-width="1"/>`;
-        svg += `<text x="${x + 4}" y="18" fill="${chartColors.axisText}" font-size="11px">${marker.label}</text>`;
+        svg += `<line x1="${x}" y1="0" x2="${x}" y2="${chartHeight}" stroke="var(--gantt-axis)" stroke-width="1"/>`;
+        svg += `<text x="${x + 4}" y="18" fill="var(--gantt-axis-text)" font-size="11">${escapeHtml(marker.label)}</text>`;
     });
-    svg += `</g>`;
+    svg += '</g>';
 
-    // Draw slot rows and jobs
+    const statusesPresent = new Set();
+
     slots.forEach((slot, slotIndex) => {
         const y = headerHeight + (slotIndex * rowHeight);
+        const rowFill = slotIndex % 2 === 0 ? 'var(--gantt-row)' : 'var(--gantt-row-alt)';
+        svg += `<rect x="0" y="${y}" width="${chartWidth}" height="${rowHeight}" fill="${rowFill}"/>`;
+        svg += `<rect x="0" y="${y}" width="${labelWidth}" height="${rowHeight}" fill="var(--gantt-label-panel)"/>`;
+        svg += `<text x="8" y="${y + rowHeight / 2 + 4}" fill="var(--gantt-label-text)" font-size="11">${escapeHtml(truncateText(slot.slot_name || slot.character_name || '', 20))}</text>`;
 
-        // Row background
-        const fillColor = slotIndex % 2 === 0 ? chartColors.rowA : chartColors.rowB;
-        svg += `<rect x="0" y="${y}" width="${chartWidth}" height="${rowHeight}" fill="${fillColor}"/>`;
-        svg += `<rect x="0" y="${y}" width="${labelWidth}" height="${rowHeight}" fill="${chartColors.labelPanel}"/>`;
-
-        // Slot label
-        svg += `<text x="12" y="${y + rowHeight / 2 + 5}" fill="${chartColors.labelText}" font-weight="600">${escapeHtml(slot.slot_name || slot.character_name)}</text>`;
-
-        // Draw jobs for this slot
-        const slotJobs = jobs.filter(job => job.assigned_slot === slot.slot_id);
-
-        slotJobs.forEach(job => {
-            const startX = timelineStartX + (job.start_time_seconds * pixelsPerSecond);
-            const width = Math.max(4, job.total_time_seconds * pixelsPerSecond);
+        jobs.forEach((job, jobIndex) => {
+            // assigned_slot 0 is a real lane, so compare strictly.
+            if (job.assigned_slot !== slot.slot_id) {
+                return;
+            }
+            const startX = timelineStartX + (Number(job.start_time_seconds) || 0) * pixelsPerSecond;
+            const width = Math.max(4, (Number(job.total_time_seconds) || 0) * pixelsPerSecond);
             const barY = y + 8;
             const barHeight = rowHeight - 16;
+            const status = getGanttJobStatus(jobIndex);
+            statusesPresent.add(status);
 
-            // Job bar
-            const color = getJobColor(job.item_type_id);
-            svg += `<rect x="${startX}" y="${barY}" width="${width}" height="${barHeight}" fill="${color}" rx="4" opacity="0.8"/>`;
-            svg += `<rect x="${startX}" y="${barY}" width="${width}" height="${barHeight}" fill="none" stroke="${darkenColor(color)}" stroke-width="2" rx="4"/>`;
+            const label = `${job.job_label || job.item_name || __('Production job')} — ${(CRAFT_GANTT_STATUSES[status] || CRAFT_GANTT_STATUSES.planned).label()}`;
+            // One rect with both fill and stroke: the old separate stroke rect
+            // sat on top and swallowed pointer events.
+            svg += `<rect class="gantt-bar" data-job-index="${jobIndex}" tabindex="-1" role="img"`
+                + ` aria-label="${escapeHtml(label)}"`
+                + ` x="${startX}" y="${barY}" width="${width}" height="${barHeight}" rx="4"`
+                + ` fill="${ganttStatusColor(status)}" fill-opacity="0.85"`
+                + ` stroke="${ganttStatusColor(status)}" stroke-width="2"/>`;
 
-            // Job label (if wide enough)
             if (width > 60) {
                 const textX = startX + width / 2;
                 const textY = barY + barHeight / 2 + 4;
-                svg += `<text x="${textX}" y="${textY}" fill="#fff" font-size="10px" font-weight="600" text-anchor="middle">${escapeHtml(truncateText(job.job_label || job.item_name, 20))}</text>`;
+                // Text wears a text token, never the series colour.
+                svg += `<text class="gantt-bar-label" x="${textX}" y="${textY}" fill="var(--gantt-label-text)" font-size="10" font-weight="600" text-anchor="middle" pointer-events="none">${escapeHtml(truncateText(job.job_label || job.item_name, 20))}</text>`;
             }
-
-            // Tooltip simulation (title attribute)
-            svg += `<title>${escapeHtml(job.job_label || job.item_name)}\nStart: ${job.start_time_formatted}\nDuration: ${job.total_time_formatted}\nRuns: ${job.runs_required}</title>`;
         });
     });
 
-    svg += `</svg>`;
+    svg += '</svg>';
     container.innerHTML = svg;
+
+    renderGanttLegend(statusesPresent);
+    bindGanttInteractions(container, schedule, slots);
+}
+
+/** Identity is never colour-alone: name every status on screen. */
+function renderGanttLegend(statusesPresent) {
+    const legend = document.getElementById('ganttLegend');
+    if (!legend) return;
+    legend.replaceChildren();
+    if (!statusesPresent || statusesPresent.size <= 1) {
+        legend.hidden = true;
+        return;
+    }
+    legend.hidden = false;
+    Object.entries(CRAFT_GANTT_STATUSES).forEach(([status, spec]) => {
+        if (!statusesPresent.has(status)) {
+            return;
+        }
+        const item = document.createElement('span');
+        const key = document.createElement('span');
+        key.className = 'craft-gantt-legend-key';
+        key.style.background = `var(${spec.token})`;
+        item.appendChild(key);
+        item.appendChild(document.createTextNode(spec.label()));
+        legend.appendChild(item);
+    });
+}
+
+/**
+ * Hover and keyboard interaction.
+ *
+ * Roving tabindex: the container is the single tab stop and arrow keys move
+ * between bars, rather than making a 50-job schedule a 50-stop tab trap.
+ */
+function bindGanttInteractions(container, schedule, slots) {
+    const jobs = Array.isArray(schedule.jobs) ? schedule.jobs : [];
+    const slotsById = new Map(slots.map((slot) => [slot.slot_id, slot]));
+    const bars = Array.from(container.querySelectorAll('.gantt-bar'));
+    if (!bars.length) return;
+
+    const describeBar = (bar) => {
+        const jobIndex = Number(bar.getAttribute('data-job-index'));
+        const job = jobs[jobIndex];
+        if (!job) return null;
+        // Every job overlapping this one in the same lane, so a hovered
+        // interval reports all of its work rather than only the first bar.
+        const overlapping = [];
+        jobs.forEach((other, otherIndex) => {
+            if (other.assigned_slot !== job.assigned_slot) return;
+            const otherStart = Number(other.start_time_seconds) || 0;
+            const otherEnd = Number(other.end_time_seconds) || 0;
+            const jobStart = Number(job.start_time_seconds) || 0;
+            const jobEnd = Number(job.end_time_seconds) || 0;
+            if (otherStart < jobEnd && otherEnd > jobStart) {
+                overlapping.push({ job: other, index: otherIndex });
+            }
+        });
+        const chosen = overlapping.length ? overlapping : [{ job, index: jobIndex }];
+        return chosen.slice(0, 6).map(({ job: entry, index }) => describeGanttJob(
+            entry,
+            slotsById.get(entry.assigned_slot),
+            getGanttJobStatus(index)
+        ));
+    };
+
+    const showFor = (bar) => {
+        const entries = describeBar(bar);
+        if (entries) {
+            showGanttTooltip(entries, bar.getBoundingClientRect());
+        }
+    };
+
+    container.addEventListener('pointerover', (event) => {
+        const bar = event.target.closest?.('.gantt-bar');
+        if (bar) showFor(bar);
+    });
+    container.addEventListener('pointerout', (event) => {
+        if (!event.relatedTarget || !event.relatedTarget.closest?.('.gantt-bar')) {
+            hideGanttTooltip();
+        }
+    });
+    // <title> never fires on keyboard focus, so focus gets the same treatment
+    // as hover -- which is what the section copy promises.
+    container.addEventListener('focusin', (event) => {
+        const bar = event.target.closest?.('.gantt-bar');
+        if (bar) showFor(bar);
+    });
+    container.addEventListener('focusout', hideGanttTooltip);
+
+    let activeIndex = 0;
+    const focusBar = (index) => {
+        const next = Math.max(0, Math.min(index, bars.length - 1));
+        bars.forEach((bar, i) => bar.setAttribute('tabindex', i === next ? '0' : '-1'));
+        activeIndex = next;
+        bars[next].focus?.();
+        showFor(bars[next]);
+    };
+    bars[0].setAttribute('tabindex', '0');
+    container.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            focusBar(activeIndex + 1);
+        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            focusBar(activeIndex - 1);
+        } else if (event.key === 'Escape') {
+            hideGanttTooltip();
+        }
+    });
 }
 
 function calculateTimeMarkers(maxTimeSeconds) {
@@ -12092,220 +11969,198 @@ function formatTimeDuration(seconds) {
     return parts.slice(0, 2).join(' '); // Show max 2 units
 }
 
-function getJobColor(itemTypeId) {
-    // Generate consistent color based on item ID
-    const hue = (itemTypeId * 137.508) % 360; // Golden angle for distribution
-    return `hsl(${hue}, 70%, 50%)`;
-}
-
-function darkenColor(hslColor) {
-    // Darken HSL color for border
-    return hslColor.replace(/50%\)$/, '35%)');
-}
-
 function truncateText(text, maxLength) {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength - 3) + '...';
 }
 
-function renderSlotUtilization(schedule) {
-    const container = document.getElementById('slotUtilizationGrid');
-    if (!container) return;
-
-    const jobs = Array.isArray(schedule.jobs) ? schedule.jobs : [];
-    const slots = schedule.slots;
-    container.innerHTML = '';
-
-    slots.forEach(slot => {
-        const card = document.createElement('div');
-        card.className = 'col-md-6 col-lg-4';
-        const slotRuns = jobs
-            .filter((job) => Number(job.assigned_slot) === Number(slot.slot_id))
-            .reduce((total, job) => total + (Number(job.runs_required) || 0), 0);
-
-        const utilizationClass = slot.utilization_percent > 75 ? 'success' : slot.utilization_percent > 50 ? 'warning' : 'secondary';
-
-        card.innerHTML = `
-            <div class="card border-0 shadow-sm">
-                <div class="card-body">
-                    <h6 class="card-title fw-semibold mb-3">
-                        <i class="fas fa-user-circle me-2"></i>${escapeHtml(slot.slot_name || slot.character_name)}
-                    </h6>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="small text-muted">Jobs Assigned</span>
-                        <span class="fw-semibold">${slot.jobs_count}</span>
-                    </div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="small text-muted">Runs Assigned</span>
-                        <span class="fw-semibold">${formatInteger(slotRuns)}</span>
-                    </div>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <span class="small text-muted">Completion Time</span>
-                        <span class="fw-semibold">${slot.completion_time_formatted}</span>
-                    </div>
-                    <div class="progress" style="height: 20px;">
-                        <div class="progress-bar bg-${utilizationClass}" role="progressbar"
-                             style="width: ${slot.utilization_percent}%"
-                             aria-valuenow="${slot.utilization_percent}" aria-valuemin="0" aria-valuemax="100">
-                            ${slot.utilization_percent}%
-                        </div>
-                    </div>
-                    <div class="small text-muted mt-2 text-center">Utilization</div>
-                </div>
-            </div>
-        `;
-
-        container.appendChild(card);
-    });
+/**
+ * Absolute plan start, when one is known.
+ *
+ * Schedule times are offsets from the start of the plan. The tracking refresh
+ * already returns an absolute anchor and the client was receiving it and
+ * throwing it away; use it when present so the table can show wall-clock.
+ */
+function getSchedulePlanAnchorMs() {
+    const anchor = scheduleTrackingState?.lastResult?.anchor;
+    const parsed = anchor ? Date.parse(anchor) : NaN;
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function formatScheduleMoment(offsetSeconds) {
+    const seconds = Math.max(0, Number(offsetSeconds) || 0);
+    const anchorMs = getSchedulePlanAnchorMs();
+    const relative = formatTimeDuration(seconds);
+    if (!anchorMs) {
+        return { text: relative, title: '' };
+    }
+    const absolute = new Date(anchorMs + seconds * 1000);
+    return { text: absolute.toLocaleString(), title: relative };
+}
+
+/**
+ * One row per scheduled chunk.
+ *
+ * This is the table view the Gantt's accessible fallback promises, so it has
+ * to carry the same information: grouping by item and character collapsed
+ * every chunk into a "2 slots x 4 runs" string and a min/max envelope, which
+ * is strictly less than the chart shows.
+ */
 function renderSlotRunSummary(schedule) {
     const tbody = document.getElementById('slotRunSummaryBody');
     if (!tbody) return;
 
-    const jobs = Array.isArray(schedule.jobs) ? schedule.jobs : [];
-    const slots = Array.isArray(schedule.slots) ? schedule.slots : [];
-    tbody.innerHTML = '';
+    const jobs = Array.isArray(schedule?.jobs) ? schedule.jobs : [];
+    const slots = Array.isArray(schedule?.slots) ? schedule.slots : [];
+    tbody.replaceChildren();
 
     const slotsById = new Map(slots.map((slot) => [Number(slot.slot_id), slot]));
-    const groupedRows = new Map();
-
-    jobs.forEach((job) => {
-        const slot = slotsById.get(Number(job.assigned_slot));
-        if (!slot) {
-            return;
-        }
-        const key = `${job.item_type_id}:${slot.character_id}`;
-        const existing = groupedRows.get(key) || {
-            itemTypeId: Number(job.item_type_id) || 0,
-            jobName: String(job.item_name || job.job_label || '-').trim() || '-',
-            characterName: String(slot.character_name || '-').trim() || '-',
-            slotIds: new Set(),
-            distribution: [],
-            totalRuns: 0,
-            startTimeSeconds: null,
-            endTimeSeconds: null,
-        };
-
-        existing.slotIds.add(Number(slot.slot_id));
-        existing.distribution.push(Number(job.runs_required) || 0);
-        existing.totalRuns += Number(job.runs_required) || 0;
-        existing.startTimeSeconds = existing.startTimeSeconds == null
-            ? Number(job.start_time_seconds) || 0
-            : Math.min(existing.startTimeSeconds, Number(job.start_time_seconds) || 0);
-        existing.endTimeSeconds = existing.endTimeSeconds == null
-            ? Number(job.end_time_seconds) || 0
-            : Math.max(existing.endTimeSeconds, Number(job.end_time_seconds) || 0);
-        groupedRows.set(key, existing);
-    });
-
-    const rows = Array.from(groupedRows.values()).sort((left, right) => {
-        const jobCompare = String(left.jobName || '').localeCompare(String(right.jobName || ''), undefined, {
-            sensitivity: 'base',
+    const rows = jobs
+        .map((job, jobIndex) => {
+            // assigned_slot of 0 is a real lane id, so an unassigned job must
+            // not be coerced into matching the first lane.
+            const assigned = job.assigned_slot;
+            const slot = (assigned === null || assigned === undefined)
+                ? null
+                : slotsById.get(Number(assigned)) || null;
+            return { job, slot, jobIndex };
+        })
+        .sort((left, right) => {
+            const byStart = (Number(left.job.start_time_seconds) || 0) - (Number(right.job.start_time_seconds) || 0);
+            if (byStart !== 0) return byStart;
+            return String(left.job.job_label || left.job.item_name || '')
+                .localeCompare(String(right.job.job_label || right.job.item_name || ''), undefined, { sensitivity: 'base' });
         });
-        if (jobCompare !== 0) {
-            return jobCompare;
-        }
-        return String(left.characterName || '').localeCompare(String(right.characterName || ''), undefined, {
-            sensitivity: 'base',
-        });
-    });
 
-    rows.forEach((entry) => {
-        const distributionSummary = summarizeGroupedRunDistribution(entry.distribution);
-        const windowText = `${formatTimeDuration(entry.startTimeSeconds || 0)} - ${formatTimeDuration(entry.endTimeSeconds || 0)}`;
-        const row = document.createElement('tr');
-        row.innerHTML = `
-            <td class="fw-semibold">${escapeHtml(entry.jobName)}</td>
-            <td>${escapeHtml(entry.characterName)}</td>
-            <td class="text-end">${formatInteger(entry.slotIds.size)}</td>
-            <td class="text-end fw-semibold">${formatInteger(entry.totalRuns)}</td>
-            <td><small class="text-muted">${escapeHtml(distributionSummary)}</small></td>
-            <td><small class="text-muted">${escapeHtml(windowText)}</small></td>
-        `;
-        tbody.appendChild(row);
-    });
-}
-
-function summarizeGroupedRunDistribution(distribution) {
-    const values = Array.isArray(distribution)
-        ? distribution.map((value) => Math.max(0, Math.floor(Number(value) || 0))).filter((value) => value > 0)
-        : [];
-    if (values.length === 0) {
-        return '-';
+    if (!rows.length) {
+        // A restored snapshot with a mismatched shape used to render a blank
+        // table under a visible heading, with no explanation.
+        const empty = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 9;
+        cell.className = 'text-muted text-center py-3';
+        cell.textContent = __('No scheduled jobs to show. Calculate a schedule to populate this table.');
+        empty.appendChild(cell);
+        tbody.appendChild(empty);
+        return;
     }
 
-    const counts = new Map();
-    values.forEach((runs) => {
-        counts.set(runs, (counts.get(runs) || 0) + 1);
-    });
-
-    return Array.from(counts.entries())
-        .sort((left, right) => right[0] - left[0])
-        .map(([runs, slotCount]) => `${formatInteger(slotCount)} ${slotCount === 1 ? __('slot') : __('slots')} x ${formatInteger(runs)} ${runs === 1 ? __('run') : __('runs')}`)
-        .join(', ');
-}
-
-function renderJobDetailsTable(schedule) {
-    const tbody = document.getElementById('jobDetailsBody');
-    if (!tbody) return;
-
-    const jobs = schedule.jobs;
-    const slots = schedule.slots;
-    tbody.innerHTML = '';
-
-    jobs.forEach(job => {
-        const slot = slots.find(s => s.slot_id === job.assigned_slot);
-        const slotName = slot ? (slot.slot_name || slot.character_name) : '-';
-
-        const criticalPathJobIds = Array.isArray(schedule.critical_path_job_ids)
-            ? schedule.critical_path_job_ids
-            : [];
-        const isOnCriticalPath = criticalPathJobIds.includes(job.job_id)
-            || (schedule.critical_path && schedule.critical_path.includes(job.item_type_id));
-        const rowClass = isOnCriticalPath ? 'table-warning' : '';
-
-        const depLabels = job.dependencies && job.dependencies.length > 0
-            ? job.dependencies.map(depId => {
-                const depJob = jobs.find(j => j.job_id === depId);
-                return depJob ? (depJob.job_label || depJob.item_name) : `Job ${depId}`;
-              })
+    let unassigned = 0;
+    rows.forEach(({ job, slot, jobIndex }) => {
+        if (!slot) {
+            unassigned += 1;
+        }
+        const startMoment = formatScheduleMoment(job.start_time_seconds);
+        const endMoment = formatScheduleMoment(job.end_time_seconds);
+        const chunkLabel = (Number(job.chunk_count) || 1) > 1
+            ? `${formatInteger(job.chunk_index)} / ${formatInteger(job.chunk_count)}`
             : '-';
-        const deps = Array.isArray(depLabels)
-            ? (depLabels.length <= 2
-                ? depLabels.join(', ')
-                : `${depLabels.slice(0, 2).join(', ')} +${depLabels.length - 2} more`)
-            : depLabels;
+
+        // Live status and planned-vs-actual, when a tracking refresh has run.
+        const trackingRow = (scheduleTrackingState.lastResult?.results || [])
+            .find((entry) => Number(entry?.index) === jobIndex);
+        const statusKey = trackingRow?.status || 'planned';
+        const statusLabel = (CRAFT_GANTT_STATUSES[statusKey] || CRAFT_GANTT_STATUSES.planned).label();
+        const deltaSeconds = Number(trackingRow?.duration_delta_seconds);
+        let actualText = '-';
+        if (Number.isFinite(deltaSeconds)) {
+            const sign = deltaSeconds > 0 ? '+' : (deltaSeconds < 0 ? '-' : '');
+            actualText = deltaSeconds === 0
+                ? __('on plan')
+                : `${sign}${formatTimeDuration(Math.abs(deltaSeconds))}`;
+        }
 
         const row = document.createElement('tr');
-        row.className = rowClass;
-        row.innerHTML = `
-            <td>
-                <span class="badge bg-info-subtle text-info-emphasis">${escapeHtml(job.job_label || job.item_name)}</span>
-                ${isOnCriticalPath ? '<i class="fas fa-star text-warning ms-2" title="On critical path"></i>' : ''}
-            </td>
-            <td class="text-end">${job.runs_required}</td>
-            <td class="text-end">${job.total_time_formatted}</td>
-            <td class="text-end">${job.start_time_formatted}</td>
-            <td class="text-end">${job.end_time_formatted}</td>
-            <td>${escapeHtml(slotName)}</td>
-            <td><small class="text-muted">${escapeHtml(deps)}</small></td>
-        `;
-
+        const cells = [
+            { text: String(job.item_name || job.job_label || '-'), className: 'fw-semibold' },
+            { text: chunkLabel, className: 'text-end text-muted' },
+            { text: slot ? String(slot.slot_name || slot.character_name || '-') : __('Unassigned'), className: slot ? '' : 'text-warning' },
+            { text: formatInteger(job.runs_required), className: 'text-end fw-semibold' },
+            { text: startMoment.text, title: startMoment.title },
+            { text: endMoment.text, title: endMoment.title },
+            { text: String(job.total_time_formatted || formatTimeDuration(job.total_time_seconds)), className: 'text-end' },
+            { text: statusLabel, className: statusKey === 'planned' ? 'text-muted' : '' },
+            { text: actualText, className: 'text-end text-muted', title: __('Observed duration minus planned duration.') },
+        ];
+        cells.forEach((spec) => {
+            const cell = document.createElement('td');
+            if (spec.className) cell.className = spec.className;
+            if (spec.title) cell.title = spec.title;
+            // Item and character names are untrusted data.
+            cell.textContent = spec.text;
+            row.appendChild(cell);
+        });
         tbody.appendChild(row);
     });
+
+    if (unassigned > 0) {
+        const note = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 9;
+        cell.className = 'text-warning small';
+        cell.textContent = `${formatInteger(unassigned)} ${__('job(s) could not be matched to a lane in this schedule.')}`;
+        note.appendChild(cell);
+        tbody.appendChild(note);
+    }
+}
+
+function findRecommendationTarget(target) {
+    if (!target || typeof target !== 'object') {
+        return null;
+    }
+    if (target.element_id) {
+        return document.getElementById(String(target.element_id));
+    }
+    if (target.character_id) {
+        return document.querySelector(
+            `input[data-build-slot-character-id="${Number(target.character_id) || 0}"]`
+        );
+    }
+    return null;
 }
 
 function displayRecommendations(recommendations) {
     const container = document.getElementById('recommendationsList');
     if (!container) return;
 
-    container.innerHTML = recommendations.map(rec => `
-        <div class="alert alert-warning d-flex align-items-start mb-2">
-            <i class="fas fa-info-circle me-2 mt-1"></i>
-            <div>${escapeHtml(rec)}</div>
-        </div>
-    `).join('');
+    container.replaceChildren();
+    (Array.isArray(recommendations) ? recommendations : []).forEach((rec) => {
+        // Tolerate the old plain-string shape from a persisted snapshot.
+        const record = (rec && typeof rec === 'object') ? rec : { message: String(rec || '') };
+        const style = CRAFT_RECOMMENDATION_STYLES[record.severity] || CRAFT_RECOMMENDATION_STYLES.info;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = `alert ${style.alert} d-flex align-items-start mb-2`;
+
+        const icon = document.createElement('i');
+        icon.className = `fas ${style.icon} me-2 mt-1`;
+        icon.setAttribute('aria-hidden', 'true');
+        wrapper.appendChild(icon);
+
+        const body = document.createElement('div');
+        body.className = 'flex-grow-1';
+        // Scheduler messages embed item and character names, which are
+        // untrusted data; textContent rather than markup concatenation.
+        body.textContent = String(record.message || '');
+
+        const targetEl = findRecommendationTarget(record.target);
+        if (targetEl) {
+            const jump = document.createElement('button');
+            jump.type = 'button';
+            jump.className = 'btn btn-link btn-sm p-0 ms-2 align-baseline';
+            jump.textContent = __('Show me');
+            jump.addEventListener('click', () => {
+                targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                if (typeof targetEl.focus === 'function') {
+                    targetEl.focus({ preventScroll: true });
+                }
+            });
+            body.appendChild(jump);
+        }
+
+        wrapper.appendChild(body);
+        container.appendChild(wrapper);
+    });
 }
 
 function showScheduleLoading(show) {

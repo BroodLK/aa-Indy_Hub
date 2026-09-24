@@ -15,16 +15,17 @@ from .views.api import (
     get_character_slots,
     load_production_config,
     menu_badge_count,
+    production_bpc_sources,
+    production_material_source_assets,
+    production_material_sources,
+    production_simulation_preferences,
+    refresh_production_material_sources,
+    refresh_production_schedule_tracking,
     save_production_config,
 )
 from .views.hubs import (
     settings_hub,
     test_darkly_theme,
-)
-from .views.public_contract_ship_prices import (
-    public_contract_ship_prices,
-    public_contract_ship_prices_api_start,
-    public_contract_ship_prices_api_status,
 )
 from .views.industry import (
     all_bp_list,
@@ -56,6 +57,15 @@ from .views.industry import (
     personnal_bp_list,
     personnal_job_list,
     production_simulations_list,
+)
+from .views.production_buyback import (
+    production_buyback_availability,
+    submit_production_buyback_order,
+)
+from .views.public_contract_ship_prices import (
+    public_contract_ship_prices,
+    public_contract_ship_prices_api_start,
+    public_contract_ship_prices_api_status,
 )
 
 try:
@@ -320,6 +330,46 @@ urlpatterns = [
         "api/production-config/load/",
         load_production_config,
         name="load_production_config",
+    ),
+    path(
+        "api/production-preferences/",
+        production_simulation_preferences,
+        name="production_simulation_preferences",
+    ),
+    path(
+        "api/production-material-sources/",
+        production_material_sources,
+        name="production_material_sources",
+    ),
+    path(
+        "api/production-material-sources/refresh/",
+        refresh_production_material_sources,
+        name="refresh_production_material_sources",
+    ),
+    path(
+        "api/production-material-source-assets/",
+        production_material_source_assets,
+        name="production_material_source_assets",
+    ),
+    path(
+        "api/production-bpc-sources/",
+        production_bpc_sources,
+        name="production_bpc_sources",
+    ),
+    path(
+        "api/production-schedule-tracking/refresh/",
+        refresh_production_schedule_tracking,
+        name="refresh_production_schedule_tracking",
+    ),
+    path(
+        "api/production-buyback/availability/",
+        production_buyback_availability,
+        name="production_buyback_availability",
+    ),
+    path(
+        "api/production-buyback/order/",
+        submit_production_buyback_order,
+        name="submit_production_buyback_order",
     ),
     path("api/menu-badge-count/", menu_badge_count, name="menu_badge_count"),
     path("simulations/", production_simulations_list, name="production_simulations_list"),

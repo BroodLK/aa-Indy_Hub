@@ -857,10 +857,24 @@ def queue_industry_job_update_for_user(
     countdown: int = 0,
     priority: int | None = None,
     scope: str | None = None,
+    character_id: int | None = None,
+    force_refresh: bool = False,
 ) -> None:
+    """Queue an industry-job refresh.
+
+    Note ``scope`` is the ESI scope string forwarded to the task, which is a
+    different thing from the cooldown namespace of the same name in
+    ``request_manual_refresh``. ``character_id`` narrows the refresh to one
+    character and ``force_refresh`` bypasses the task's own age check; both
+    default to the previous whole-account behaviour.
+    """
     kwargs = {}
     if scope:
         kwargs["scope"] = scope
+    if character_id:
+        kwargs["character_id"] = int(character_id)
+    if force_refresh:
+        kwargs["force_refresh"] = True
     update_industry_jobs_for_user.apply_async(args=(user_id,), kwargs=kwargs, countdown=countdown, priority=priority)
 
 
@@ -871,8 +885,21 @@ def request_manual_refresh(
     priority: int | None = None,
     scope: str | None = None,
     check_active: bool = True,
+    character_id: int | None = None,
+    force_refresh: bool = False,
+    cooldown_scope: str | None = None,
 ) -> tuple[bool, timedelta | None]:
-    allowed, remaining = manual_refresh_allowed(kind, user_id, scope)
+    """Queue a throttled manual refresh.
+
+    ``scope`` is forwarded to the task as an ESI scope. ``cooldown_scope``
+    namespaces the cooldown cache key independently, which is what a caller
+    needs to throttle per character; it defaults to ``scope`` so existing
+    callers are unaffected. ``character_id`` and ``force_refresh`` reach the
+    jobs task, letting a per-character refresh actually refresh that character
+    rather than the whole account.
+    """
+    cooldown_key_scope = cooldown_scope if cooldown_scope is not None else scope
+    allowed, remaining = manual_refresh_allowed(kind, user_id, cooldown_key_scope)
     if not allowed:
         return False, remaining
 
@@ -887,11 +914,17 @@ def request_manual_refresh(
     if kind == MANUAL_REFRESH_KIND_BLUEPRINTS:
         queue_blueprint_update_for_user(user_id, priority=priority, scope=scope)
     elif kind == MANUAL_REFRESH_KIND_JOBS:
-        queue_industry_job_update_for_user(user_id, priority=priority, scope=scope)
+        queue_industry_job_update_for_user(
+            user_id,
+            priority=priority,
+            scope=scope,
+            character_id=character_id,
+            force_refresh=force_refresh,
+        )
     else:
         raise ValueError(f"Unknown manual refresh kind: {kind}")
 
-    _record_manual_refresh(kind, user_id, scope)
+    _record_manual_refresh(kind, user_id, cooldown_key_scope)
     return True, None
 
 

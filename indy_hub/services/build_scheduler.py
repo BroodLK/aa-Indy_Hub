@@ -126,7 +126,7 @@ class BuildSchedule:
     total_sequential_time_seconds: int
     total_parallel_time_seconds: int
     critical_path: List[int] = field(default_factory=list)
-    recommendations: List[str] = field(default_factory=list)
+    recommendations: List[dict] = field(default_factory=list)
     schedule_mode: str = "fastest"
     requested_slot_count: int = 0
     used_slot_count: int = 0
@@ -186,10 +186,25 @@ class BuildSchedule:
                     "character_name": slot.character_name,
                     "slot_name": slot.slot_name or slot.character_name,
                     "jobs_count": len(slot.jobs),
+                    "runs_assigned": sum(job.runs_required for job in slot.jobs),
+                    # available_at_seconds is a completion timestamp, not
+                    # accumulated busy time (add_job assigns rather than adds),
+                    # so the old "utilization" always over-reported and the lane
+                    # defining the makespan was tautologically 100%. Report both
+                    # numbers under honest names: their difference is the time
+                    # the lane spends idle waiting on dependencies.
                     "utilization_percent": round(
+                        (slot_busy_seconds(slot) / max(self.total_parallel_time_seconds, 1)) * 100,
+                        1,
+                    ),
+                    "span_percent": round(
                         (slot.available_at_seconds / max(self.total_parallel_time_seconds, 1)) * 100,
                         1,
                     ),
+                    "busy_time_seconds": slot_busy_seconds(slot),
+                    "busy_time_formatted": format_time_duration(slot_busy_seconds(slot)),
+                    "idle_time_seconds": slot_idle_seconds(slot),
+                    "idle_time_formatted": format_time_duration(slot_idle_seconds(slot)),
                     "completion_time_seconds": slot.available_at_seconds,
                     "completion_time_formatted": format_time_duration(slot.available_at_seconds),
                 }
@@ -677,17 +692,40 @@ def calculate_schedule_for_mode(
             ):
                 schedule.recommendations.insert(
                     0,
-                    "Components can be ready in " + format_time_duration(schedule.component_completion_time_seconds),
+                    {
+                        "code": "component_target_met",
+                        # Good news; it was previously rendered as a warning.
+                        "severity": "success",
+                        "message": (
+                            "Components can be ready in "
+                            + format_time_duration(schedule.component_completion_time_seconds)
+                        ),
+                        "params": {
+                            "seconds": schedule.component_completion_time_seconds,
+                            "slots_used": candidate_slot_count,
+                        },
+                        "target": None,
+                    },
                 )
                 return schedule
 
         if best_fallback is not None:
             best_fallback.recommendations.insert(
                 0,
-                (
-                    "Component target not met. Fastest component completion with the "
-                    f"selected slots is {format_time_duration(best_fallback.component_completion_time_seconds or 0)}."
-                ),
+                {
+                    "code": "component_target_missed",
+                    "severity": "warning",
+                    "message": (
+                        "Component target not met. Fastest component completion with "
+                        "the selected slots is "
+                        f"{format_time_duration(best_fallback.component_completion_time_seconds or 0)}."
+                    ),
+                    "params": {
+                        "seconds": best_fallback.component_completion_time_seconds or 0,
+                        "target_seconds": component_target_time_seconds,
+                    },
+                    "target": {"element_id": "buildScheduleTargetDays"},
+                },
             )
             return best_fallback
 
@@ -920,45 +958,167 @@ def find_critical_path(
     return critical_path
 
 
+def slot_busy_seconds(slot: IndustrySlot) -> int:
+    """Time this lane actually spends running jobs."""
+    return sum(job.total_time_seconds for job in slot.jobs)
+
+
+def slot_idle_seconds(slot: IndustrySlot) -> int:
+    """Time this lane spends waiting, before and between its jobs."""
+    return max(0, slot.available_at_seconds - slot_busy_seconds(slot))
+
+
 def generate_recommendations(
     jobs: List[ManufacturingJob],
     slots: List[IndustrySlot],
     total_time: int,
     critical_path: List[int],
     job_map: Dict[int, ManufacturingJob],
-) -> List[str]:
-    """Generate optimization recommendations based on schedule analysis."""
-    recommendations: List[str] = []
+) -> List[dict]:
+    """Actionable schedule findings, each with a measured effect and a target.
+
+    Returns structured records rather than sentences so the client can localize
+    them and attach a focus affordance:
+
+        {"code", "severity", "message", "params", "target"}
+
+    Every number quoted here is measured from the schedule that was actually
+    built. Where an effect is an estimate it is stated as an upper bound, not a
+    promised saving -- nothing here re-runs the allocator.
+    """
+    recommendations: List[dict] = []
+    span = max(total_time, 1)
 
     if slots:
-        avg_utilization = sum(slot.available_at_seconds for slot in slots) / len(slots)
-        utilization_pct = (avg_utilization / max(total_time, 1)) * 100
+        busy_total = sum(slot_busy_seconds(slot) for slot in slots)
+        utilization_pct = (busy_total / (len(slots) * span)) * 100
 
-        if utilization_pct < 50:
+        # Idle lanes, ranked. The old "low utilization" message used a
+        # completion timestamp as if it were busy time, so it under-triggered.
+        idle_ranked = sorted(slots, key=slot_idle_seconds, reverse=True)
+        worst_idle = idle_ranked[0] if idle_ranked else None
+        if worst_idle is not None and slot_idle_seconds(worst_idle) > 0:
             recommendations.append(
-                f"Low slot utilization ({utilization_pct:.0f}%). " "Consider using fewer slots or adding more jobs."
+                {
+                    "code": "lane_idle",
+                    "severity": "info",
+                    "message": (
+                        f"{worst_idle.slot_name or worst_idle.character_name} is idle "
+                        f"{format_time_duration(slot_idle_seconds(worst_idle))} of the "
+                        f"{format_time_duration(span)} plan, waiting on earlier jobs. "
+                        "Overall lane utilization is "
+                        f"{utilization_pct:.0f}%."
+                    ),
+                    "params": {
+                        "slot_id": worst_idle.slot_id,
+                        "idle_seconds": slot_idle_seconds(worst_idle),
+                        "utilization_pct": round(utilization_pct, 1),
+                    },
+                    "target": {"character_id": worst_idle.character_id},
+                }
             )
 
-        idle_slots = [slot for slot in slots if len(slot.jobs) == 0]
-        if idle_slots:
-            recommendations.append(f"{len(idle_slots)} slot(s) have no jobs assigned. Consider removing unused slots.")
+        # Rebalancing: state the bound, not a promise. Moving work can only
+        # close half the gap between the last and first lane to finish, and
+        # cannot beat the per-run cost of the job being moved.
+        busiest = max(slots, key=lambda slot: slot.available_at_seconds)
+        lightest = min(slots, key=lambda slot: slot.available_at_seconds)
+        gap = busiest.available_at_seconds - lightest.available_at_seconds
+        if gap > 0 and busiest.jobs and busiest is not lightest:
+            movable = max(busiest.jobs, key=lambda job: job.runs_required)
+            per_run = max(1, movable.adjusted_time_seconds)
+            runs_to_move = max(1, min(movable.runs_required, (gap // 2) // per_run))
+            saving_bound = min(runs_to_move * per_run, gap // 2)
+            if saving_bound > 0:
+                recommendations.append(
+                    {
+                        "code": "rebalance_lanes",
+                        "severity": "info",
+                        "message": (
+                            f"Move up to {runs_to_move} run(s) of {movable.item_name} from "
+                            f"{busiest.slot_name or busiest.character_name} to "
+                            f"{lightest.slot_name or lightest.character_name}: "
+                            f"{busiest.slot_name or busiest.character_name} finishes "
+                            f"{format_time_duration(gap)} after it, so this removes at most "
+                            f"{format_time_duration(saving_bound)} from the total."
+                        ),
+                        "params": {
+                            "from_slot_id": busiest.slot_id,
+                            "to_slot_id": lightest.slot_id,
+                            "runs": runs_to_move,
+                            "max_saving_seconds": saving_bound,
+                        },
+                        "target": {"character_id": lightest.character_id},
+                    }
+                )
+
+        empty_slots = [slot for slot in slots if not slot.jobs]
+        if empty_slots:
+            recommendations.append(
+                {
+                    "code": "empty_lanes",
+                    "severity": "info",
+                    "message": (
+                        f"{len(empty_slots)} selected lane(s) received no work. "
+                        "Reducing the slot count for those characters will not change "
+                        "the finish time."
+                    ),
+                    "params": {
+                        "slot_ids": [slot.slot_id for slot in empty_slots],
+                    },
+                    "target": {"character_id": empty_slots[0].character_id},
+                }
+            )
 
     if critical_path and len(critical_path) > 1:
         critical_items = list(
             dict.fromkeys(job_map[job_id].item_name for job_id in critical_path if job_id in job_map)
         )
+        critical_seconds = sum(job_map[job_id].total_time_seconds for job_id in critical_path if job_id in job_map)
         recommendations.append(
-            f"Critical path: {' -> '.join(critical_items)}. " "Optimizing these items will reduce total time."
+            {
+                "code": "critical_path",
+                "severity": "info",
+                "message": (
+                    f"The critical path is {' -> '.join(critical_items)}, "
+                    f"{format_time_duration(critical_seconds)} of the "
+                    f"{format_time_duration(span)} plan. Only changes to these items "
+                    "can shorten the total."
+                ),
+                "params": {
+                    "items": critical_items,
+                    "critical_seconds": critical_seconds,
+                },
+                "target": None,
+            }
         )
 
     if jobs:
         longest_job = max(jobs, key=lambda job: job.total_time_seconds)
-        if longest_job.total_time_seconds > total_time * 0.3:
+        share = longest_job.total_time_seconds / span * 100
+        if share > 30:
+            # TE is the lever that actually exists here: the runs are already
+            # split across every selected lane, so "split it up" is not
+            # actionable advice.
             recommendations.append(
-                f"'{longest_job.item_name}' takes "
-                f"{format_time_duration(longest_job.total_time_seconds)} "
-                f"({(longest_job.total_time_seconds / max(total_time, 1) * 100):.0f}% "
-                "of total time). Consider splitting runs across multiple jobs or improving TE."
+                {
+                    "code": "dominant_job",
+                    "severity": "warning",
+                    "message": (
+                        f"{longest_job.item_name} takes "
+                        f"{format_time_duration(longest_job.total_time_seconds)}, "
+                        f"{share:.0f}% of the plan, at TE {longest_job.time_efficiency}. "
+                        "Raising its TE or adding a lane for it is the only way to "
+                        "shorten this."
+                    ),
+                    "params": {
+                        "item_type_id": longest_job.item_type_id,
+                        "seconds": longest_job.total_time_seconds,
+                        "share_pct": round(share, 1),
+                        "time_efficiency": longest_job.time_efficiency,
+                    },
+                    "target": {"element_id": "buildSkillAdvanced"},
+                }
             )
 
     return recommendations

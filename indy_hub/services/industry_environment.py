@@ -565,6 +565,11 @@ def _load_corptools_engineering_structures(
             if not owner_corporation_name:
                 owner_corporation_name = str(get_corporation_name(owner_corporation_id) or "")
 
+        # Structures come from the corporation audit's stored copy, which is
+        # why a viewer without director roles can still pick them. Report how
+        # old that copy is so the UI never presents it as a live ESI read.
+        structures_updated_at = getattr(owner_corporation, "last_update_structures", None)
+
         structures.append(
             {
                 "structure_id": structure_id,
@@ -580,6 +585,8 @@ def _load_corptools_engineering_structures(
                 "rig_keys": [],
                 "rig_type_ids": [],
                 "facility_tax": None,
+                "is_cached": True,
+                "cached_at": structures_updated_at.isoformat() if structures_updated_at else None,
             }
         )
     return structures

@@ -2449,9 +2449,11 @@ def craft_bp(request, type_id):
         fee_system_id = int(build_system_id)
 
     industry_fee_config = {
+        # Fees are part of the cost model, so they default on; the user
+        # preference and the URL parameter both still override this.
         "enabled": _parse_bool(
-            request.GET.get("industry_fee_enabled", "0"),
-            default=False,
+            request.GET.get("industry_fee_enabled", "1"),
+            default=True,
         ),
         "structure_type_id": _parse_optional_int(request.GET.get("industry_fee_structure_type_id")),
         "security": fee_security,
@@ -3052,23 +3054,44 @@ def craft_bp(request, type_id):
             Blueprint,
             CharacterSettings,
             CorporationSharingSetting,
+            ProductionSimulationPreference,
         )
+        from indy_hub.services.production_material_sources import describe_bpc_source
+
+        # BPC/BPO coverage source: the URL wins (so switching can be tried
+        # without saving), otherwise the user's saved preference. It is never
+        # read from a share link. describe_bpc_source only accepts locations
+        # where this user has cached blueprints and only ever narrows the
+        # user's own blueprints, so a forged ID cannot widen coverage.
+        bpc_source_token = request.GET.get("bpc_source")
+        if bpc_source_token is None:
+            preference_state = (
+                ProductionSimulationPreference.objects.filter(user=request.user)
+                .values_list("state", flat=True)
+                .first()
+                or {}
+            )
+            bpc_source_token = preference_state.get("bpcSource", "")
+        try:
+            bpc_source = describe_bpc_source(request.user, bpc_source_token)
+        except Exception:
+            logger.exception("Unable to resolve BPC source for user %s", request.user.id)
+            bpc_source = {"token": "all", "item_ids": None, "rejected": True}
 
         try:
-            user_blueprints = (
-                Blueprint.objects.filter(
-                    owner_user=request.user,
-                    owner_kind=Blueprint.OwnerKind.CHARACTER,  # exclude corp-owned blueprints
-                )
-                .values_list(
-                    "type_id",
-                    "material_efficiency",
-                    "time_efficiency",
-                    "bp_type",
-                    "runs",
-                )
-                .order_by("type_id", "-material_efficiency", "-time_efficiency")
+            user_blueprints = Blueprint.objects.filter(
+                owner_user=request.user,
+                owner_kind=Blueprint.OwnerKind.CHARACTER,  # exclude corp-owned blueprints
             )
+            if bpc_source.get("item_ids") is not None:
+                user_blueprints = user_blueprints.filter(item_id__in=sorted(bpc_source["item_ids"]))
+            user_blueprints = user_blueprints.values_list(
+                "type_id",
+                "material_efficiency",
+                "time_efficiency",
+                "bp_type",
+                "runs",
+            ).order_by("type_id", "-material_efficiency", "-time_efficiency")
 
             # Aggregate user blueprints per type_id to capture originals and total copy runs
             user_bp_map: dict[int, dict[str, object]] = {}
@@ -3558,6 +3581,7 @@ def craft_bp(request, type_id):
         blueprint_payload = {
             "type_id": type_id,
             "bp_type_id": type_id,
+            "bpc_source": {key: value for key, value in bpc_source.items() if key != "item_ids"},
             "bp_name": bp_name,
             "name": bp_name,
             "num_runs": num_runs,
@@ -3590,6 +3614,9 @@ def craft_bp(request, type_id):
                 "craft_bpc_contracts": reverse("indy_hub:craft_bpc_contracts"),
                 "craft_industry_fees": reverse("indy_hub:craft_industry_fees"),
                 "craft_bp_payload": reverse("indy_hub:craft_bp_payload", args=[type_id]),
+                "schedule_tracking_refresh": reverse("indy_hub:refresh_production_schedule_tracking"),
+                "buyback_availability": reverse("indy_hub:production_buyback_availability"),
+                "buyback_order": reverse("indy_hub:submit_production_buyback_order"),
             },
         }
 

@@ -1866,6 +1866,11 @@ class ProductionSimulation(models.Model):
     blueprint_name = models.CharField(max_length=255)
     runs = models.IntegerField(default=1)
     simulation_name = models.CharField(max_length=255, blank=True)
+    # NULL (not "") for unnamed simulations: every backend treats NULLs as
+    # distinct in a unique index, so one user may keep many unnamed snapshots
+    # while named ones stay unique. A conditional/partial constraint would be
+    # silently dropped on MySQL/MariaDB.
+    simulation_name_normalized = models.CharField(max_length=255, blank=True, null=True, default=None)
 
     # Summary metadata
     total_items = models.IntegerField(default=0)
@@ -1889,10 +1894,37 @@ class ProductionSimulation(models.Model):
             models.Index(fields=["user", "-updated_at"]),
             models.Index(fields=["user", "blueprint_type_id"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "simulation_name_normalized"],
+                name="indy_sim_user_name_normalized_uniq",
+            ),
+        ]
 
     def __str__(self):
         name = self.simulation_name or f"{self.blueprint_name} x{self.runs}"
         return f"{self.user.username} - {name}"
+
+    @staticmethod
+    def normalize_simulation_name(value: str) -> str | None:
+        """Collapse whitespace and case so per-user names compare consistently.
+
+        Returns None for an empty name so unnamed snapshots stay unconstrained.
+        """
+        normalized = " ".join((value or "").split()).casefold()
+        return normalized or None
+
+    def save(self, *args, **kwargs):
+        self.simulation_name_normalized = self.normalize_simulation_name(self.simulation_name)
+        # A partial save that touches the name must also persist its normalized
+        # key, otherwise uniqueness would keep guarding the previous value.
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if "simulation_name" in update_fields:
+                update_fields.add("simulation_name_normalized")
+            kwargs["update_fields"] = update_fields
+        super().save(*args, **kwargs)
 
     @property
     def display_name(self):
@@ -1951,6 +1983,21 @@ class ProductionSimulation(models.Model):
         if self.estimated_revenue > 0:
             return float((self.estimated_profit / self.estimated_revenue) * 100)
         return 0.0
+
+
+class ProductionSimulationPreference(models.Model):
+    """User defaults for the simulator; private selections never enter shares."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="production_simulation_preferences",
+    )
+    state = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        default_permissions = ()
 
 
 # ============================================================================

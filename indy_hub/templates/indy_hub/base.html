@@ -199,9 +199,19 @@
                     </li>
                     <li>
                         <a class="dropdown-item" href="{% url 'indy_hub:production_simulations_list' %}">
-                            <i class="fas fa-flask me-2"></i>{% trans "Production Simulations" %}
+                            <i class="fas fa-flask me-2"></i>{% trans "Production Simulator" %}
+                            <small class="d-block text-muted text-wrap ms-4" style="max-width: 18rem;">
+                                {% trans "Choose Buy or Produce for the blueprint tree, estimate material cost and profit, schedule build slots, and save or share the scenario." %}
+                            </small>
                         </a>
                     </li>
+                    {% if public_contract_ship_prices_url %}
+                        <li>
+                            <a class="dropdown-item" href="{{ public_contract_ship_prices_url }}">
+                                <i class="fas fa-tags me-2"></i>{% trans "Contract Prices" %}
+                            </a>
+                        </li>
+                    {% endif %}
                 </ul>
             </div>
         {% endif %}
@@ -212,12 +222,6 @@
         {% if capital_orders_nav_url %}
             {% translate "Capital Orders" as capital_orders_tab_title %}
             {% include "framework/header/nav-collapse-button.html" with btn_class=capital_orders_nav_class url=capital_orders_nav_url title=capital_orders_tab_title fa_icon="fa-solid fa-ship" icon_on_mobile=True icon_on_desktop=True %}
-        {% endif %}
-        {% if public_contract_ship_prices_url %}
-            <a class="nav-link" href="{{ public_contract_ship_prices_url }}">
-                <i class="fa-solid fa-tags me-2"></i>
-                <span class="d-none d-lg-inline">Contract Prices</span>
-            </a>
         {% endif %}
         {% if stats_nav_url %}
             {% translate "Stats" as stats_tab_title %}

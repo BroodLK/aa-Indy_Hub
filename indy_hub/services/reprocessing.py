@@ -1276,11 +1276,22 @@ def calculate_compressed_ore_for_minerals(
             ),
         }
 
-    # Refresh prices lazily when stale; this is the only networked step allowed
-    # on the request path.
-    if CompressedOreCache.needs_price_update():
-        update_progress("Updating prices from market data...")
-        _update_compressed_ore_prices()  # Don't fail if this doesn't work
+    # Never fetch on the request path. The inline Fuzzwork call used to live
+    # here: its timeout is per-socket rather than a total deadline, and it was
+    # followed by one UPDATE per cached ore, so a slow upstream could hold the
+    # request open for tens of seconds. Serve the cache and refresh out of band.
+    prices_are_stale = CompressedOreCache.needs_price_update()
+    refresh_queued = False
+    if prices_are_stale:
+        update_progress("Queueing a market price refresh...")
+        try:
+            # AA Example App
+            from indy_hub.tasks.reprocessing import refresh_compressed_ore_prices
+
+            refresh_compressed_ore_prices.delay()
+            refresh_queued = True
+        except Exception:
+            logger.warning("Unable to queue compressed ore price refresh", exc_info=True)
 
     # Load ore data from cache
     update_progress("Running calculation...")
@@ -1291,7 +1302,9 @@ def calculate_compressed_ore_for_minerals(
     # Build ore_mineral_yields from cache, filtering to only ores that produce requested minerals
     ore_mineral_yields: dict[int, dict[int, int]] = {}
     price_map: dict[int, dict[str, Decimal]] = {}
-    prices_estimated = False
+    # Counted so the caller can report these as excluded rather than silently
+    # omitting them from the result.
+    low_market_excluded = 0
 
     for ore in cached_ores:
         # Convert JSON field back to dict[int, int]
@@ -1304,6 +1317,7 @@ def calculate_compressed_ore_for_minerals(
 
         sell_price = _to_decimal(ore.get("sell_price", 0))
         if sell_price <= Decimal("1"):
+            low_market_excluded += 1
             continue
 
         ore_type_id = ore["ore_type_id"]
@@ -1465,10 +1479,29 @@ def calculate_compressed_ore_for_minerals(
     # Sort by type name for consistent ordering
     compressed_ore_list.sort(key=lambda x: x["type_name"])
 
+    # prices_estimated was initialised False and never reassigned, so it was
+    # never a usable provenance signal. Report what is actually knowable.
+    price_ages = list(
+        CompressedOreCache.objects.filter(
+            ore_type_id__in=[int(ore["type_id"]) for ore in compressed_ore_list]
+        ).values_list("pricing_data_updated", flat=True)
+    )
+    oldest_price_at = min((value for value in price_ages if value), default=None)
+
     return {
         "compressed_ores": compressed_ore_list,
         "total_cost": total_cost.quantize(Decimal("0.01")),
         "excess_minerals": excess_minerals,
-        "prices_estimated": prices_estimated,
+        "prices_estimated": bool(prices_are_stale),
+        "provenance": {
+            "price_source": "fuzzwork_cache",
+            "prices_stale": bool(prices_are_stale),
+            "refresh_queued": bool(refresh_queued),
+            "oldest_price_at": (oldest_price_at.isoformat() if oldest_price_at else None),
+            "ores_considered": len(ore_mineral_yields),
+            # Ores at or below 1 ISK sell are dropped as having no usable
+            # market; say so rather than silently omitting them.
+            "low_market_ores_excluded": int(low_market_excluded),
+        },
         "error": None,
     }

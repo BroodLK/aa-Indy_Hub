@@ -34,6 +34,11 @@ logger = get_extension_logger(__name__)
 
 SYNC_LOCK_KEY = "indy_hub:public_jita_contracts:sync_lock:v1"
 SYNC_META_KEY = "indy_hub:public_jita_contracts:sync_meta:v1"
+# Kept apart from SYNC_META_KEY so a failed run never erases the metadata of
+# the last successful sync; the UI shows both.
+SYNC_FAILURE_KEY = "indy_hub:public_jita_contracts:sync_failure:v1"
+REFRESH_QUEUED_KEY = "indy_hub:public_jita_contracts:refresh_queued:v1"
+REFRESH_QUEUED_TTL_SECONDS = 5 * 60
 SYNC_LOCK_TTL_SECONDS = 55 * 60
 SYNC_META_TTL_SECONDS = 30 * 24 * 60 * 60
 MIN_SYNC_INTERVAL_SECONDS = PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS
@@ -393,46 +398,116 @@ def sync_public_jita_contract_cache(
             "max_pages": int(max_pages),
         }
         cache.set(SYNC_META_KEY, meta, SYNC_META_TTL_SECONDS)
+        cache.delete(SYNC_FAILURE_KEY)
         logger.info("Public Jita contract sync summary: %s", meta)
         return meta
+    except Exception as exc:
+        # Record only the exception class: messages can carry request details.
+        cache.set(
+            SYNC_FAILURE_KEY,
+            {"failed_at": timezone.now().isoformat(), "error": type(exc).__name__},
+            SYNC_META_TTL_SECONDS,
+        )
+        raise
     finally:
         cache.delete(SYNC_LOCK_KEY)
+        cache.delete(REFRESH_QUEUED_KEY)
+
+
+def _get_sync_failure(*, last_synced_at) -> dict[str, Any]:
+    failure = cache.get(SYNC_FAILURE_KEY)
+    if not isinstance(failure, dict):
+        return {"refresh_failed": False, "last_error": "", "last_failure_at": ""}
+    failed_at = _parse_esi_datetime(failure.get("failed_at"))
+    # A failure older than the last good sync is no longer relevant.
+    if failed_at is None or (last_synced_at is not None and failed_at <= last_synced_at):
+        return {"refresh_failed": False, "last_error": "", "last_failure_at": ""}
+    return {
+        "refresh_failed": True,
+        "last_error": str(failure.get("error") or "")[:80],
+        "last_failure_at": failed_at.isoformat(),
+    }
+
+
+def _build_cache_meta(*, synced_at, extra: dict[str, Any]) -> dict[str, Any]:
+    now = timezone.now()
+    base: dict[str, Any] = {
+        **extra,
+        "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
+        "refresh_queued": bool(cache.get(REFRESH_QUEUED_KEY)),
+    }
+    if synced_at is None:
+        base.update(
+            {
+                "cached_at": "",
+                "last_synced": "",
+                "expires_at": "",
+                "cache_age_seconds": None,
+                "is_cached": False,
+            }
+        )
+    else:
+        expires_at = synced_at + timedelta(seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS)
+        base.update(
+            {
+                "cached_at": synced_at.isoformat(),
+                "last_synced": synced_at.isoformat(),
+                "expires_at": expires_at.isoformat(),
+                "cache_age_seconds": max(0, int((now - synced_at).total_seconds())),
+                "is_cached": now <= expires_at,
+            }
+        )
+    base.update(_get_sync_failure(last_synced_at=synced_at))
+    return base
 
 
 def get_public_jita_contract_cache_meta() -> dict[str, Any]:
+    """Describe the freshness of the public contract cache.
+
+    ``last_synced`` is the last *successful* ESI sync; ``refresh_failed`` is
+    only true when a sync failed after it, so a failed run never makes older
+    data look current and never erases it either.
+    """
     meta = cache.get(SYNC_META_KEY)
     if isinstance(meta, dict):
         synced_at = _parse_esi_datetime(meta.get("synced_at"))
         if synced_at is not None:
-            expires_at = synced_at + timedelta(seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS)
-            return {
-                **meta,
-                "cached_at": synced_at.isoformat(),
-                "expires_at": expires_at.isoformat(),
-                "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
-                "is_cached": timezone.now() <= expires_at,
-            }
+            return _build_cache_meta(synced_at=synced_at, extra=meta)
 
     latest_sync = PublicJitaContract.objects.order_by("-last_synced").values_list("last_synced", flat=True).first()
     if latest_sync is None:
-        return {
-            "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
-            "cached_at": "",
-            "expires_at": "",
-            "is_cached": False,
-            "active_contracts": 0,
-            "active_items": 0,
-        }
+        return _build_cache_meta(synced_at=None, extra={"active_contracts": 0, "active_items": 0})
+    return _build_cache_meta(
+        synced_at=latest_sync,
+        extra={
+            "active_contracts": PublicJitaContract.objects.count(),
+            "active_items": PublicJitaContractItem.objects.count(),
+        },
+    )
 
-    expires_at = latest_sync + timedelta(seconds=PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS)
-    return {
-        "cache_ttl_seconds": PUBLIC_BPC_OFFERS_CACHE_TTL_SECONDS,
-        "cached_at": latest_sync.isoformat(),
-        "expires_at": expires_at.isoformat(),
-        "is_cached": timezone.now() <= expires_at,
-        "active_contracts": PublicJitaContract.objects.count(),
-        "active_items": PublicJitaContractItem.objects.count(),
-    }
+
+def request_public_jita_contract_refresh() -> bool:
+    """Queue a background sync when the cache is stale.
+
+    The sync task keeps its own global one-hour minimum and lock, so this can
+    never make ESI requests more frequent; the queued marker just stops many
+    viewers from each enqueueing a no-op task. Returns True when queued.
+    """
+    meta = get_public_jita_contract_cache_meta()
+    if meta.get("is_cached"):
+        return False
+    if not cache.add(REFRESH_QUEUED_KEY, timezone.now().isoformat(), REFRESH_QUEUED_TTL_SECONDS):
+        return False
+    try:
+        # AA Example App
+        from indy_hub.tasks.public_contracts import sync_public_jita_contracts
+
+        sync_public_jita_contracts.delay()
+    except Exception:
+        cache.delete(REFRESH_QUEUED_KEY)
+        logger.warning("Unable to queue public Jita contract refresh", exc_info=True)
+        return False
+    return True
 
 
 def get_public_jita_bpc_offers(

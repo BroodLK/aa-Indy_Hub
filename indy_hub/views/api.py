@@ -6,6 +6,7 @@ These views handle API calls, external data fetching, and service integrations.
 
 # Standard Library
 import json
+from datetime import timedelta
 from decimal import Decimal
 from math import ceil
 from urllib.parse import parse_qsl
@@ -13,7 +14,8 @@ from urllib.parse import parse_qsl
 # Django
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
-from django.db import connection, transaction
+from django.db import IntegrityError, connection, transaction
+from django.db.models import Max
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_http_methods
@@ -28,9 +30,11 @@ from ..decorators import indy_hub_access_required, indy_hub_permission_required
 from ..models import (
     BlueprintEfficiency,
     CustomPrice,
+    IndustryJob,
     IndustrySkillSnapshot,
     ProductionConfig,
     ProductionSimulation,
+    ProductionSimulationPreference,
 )
 from ..services.craft_materials import calculate_job_material_quantity
 from ..services.everef import (
@@ -44,16 +48,184 @@ from ..services.industry_skill_snapshots import (
     fetch_character_skill_levels,
     update_skill_snapshot,
 )
+from ..services.production_material_sources import (
+    MAX_TYPE_FILTER,
+    get_source_assets,
+    list_asset_sources,
+)
+from ..services.production_price_estimates import capital_estimates_for_types
+from ..services.production_simulation_state import (
+    StateTooLargeError,
+    migrate_ui_state,
+    normalize_preference_state,
+)
 from ..services.public_contracts_store import (
     get_public_jita_bpc_offers,
     get_public_jita_contract_cache_meta,
+    request_public_jita_contract_refresh,
 )
-from ..tasks.industry import MANUAL_REFRESH_KIND_BLUEPRINTS, request_manual_refresh
+from ..services.schedule_tracking import (
+    normalize_planned_chunks,
+    planned_window,
+    reconcile_schedule_jobs,
+    tracking_freshness,
+)
+from ..tasks.industry import (
+    MANUAL_REFRESH_KIND_BLUEPRINTS,
+    MANUAL_REFRESH_KIND_JOBS,
+    request_manual_refresh,
+)
+from ..tasks.material_exchange import (
+    me_sell_assets_esi_cooldown_key,
+    refresh_material_exchange_sell_user_assets,
+)
 from ..utils.analytics import emit_view_analytics_event
 from ..utils.eve import get_type_name
 from ..utils.menu_badge import compute_menu_badge_count
 
 logger = get_extension_logger(__name__)
+
+# When a schedule carries no usable timestamps there is no window to bound the
+# candidate jobs with, so fall back to a recent slice rather than all history.
+TRACKING_FALLBACK_LOOKBACK = timedelta(days=30)
+TRACKING_JOBS_SCOPE = "esi-industry.read_character_jobs.v1"
+# Browser auto-refresh interval for opted-in tracking. Each refresh is also
+# throttled per character server-side, so this only bounds the page's polling.
+TRACKING_AUTO_REFRESH_SECONDS = 15 * 60
+
+
+def _get_owned_character_ids(user) -> set[int]:
+    """Character IDs the user demonstrably owns.
+
+    A valid token proves ownership; so does an industry job already stored
+    against this account. Either is enough to accept a browser-supplied ID.
+    """
+    owned: set[int] = set()
+    try:
+        owned.update(
+            int(character_id)
+            for character_id in Token.objects.filter(user=user).values_list(
+                "character_id", flat=True
+            )
+            if character_id
+        )
+    except Exception:
+        logger.exception("Unable to read tokens for user %s", getattr(user, "id", None))
+    owned.update(
+        int(character_id)
+        for character_id in IndustryJob.objects.filter(owner_user=user)
+        .values_list("character_id", flat=True)
+        .distinct()
+        if character_id
+    )
+    return owned
+
+
+def _read_ui_state(simulation) -> dict:
+    """Normalize a stored snapshot on the way out.
+
+    migrate_ui_state used to run only on save, so a row written by an older
+    client was handed to the browser unversioned and was only fixed as a side
+    effect of the next save. An oversized legacy row is served as-is rather
+    than failing the load.
+    """
+    if simulation is None:
+        return {}
+    try:
+        return migrate_ui_state(simulation.ui_state)
+    except StateTooLargeError:
+        logger.warning(
+            "Serving oversized ui_state for simulation %s without migration",
+            simulation.id,
+        )
+        return simulation.ui_state if isinstance(simulation.ui_state, dict) else {}
+
+
+def _production_asset_progress_key(user_id: int) -> str:
+    """Mirror of the sell-assets progress key.
+
+    The same string is already duplicated between tasks/material_exchange.py
+    and views/material_exchange.py, so it is an established cross-module
+    contract rather than a private detail.
+    """
+    return f"indy_hub:material_exchange:sell_assets_refresh:{int(user_id)}"
+
+
+def _get_or_store_tracking_schedule(simulation, candidate, *, replace: bool = False):
+    """Return the schedule snapshot tracking is reconciling against.
+
+    The snapshot is stored with the simulation on first opt-in and is
+    authoritative from then on. Previously the endpoint reconciled whatever
+    schedule the browser posted, which meant "planned" was whatever the client
+    said it was; a stale tab or an edited payload could silently redefine it.
+
+    Returns (schedule, stored_at_iso).
+    """
+    ui_state = simulation.ui_state if isinstance(simulation.ui_state, dict) else {}
+    tracking = ui_state.get("scheduleTracking")
+    tracking = tracking if isinstance(tracking, dict) else {}
+    stored = tracking.get("schedule")
+
+    if isinstance(stored, dict) and stored.get("jobs") and not replace:
+        return stored, tracking.get("scheduleStoredAt")
+
+    # Accept a client snapshot only to establish (or explicitly replace) it.
+    snapshot = candidate if isinstance(candidate, dict) else {}
+    if isinstance(snapshot.get("schedule"), dict):
+        snapshot = snapshot["schedule"]
+    if not snapshot.get("jobs"):
+        # Fall back to the saved build schedule before giving up.
+        saved = ui_state.get("buildSchedule")
+        if isinstance(saved, dict):
+            saved = (
+                saved.get("schedule")
+                if isinstance(saved.get("schedule"), dict)
+                else saved
+            )
+            if isinstance(saved, dict) and saved.get("jobs"):
+                snapshot = saved
+    if not snapshot.get("jobs"):
+        return {}, tracking.get("scheduleStoredAt")
+
+    stored_at = timezone.now().isoformat()
+    tracking["schedule"] = snapshot
+    tracking["scheduleStoredAt"] = stored_at
+    ui_state["scheduleTracking"] = tracking
+    try:
+        simulation.ui_state = migrate_ui_state(ui_state)
+    except StateTooLargeError:
+        # A schedule big enough to blow the snapshot budget is not worth
+        # refusing the refresh over; reconcile against it without persisting.
+        logger.warning(
+            "Tracking schedule too large to persist for simulation %s", simulation.id
+        )
+        return snapshot, None
+    simulation.save(update_fields=["ui_state", "updated_at"])
+    return snapshot, stored_at
+
+
+def _get_or_create_tracking_anchor(simulation, *, reset: bool = False):
+    """Return the absolute start time the planned offsets are measured from.
+
+    Stamped server-side on first use and persisted with the simulation so
+    repeated refreshes compare against a stable window.
+    """
+    ui_state = simulation.ui_state if isinstance(simulation.ui_state, dict) else {}
+    tracking = ui_state.get("scheduleTracking")
+    tracking = tracking if isinstance(tracking, dict) else {}
+    existing = tracking.get("trackingStartedAt")
+    if existing and not reset:
+        return existing
+
+    anchor = timezone.now().isoformat()
+    tracking["trackingStartedAt"] = anchor
+    ui_state["scheduleTracking"] = tracking
+    # Round-trip through the migrator so this third write path cannot store a
+    # snapshot the save/load paths would consider unversioned.
+    simulation.ui_state = migrate_ui_state(ui_state)
+    simulation.save(update_fields=["ui_state", "updated_at"])
+    return anchor
+
 
 MENU_BADGE_CACHE_TTL_SECONDS = 45
 BLUEPRINT_SCOPE_SET = [
@@ -244,6 +416,29 @@ def menu_badge_count(request):
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
 @require_http_methods(["GET"])
+def _collect_payload_type_ids(materials_tree, product_type_id) -> set[int]:
+    """Every type in the tree plus the final product."""
+    collected: set[int] = set()
+    if product_type_id:
+        collected.add(int(product_type_id))
+
+    def walk(nodes):
+        for node in nodes or []:
+            if not isinstance(node, dict):
+                continue
+            node_type_id = node.get("type_id") or node.get("typeId")
+            try:
+                node_type_id = int(node_type_id)
+            except (TypeError, ValueError):
+                node_type_id = 0
+            if node_type_id > 0:
+                collected.add(node_type_id)
+            walk(node.get("sub_materials"))
+
+    walk(materials_tree)
+    return collected
+
+
 def craft_bp_payload(request, type_id: int):
     """Return the craft blueprint payload as JSON for a given number of runs.
 
@@ -521,6 +716,14 @@ def craft_bp_payload(request, type_id: int):
         "recipe_map": _to_serializable(recipe_map),
     }
 
+    # Derived fallbacks for items with no usable market price. These sit below
+    # the market estimate in the client's price precedence and never displace a
+    # user-entered real price; provenance travels with them so the Buy tab can
+    # say where the number came from and how old it is.
+    payload["price_estimates"] = capital_estimates_for_types(
+        _collect_payload_type_ids(materials_tree, product_type_id)
+    )
+
     if debug_enabled:
         payload["_debug"] = _to_serializable(debug_info)
 
@@ -698,6 +901,9 @@ def craft_bpc_contracts(request):
         "yes",
     }
 
+    # ``force`` never fetches inline: it queues the background sync, which
+    # keeps its own global rate limit, and only when the cache is stale.
+    refresh_queued = request_public_jita_contract_refresh() if force_refresh else False
     cache_meta = get_public_jita_contract_cache_meta()
 
     contracts_by_blueprint: dict[str, list[dict]] = {}
@@ -736,6 +942,12 @@ def craft_bpc_contracts(request):
             "expires_at": str(cache_meta.get("expires_at") or ""),
             "fetched_at": timezone.now().isoformat(),
             "is_cached": bool(cache_meta.get("is_cached")),
+            "last_synced": str(cache_meta.get("last_synced") or ""),
+            "cache_age_seconds": cache_meta.get("cache_age_seconds"),
+            "refresh_failed": bool(cache_meta.get("refresh_failed")),
+            "last_error": str(cache_meta.get("last_error") or ""),
+            "last_failure_at": str(cache_meta.get("last_failure_at") or ""),
+            "refresh_queued": bool(refresh_queued or cache_meta.get("refresh_queued")),
         },
         status=200,
     )
@@ -1084,13 +1296,12 @@ def save_production_config(request):
         if not blueprint_type_id:
             return JsonResponse({"error": "blueprint_type_id is required"}, status=400)
 
+        simulation_name = " ".join(str(data.get("simulation_name", "")).split())
         with transaction.atomic():
             # Create or update the simulation
             simulation = None
             created = False
-            ui_state = data.get("ui_state", {})
-            if not isinstance(ui_state, dict):
-                ui_state = {}
+            ui_state = migrate_ui_state(data.get("ui_state", {}))
             if simulation_id:
                 simulation = (
                     ProductionSimulation.objects.select_for_update()
@@ -1115,7 +1326,7 @@ def save_production_config(request):
                         "blueprint_name", f"Blueprint {blueprint_type_id}"
                     ),
                     runs=runs,
-                    simulation_name=data.get("simulation_name", ""),
+                    simulation_name=simulation_name,
                     active_tab=data.get("active_tab", "materials"),
                     ui_state=ui_state,
                     estimated_cost=data.get("estimated_cost", 0),
@@ -1130,8 +1341,8 @@ def save_production_config(request):
                     "blueprint_name", simulation.blueprint_name
                 )
                 simulation.runs = runs
-                simulation.simulation_name = data.get(
-                    "simulation_name", simulation.simulation_name
+                simulation.simulation_name = (
+                    simulation_name or simulation.simulation_name
                 )
                 simulation.active_tab = data.get("active_tab", simulation.active_tab)
                 simulation.ui_state = ui_state
@@ -1226,11 +1437,337 @@ def save_production_config(request):
             }
         )
 
+    except StateTooLargeError as exc:
+        return JsonResponse(
+            {
+                "error": "ui_state_too_large",
+                "message": (
+                    "This simulation snapshot is too large to save "
+                    f"({exc.size} bytes, limit {exc.limit})."
+                ),
+            },
+            status=413,
+        )
+    except IntegrityError:
+        return JsonResponse(
+            {
+                "error": "simulation_name_taken",
+                "message": "You already have a simulation with this name.",
+            },
+            status=409,
+        )
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON data"}, status=400)
     except Exception as e:
         logger.error(f"Error saving production config: {e}")
         return JsonResponse({"error": "Internal server error"}, status=500)
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET", "PUT"])
+def production_simulation_preferences(request):
+    """Read or update durable simulator defaults for the current user."""
+    if request.method == "GET":
+        preference = ProductionSimulationPreference.objects.filter(
+            user=request.user
+        ).first()
+        return JsonResponse({"state": preference.state if preference else {}})
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON data"}, status=400)
+    incoming_state = normalize_preference_state(payload.get("state", payload))
+    preference, _ = ProductionSimulationPreference.objects.get_or_create(
+        user=request.user
+    )
+    state = normalize_preference_state({**(preference.state or {}), **incoming_state})
+    preference.state = state
+    preference.save(update_fields=["state", "updated_at"])
+    return JsonResponse({"success": True, "state": state})
+
+
+def _parse_type_ids(raw_value: str) -> list[int]:
+    type_ids: list[int] = []
+    for raw_type_id in str(raw_value or "").split(",")[:MAX_TYPE_FILTER]:
+        try:
+            type_id = int(raw_type_id)
+        except (TypeError, ValueError):
+            continue
+        if type_id > 0 and type_id not in type_ids:
+            type_ids.append(type_id)
+    return type_ids
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def production_material_sources(request):
+    """Cached personal material locations, named, scoped to the current user."""
+    return JsonResponse(list_asset_sources(request.user, blueprints=False))
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def production_bpc_sources(request):
+    """Cached personal blueprint locations, for the BPC/BPO source selector."""
+    return JsonResponse(list_asset_sources(request.user, blueprints=True))
+
+
+ASSET_REFRESH_PROGRESS_STALE_SECONDS = 180
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["POST"])
+def refresh_production_material_sources(request):
+    """Queue a user-scoped refresh of cached personal assets.
+
+    Guarded the same way the buyback sell page guards this task: a click must
+    not be able to stack forced ESI fan-out. Checks, in order, the ESI-down
+    cooldown the task itself sets, and whether a run is already in flight and
+    making progress. Returns 200 with a retry hint rather than 429 -- nothing
+    in this codebase emits 429 and every client here expects the payload shape.
+    """
+    user_id = int(request.user.id)
+
+    cooldown_until = cache.get(me_sell_assets_esi_cooldown_key(user_id))
+    if cooldown_until:
+        remaining = 0
+        try:
+            remaining = max(0, int(float(cooldown_until) - timezone.now().timestamp()))
+        except (TypeError, ValueError):
+            remaining = 0
+        return JsonResponse(
+            {
+                "scheduled": False,
+                "error": "esi_down",
+                "message": (
+                    "The asset service is temporarily unavailable. "
+                    "Cached quantities are still usable."
+                ),
+                "retry_seconds": remaining,
+                "retry_minutes": (remaining + 59) // 60 if remaining else 0,
+            }
+        )
+
+    progress = cache.get(_production_asset_progress_key(user_id)) or {}
+    if progress.get("running"):
+        last_progress = progress.get("last_progress_at") or 0
+        try:
+            age = timezone.now().timestamp() - float(last_progress)
+        except (TypeError, ValueError):
+            age = ASSET_REFRESH_PROGRESS_STALE_SECONDS + 1
+        if age <= ASSET_REFRESH_PROGRESS_STALE_SECONDS:
+            return JsonResponse(
+                {
+                    "scheduled": False,
+                    "error": "already_running",
+                    "message": "An asset refresh is already running.",
+                    "retry_seconds": int(ASSET_REFRESH_PROGRESS_STALE_SECONDS - age),
+                    "done": progress.get("done"),
+                    "total": progress.get("total"),
+                }
+            )
+
+    try:
+        task = refresh_material_exchange_sell_user_assets.delay(user_id)
+    except Exception:
+        logger.exception("Unable to queue material source refresh for user %s", user_id)
+        return JsonResponse({"error": "asset refresh could not be queued"}, status=503)
+    return JsonResponse(
+        {"scheduled": True, "queued": True, "task_id": getattr(task, "id", None)}
+    )
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def production_material_source_assets(request):
+    """Cached quantities for one user-authorized asset location.
+
+    Optional narrowing by location_flag (e.g. Hangar) and by container item_id;
+    both follow the container parent chain.
+    """
+    try:
+        location_id = int(request.GET.get("location_id", "0"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "location_id must be an integer"}, status=400)
+    if location_id <= 0:
+        return JsonResponse({"error": "location_id is required"}, status=400)
+
+    try:
+        container_item_id = int(request.GET.get("container_item_id", "0") or 0)
+    except (TypeError, ValueError):
+        return JsonResponse(
+            {"error": "container_item_id must be an integer"}, status=400
+        )
+
+    result = get_source_assets(
+        request.user,
+        location_id=location_id,
+        type_ids=_parse_type_ids(request.GET.get("type_ids", "")),
+        location_flag=str(request.GET.get("location_flag", "") or "").strip()[:50],
+        container_item_id=max(0, container_item_id),
+        blueprints=str(request.GET.get("blueprints", "")).strip()
+        in {"1", "true", "yes"},
+    )
+    if result is None:
+        return JsonResponse(
+            {"error": "location is not available in the user asset cache"}, status=403
+        )
+    return JsonResponse(result)
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["POST"])
+def refresh_production_schedule_tracking(request):
+    """Reconcile an opted-in schedule against the user's cached industry jobs."""
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON data"}, status=400)
+    try:
+        simulation_id = int(payload.get("simulation_id") or 0)
+    except (TypeError, ValueError):
+        simulation_id = 0
+    simulation = ProductionSimulation.objects.filter(
+        id=simulation_id, user=request.user
+    ).first()
+    if simulation is None:
+        return JsonResponse({"error": "simulation not found"}, status=404)
+    if not bool(payload.get("opt_in")):
+        return JsonResponse({"error": "tracking opt-in is required"}, status=400)
+
+    requested_ids = []
+    raw_character_ids = payload.get("character_ids", [])
+    for raw_id in raw_character_ids if isinstance(raw_character_ids, list) else []:
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in requested_ids:
+            requested_ids.append(value)
+
+    # Never forward a character ID from the browser without proving the user
+    # owns it: a token or an existing owned job row are both sufficient proof.
+    owned_ids = _get_owned_character_ids(request.user)
+    character_ids = [value for value in requested_ids if value in owned_ids]
+    rejected_ids = [value for value in requested_ids if value not in owned_ids]
+    if requested_ids and not character_ids:
+        return JsonResponse(
+            {"error": "no tracked character belongs to this account"}, status=403
+        )
+
+    # Reconcile against the snapshot this simulation was tracking, not whatever
+    # the browser happens to post. The client may supply one only to establish
+    # the snapshot on opt-in; after that the stored copy is authoritative, so a
+    # tampered or stale payload cannot change what "planned" means.
+    schedule, snapshot_stored_at = _get_or_store_tracking_schedule(
+        simulation,
+        payload.get("schedule"),
+        replace=bool(payload.get("reset_anchor")),
+    )
+    if not schedule.get("jobs"):
+        return JsonResponse(
+            {
+                "error": "no_tracked_schedule",
+                "message": (
+                    "Calculate and save a schedule before enabling live tracking."
+                ),
+            },
+            status=409,
+        )
+
+    # The planner records offsets from the start of the plan, so tracking needs
+    # an absolute anchor. Stamp it once, server-side, on the first refresh.
+    anchor = _get_or_create_tracking_anchor(
+        simulation, reset=bool(payload.get("reset_anchor"))
+    )
+
+    # Throttled per character. The cooldown namespace and the refresh target
+    # are separate arguments: passing the character as the ESI `scope` would
+    # have cooled down per character while refreshing the whole account.
+    scheduled_ids = []
+    cooldown_ids = []
+    retry_seconds = 0
+    for character_id in character_ids:
+        queued_ok, remaining = request_manual_refresh(
+            MANUAL_REFRESH_KIND_JOBS,
+            request.user.id,
+            character_id=character_id,
+            force_refresh=True,
+            cooldown_scope=f"tracking:{character_id}",
+            priority=3,
+        )
+        if queued_ok:
+            scheduled_ids.append(character_id)
+        else:
+            cooldown_ids.append(character_id)
+            if remaining is not None:
+                retry_seconds = max(retry_seconds, int(remaining.total_seconds()))
+
+    jobs = IndustryJob.objects.filter(
+        owner_user=request.user, character_id__in=character_ids
+    )
+    # Bound the candidate set to the planned window so a long-finished job with
+    # the same product and run count cannot be reported as this chunk.
+    window_start, window_end = planned_window(
+        normalize_planned_chunks(schedule, anchor=anchor)
+    )
+    if window_start and window_end:
+        jobs = jobs.filter(start_date__lte=window_end, end_date__gte=window_start)
+    else:
+        jobs = jobs.filter(end_date__gte=timezone.now() - TRACKING_FALLBACK_LOOKBACK)
+    jobs = jobs.order_by("start_date")
+
+    # Freshness of the data actually being reconciled, so the UI can say when
+    # it last heard from ESI rather than only when it last recalculated.
+    last_job_sync = IndustryJob.objects.filter(
+        owner_user=request.user, character_id__in=character_ids
+    ).aggregate(last=Max("last_updated"))["last"]
+
+    result = reconcile_schedule_jobs(schedule, jobs, anchor=anchor)
+    # Scope check without network: whether any tracked character has a token
+    # carrying the industry jobs scope. Without one, live tracking is
+    # unavailable (the schedule itself is untouched).
+    try:
+        has_jobs_scope = (
+            Token.objects.filter(user=request.user, character_id__in=character_ids)
+            .require_scopes([TRACKING_JOBS_SCOPE])
+            .exists()
+        )
+    except Exception:
+        logger.exception("Unable to check job scopes for user %s", request.user.id)
+        has_jobs_scope = False
+    freshness = tracking_freshness(last_job_sync, has_scope=has_jobs_scope)
+    return JsonResponse(
+        {
+            "simulation_id": simulation.id,
+            "tracking": result,
+            "freshness": freshness,
+            # Refresh cadence the client should respect for automatic refresh.
+            "auto_refresh_seconds": TRACKING_AUTO_REFRESH_SECONDS,
+            # 200 with a payload, matching craft_sync_owned_bpcs; nothing in
+            # this codebase emits 429.
+            "scheduled": bool(scheduled_ids),
+            "scheduled_character_ids": scheduled_ids,
+            "cooldown_character_ids": cooldown_ids,
+            "retry_seconds": retry_seconds,
+            "retry_minutes": (retry_seconds + 59) // 60 if retry_seconds else 0,
+            "ignored_character_ids": rejected_ids,
+            "snapshot_stored_at": snapshot_stored_at,
+            "jobs_last_synced": (last_job_sync.isoformat() if last_job_sync else None),
+        }
+    )
 
 
 @indy_hub_access_required
@@ -1362,7 +1899,7 @@ def load_production_config(request):
             "items": items,
             "blueprint_efficiencies": blueprint_efficiencies,
             "custom_prices": custom_prices,
-            "ui_state": simulation.ui_state if simulation else {},
+            "ui_state": _read_ui_state(simulation),
         }
 
         if simulation:  # Add simulation metadata when it exists
@@ -1388,6 +1925,8 @@ def load_production_config(request):
         return JsonResponse({"error": "Internal server error"}, status=500)
 
 
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
 @login_required
 @require_http_methods(["POST"])
 def convert_minerals_to_compressed_ore(request):
@@ -1461,6 +2000,9 @@ def convert_minerals_to_compressed_ore(request):
                 str(k): v for k, v in result["excess_minerals"].items()
             },
             "prices_estimated": result.get("prices_estimated", False),
+            # Real provenance: which prices were used, how old they are, and
+            # whether a refresh was queued instead of fetched inline.
+            "provenance": result.get("provenance", {}),
             "error": result.get("error"),
         }
 
@@ -1471,6 +2013,8 @@ def convert_minerals_to_compressed_ore(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
 @login_required
 @require_http_methods(["GET"])
 def get_character_slots(request):
@@ -1561,6 +2105,8 @@ def get_character_slots(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
 @login_required
 @require_http_methods(["POST"])
 def calculate_import_fees(request):
@@ -1634,6 +2180,8 @@ def calculate_import_fees(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
 @login_required
 @require_http_methods(["POST"])
 def calculate_build_schedule(request):

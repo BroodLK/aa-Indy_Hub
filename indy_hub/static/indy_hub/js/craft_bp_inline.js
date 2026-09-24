@@ -249,7 +249,17 @@
         };
     }
 
+    function bindSimulationNameValidationReset() {
+        const input = document.getElementById('simulationName');
+        if (!input || input.dataset.nameValidationBound === 'true') {
+            return;
+        }
+        input.dataset.nameValidationBound = 'true';
+        input.addEventListener('input', clearSimulationNameInvalid);
+    }
+
     function syncSaveModalState(options = {}) {
+        bindSimulationNameValidationReset();
         const resetOverwriteChoice = options.resetOverwriteChoice === true;
         const {
             overwriteWrap,
@@ -345,16 +355,24 @@
             });
 
             const data = await response.json();
+            if (response.status === 409 && data?.error === 'simulation_name_taken') {
+                // Keep the modal open with the name still in the field so the
+                // user can just edit it. data.message is the readable text;
+                // data.error is a machine token and must not be shown raw.
+                markSimulationNameInvalid(data.message || __('You already have a simulation with this name.'));
+                return;
+            }
             if (!response.ok) {
-                throw new Error(data?.error || `Request failed with status ${response.status}`);
+                throw new Error(data?.message || data?.error || `Request failed with status ${response.status}`);
             }
             if (data && data.success) {
+                clearSimulationNameInvalid();
                 syncSimulationScope(data.simulation_id, { migrateCurrentState: true });
                 hideSaveSimulationModal();
                 showSimulationStatus(__('Simulation saved successfully.'), 'success');
                 cachedSimulations = null; // force refresh next time
             } else {
-                throw new Error(data?.error || __('Unable to save simulation.'));
+                throw new Error(data?.message || data?.error || __('Unable to save simulation.'));
             }
         } catch (error) {
             console.error('[CraftBP] Failed to save simulation', error);
@@ -363,6 +381,36 @@
             if (saveButton) {
                 saveButton.disabled = false;
             }
+        }
+    }
+
+    function markSimulationNameInvalid(message) {
+        const input = document.getElementById('simulationName');
+        if (!input) {
+            showSimulationStatus(String(message), 'danger');
+            return;
+        }
+        input.classList.add('is-invalid');
+        let feedback = input.parentElement?.querySelector('.invalid-feedback');
+        if (!feedback) {
+            feedback = document.createElement('div');
+            feedback.className = 'invalid-feedback';
+            input.insertAdjacentElement('afterend', feedback);
+        }
+        feedback.textContent = String(message);
+        input.focus();
+        input.select();
+    }
+
+    function clearSimulationNameInvalid() {
+        const input = document.getElementById('simulationName');
+        if (!input) {
+            return;
+        }
+        input.classList.remove('is-invalid');
+        const feedback = input.parentElement?.querySelector('.invalid-feedback');
+        if (feedback) {
+            feedback.textContent = '';
         }
     }
 
