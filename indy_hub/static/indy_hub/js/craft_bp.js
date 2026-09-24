@@ -1432,7 +1432,35 @@ function applyComputedNeededRowsSnapshot(rows) {
 }
 
 function collectCustomPriceStateSnapshot() {
-    const prices = [];
+    const pricesMap = new Map();
+
+    if (window.SimulationAPI && typeof window.SimulationAPI.getState === 'function') {
+        const state = window.SimulationAPI.getState();
+        if (state && state.prices) {
+            const apiPrices = state.prices instanceof Map ? state.prices : new Map(Object.entries(state.prices));
+            apiPrices.forEach((entry, typeIdRaw) => {
+                const typeId = Number(typeIdRaw) || 0;
+                if (!typeId) {
+                    return;
+                }
+                if (Number.isFinite(entry.real) && entry.real > 0) {
+                    pricesMap.set(`real:${typeId}`, {
+                        item_type_id: typeId,
+                        unit_price: entry.real,
+                        is_sale_price: false,
+                    });
+                }
+                if (Number.isFinite(entry.sale) && entry.sale > 0) {
+                    pricesMap.set(`sale:${typeId}`, {
+                        item_type_id: typeId,
+                        unit_price: entry.sale,
+                        is_sale_price: true,
+                    });
+                }
+            });
+        }
+    }
+
     document.querySelectorAll('input.real-price[data-type-id], input.sale-price-unit[data-type-id]').forEach((input) => {
         const typeId = Number(input.getAttribute('data-type-id')) || 0;
         if (!typeId) {
@@ -1442,18 +1470,22 @@ function collectCustomPriceStateSnapshot() {
         const isSalePrice = input.classList.contains('sale-price-unit');
         const userModified = input.dataset.userModified === 'true';
         if (!isSalePrice && !userModified) {
+            if (!isSalePrice) {
+                pricesMap.delete(`real:${typeId}`);
+            }
             return;
         }
         if (!Number.isFinite(value) || value <= 0) {
+            pricesMap.delete(`${isSalePrice ? 'sale' : 'real'}:${typeId}`);
             return;
         }
-        prices.push({
+        pricesMap.set(`${isSalePrice ? 'sale' : 'real'}:${typeId}`, {
             item_type_id: typeId,
             unit_price: value,
             is_sale_price: isSalePrice,
         });
     });
-    return prices;
+    return Array.from(pricesMap.values());
 }
 
 function applyCustomPriceStateSnapshot(prices) {
@@ -1463,18 +1495,17 @@ function applyCustomPriceStateSnapshot(prices) {
             return;
         }
         const isSalePrice = Boolean(price?.is_sale_price);
+        const value = Number(price?.unit_price) || 0;
+        if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
+            window.SimulationAPI.setPrice(typeId, isSalePrice ? 'sale' : 'real', value > 0 ? value : 0);
+        }
         const selector = isSalePrice ? '.sale-price-unit' : '.real-price';
         const input = document.querySelector(`${selector}[data-type-id="${typeId}"]`);
-        if (!input) {
-            return;
-        }
-        const value = Number(price?.unit_price) || 0;
-        setCraftPriceInputValue(input, value > 0 ? value : 0);
-        if (isSalePrice || value > 0) {
-            updatePriceInputManualState(input, true);
-        }
-        if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
-            window.SimulationAPI.setPrice(typeId, isSalePrice ? 'sale' : 'real', value);
+        if (input) {
+            setCraftPriceInputValue(input, value > 0 ? value : 0);
+            if (isSalePrice || value > 0) {
+                updatePriceInputManualState(input, true);
+            }
         }
     });
 }
@@ -1946,6 +1977,7 @@ function applyFullUiState(snapshot, options = {}) {
             applyBuyCraftStateToTree(snapshot.buyTypeIds);
         }
 
+        applyCustomPriceStateSnapshot(snapshot.customPrices);
         applySelectedBpcContractsState(snapshot.selectedBpcContracts);
         applyManualFinancialStateSnapshot(snapshot.manualFinancial);
         applyComputedNeededRowsSnapshot(snapshot.computedNeededRows);
@@ -4723,23 +4755,17 @@ function applyPendingMETEChanges() {
         return false; // No changes to apply
     }
 
-    craftBPDebugLog('Applying pending Configure changes by reloading page...');
+    craftBPDebugLog('Applying pending Configure changes without page reload...');
 
     try {
+        window.craftBPFlags.hasPendingMETEChanges = false;
+        updateMETEIndicator();
+
         // Get current configuration values
         const config = getCurrentMETEConfig();
         const runs = parseInt(document.getElementById('runsInput')?.value || 1);
 
-        // Get current blueprint type ID from the page
-        const bpTypeId = window.BLUEPRINT_DATA?.type_id || getCurrentBlueprintTypeId();
-
-        if (!bpTypeId) {
-            console.error('Cannot determine blueprint type ID for recalculation');
-            return false;
-        }
-
-        // Build URL with current Configure values
-        // Start with a clean URL (only keep certain params)
+        // Build URL with current Configure values silently
         const cleanUrl = new URL(window.location.pathname, window.location.origin);
 
         // Copy over params we want to keep
@@ -4752,7 +4778,7 @@ function applyPendingMETEChanges() {
             }
         }
 
-        // Persist current Buy/Prod decisions before reload and ensure URL reflects them.
+        // Persist current Buy/Prod decisions
         saveBuyCraftStateToStorage();
         const buyDecisions = getCurrentBuyCraftDecisions();
         if (buyDecisions.length > 0) {
@@ -4761,23 +4787,19 @@ function applyPendingMETEChanges() {
             cleanUrl.searchParams.delete('buy');
         }
 
-        // Set ME/TE for main blueprint (these are REQUIRED)
+        // Set ME/TE for main blueprint
         cleanUrl.searchParams.set('runs', runs);
         cleanUrl.searchParams.set('me', config.mainME || 0);
         cleanUrl.searchParams.set('te', config.mainTE || 0);
-        craftBPDebugLog(`Setting main blueprint: me=${config.mainME || 0}, te=${config.mainTE || 0}`);
 
         // Set ME/TE for all blueprints
-        craftBPDebugLog(`Applying ME/TE for ${Object.keys(config.blueprintConfigs).length} blueprints`);
         const useBlueprintTypeIds = [];
         for (const [typeId, bpConfig] of Object.entries(config.blueprintConfigs)) {
             if (bpConfig.me !== undefined) {
                 cleanUrl.searchParams.set(`me_${typeId}`, bpConfig.me);
-                craftBPDebugLog(`Setting me_${typeId}=${bpConfig.me}`);
             }
             if (bpConfig.te !== undefined) {
                 cleanUrl.searchParams.set(`te_${typeId}`, bpConfig.te);
-                craftBPDebugLog(`Setting te_${typeId}=${bpConfig.te}`);
             }
             if (bpConfig.use === true || bpConfig.use === 1 || bpConfig.use === '1') {
                 const numericTypeId = Number(typeId) || 0;
@@ -4848,25 +4870,23 @@ function applyPendingMETEChanges() {
             cleanUrl.searchParams.set('industry_fee_extra_params', industryFee.extra_params);
         }
 
-        craftBPDebugLog(`Reloading with URL: ${cleanUrl.toString()}`);
-
         // Keep the target tab (where user is switching to)
         const targetTab = window.craftBPFlags.switchingToTab || 'materials';
         cleanUrl.searchParams.set('active_tab', targetTab);
         persistCraftMainTabState(targetTab);
 
-        // This navigation happens immediately, so do a synchronous full draft save
-        // before leaving the page. Autosave listeners are not reliable here because
-        // the reload can win the race and drop manual prices / fee snapshots.
+        try {
+            window.history.replaceState(window.history.state, '', cleanUrl.toString());
+        } catch (e) {
+            // Ignore replaceState errors
+        }
+
         saveCraftUiStateToStorage();
 
-        // Reset the flag
-        window.craftBPFlags.hasPendingMETEChanges = false;
-
-        // Navigate to new URL with updated parameters
-        window.location.href = cleanUrl.toString();
-        return true; // Page will reload
-
+        if (typeof refreshLiveCraftPayloadFromConfigure === 'function') {
+            refreshLiveCraftPayloadFromConfigure({ force: true });
+        }
+        return true;
     } catch (error) {
         console.error('Error applying Configure changes:', error);
         return false;

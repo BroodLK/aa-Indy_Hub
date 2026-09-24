@@ -207,8 +207,12 @@ def _pending_request_reminder_level(stage_key: str) -> str:
     return "warning" if str(stage_key or "").strip().lower() == "day3" else "info"
 
 
-def _build_contract_state_webhook_line(actor_name: str, state: str, *, relation: str = "from") -> str:
-    normalized_state = "validated" if str(state).strip().lower() == "validated" else "completed"
+def _build_contract_state_webhook_line(
+    actor_name: str, state: str, *, relation: str = "from"
+) -> str:
+    normalized_state = (
+        "validated" if str(state).strip().lower() == "validated" else "completed"
+    )
     normalized_relation = str(relation or "from").strip().lower()
     if normalized_relation not in {"from", "for"}:
         normalized_relation = "from"
@@ -281,10 +285,16 @@ def _build_contract_validation_webhook_message(
             "issues were found.\n"
             f"Reach out to correct the issue(s): {reason_text}"
         )
-    return f"{summary_line}\n" "Validation anomaly detected before completion.\n" f"Reason: {reason_text}"
+    return (
+        f"{summary_line}\n"
+        "Validation anomaly detected before completion.\n"
+        f"Reason: {reason_text}"
+    )
 
 
-def _format_contract_issue_line(contract_id: int | None, contract_status: str | None) -> str:
+def _format_contract_issue_line(
+    contract_id: int | None, contract_status: str | None
+) -> str:
     parsed_contract_id = int(contract_id or 0)
     if parsed_contract_id <= 0:
         return ""
@@ -546,9 +556,9 @@ def _log_sell_order_transactions(order: MaterialExchangeSellOrder) -> None:
             total_price=item.total_price,
             **snapshot,
         )
-        added_quantities_by_type[int(item.type_id)] = int(added_quantities_by_type.get(int(item.type_id), 0)) + int(
-            item.quantity or 0
-        )
+        added_quantities_by_type[int(item.type_id)] = int(
+            added_quantities_by_type.get(int(item.type_id), 0)
+        ) + int(item.quantity or 0)
 
         stock_item, _created = MaterialExchangeStock.objects.get_or_create(
             config=order.config,
@@ -623,7 +633,9 @@ def _log_buy_order_transactions(order: MaterialExchangeBuyOrder) -> None:
         )
 
 
-def _get_location_name(location_id: int, esi_client=None, *, corporation_id: int | None = None) -> str | None:
+def _get_location_name(
+    location_id: int, esi_client=None, *, corporation_id: int | None = None
+) -> str | None:
     """Resolve a location name from ESI, with caching and signed/unsigned support."""
 
     # Handle potential unsigned IDs coming from ESI
@@ -650,7 +662,9 @@ def _get_location_name(location_id: int, esi_client=None, *, corporation_id: int
     return None
 
 
-def _get_structure_name(location_id: int, esi_client, *, corporation_id: int | None = None) -> str | None:
+def _get_structure_name(
+    location_id: int, esi_client, *, corporation_id: int | None = None
+) -> str | None:
     """
     Get the name of a structure from ESI, with caching.
 
@@ -663,7 +677,9 @@ def _get_structure_name(location_id: int, esi_client, *, corporation_id: int | N
     # Prefer persistent DB cache first
     try:
         cached = (
-            CachedStructureName.objects.filter(structure_id=int(location_id)).values_list("name", flat=True).first()
+            CachedStructureName.objects.filter(structure_id=int(location_id))
+            .values_list("name", flat=True)
+            .first()
         )
         if cached:
             _structure_name_cache[int(location_id)] = str(cached)
@@ -691,7 +707,9 @@ def _get_structure_name(location_id: int, esi_client, *, corporation_id: int | N
         get_structure_info = getattr(esi_client, "get_structure_info", None)
         if callable(get_structure_info):
             structure_info = get_structure_info(location_id)
-            structure_name = structure_info.get("name") if isinstance(structure_info, dict) else None
+            structure_name = (
+                structure_info.get("name") if isinstance(structure_info, dict) else None
+            )
             if structure_name:
                 _structure_name_cache[int(location_id)] = str(structure_name)
                 try:
@@ -737,18 +755,28 @@ def sync_esi_contracts():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info(_contract_sync_log("Buyback disabled; skipping corporation contract sync."))
+            logger.info(
+                _contract_sync_log(
+                    "Buyback disabled; skipping corporation contract sync."
+                )
+            )
             return
     except Exception:
         pass
 
     configs = list(MaterialExchangeConfig.objects.all())
     if not configs:
-        logger.info(_contract_sync_log("No MaterialExchangeConfig rows found; skipping corporation contract sync."))
+        logger.info(
+            _contract_sync_log(
+                "No MaterialExchangeConfig rows found; skipping corporation contract sync."
+            )
+        )
         return
 
     logger.info(
-        _contract_sync_log("Starting corporation contract sync for %s configured corporation(s)."),
+        _contract_sync_log(
+            "Starting corporation contract sync for %s configured corporation(s)."
+        ),
         len(configs),
     )
 
@@ -758,7 +786,9 @@ def sync_esi_contracts():
         except ESIRateLimitError as exc:
             delay = get_retry_after_seconds(exc)
             logger.warning(
-                _contract_sync_log("ESI rate limit reached during corporation contract sync; retrying in %ss: %s"),
+                _contract_sync_log(
+                    "ESI rate limit reached during corporation contract sync; retrying in %ss: %s"
+                ),
                 delay,
                 exc,
             )
@@ -773,12 +803,16 @@ def sync_esi_contracts():
             )
 
     logger.info(
-        _contract_sync_log("Completed corporation contract sync for %s configured corporation(s)."),
+        _contract_sync_log(
+            "Completed corporation contract sync for %s configured corporation(s)."
+        ),
         len(configs),
     )
 
 
-def _reprocessing_request_detail_link(service_request: ReprocessingServiceRequest) -> str:
+def _reprocessing_request_detail_link(
+    service_request: ReprocessingServiceRequest,
+) -> str:
     return f"/indy_hub/reprocessing-services/requests/{int(service_request.id)}/"
 
 
@@ -820,7 +854,9 @@ def _reprocessing_expected_input_map(
     service_request: ReprocessingServiceRequest,
 ) -> dict[int, int]:
     return {
-        int(item.type_id): int(item.quantity) for item in service_request.items.all() if int(item.quantity or 0) > 0
+        int(item.type_id): int(item.quantity)
+        for item in service_request.items.all()
+        if int(item.quantity or 0) > 0
     }
 
 
@@ -841,10 +877,14 @@ def _build_reprocessing_items_mismatch_details(
     tolerance_percent: Decimal | None = None,
 ) -> str:
     expected: dict[int, int] = {
-        int(type_id): int(qty) for type_id, qty in (expected_by_type or {}).items() if int(qty or 0) > 0
+        int(type_id): int(qty)
+        for type_id, qty in (expected_by_type or {}).items()
+        if int(qty or 0) > 0
     }
     actual: dict[int, int] = {
-        int(type_id): int(qty) for type_id, qty in (actual_by_type or {}).items() if int(qty or 0) > 0
+        int(type_id): int(qty)
+        for type_id, qty in (actual_by_type or {}).items()
+        if int(qty or 0) > 0
     }
 
     if expected == actual and tolerance_percent is None:
@@ -854,7 +894,11 @@ def _build_reprocessing_items_mismatch_details(
     surplus_lines: list[str] = []
     tolerance_lines: list[str] = []
 
-    tolerance_ratio = None if tolerance_percent is None else (Decimal(str(tolerance_percent or 0)) / Decimal("100"))
+    tolerance_ratio = (
+        None
+        if tolerance_percent is None
+        else (Decimal(str(tolerance_percent or 0)) / Decimal("100"))
+    )
 
     for type_id in sorted(set(expected.keys()) | set(actual.keys())):
         expected_qty = int(expected.get(type_id, 0))
@@ -872,15 +916,25 @@ def _build_reprocessing_items_mismatch_details(
                 f"(expected {expected_qty:,}, actual {actual_qty:,})"
             )
 
-        if tolerance_ratio is not None and expected_qty > 0 and actual_qty > 0 and expected_qty != actual_qty:
+        if (
+            tolerance_ratio is not None
+            and expected_qty > 0
+            and actual_qty > 0
+            and expected_qty != actual_qty
+        ):
             max_delta = max(
                 1,
-                int((Decimal(expected_qty) * tolerance_ratio).to_integral_value(rounding=ROUND_CEILING)),
+                int(
+                    (Decimal(expected_qty) * tolerance_ratio).to_integral_value(
+                        rounding=ROUND_CEILING
+                    )
+                ),
             )
             delta = abs(actual_qty - expected_qty)
             if delta > max_delta:
                 tolerance_lines.append(
-                    f"- {type_name}: expected {expected_qty:,}, actual {actual_qty:,} " f"(allowed +/- {max_delta:,})"
+                    f"- {type_name}: expected {expected_qty:,}, actual {actual_qty:,} "
+                    f"(allowed +/- {max_delta:,})"
                 )
 
     sections: list[str] = []
@@ -940,7 +994,9 @@ def _validate_reprocessing_inbound_contract(
         return False, "Inbound contract title/description is missing request reference."
     if int(contract.issuer_id or 0) != int(service_request.requester_character_id or 0):
         return False, "Inbound contract issuer does not match requester character."
-    if int(contract.assignee_id or 0) != int(service_request.processor_character_id or 0):
+    if int(contract.assignee_id or 0) != int(
+        service_request.processor_character_id or 0
+    ):
         return False, "Inbound contract assignee does not match reprocessor character."
 
     price = Decimal(str(contract.price or 0)).quantize(Decimal("0.01"))
@@ -988,7 +1044,9 @@ def _validate_reprocessing_return_contract(
         return False, "Return contract title/description is missing request reference."
     if int(contract.issuer_id or 0) != int(service_request.processor_character_id or 0):
         return False, "Return contract issuer does not match reprocessor character."
-    if int(contract.assignee_id or 0) != int(service_request.requester_character_id or 0):
+    if int(contract.assignee_id or 0) != int(
+        service_request.requester_character_id or 0
+    ):
         return False, "Return contract assignee does not match requester character."
 
     expected_price = _floor_isk_amount(service_request.reward_isk)
@@ -1098,12 +1156,18 @@ def _is_reprocessing_contract_relevant(
 
 def sync_reprocessing_character_contracts() -> None:
     active_rows = list(
-        ReprocessingServiceRequest.objects.filter(status__in=_ACTIVE_REPROCESSING_STATUSES).values(
+        ReprocessingServiceRequest.objects.filter(
+            status__in=_ACTIVE_REPROCESSING_STATUSES
+        ).values(
             "request_reference", "requester_character_id", "processor_character_id"
         )
     )
     if not active_rows:
-        logger.debug(_reprocessing_log("Character contract sync skipped: no active reprocessing requests."))
+        logger.debug(
+            _reprocessing_log(
+                "Character contract sync skipped: no active reprocessing requests."
+            )
+        )
         return
 
     active_references_upper = {
@@ -1124,7 +1188,11 @@ def sync_reprocessing_character_contracts() -> None:
         }
     )
     if not participant_character_ids:
-        logger.info(_reprocessing_log("Character contract sync skipped: no requester or processor character ids found."))
+        logger.info(
+            _reprocessing_log(
+                "Character contract sync skipped: no requester or processor character ids found."
+            )
+        )
         return
 
     logger.info(
@@ -1141,12 +1209,16 @@ def sync_reprocessing_character_contracts() -> None:
     synced_items_contract_ids: set[int] = set()
     for character_id in participant_character_ids:
         try:
-            contracts = shared_client.fetch_character_contracts(character_id=character_id)
+            contracts = shared_client.fetch_character_contracts(
+                character_id=character_id
+            )
         except ESIUnmodifiedError:
             continue
         except ESIRateLimitError as exc:
             logger.warning(
-                _reprocessing_log("ESI rate limit during character contract sync for %s: %s"),
+                _reprocessing_log(
+                    "ESI rate limit during character contract sync for %s: %s"
+                ),
                 character_id,
                 exc,
             )
@@ -1168,7 +1240,9 @@ def sync_reprocessing_character_contracts() -> None:
 
         if not isinstance(contracts, list):
             logger.warning(
-                _reprocessing_log("Unexpected payload type for character contracts (%s): %s"),
+                _reprocessing_log(
+                    "Unexpected payload type for character contracts (%s): %s"
+                ),
                 character_id,
                 type(contracts).__name__,
             )
@@ -1193,7 +1267,9 @@ def sync_reprocessing_character_contracts() -> None:
             ):
                 continue
 
-            issuer_corporation_id = int(contract_payload.get("issuer_corporation_id") or 0)
+            issuer_corporation_id = int(
+                contract_payload.get("issuer_corporation_id") or 0
+            )
             contract, _created = ESIContract.objects.update_or_create(
                 contract_id=contract_id,
                 defaults={
@@ -1209,8 +1285,10 @@ def sync_reprocessing_character_contracts() -> None:
                     "price": Decimal(str(contract_payload.get("price") or 0)),
                     "reward": Decimal(str(contract_payload.get("reward") or 0)),
                     "collateral": Decimal(str(contract_payload.get("collateral") or 0)),
-                    "date_issued": contract_payload.get("date_issued") or timezone.now(),
-                    "date_expired": contract_payload.get("date_expired") or (timezone.now() + timedelta(days=7)),
+                    "date_issued": contract_payload.get("date_issued")
+                    or timezone.now(),
+                    "date_expired": contract_payload.get("date_expired")
+                    or (timezone.now() + timedelta(days=7)),
                     "date_accepted": contract_payload.get("date_accepted"),
                     "date_completed": contract_payload.get("date_completed"),
                     # Character contracts are not owned by a specific corp cache scope.
@@ -1221,7 +1299,8 @@ def sync_reprocessing_character_contracts() -> None:
 
             contract_status = str(contract_payload.get("status") or "").strip().lower()
             if (
-                str(contract_payload.get("type") or "").strip().lower() != "item_exchange"
+                str(contract_payload.get("type") or "").strip().lower()
+                != "item_exchange"
                 or contract_status not in _REPROCESSING_CONTRACT_ITEM_SYNC_STATUSES
                 or contract_id in synced_items_contract_ids
             ):
@@ -1238,19 +1317,25 @@ def sync_reprocessing_character_contracts() -> None:
             except ESIClientError as exc:
                 if "404" in str(exc):
                     logger.debug(
-                        _reprocessing_log("No character contract items available for %s (404)."),
+                        _reprocessing_log(
+                            "No character contract items available for %s (404)."
+                        ),
                         contract_id,
                     )
                 else:
                     logger.warning(
-                        _reprocessing_log("Failed fetching character contract items for %s: %s"),
+                        _reprocessing_log(
+                            "Failed fetching character contract items for %s: %s"
+                        ),
                         contract_id,
                         exc,
                     )
                 continue
             except Exception as exc:
                 logger.warning(
-                    _reprocessing_log("Failed fetching character contract items for %s: %s"),
+                    _reprocessing_log(
+                        "Failed fetching character contract items for %s: %s"
+                    ),
                     contract_id,
                     exc,
                 )
@@ -1258,7 +1343,9 @@ def sync_reprocessing_character_contracts() -> None:
 
             if not isinstance(contract_items, list):
                 logger.warning(
-                    _reprocessing_log("Unexpected payload type for character contract items (%s): %s"),
+                    _reprocessing_log(
+                        "Unexpected payload type for character contract items (%s): %s"
+                    ),
                     contract_id,
                     type(contract_items).__name__,
                 )
@@ -1286,12 +1373,18 @@ def sync_reprocessing_character_contracts() -> None:
 
     if synced_contract_count or synced_item_count:
         logger.info(
-            _reprocessing_log("Character contract sync completed: %s contracts, %s items."),
+            _reprocessing_log(
+                "Character contract sync completed: %s contracts, %s items."
+            ),
             synced_contract_count,
             synced_item_count,
         )
     else:
-        logger.info(_reprocessing_log("Character contract sync completed: no relevant contracts or items refreshed."))
+        logger.info(
+            _reprocessing_log(
+                "Character contract sync completed: no relevant contracts or items refreshed."
+            )
+        )
 
 
 def _process_reprocessing_request_contracts(
@@ -1313,7 +1406,9 @@ def _process_reprocessing_request_contracts(
     inbound_contract_id = int(service_request.inbound_contract_id or 0)
     if inbound_contract_id > 0:
         inbound_contract = (
-            ESIContract.objects.filter(contract_id=inbound_contract_id).prefetch_related("items").first()
+            ESIContract.objects.filter(contract_id=inbound_contract_id)
+            .prefetch_related("items")
+            .first()
         )
     if inbound_contract is None:
         inbound_contract = _reprocessing_find_contract_candidate(
@@ -1338,17 +1433,25 @@ def _process_reprocessing_request_contracts(
             return
 
         updated_fields: set[str] = set()
-        if int(service_request.inbound_contract_id or 0) != int(inbound_contract.contract_id):
+        if int(service_request.inbound_contract_id or 0) != int(
+            inbound_contract.contract_id
+        ):
             service_request.inbound_contract_id = int(inbound_contract.contract_id)
             updated_fields.add("inbound_contract_id")
-        if service_request.status == ReprocessingServiceRequest.Status.REQUEST_SUBMITTED:
-            service_request.status = ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT
+        if (
+            service_request.status
+            == ReprocessingServiceRequest.Status.REQUEST_SUBMITTED
+        ):
+            service_request.status = (
+                ReprocessingServiceRequest.Status.AWAITING_INBOUND_CONTRACT
+            )
             updated_fields.add("status")
 
         inbound_status = str(inbound_contract.status or "").strip().lower()
         sent_marker = f"[AUTO-REPROC-INBOUND-SENT:{int(inbound_contract.contract_id)}]"
-        if inbound_status in _REPROCESSING_SENT_STATUSES and not _reprocessing_has_note_marker(
-            service_request, sent_marker
+        if (
+            inbound_status in _REPROCESSING_SENT_STATUSES
+            and not _reprocessing_has_note_marker(service_request, sent_marker)
         ):
             validation_summary = _reprocessing_validation_summary_for_notification(
                 stage="inbound",
@@ -1356,9 +1459,12 @@ def _process_reprocessing_request_contracts(
             notify_user(
                 service_request.processor_user,
                 _("Reprocessing Request - Inbound Contract Sent"),
-                _("Requester %(character)s sent contract *%(contract)s* for *%(reference)s*.\n\n%(validation)s")
+                _(
+                    "Requester %(character)s sent contract *%(contract)s* for *%(reference)s*.\n\n%(validation)s"
+                )
                 % {
-                    "character": service_request.requester_character_name or service_request.requester.username,
+                    "character": service_request.requester_character_name
+                    or service_request.requester.username,
                     "contract": f"#{inbound_contract.contract_id}",
                     "reference": service_request.request_reference,
                     "validation": validation_summary,
@@ -1370,7 +1476,9 @@ def _process_reprocessing_request_contracts(
             if _reprocessing_add_note_marker(service_request, sent_marker):
                 updated_fields.add("notes")
 
-        accepted_marker = f"[AUTO-REPROC-INBOUND-ACCEPTED:{int(inbound_contract.contract_id)}]"
+        accepted_marker = (
+            f"[AUTO-REPROC-INBOUND-ACCEPTED:{int(inbound_contract.contract_id)}]"
+        )
         if _is_reprocessing_contract_accepted(
             contract=inbound_contract,
             expected_acceptor_id=processor_character_id,
@@ -1389,7 +1497,9 @@ def _process_reprocessing_request_contracts(
                 notify_user(
                     service_request.requester,
                     _("Reprocessing Request - Inbound Contract Accepted"),
-                    _("Inbound contract %(contract)s for %(reference)s was accepted by %(processor)s.")
+                    _(
+                        "Inbound contract %(contract)s for %(reference)s was accepted by %(processor)s."
+                    )
                     % {
                         "contract": f"#{inbound_contract.contract_id}",
                         "reference": service_request.request_reference,
@@ -1413,7 +1523,11 @@ def _process_reprocessing_request_contracts(
     return_contract = None
     return_contract_id = int(service_request.return_contract_id or 0)
     if return_contract_id > 0:
-        return_contract = ESIContract.objects.filter(contract_id=return_contract_id).prefetch_related("items").first()
+        return_contract = (
+            ESIContract.objects.filter(contract_id=return_contract_id)
+            .prefetch_related("items")
+            .first()
+        )
     if return_contract is None:
         return_contract = _reprocessing_find_contract_candidate(
             request_reference=str(service_request.request_reference or ""),
@@ -1452,9 +1566,12 @@ def _process_reprocessing_request_contracts(
         notify_user(
             service_request.requester,
             _("Reprocessing Request - Return Contract Sent"),
-            _("Reprocessor %(processor)s sent return contract %(contract)s for %(reference)s.\n%(validation)s")
+            _(
+                "Reprocessor %(processor)s sent return contract %(contract)s for %(reference)s.\n%(validation)s"
+            )
             % {
-                "processor": service_request.processor_character_name or service_request.processor_user.username,
+                "processor": service_request.processor_character_name
+                or service_request.processor_user.username,
                 "contract": f"#{return_contract.contract_id}",
                 "reference": service_request.request_reference,
                 "validation": validation_summary,
@@ -1476,7 +1593,9 @@ def _process_reprocessing_request_contracts(
         service_request.status = ReprocessingServiceRequest.Status.COMPLETED
         updated_fields.add("status")
 
-    actual_by_type = aggregate_contract_items_by_type(return_contract.items.filter(is_included=True))
+    actual_by_type = aggregate_contract_items_by_type(
+        return_contract.items.filter(is_included=True)
+    )
     outputs_to_update: list = []
     for output in service_request.expected_outputs.all():
         actual_quantity = int(actual_by_type.get(int(output.type_id), 0))
@@ -1493,16 +1612,25 @@ def _process_reprocessing_request_contracts(
 
 def auto_progress_reprocessing_requests() -> None:
     requests = list(
-        ReprocessingServiceRequest.objects.filter(status__in=_ACTIVE_REPROCESSING_STATUSES)
+        ReprocessingServiceRequest.objects.filter(
+            status__in=_ACTIVE_REPROCESSING_STATUSES
+        )
         .select_related("requester", "processor_user", "processor_profile")
         .prefetch_related("items", "expected_outputs")
         .order_by("updated_at")
     )
     if not requests:
-        logger.debug(_reprocessing_log("Auto-progress skipped: no active reprocessing requests."))
+        logger.debug(
+            _reprocessing_log("Auto-progress skipped: no active reprocessing requests.")
+        )
         return
 
-    logger.info(_reprocessing_log("Auto-progress starting for %s active reprocessing request(s)."), len(requests))
+    logger.info(
+        _reprocessing_log(
+            "Auto-progress starting for %s active reprocessing request(s)."
+        ),
+        len(requests),
+    )
     failure_count = 0
     for service_request in requests:
         try:
@@ -1510,13 +1638,17 @@ def auto_progress_reprocessing_requests() -> None:
         except Exception as exc:
             failure_count += 1
             logger.error(
-                _reprocessing_log("Failed automated contract processing for request %s: %s"),
+                _reprocessing_log(
+                    "Failed automated contract processing for request %s: %s"
+                ),
                 service_request.request_reference or service_request.id,
                 exc,
                 exc_info=True,
             )
     logger.info(
-        _reprocessing_log("Auto-progress completed for %s active reprocessing request(s); failures=%s."),
+        _reprocessing_log(
+            "Auto-progress completed for %s active reprocessing request(s); failures=%s."
+        ),
         len(requests),
         failure_count,
     )
@@ -1618,7 +1750,10 @@ def send_reprocessing_request_waiting_reminders() -> None:
             % {
                 "reference": service_request.request_reference,
                 "elapsed": elapsed_label,
-                "requester": (service_request.requester_character_name or service_request.requester.username),
+                "requester": (
+                    service_request.requester_character_name
+                    or service_request.requester.username
+                ),
                 "status": service_request.get_status_display(),
             },
             level=_pending_request_reminder_level(stage_key),
@@ -1717,7 +1852,9 @@ def run_material_exchange_cycle():
 
     material_exchange_has_config = bool(MaterialExchangeConfig.objects.exists())
     logger.info(
-        _cycle_log("Starting material exchange cycle. buyback_enabled=%s has_config=%s."),
+        _cycle_log(
+            "Starting material exchange cycle. buyback_enabled=%s has_config=%s."
+        ),
         material_exchange_enabled,
         material_exchange_has_config,
     )
@@ -1742,7 +1879,9 @@ def run_material_exchange_cycle():
         check_completed_material_exchange_contracts()
     else:
         logger.info(
-            _cycle_log("Skipping Buyback contract workflow (enabled=%s, has_config=%s)."),
+            _cycle_log(
+                "Skipping Buyback contract workflow (enabled=%s, has_config=%s)."
+            ),
             material_exchange_enabled,
             material_exchange_has_config,
         )
@@ -1766,7 +1905,9 @@ def run_material_exchange_cycle():
     # Step 10: remind on untouched blueprint copy requests
     send_blueprint_copy_request_waiting_reminders()
     logger.info(
-        _cycle_log("Completed material exchange cycle. buyback_enabled=%s has_config=%s."),
+        _cycle_log(
+            "Completed material exchange cycle. buyback_enabled=%s has_config=%s."
+        ),
         material_exchange_enabled,
         material_exchange_has_config,
     )
@@ -1774,7 +1915,9 @@ def run_material_exchange_cycle():
 
 def _sync_contracts_for_corporation(corporation_id: int):
     """Sync ESI contracts for a single corporation."""
-    logger.info(_contract_sync_log("Syncing ESI contracts for corporation %s."), corporation_id)
+    logger.info(
+        _contract_sync_log("Syncing ESI contracts for corporation %s."), corporation_id
+    )
 
     # Get pending orders to determine which contracts need item data
     pending_sell_orders = MaterialExchangeSellOrder.objects.filter(
@@ -1826,7 +1969,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
         )
         if not isinstance(contracts, list):
             logger.warning(
-                _contract_sync_log("Skipping contract sync for corporation %s: unexpected payload type %s."),
+                _contract_sync_log(
+                    "Skipping contract sync for corporation %s: unexpected payload type %s."
+                ),
                 corporation_id,
                 type(contracts).__name__,
             )
@@ -1840,7 +1985,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
 
     except ESITokenError as exc:
         logger.warning(
-            _contract_sync_log("Cannot sync contracts for corporation %s - missing ESI scope: %s"),
+            _contract_sync_log(
+                "Cannot sync contracts for corporation %s - missing ESI scope: %s"
+            ),
             corporation_id,
             exc,
         )
@@ -1848,7 +1995,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
     except ESIUnmodifiedError:
         cached_contracts = ESIContract.objects.filter(corporation_id=corporation_id)
         cached_count = cached_contracts.count()
-        last_synced = cached_contracts.order_by("-last_synced").values_list("last_synced", flat=True).first()
+        last_synced = (
+            cached_contracts.order_by("-last_synced")
+            .values_list("last_synced", flat=True)
+            .first()
+        )
         logger.info(
             _contract_sync_log(
                 "Contracts not modified for corporation %s; keeping cached snapshot (rows=%s, last_synced=%s)."
@@ -1860,14 +2011,18 @@ def _sync_contracts_for_corporation(corporation_id: int):
         return
     except ESIRateLimitError as exc:
         logger.warning(
-            _contract_sync_log("ESI rate limit reached while syncing contracts for corporation %s: %s"),
+            _contract_sync_log(
+                "ESI rate limit reached while syncing contracts for corporation %s: %s"
+            ),
             corporation_id,
             exc,
         )
         raise
     except (ESIClientError, ESIForbiddenError) as exc:
         logger.error(
-            _contract_sync_log("Failed to fetch contracts from ESI for corporation %s: %s"),
+            _contract_sync_log(
+                "Failed to fetch contracts from ESI for corporation %s: %s"
+            ),
             corporation_id,
             exc,
             exc_info=True,
@@ -1894,7 +2049,10 @@ def _sync_contracts_for_corporation(corporation_id: int):
             contract_type = str(contract_payload.get("type") or "").strip().lower()
             contract_title = contract_payload.get("title", "")
             contract_title_upper = str(contract_title or "").upper()
-            is_tagged_contract = any(marker in contract_title_upper for marker in ("INDY", "REPROCESSING", "REPROC"))
+            is_tagged_contract = any(
+                marker in contract_title_upper
+                for marker in ("INDY", "REPROCESSING", "REPROC")
+            )
             # Keep all item-exchange contracts in cache so validation can detect
             # newly-created buyback contracts even when the title/reference is
             # missing or malformed.
@@ -1909,7 +2067,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
                 contract_id=contract_id,
                 defaults={
                     "issuer_id": contract_payload.get("issuer_id", 0),
-                    "issuer_corporation_id": contract_payload.get("issuer_corporation_id", 0),
+                    "issuer_corporation_id": contract_payload.get(
+                        "issuer_corporation_id", 0
+                    ),
                     "assignee_id": contract_payload.get("assignee_id", 0),
                     "acceptor_id": contract_payload.get("acceptor_id", 0),
                     "contract_type": contract_type or "unknown",
@@ -1938,7 +2098,10 @@ def _sync_contracts_for_corporation(corporation_id: int):
             assignee_id = int(contract_payload.get("assignee_id", 0))
 
             # Check if this contract is relevant to any pending order
-            is_relevant_to_pending_order = issuer_id in pending_character_ids or assignee_id in pending_character_ids
+            is_relevant_to_pending_order = (
+                issuer_id in pending_character_ids
+                or assignee_id in pending_character_ids
+            )
 
             # Also fetch items for recent outstanding contracts (user may create order later)
             date_issued = contract_payload.get("date_issued")
@@ -1946,7 +2109,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
             if contract_status == "outstanding" and date_issued:
                 try:
                     age = timezone.now() - date_issued
-                    is_recent_outstanding = age.total_seconds() < (24 * 60 * 60)  # 24 hours
+                    is_recent_outstanding = age.total_seconds() < (
+                        24 * 60 * 60
+                    )  # 24 hours
                 except Exception:
                     is_recent_outstanding = False
 
@@ -1973,7 +2138,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
                     )
                     if not isinstance(contract_items, list):
                         logger.warning(
-                            _contract_sync_log("Skipping contract items for %s: unexpected payload type %s."),
+                            _contract_sync_log(
+                                "Skipping contract items for %s: unexpected payload type %s."
+                            ),
                             contract_id,
                             type(contract_items).__name__,
                         )
@@ -1989,7 +2156,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
                         )
                         if not item_payload:
                             continue
-                        type_id = item_payload.get("type_id", item_payload.get("item_id", 0))
+                        type_id = item_payload.get(
+                            "type_id", item_payload.get("item_id", 0)
+                        )
                         quantity = item_payload.get("quantity", 0)
                         if int(type_id or 0) <= 0 or int(quantity or 0) <= 0:
                             logger.warning(
@@ -2019,7 +2188,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
 
                 except ESIUnmodifiedError:
                     logger.debug(
-                        _contract_sync_log("Contract items not modified for %s; keeping cached items."),
+                        _contract_sync_log(
+                            "Contract items not modified for %s; keeping cached items."
+                        ),
                         contract_id,
                     )
                     # Keep existing items in database - they're still valid
@@ -2037,12 +2208,16 @@ def _sync_contracts_for_corporation(corporation_id: int):
                     # 404 is normal for contracts without items or expired contracts
                     if "404" in str(exc):
                         logger.debug(
-                            _contract_sync_log("Contract %s has no items (404) - skipping items sync."),
+                            _contract_sync_log(
+                                "Contract %s has no items (404) - skipping items sync."
+                            ),
                             contract_id,
                         )
                     else:
                         logger.warning(
-                            _contract_sync_log("Failed to fetch items for contract %s: %s"),
+                            _contract_sync_log(
+                                "Failed to fetch items for contract %s: %s"
+                            ),
                             contract_id,
                             exc,
                         )
@@ -2074,7 +2249,9 @@ def _sync_contracts_for_corporation(corporation_id: int):
             )
 
     logger.info(
-        _contract_sync_log("Successfully synced %s relevant contracts (filtered from %s total) for corporation %s."),
+        _contract_sync_log(
+            "Successfully synced %s relevant contracts (filtered from %s total) for corporation %s."
+        ),
         indy_contracts_count,
         len(contracts),
         corporation_id,
@@ -2107,14 +2284,20 @@ def validate_material_exchange_sell_orders():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info(_sell_validation_log("Buyback disabled; skipping sell validation."))
+            logger.info(
+                _sell_validation_log("Buyback disabled; skipping sell validation.")
+            )
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.warning(_sell_validation_log("No MaterialExchangeConfig found; skipping sell validation."))
+        logger.warning(
+            _sell_validation_log(
+                "No MaterialExchangeConfig found; skipping sell validation."
+            )
+        )
         return
 
     pending_orders = MaterialExchangeSellOrder.objects.filter(
@@ -2171,7 +2354,9 @@ def validate_material_exchange_sell_orders():
         esi_client = shared_client
     except Exception:
         esi_client = None
-        logger.warning(_sell_validation_log("ESI client not available for structure name lookups."))
+        logger.warning(
+            _sell_validation_log("ESI client not available for structure name lookups.")
+        )
 
     # Process each pending order
     for order in pending_orders:
@@ -2212,14 +2397,20 @@ def validate_material_exchange_buy_orders():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info(_buy_validation_log("Buyback disabled; skipping buy validation."))
+            logger.info(
+                _buy_validation_log("Buyback disabled; skipping buy validation.")
+            )
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.warning(_buy_validation_log("No MaterialExchangeConfig found; skipping buy validation."))
+        logger.warning(
+            _buy_validation_log(
+                "No MaterialExchangeConfig found; skipping buy validation."
+            )
+        )
         return
 
     pending_orders = MaterialExchangeBuyOrder.objects.filter(
@@ -2242,7 +2433,9 @@ def validate_material_exchange_buy_orders():
     for order in pending_orders:
         if order.status != MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION:
             continue
-        reminder_key = f"material_exchange:buy_order:{order.id}:awaiting_validation_ping"
+        reminder_key = (
+            f"material_exchange:buy_order:{order.id}:awaiting_validation_ping"
+        )
         if not cache.add(reminder_key, timezone.now().timestamp(), 60 * 60 * 24):
             continue
         items_str = ", ".join(item.type_name for item in order.items.all())
@@ -2285,7 +2478,9 @@ def validate_material_exchange_buy_orders():
         return
 
     logger.info(
-        _buy_validation_log("Validating %s pending buy orders against %s cached contracts for %s buyer character(s)."),
+        _buy_validation_log(
+            "Validating %s pending buy orders against %s cached contracts for %s buyer character(s)."
+        ),
         pending_orders.count(),
         contracts.count(),
         len(buyer_character_ids),
@@ -2295,7 +2490,9 @@ def validate_material_exchange_buy_orders():
         esi_client = shared_client
     except Exception:
         esi_client = None
-        logger.warning(_buy_validation_log("ESI client not available for structure name lookups."))
+        logger.warning(
+            _buy_validation_log("ESI client not available for structure name lookups.")
+        )
 
     for order in pending_orders:
         try:
@@ -2322,7 +2519,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     - price matches
     """
     order_ref = order.order_reference or f"INDY-{order.id}"
-    notify_admins_on_sell_anomaly = bool(getattr(config, "notify_admins_on_sell_anomaly", True))
+    notify_admins_on_sell_anomaly = bool(
+        getattr(config, "notify_admins_on_sell_anomaly", True)
+    )
     (
         expected_sell_location_ids,
         expected_sell_location_names,
@@ -2374,22 +2573,29 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         now = timezone.now()
         normalized_contract_id = int(contract_id or 0)
         normalized_contract_status = str(contract_status or "").strip().lower()
-        contract_already_completed = _is_finished_contract_status(normalized_contract_status)
-        previous_notes = str(order.notes or "").strip()
-        completed_before_validation_note = _build_completed_before_validation_note(normalized_contract_status)
-        completed_before_validation_verified_note = _build_completed_before_validation_verified_note(
+        contract_already_completed = _is_finished_contract_status(
             normalized_contract_status
+        )
+        previous_notes = str(order.notes or "").strip()
+        completed_before_validation_verified_note = (
+            _build_completed_before_validation_verified_note(normalized_contract_status)
         )
 
         if override:
             try:
-                price_label = f"{Decimal(str(contract_price)).quantize(Decimal('1')):,.0f}"
+                price_label = (
+                    f"{Decimal(str(contract_price)).quantize(Decimal('1')):,.0f}"
+                )
             except (InvalidOperation, TypeError):
                 price_label = f"{order.total_price:,.0f}"
             notes = f"Contract accepted in-game despite anomaly: {normalized_contract_id} @ " f"{price_label} ISK" + (
                 f" ({override_reason})" if override_reason else ""
-            ) + (f"\n\n{override_details}" if override_details else "") + (
-                f"\n\nPrevious anomaly details:\n{previous_notes}" if previous_notes else ""
+            ) + (
+                f"\n\n{override_details}" if override_details else ""
+            ) + (
+                f"\n\nPrevious anomaly details:\n{previous_notes}"
+                if previous_notes
+                else ""
             )
         else:
             notes = f"Contract validated: {normalized_contract_id} @ {order.total_price:,.0f} ISK"
@@ -2438,14 +2644,20 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"The order has been moved back to validated status."
                     + (f"\nReason: {override_reason}" if override_reason else "")
                     + (f"\n\n{override_details}" if override_details else "")
-                    + (f"\n\nPrevious anomaly details:\n{previous_notes}" if previous_notes else "")
+                    + (
+                        f"\n\nPrevious anomaly details:\n{previous_notes}"
+                        if previous_notes
+                        else ""
+                    )
                     + (f"\nLocation: {contract_location}" if contract_location else "")
                 ),
                 level="success",
                 link=f"/indy_hub/material-exchange/my-orders/sell/{order.id}/",
             )
 
-            anomaly_context_parts = ["Contract was accepted in-game despite an earlier validation anomaly."]
+            anomaly_context_parts = [
+                "Contract was accepted in-game despite an earlier validation anomaly."
+            ]
             if override_reason:
                 anomaly_context_parts.append(f"Original issue: {override_reason}.")
             if override_details:
@@ -2460,7 +2672,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     _build_contract_validation_webhook_message(
                         order.seller.username,
                         relation="from",
-                        anomaly_reason=" ".join(part for part in anomaly_context_parts if str(part).strip()),
+                        anomaly_reason=" ".join(
+                            part for part in anomaly_context_parts if str(part).strip()
+                        ),
                     )
                 ),
                 level="info",
@@ -2554,7 +2768,8 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             "Order remains open so user can submit a new compliant contract."
         )
         anomaly_rejected_updated = (
-            order.status != MaterialExchangeSellOrder.Status.ANOMALY_REJECTED or order.notes != anomaly_rejected_notes
+            order.status != MaterialExchangeSellOrder.Status.ANOMALY_REJECTED
+            or order.notes != anomaly_rejected_notes
         )
 
         order.status = MaterialExchangeSellOrder.Status.ANOMALY_REJECTED
@@ -2588,9 +2803,14 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
     # Find seller's characters
     seller_character_ids = _get_user_character_ids(order.seller)
     if not seller_character_ids:
-        logger.warning("Sell order %s: seller %s has no character", order.id, order.seller)
+        logger.warning(
+            "Sell order %s: seller %s has no character", order.id, order.seller
+        )
         anomaly_notes = "Anomaly: seller has no linked EVE character"
-        anomaly_updated = order.status != MaterialExchangeSellOrder.Status.ANOMALY or order.notes != anomaly_notes
+        anomaly_updated = (
+            order.status != MaterialExchangeSellOrder.Status.ANOMALY
+            or order.notes != anomaly_notes
+        )
         order.status = MaterialExchangeSellOrder.Status.ANOMALY
         order.notes = anomaly_notes
         order.save(update_fields=["status", "notes", "updated_at"])
@@ -2599,7 +2819,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             notify_user(
                 order.seller,
                 _("Sell Order Error"),
-                _("Your sell order cannot be validated: no linked EVE character found."),
+                _(
+                    "Your sell order cannot be validated: no linked EVE character found."
+                ),
                 level="warning",
             )
 
@@ -2656,13 +2878,19 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             continue
 
         items_match = _contract_items_match_order_db(contract, order)
-        mismatch_details = _build_items_mismatch_details(contract, order) if not items_match else ""
+        mismatch_details = (
+            _build_items_mismatch_details(contract, order) if not items_match else ""
+        )
         _missing_by_type, surplus_by_type, mismatch_type_names = (
-            _get_items_mismatch_breakdown(contract, order) if not items_match else ({}, {}, {})
+            _get_items_mismatch_breakdown(contract, order)
+            if not items_match
+            else ({}, {}, {})
         )
         price_ok, price_msg = _contract_price_matches_db(contract, order)
         try:
-            contract_price, expected_price = _get_contract_price_comparison(contract, order)
+            contract_price, expected_price = _get_contract_price_comparison(
+                contract, order
+            )
         except ValueError:
             contract_price = contract.price
             expected_price = order.total_price
@@ -2677,7 +2905,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     "start_location_id": contract.start_location_id,
                     "end_location_id": contract.end_location_id,
                     "details": mismatch_details,
-                    "surplus_type_ids": sorted(int(type_id) for type_id in surplus_by_type.keys()),
+                    "surplus_type_ids": sorted(
+                        int(type_id) for type_id in surplus_by_type.keys()
+                    ),
                     "type_names": {
                         str(int(type_id)): str(name)
                         for type_id, name in (mismatch_type_names or {}).items()
@@ -2687,7 +2917,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     "contract_price": contract_price,
                     "expected_price": expected_price,
                 }
-            if not price_ok and has_correct_ref and not contract_with_correct_ref_wrong_price:
+            if (
+                not price_ok
+                and has_correct_ref
+                and not contract_with_correct_ref_wrong_price
+            ):
                 contract_with_correct_ref_wrong_price = {
                     "contract_id": contract.contract_id,
                     "price_msg": price_msg,
@@ -2740,8 +2974,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             contract_completed_at=getattr(matching_contract, "date_completed", None),
         )
     elif contract_with_correct_ref_wrong_structure:
-        contract_status = str(contract_with_correct_ref_wrong_structure.get("status") or "").lower()
-        completed_before_validation_note = _build_completed_before_validation_note(contract_status)
+        contract_status = str(
+            contract_with_correct_ref_wrong_structure.get("status") or ""
+        ).lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_wrong_structure["contract_id"],
@@ -2754,9 +2992,16 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             f"Anomaly: contract {contract_with_correct_ref_wrong_structure['contract_id']} has the correct title ({order_ref}) "
             f"but wrong location. Expected: {expected_sell_locations_label}\n"
             f"Contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}"
-            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
+            + (
+                f"\n\n{completed_before_validation_note}"
+                if completed_before_validation_note
+                else ""
+            )
         )
-        anomaly_updated = order.status != MaterialExchangeSellOrder.Status.ANOMALY or order.notes != anomaly_notes
+        anomaly_updated = (
+            order.status != MaterialExchangeSellOrder.Status.ANOMALY
+            or order.notes != anomaly_notes
+        )
         order.status = MaterialExchangeSellOrder.Status.ANOMALY
         order.notes = anomaly_notes
         order.save(update_fields=["status", "notes", "updated_at"])
@@ -2777,7 +3022,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"but it's located at the wrong structure.\n\n"
                         f"Required location(s): {expected_sell_locations_label}\n"
                         f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n"
-                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
                         + "You can either create a new contract at the correct location, or contact an admin (they have been notified)."
                     )
                     if notify_admins_on_sell_anomaly
@@ -2787,7 +3036,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"but it's located at the wrong structure.\n\n"
                         f"Required location(s): {expected_sell_locations_label}\n"
                         f"Your contract is at location {contract_with_correct_ref_wrong_structure.get('start_location_id') or contract_with_correct_ref_wrong_structure.get('end_location_id')}\n"
-                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
                         + "Please create a new compliant contract at the correct location."
                     )
                 ),
@@ -2819,10 +3072,15 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             contract_with_correct_ref_wrong_structure["contract_id"],
         )
     elif contract_with_correct_ref_items_mismatch and (
-        contract_with_correct_ref_items_mismatch.get("price_issue") or not contract_with_correct_ref_wrong_price
+        contract_with_correct_ref_items_mismatch.get("price_issue")
+        or not contract_with_correct_ref_wrong_price
     ):
-        contract_status = str(contract_with_correct_ref_items_mismatch.get("status") or "").lower()
-        completed_before_validation_note = _build_completed_before_validation_note(contract_status)
+        contract_status = str(
+            contract_with_correct_ref_items_mismatch.get("status") or ""
+        ).lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
                 contract_id=contract_with_correct_ref_items_mismatch["contract_id"],
@@ -2830,7 +3088,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             )
             return
 
-        mismatch_type_names_raw = contract_with_correct_ref_items_mismatch.get("type_names") or {}
+        mismatch_type_names_raw = (
+            contract_with_correct_ref_items_mismatch.get("type_names") or {}
+        )
         mismatch_type_names: dict[int, str] = {}
         if isinstance(mismatch_type_names_raw, dict):
             for raw_type_id, raw_name in mismatch_type_names_raw.items():
@@ -2843,7 +3103,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     mismatch_type_names[parsed_type_id] = parsed_name
 
         surplus_type_ids = []
-        for raw_type_id in contract_with_correct_ref_items_mismatch.get("surplus_type_ids") or []:
+        for raw_type_id in (
+            contract_with_correct_ref_items_mismatch.get("surplus_type_ids") or []
+        ):
             try:
                 parsed_type_id = int(raw_type_id)
             except (TypeError, ValueError):
@@ -2854,8 +3116,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 surplus_type_ids.append(parsed_type_id)
 
         effective_contract_location_id = _get_effective_contract_location_id(
-            start_location_id=contract_with_correct_ref_items_mismatch.get("start_location_id"),
-            end_location_id=contract_with_correct_ref_items_mismatch.get("end_location_id"),
+            start_location_id=contract_with_correct_ref_items_mismatch.get(
+                "start_location_id"
+            ),
+            end_location_id=contract_with_correct_ref_items_mismatch.get(
+                "end_location_id"
+            ),
             expected_location_ids=expected_sell_location_ids,
         )
         location_guidance_block = _build_sell_surplus_item_location_guidance(
@@ -2864,7 +3130,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             surplus_type_ids=surplus_type_ids,
             type_names=mismatch_type_names,
         )
-        price_issue = str(contract_with_correct_ref_items_mismatch.get("price_issue") or "").strip()
+        price_issue = str(
+            contract_with_correct_ref_items_mismatch.get("price_issue") or ""
+        ).strip()
         price_details_block = ""
         if price_issue:
             price_details_block = (
@@ -2873,15 +3141,19 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 f"Contract price: {Decimal(str(contract_with_correct_ref_items_mismatch.get('contract_price') or 0)).quantize(Decimal('1')):,.0f} ISK"
             )
 
-        core_anomaly_notes = (
-            f"Anomaly: contract {contract_with_correct_ref_items_mismatch['contract_id']} has the correct title ({order_ref}) "
-            "but item list/quantities do not match this order."
-            + (f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}" if contract_with_correct_ref_items_mismatch.get("details") else "")
-            + (f"\n\n{price_details_block}" if price_details_block else "")
-            + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
+        core_anomaly_notes = f"Anomaly: contract {contract_with_correct_ref_items_mismatch['contract_id']} has the correct title ({order_ref}) " "but item list/quantities do not match this order." + (
+            f"\n\n{contract_with_correct_ref_items_mismatch.get('details')}"
+            if contract_with_correct_ref_items_mismatch.get("details")
+            else ""
+        ) + (
+            f"\n\n{price_details_block}" if price_details_block else ""
+        ) + (
+            f"\n\n{location_guidance_block}" if location_guidance_block else ""
         )
         anomaly_notes = core_anomaly_notes + (
-            f"\n\n{completed_before_validation_note}" if completed_before_validation_note else ""
+            f"\n\n{completed_before_validation_note}"
+            if completed_before_validation_note
+            else ""
         )
 
         mismatch_details_block = (
@@ -2889,14 +3161,19 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             if contract_with_correct_ref_items_mismatch.get("details")
             else ""
         )
-        guidance_details_block = f"{location_guidance_block}\n\n" if location_guidance_block else ""
-        price_details_message_block = f"{price_details_block}\n\n" if price_details_block else ""
+        guidance_details_block = (
+            f"{location_guidance_block}\n\n" if location_guidance_block else ""
+        )
+        price_details_message_block = (
+            f"{price_details_block}\n\n" if price_details_block else ""
+        )
 
         previous_notes = str(order.notes or "")
         previous_core_notes = previous_notes.split("\n\nContract had already ")[0]
 
         anomaly_updated = (
-            order.status != MaterialExchangeSellOrder.Status.ANOMALY or previous_core_notes != core_anomaly_notes
+            order.status != MaterialExchangeSellOrder.Status.ANOMALY
+            or previous_core_notes != core_anomaly_notes
         )
         order.status = MaterialExchangeSellOrder.Status.ANOMALY
         order.notes = anomaly_notes
@@ -2914,7 +3191,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
                     f"{price_details_message_block}"
-                    + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "")
+                    + (
+                        f"{completed_before_validation_note}\n\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
                     + f"{guidance_details_block}"
                     + "Please create a corrected contract, or contact a Hub admin (they have been notified)."
                 )
@@ -2924,7 +3205,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"Contract #{contract_with_correct_ref_items_mismatch['contract_id']} has the correct reference, but item list/quantities do not match this order.\n\n"
                     f"{mismatch_details_block}"
                     f"{price_details_message_block}"
-                    + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "")
+                    + (
+                        f"{completed_before_validation_note}\n\n"
+                        if completed_before_validation_note
+                        else ""
+                    )
                     + f"{guidance_details_block}"
                     + "Please create a corrected and compliant contract."
                 )
@@ -2956,7 +3241,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         else ""
                     )
                     + (f"\n\n{price_details_block}" if price_details_block else "")
-                    + (f"\n\n{location_guidance_block}" if location_guidance_block else "")
+                    + (
+                        f"\n\n{location_guidance_block}"
+                        if location_guidance_block
+                        else ""
+                    )
                 ),
                 level="error",
                 link=admin_link,
@@ -2973,8 +3262,12 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
             result="warning",
         )
     elif contract_with_correct_ref_wrong_price:
-        contract_status = str(contract_with_correct_ref_wrong_price.get("status") or "").lower()
-        completed_before_validation_note = _build_completed_before_validation_note(contract_status)
+        contract_status = str(
+            contract_with_correct_ref_wrong_price.get("status") or ""
+        ).lower()
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
         expected_price = f"{Decimal(str(contract_with_correct_ref_wrong_price.get('expected_price') or 0)).quantize(Decimal('1')):,.0f} ISK"
         contract_price = f"{Decimal(str(contract_with_correct_ref_wrong_price.get('contract_price') or 0)).quantize(Decimal('1')):,.0f} ISK"
 
@@ -2988,9 +3281,16 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         anomaly_notes = (
             f"Anomaly: contract {contract_with_correct_ref_wrong_price['contract_id']} has the correct title ({order_ref}) "
             f"but wrong price ({contract_with_correct_ref_wrong_price['price_msg']})."
-            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
+            + (
+                f"\n\n{completed_before_validation_note}"
+                if completed_before_validation_note
+                else ""
+            )
         )
-        anomaly_updated = order.status != MaterialExchangeSellOrder.Status.ANOMALY or order.notes != anomaly_notes
+        anomaly_updated = (
+            order.status != MaterialExchangeSellOrder.Status.ANOMALY
+            or order.notes != anomaly_notes
+        )
         order.status = MaterialExchangeSellOrder.Status.ANOMALY
         order.notes = anomaly_notes
         order.save(update_fields=["status", "notes", "updated_at"])
@@ -3010,7 +3310,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the contract price does not match the agreed total.\n\n"
                         f"Expected price: {expected_price}\n"
                         f"Contract price: {contract_price}\n"
-                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
                         + f"You can either create a new contract with the correct price at {expected_sell_locations_label}, or wait for admin review (admins have been notified)."
                     )
                     if notify_admins_on_sell_anomaly
@@ -3019,7 +3323,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                         f"You submitted contract #{contract_with_correct_ref_wrong_price['contract_id']} with the correct title, but the contract price does not match the agreed total.\n\n"
                         f"Expected price: {expected_price}\n"
                         f"Contract price: {contract_price}\n"
-                        + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                        + (
+                            f"{completed_before_validation_note}\n\n"
+                            if completed_before_validation_note
+                            else "\n"
+                        )
                         + f"Please create a new compliant contract with the correct price at {expected_sell_locations_label}."
                     )
                 ),
@@ -3056,7 +3364,9 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         found_title = (contract_with_wrong_ref_only.get("title") or "").strip()
         title_display = found_title or _("(empty title)")
         contract_status = str(contract_with_wrong_ref_only.get("status") or "").lower()
-        completed_before_validation_note = _build_completed_before_validation_note(contract_status)
+        completed_before_validation_note = _build_completed_before_validation_note(
+            contract_status
+        )
 
         if contract_status in rejected_statuses:
             _set_sell_order_anomaly_rejected(
@@ -3068,9 +3378,16 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
         anomaly_notes = (
             f"Anomaly: contract {contract_id} matches seller/corp/location/items/price but title reference is incorrect. "
             f"Found title: '{title_display}'. Expected reference: '{order_ref}'."
-            + (f"\n\n{completed_before_validation_note}" if completed_before_validation_note else "")
+            + (
+                f"\n\n{completed_before_validation_note}"
+                if completed_before_validation_note
+                else ""
+            )
         )
-        anomaly_updated = order.status != MaterialExchangeSellOrder.Status.ANOMALY or order.notes != anomaly_notes
+        anomaly_updated = (
+            order.status != MaterialExchangeSellOrder.Status.ANOMALY
+            or order.notes != anomaly_notes
+        )
         order.status = MaterialExchangeSellOrder.Status.ANOMALY
         order.notes = anomaly_notes
         order.save(update_fields=["status", "notes", "updated_at"])
@@ -3084,7 +3401,11 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                     f"but the title/reference is incorrect.\n\n"
                     f"Found title: {title_display}\n"
                     f"Expected reference: {order_ref}\n"
-                    + (f"{completed_before_validation_note}\n\n" if completed_before_validation_note else "\n")
+                    + (
+                        f"{completed_before_validation_note}\n\n"
+                        if completed_before_validation_note
+                        else "\n"
+                    )
                     + "Please recreate/update the contract title with the exact order reference."
                 ),
                 level="warning",
@@ -3160,8 +3481,7 @@ def _validate_sell_order_from_db(config, order, contracts, esi_client=None):
                 _(
                     f"We still don't see a matching contract for your sell order {order_ref}.\n"
                     f"Please submit an item exchange contract matching the requirements above."
-                    + (f"\nLatest issue seen: {last_reason}" if last_reason else "")
-                    + "\n\nDon't need this order anymore? You can delete it from your orders page."
+                    "\n\nDon't need this order anymore? You can delete it from your orders page."
                 ),
                 level="warning",
                 link=delete_link,
@@ -3230,20 +3550,29 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     ):
         now = timezone.now()
         normalized_contract_id = int(getattr(contract, "contract_id", 0) or 0)
-        normalized_contract_status = str(getattr(contract, "status", "") or "").strip().lower()
-        contract_already_completed = _is_finished_contract_status(normalized_contract_status)
+        normalized_contract_status = (
+            str(getattr(contract, "status", "") or "").strip().lower()
+        )
+        contract_already_completed = _is_finished_contract_status(
+            normalized_contract_status
+        )
         previous_notes = str(order.notes or "").strip()
 
         if override:
-            notes = (
-                f"Contract accepted in-game despite anomaly: {normalized_contract_id} @ "
-                f"{contract.price:,.0f} ISK"
-                + (f" ({override_reason})" if override_reason else "")
-                + (f"\n\n{override_details}" if override_details else "")
-                + (f"\n\nPrevious anomaly details:\n{previous_notes}" if previous_notes else "")
+            notes = f"Contract accepted in-game despite anomaly: {normalized_contract_id} @ " f"{contract.price:,.0f} ISK" + (
+                f" ({override_reason})" if override_reason else ""
+            ) + (
+                f"\n\n{override_details}" if override_details else ""
+            ) + (
+                f"\n\nPrevious anomaly details:\n{previous_notes}"
+                if previous_notes
+                else ""
             )
         else:
-            notes = f"Contract validated: {normalized_contract_id} @ " f"{contract.price:,.0f} ISK"
+            notes = (
+                f"Contract validated: {normalized_contract_id} @ "
+                f"{contract.price:,.0f} ISK"
+            )
 
         rows_updated = MaterialExchangeBuyOrder.objects.filter(
             pk=order.pk,
@@ -3299,13 +3628,19 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                     f"The order has been moved back to validated status and completion sync will follow."
                     + (f"\nReason: {override_reason}" if override_reason else "")
                     + (f"\n\n{override_details}" if override_details else "")
-                    + (f"\n\nPrevious anomaly details:\n{previous_notes}" if previous_notes else "")
+                    + (
+                        f"\n\nPrevious anomaly details:\n{previous_notes}"
+                        if previous_notes
+                        else ""
+                    )
                 ),
                 level="success",
                 link=f"/indy_hub/material-exchange/my-orders/buy/{order.id}/",
             )
 
-            anomaly_context_parts = ["Contract was accepted in-game despite an earlier validation anomaly."]
+            anomaly_context_parts = [
+                "Contract was accepted in-game despite an earlier validation anomaly."
+            ]
             if override_reason:
                 anomaly_context_parts.append(f"Original issue: {override_reason}.")
             if override_details:
@@ -3320,7 +3655,9 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                     _build_contract_validation_webhook_message(
                         order.buyer.username,
                         relation="for",
-                        anomaly_reason=" ".join(part for part in anomaly_context_parts if str(part).strip()),
+                        anomaly_reason=" ".join(
+                            part for part in anomaly_context_parts if str(part).strip()
+                        ),
                     )
                 ),
                 level="info",
@@ -3414,11 +3751,18 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 expected_location_ids=expected_buy_location_ids,
                 expected_location_names=expected_buy_location_names,
             )
-            if criteria_match_without_ref and _contract_items_match_order_db(contract, order):
-                price_ok_without_ref, _price_msg_unused = _contract_price_matches_db(contract, order)
+            if criteria_match_without_ref and _contract_items_match_order_db(
+                contract, order
+            ):
+                price_ok_without_ref, _price_msg_unused = _contract_price_matches_db(
+                    contract, order
+                )
                 if price_ok_without_ref:
                     contract_status = str(contract.status or "").lower()
-                    if contract_status in active_validation_statuses and active_contract_ref_mismatch is None:
+                    if (
+                        contract_status in active_validation_statuses
+                        and active_contract_ref_mismatch is None
+                    ):
                         active_contract_ref_mismatch = contract
                         if "wrong contract reference" not in detected_issues:
                             detected_issues.append("wrong contract reference")
@@ -3442,13 +3786,18 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
             expected_location_names=expected_buy_location_names,
         )
         if not criteria_match:
-            expected_recipient_id = int(getattr(order, "recipient_character_id", 0) or 0)
+            expected_recipient_id = int(
+                getattr(order, "recipient_character_id", 0) or 0
+            )
             actual_assignee_id = int(getattr(contract, "assignee_id", 0) or 0)
             if expected_recipient_id and actual_assignee_id != expected_recipient_id:
                 expected_name = str(
-                    getattr(order, "recipient_character_name", "") or get_character_name(expected_recipient_id)
+                    getattr(order, "recipient_character_name", "")
+                    or get_character_name(expected_recipient_id)
                 ).strip()
-                actual_name = str(get_character_name(actual_assignee_id) or actual_assignee_id).strip()
+                actual_name = str(
+                    get_character_name(actual_assignee_id) or actual_assignee_id
+                ).strip()
                 recipient_issue = (
                     f"wrong contract recipient character "
                     f"(expected {expected_name or expected_recipient_id} [{expected_recipient_id}], "
@@ -3494,16 +3843,25 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     issues = list(detected_issues)
 
     issue_line = f"Issue(s): {'; '.join(issues)}" if issues else ""
-    mismatch_block = f"\n\n{last_items_mismatch_details}" if last_items_mismatch_details else ""
+    mismatch_block = (
+        f"\n\n{last_items_mismatch_details}" if last_items_mismatch_details else ""
+    )
     merged_issue_contract_lines = issue_contract_lines + [
-        line for line in previous_issue_contract_lines if line not in issue_contract_lines
+        line
+        for line in previous_issue_contract_lines
+        if line not in issue_contract_lines
     ]
     completed_before_validation_note = (
         _build_completed_before_validation_note("finished")
-        if any("(finished" in str(line).strip().lower() for line in merged_issue_contract_lines)
+        if any(
+            "(finished" in str(line).strip().lower()
+            for line in merged_issue_contract_lines
+        )
         else ""
     )
-    issue_contract_block = "\n".join(line for line in merged_issue_contract_lines if str(line).strip())
+    issue_contract_block = "\n".join(
+        line for line in merged_issue_contract_lines if str(line).strip()
+    )
     issue_header = (
         (
             f"Contract anomaly detected for {order_ref} after in-game completion."
@@ -3536,10 +3894,16 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     immediate_issue_alert_sent = False
     if issues:
         issue_fingerprint = hashlib.sha1(
-            (f"{order_ref}|{';'.join(issues)}|{last_items_mismatch_details or ''}").encode("utf-8")
+            (
+                f"{order_ref}|{';'.join(issues)}|{last_items_mismatch_details or ''}"
+            ).encode("utf-8")
         ).hexdigest()[:16]
-        issue_alert_key = f"material_exchange:buy_order:{order.id}:contract_issue:{issue_fingerprint}"
-        immediate_issue_alert_sent = cache.add(issue_alert_key, now.timestamp(), 60 * 60 * 24)
+        issue_alert_key = (
+            f"material_exchange:buy_order:{order.id}:contract_issue:{issue_fingerprint}"
+        )
+        immediate_issue_alert_sent = cache.add(
+            issue_alert_key, now.timestamp(), 60 * 60 * 24
+        )
 
     if immediate_issue_alert_sent:
         anomaly_message = (
@@ -3549,13 +3913,21 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 else f"Contract anomaly detected for buy order {order.order_reference} before completion.\n"
             )
             + (f"{issue_contract_block}\n" if issue_contract_block else "")
-            + (f"{completed_before_validation_note}\n" if completed_before_validation_note else "")
+            + (
+                f"{completed_before_validation_note}\n"
+                if completed_before_validation_note
+                else ""
+            )
             + "Reason: contract mismatch.\n"
             + f"Buyer: {order.buyer.username}\n"
             + f"Required location: {expected_buy_location_label}\n"
             + f"Expected price: {order.total_price:,.0f} ISK"
             + (f"\nIssue(s): {'; '.join(issues)}" if issues else "")
-            + (f"\n\n{last_items_mismatch_details}" if last_items_mismatch_details else "")
+            + (
+                f"\n\n{last_items_mismatch_details}"
+                if last_items_mismatch_details
+                else ""
+            )
         )
         _notify_material_exchange_admins(
             config,
@@ -3598,13 +3970,25 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
                 else f"Buy order {order.order_reference} has no matching contract yet.\n"
             )
             + (f"{issue_contract_block}\n" if issue_contract_block else "")
-            + (f"{completed_before_validation_note}\n" if completed_before_validation_note else "")
-            + ("Reason: contract mismatch.\n" if issues else "Reason: no matching contract found yet.\n")
+            + (
+                f"{completed_before_validation_note}\n"
+                if completed_before_validation_note
+                else ""
+            )
+            + (
+                "Reason: contract mismatch.\n"
+                if issues
+                else "Reason: no matching contract found yet.\n"
+            )
             + f"Buyer: {order.buyer.username}\n"
             + f"Required location: {expected_buy_location_label}\n"
             + f"Expected price: {order.total_price:,.0f} ISK"
             + (f"\nIssue(s): {'; '.join(issues)}" if issues else "")
-            + (f"\n\n{last_items_mismatch_details}" if last_items_mismatch_details else "")
+            + (
+                f"\n\n{last_items_mismatch_details}"
+                if last_items_mismatch_details
+                else ""
+            )
         )
         _notify_material_exchange_admins(
             config,
@@ -3642,7 +4026,11 @@ def _get_type_market_group_id(type_id: int) -> int | None:
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
 
-        market_group_id = ItemType.objects.filter(id=type_id_int).values_list("market_group_id_raw", flat=True).first()
+        market_group_id = (
+            ItemType.objects.filter(id=type_id_int)
+            .values_list("market_group_id_raw", flat=True)
+            .first()
+        )
         market_group_value = int(market_group_id) if market_group_id else None
     except Exception:
         market_group_value = None
@@ -3662,7 +4050,9 @@ def _get_market_group_children_map() -> dict[int | None, set[int]]:
         from indy_hub.models import SdeMarketGroup
 
         children_map: dict[int | None, set[int]] = {}
-        for group_id, parent_id in SdeMarketGroup.objects.values_list("id", "parent_id"):
+        for group_id, parent_id in SdeMarketGroup.objects.values_list(
+            "id", "parent_id"
+        ):
             children_map.setdefault(parent_id, set()).add(int(group_id))
     except Exception:
         children_map = {}
@@ -3697,7 +4087,9 @@ def _expand_market_group_ids(group_ids: set[int]) -> set[int]:
     return expanded
 
 
-def _normalize_group_ids(raw_group_ids: list[int] | tuple[int, ...] | set[int] | None) -> list[int]:
+def _normalize_group_ids(
+    raw_group_ids: list[int] | tuple[int, ...] | set[int] | None,
+) -> list[int]:
     normalized: list[int] = []
     for raw in raw_group_ids or []:
         try:
@@ -3710,7 +4102,9 @@ def _normalize_group_ids(raw_group_ids: list[int] | tuple[int, ...] | set[int] |
     return normalized
 
 
-def _get_sell_group_ids_for_location(config: MaterialExchangeConfig, location_id: int) -> list[int] | None:
+def _get_sell_group_ids_for_location(
+    config: MaterialExchangeConfig, location_id: int
+) -> list[int] | None:
     """Return grouped sell market IDs for a location, or None for explicit all."""
     group_map = config.get_sell_market_group_map()
     location_key = int(location_id)
@@ -3720,7 +4114,9 @@ def _get_sell_group_ids_for_location(config: MaterialExchangeConfig, location_id
             return None
         return _normalize_group_ids(rule)
 
-    return _normalize_group_ids(list(getattr(config, "allowed_market_groups_sell", []) or []))
+    return _normalize_group_ids(
+        list(getattr(config, "allowed_market_groups_sell", []) or [])
+    )
 
 
 def _is_type_accepted_for_sell_location(
@@ -3839,7 +4235,9 @@ def _build_sell_surplus_item_location_guidance(
                 location_id=loc_id,
                 type_id=type_id,
             ):
-                accepted_elsewhere.append(str(sell_name_map.get(loc_id) or f"Structure {loc_id}"))
+                accepted_elsewhere.append(
+                    str(sell_name_map.get(loc_id) or f"Structure {loc_id}")
+                )
 
         if accepted_elsewhere:
             guidance_lines.append(
@@ -3860,7 +4258,9 @@ def _normalize_location_name(name: str | None) -> str:
     return str(name or "").strip().lower()
 
 
-def _get_expected_location_ids(config: MaterialExchangeConfig, *, side: str) -> list[int]:
+def _get_expected_location_ids(
+    config: MaterialExchangeConfig, *, side: str
+) -> list[int]:
     if side == "sell":
         raw_ids = config.get_sell_structure_ids()
     elif side == "buy":
@@ -3880,7 +4280,9 @@ def _get_expected_location_ids(config: MaterialExchangeConfig, *, side: str) -> 
     return normalized_ids
 
 
-def _get_expected_location_name_set(config: MaterialExchangeConfig, *, side: str) -> set[str]:
+def _get_expected_location_name_set(
+    config: MaterialExchangeConfig, *, side: str
+) -> set[str]:
     if side == "sell":
         name_map = config.get_sell_structure_name_map()
     elif side == "buy":
@@ -3888,7 +4290,11 @@ def _get_expected_location_name_set(config: MaterialExchangeConfig, *, side: str
     else:
         name_map = {}
 
-    names = {_normalize_location_name(name) for name in (name_map or {}).values() if _normalize_location_name(name)}
+    names = {
+        _normalize_location_name(name)
+        for name in (name_map or {}).values()
+        if _normalize_location_name(name)
+    }
     return names
 
 
@@ -3905,7 +4311,11 @@ def _get_expected_locations_label(config: MaterialExchangeConfig, *, side: str) 
         name = str((name_map or {}).get(int(sid), "") or "").strip()
         labels.append(name or f"Structure {sid}")
 
-    return ", ".join(labels) if labels else (config.structure_name or f"Structure {config.structure_id}")
+    return (
+        ", ".join(labels)
+        if labels
+        else (config.structure_name or f"Structure {config.structure_id}")
+    )
 
 
 def _get_sell_order_expected_locations(
@@ -3934,7 +4344,9 @@ def _infer_buy_order_source_location_from_stock(
 ) -> tuple[int | None, str]:
     try:
         order_type_ids = {
-            int(type_id) for type_id in order.items.values_list("type_id", flat=True) if int(type_id) > 0
+            int(type_id)
+            for type_id in order.items.values_list("type_id", flat=True)
+            if int(type_id) > 0
         }
     except Exception:
         order_type_ids = set()
@@ -3943,9 +4355,9 @@ def _infer_buy_order_source_location_from_stock(
 
     source_ids_by_type: dict[int, set[int]] = {}
     try:
-        stock_rows = config.stock_items.filter(type_id__in=list(order_type_ids)).values_list(
-            "type_id", "source_structure_ids"
-        )
+        stock_rows = config.stock_items.filter(
+            type_id__in=list(order_type_ids)
+        ).values_list("type_id", "source_structure_ids")
     except Exception:
         stock_rows = []
 
@@ -3982,7 +4394,9 @@ def _infer_buy_order_source_location_from_stock(
 
     selected_location_id = sorted(common_location_ids)[0]
     name_map = config.get_buy_structure_name_map() or {}
-    selected_location_name = str(name_map.get(int(selected_location_id), "") or "").strip()
+    selected_location_name = str(
+        name_map.get(int(selected_location_id), "") or ""
+    ).strip()
     if not selected_location_name:
         selected_location_name = f"Structure {int(selected_location_id)}"
     return int(selected_location_id), selected_location_name
@@ -4012,12 +4426,16 @@ def _get_buy_order_expected_locations(
         }
         return [source_location_id], name_set, label_name
 
-    inferred_location_id, inferred_location_name = _infer_buy_order_source_location_from_stock(
-        order,
-        config,
+    inferred_location_id, inferred_location_name = (
+        _infer_buy_order_source_location_from_stock(
+            order,
+            config,
+        )
     )
     if inferred_location_id and inferred_location_id > 0:
-        inferred_label = str(inferred_location_name or "").strip() or (f"Structure {int(inferred_location_id)}")
+        inferred_label = str(inferred_location_name or "").strip() or (
+            f"Structure {int(inferred_location_id)}"
+        )
         inferred_name_set = {_normalize_location_name(inferred_label)}
         return [int(inferred_location_id)], inferred_name_set, inferred_label
 
@@ -4225,7 +4643,9 @@ def _contract_items_match_order_db(contract, order):
     expected_by_type: dict[int, int] = {}
     for order_item in order_items:
         type_id = int(order_item.type_id)
-        expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(order_item.quantity)
+        expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(
+            order_item.quantity
+        )
 
     actual_by_type: dict[int, int] = {}
     for contract_item in contract_items:
@@ -4233,7 +4653,9 @@ def _contract_items_match_order_db(contract, order):
 
         # Skip containers - they shouldn't affect item matching
         if _is_container_type(type_id):
-            logger.debug("Excluding container type_id %s from contract item matching", type_id)
+            logger.debug(
+                "Excluding container type_id %s from contract item matching", type_id
+            )
             continue
 
         # Skip items that are inside containers (raw_quantity < 0)
@@ -4245,7 +4667,9 @@ def _contract_items_match_order_db(contract, order):
             )
             continue
 
-        actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(contract_item.quantity)
+        actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
+            contract_item.quantity
+        )
 
     return expected_by_type == actual_by_type
 
@@ -4313,7 +4737,9 @@ def _refresh_contract_items_for_validation(contract) -> bool:
             contract_id,
             len(contract_items),
         )
-        return bool(ESIContractItem.objects.filter(contract=contract, is_included=True).exists())
+        return bool(
+            ESIContractItem.objects.filter(contract=contract, is_included=True).exists()
+        )
     except ESIUnmodifiedError:
         logger.debug(
             "Contract %s items were unmodified during validation refresh",
@@ -4338,7 +4764,9 @@ def _refresh_contract_items_for_validation(contract) -> bool:
             exc,
         )
 
-    return bool(ESIContractItem.objects.filter(contract=contract, is_included=True).exists())
+    return bool(
+        ESIContractItem.objects.filter(contract=contract, is_included=True).exists()
+    )
 
 
 def _is_item_inside_container(contract_item) -> bool:
@@ -4385,7 +4813,8 @@ def _is_container_type(type_id: int) -> bool:
                 return False
 
             group_id = (
-                getattr(item_type, "group_id", None) or getattr(item_type.group, "id", None)
+                getattr(item_type, "group_id", None)
+                or getattr(item_type.group, "id", None)
                 if hasattr(item_type, "group")
                 else None
             )
@@ -4409,7 +4838,9 @@ def _is_container_type(type_id: int) -> bool:
             return False
 
 
-def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
+def _get_items_mismatch_breakdown(
+    contract, order
+) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
     """Return (missing_by_type, surplus_by_type, type_names) for order vs contract items.
 
     Containers and their contents are excluded from surplus calculations.
@@ -4445,7 +4876,9 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
 
     for order_item in order_items:
         type_id = int(order_item.type_id)
-        expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(order_item.quantity)
+        expected_by_type[type_id] = expected_by_type.get(type_id, 0) + int(
+            order_item.quantity
+        )
         if type_id not in type_names:
             type_names[type_id] = _resolved_type_name(type_id, order_item.type_name)
 
@@ -4454,7 +4887,9 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
 
         # Skip containers - they shouldn't be counted as surplus
         if _is_container_type(type_id):
-            logger.debug("Excluding container type_id %s from contract item comparison", type_id)
+            logger.debug(
+                "Excluding container type_id %s from contract item comparison", type_id
+            )
             continue
 
         # Skip items that are inside containers (raw_quantity < 0)
@@ -4466,7 +4901,9 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
             )
             continue
 
-        actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(contract_item.quantity)
+        actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
+            contract_item.quantity
+        )
         if type_id not in type_names:
             type_names[type_id] = _resolved_type_name(type_id)
 
@@ -4484,12 +4921,16 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
             surplus_lines.append(type_id)
 
     missing_by_type = {
-        int(type_id): int(expected_by_type.get(type_id, 0) - actual_by_type.get(type_id, 0))
+        int(type_id): int(
+            expected_by_type.get(type_id, 0) - actual_by_type.get(type_id, 0)
+        )
         for type_id in missing_lines
         if expected_by_type.get(type_id, 0) > actual_by_type.get(type_id, 0)
     }
     surplus_by_type = {
-        int(type_id): int(actual_by_type.get(type_id, 0) - expected_by_type.get(type_id, 0))
+        int(type_id): int(
+            actual_by_type.get(type_id, 0) - expected_by_type.get(type_id, 0)
+        )
         for type_id in surplus_lines
         if actual_by_type.get(type_id, 0) > expected_by_type.get(type_id, 0)
     }
@@ -4498,7 +4939,9 @@ def _get_items_mismatch_breakdown(contract, order) -> tuple[dict[int, int], dict
 
 def _build_items_mismatch_details(contract, order) -> str:
     """Build a human-readable item delta between order and contract included items."""
-    missing_by_type, surplus_by_type, type_names = _get_items_mismatch_breakdown(contract, order)
+    missing_by_type, surplus_by_type, type_names = _get_items_mismatch_breakdown(
+        contract, order
+    )
     if not missing_by_type and not surplus_by_type:
         return ""
 
@@ -4547,7 +4990,10 @@ def _contract_price_matches_db(contract, order) -> tuple[bool, str]:
         return False, "invalid contract price"
 
     if contract_price != expected_price:
-        return False, f"price {contract_price:,.0f} ISK vs expected {expected_price:,.0f} ISK"
+        return (
+            False,
+            f"price {contract_price:,.0f} ISK vs expected {expected_price:,.0f} ISK",
+        )
 
     return True, f"price {contract_price:,.0f} ISK OK"
 
@@ -4826,7 +5272,9 @@ def _resolve_locked_capital_manager_id(order: CapitalShipOrder) -> int:
         return int(in_production_by_id)
 
     try:
-        gathering_materials_by_id = int(getattr(order, "gathering_materials_by_id", 0) or 0)
+        gathering_materials_by_id = int(
+            getattr(order, "gathering_materials_by_id", 0) or 0
+        )
     except (TypeError, ValueError):
         gathering_materials_by_id = 0
     if gathering_materials_by_id <= 0:
@@ -4845,10 +5293,16 @@ def _resolve_locked_capital_manager(order: CapitalShipOrder) -> User | None:
     if manager_id <= 0:
         return None
     in_production_manager = getattr(order, "in_production_by", None)
-    if in_production_manager is not None and int(getattr(in_production_manager, "id", 0) or 0) == manager_id:
+    if (
+        in_production_manager is not None
+        and int(getattr(in_production_manager, "id", 0) or 0) == manager_id
+    ):
         return in_production_manager
     gathering_manager = getattr(order, "gathering_materials_by", None)
-    if gathering_manager is not None and int(getattr(gathering_manager, "id", 0) or 0) == manager_id:
+    if (
+        gathering_manager is not None
+        and int(getattr(gathering_manager, "id", 0) or 0) == manager_id
+    ):
         return gathering_manager
     return User.objects.filter(id=manager_id).first()
 
@@ -4857,7 +5311,10 @@ def _is_capital_order_locked_to_producer(order: CapitalShipOrder) -> bool:
     manager_id = _resolve_locked_capital_manager_id(order)
     if manager_id <= 0:
         return False
-    return str(getattr(order, "status", "") or "") not in _CAPITAL_ORDER_PRE_PRODUCTION_STATUSES
+    return (
+        str(getattr(order, "status", "") or "")
+        not in _CAPITAL_ORDER_PRE_PRODUCTION_STATUSES
+    )
 
 
 def _notify_capital_order_managers(
@@ -4937,7 +5394,12 @@ def _notify_capital_eta_overdue_manager_once(order: CapitalShipOrder) -> None:
         getattr(order, "definitive_eta_max_days", None),
         anchor_at=anchor_at,
     )
-    if min_remaining_days is None or max_remaining_days is None or min_remaining_days >= 0 or max_remaining_days >= 0:
+    if (
+        min_remaining_days is None
+        or max_remaining_days is None
+        or min_remaining_days >= 0
+        or max_remaining_days >= 0
+    ):
         return
 
     marker = _capital_overdue_marker_for_anchor(anchor_at)
@@ -4993,9 +5455,13 @@ def _notify_capital_eta_overdue_manager_once(order: CapitalShipOrder) -> None:
 def handle_capital_ship_order_created(order_id):
     """Notify admins/webhook when a capital order is created."""
     try:
-        order = CapitalShipOrder.objects.select_related("config", "requester").get(id=order_id)
+        order = CapitalShipOrder.objects.select_related("config", "requester").get(
+            id=order_id
+        )
     except CapitalShipOrder.DoesNotExist:
-        logger.warning(_capital_log("Creation notification skipped: order %s not found."), order_id)
+        logger.warning(
+            _capital_log("Creation notification skipped: order %s not found."), order_id
+        )
         return
 
     title = _("Capital Order Created")
@@ -5053,16 +5519,26 @@ def handle_capital_ship_order_created(order_id):
 def handle_capital_ship_order_marked_in_production(order_id):
     """Notify user/admins when manager marks a capital order in production."""
     try:
-        order = CapitalShipOrder.objects.select_related("config", "requester", "in_production_by").get(id=order_id)
+        order = CapitalShipOrder.objects.select_related(
+            "config", "requester", "in_production_by"
+        ).get(id=order_id)
     except CapitalShipOrder.DoesNotExist:
-        logger.warning(_capital_log("In-production notification skipped: order %s not found."), order_id)
+        logger.warning(
+            _capital_log("In-production notification skipped: order %s not found."),
+            order_id,
+        )
         return
 
-    manager_name = str(getattr(order.in_production_by, "username", "") or "").strip() or "Manager"
+    manager_name = (
+        str(getattr(order.in_production_by, "username", "") or "").strip() or "Manager"
+    )
     notify_user(
         order.requester,
         _("Capital Order In Production"),
-        _(f"Order {order.order_reference} ({order.ship_type_name}) is now in production.\n" f"Set by: {manager_name}"),
+        _(
+            f"Order {order.order_reference} ({order.ship_type_name}) is now in production.\n"
+            f"Set by: {manager_name}"
+        ),
         level="info",
         link="/indy_hub/material-exchange/capital-orders/",
     )
@@ -5100,9 +5576,14 @@ def handle_capital_ship_order_closed_by_manager(
         return
 
     try:
-        order = CapitalShipOrder.objects.select_related("config", "requester").get(id=order_id)
+        order = CapitalShipOrder.objects.select_related("config", "requester").get(
+            id=order_id
+        )
     except CapitalShipOrder.DoesNotExist:
-        logger.warning(_capital_log("Closed-order notification skipped: order %s not found."), order_id)
+        logger.warning(
+            _capital_log("Closed-order notification skipped: order %s not found."),
+            order_id,
+        )
         return
 
     if str(order.status or "").strip().lower() != normalized_status:
@@ -5113,14 +5594,19 @@ def handle_capital_ship_order_closed_by_manager(
     if manager_user_id:
         try:
             manager_name = (
-                User.objects.filter(id=int(manager_user_id)).values_list("username", flat=True).first() or manager_name
+                User.objects.filter(id=int(manager_user_id))
+                .values_list("username", flat=True)
+                .first()
+                or manager_name
             )
         except Exception:
             pass
 
     if normalized_status == CapitalShipOrder.Status.REJECTED:
         user_title = _("Capital Order Rejected")
-        user_message = _(f"Order {order.order_reference} ({order.ship_type_name}) was rejected by {manager_name}.")
+        user_message = _(
+            f"Order {order.order_reference} ({order.ship_type_name}) was rejected by {manager_name}."
+        )
         admin_title = _("Capital Order Rejected")
         admin_message = _(
             f"{manager_name} rejected capital order {order.order_reference}.\n"
@@ -5130,7 +5616,9 @@ def handle_capital_ship_order_closed_by_manager(
         level = "warning"
     else:
         user_title = _("Capital Order Cancelled")
-        user_message = _(f"Order {order.order_reference} ({order.ship_type_name}) was cancelled by {manager_name}.")
+        user_message = _(
+            f"Order {order.order_reference} ({order.ship_type_name}) was cancelled by {manager_name}."
+        )
         admin_title = _("Capital Order Cancelled")
         admin_message = _(
             f"{manager_name} cancelled capital order {order.order_reference}.\n"
@@ -5169,7 +5657,9 @@ def _get_user_main_character_id(user: User) -> int | None:
         return None
 
 
-def _capital_contract_has_requested_hull(contract: ESIContract, ship_type_id: int) -> bool:
+def _capital_contract_has_requested_hull(
+    contract: ESIContract, ship_type_id: int
+) -> bool:
     included_items = contract.items.filter(is_included=True)
     if not included_items.exists():
         return False
@@ -5179,7 +5669,9 @@ def _capital_contract_has_requested_hull(contract: ESIContract, ship_type_id: in
         contract_type_id = int(getattr(contract_item, "type_id", 0) or 0)
         if contract_type_id <= 0:
             continue
-        if _is_container_type(contract_type_id) or _is_item_inside_container(contract_item):
+        if _is_container_type(contract_type_id) or _is_item_inside_container(
+            contract_item
+        ):
             continue
         quantity = int(getattr(contract_item, "quantity", 0) or 0)
         if contract_type_id == requested_type_id and quantity > 0:
@@ -5212,7 +5704,9 @@ def _set_capital_order_anomaly(
     if contract_id and not order.esi_contract_id:
         order.esi_contract_id = int(contract_id)
     status_note = f" ({contract_status})" if contract_status else ""
-    order.notes = f"Anomaly detected for order {order.order_reference}: {reason}{status_note}"
+    order.notes = (
+        f"Anomaly detected for order {order.order_reference}: {reason}{status_note}"
+    )
     order.save(
         update_fields=[
             "status",
@@ -5237,7 +5731,10 @@ def _set_capital_order_anomaly(
     notify_user(
         order.requester,
         _("Capital Order Anomaly"),
-        _(f"Order {order.order_reference} is now in anomaly status.\n" f"Reason: {reason}"),
+        _(
+            f"Order {order.order_reference} is now in anomaly status.\n"
+            f"Reason: {reason}"
+        ),
         level="warning",
         link="/indy_hub/material-exchange/capital-orders/",
     )
@@ -5266,7 +5763,9 @@ def _get_user_state_name(user: User | None) -> str:
         return ""
 
 
-def _normalize_state_name_set(raw_names: list[str] | tuple[str, ...] | set[str]) -> set[str]:
+def _normalize_state_name_set(
+    raw_names: list[str] | tuple[str, ...] | set[str],
+) -> set[str]:
     normalized: set[str] = set()
     for raw_name in raw_names or []:
         name = str(raw_name or "").strip().casefold()
@@ -5285,7 +5784,9 @@ def _collect_capital_requester_character_id_map(
         user_id = int(getattr(order, "requester_id", 0) or 0)
         if user_id <= 0 or user_id in by_user_id:
             continue
-        character_ids = {int(cid) for cid in _get_user_character_ids(order.requester) if int(cid) > 0}
+        character_ids = {
+            int(cid) for cid in _get_user_character_ids(order.requester) if int(cid) > 0
+        }
         main_character_id = _get_user_main_character_id(order.requester)
         if int(main_character_id or 0) > 0:
             character_ids.add(int(main_character_id))
@@ -5338,7 +5839,9 @@ def _sync_capital_character_contracts(
 ) -> None:
     """Cache personal character contracts relevant to active capital orders."""
     if not orders:
-        logger.info(_capital_log("Personal contract sync skipped: no active capital orders."))
+        logger.info(
+            _capital_log("Personal contract sync skipped: no active capital orders.")
+        )
         return
 
     active_references_upper = {
@@ -5347,7 +5850,11 @@ def _sync_capital_character_contracts(
         if str(order.order_reference or "").strip()
     }
     if not active_references_upper:
-        logger.info(_capital_log("Personal contract sync skipped: no active capital references found."))
+        logger.info(
+            _capital_log(
+                "Personal contract sync skipped: no active capital references found."
+            )
+        )
         return
 
     participant_character_ids = sorted(
@@ -5359,7 +5866,11 @@ def _sync_capital_character_contracts(
         }
     )
     if not participant_character_ids:
-        logger.info(_capital_log("Personal contract sync skipped: no requester character ids found."))
+        logger.info(
+            _capital_log(
+                "Personal contract sync skipped: no requester character ids found."
+            )
+        )
         return
 
     logger.info(
@@ -5377,12 +5888,16 @@ def _sync_capital_character_contracts(
 
     for character_id in participant_character_ids:
         try:
-            contracts = shared_client.fetch_character_contracts(character_id=character_id)
+            contracts = shared_client.fetch_character_contracts(
+                character_id=character_id
+            )
         except ESIUnmodifiedError:
             continue
         except ESIRateLimitError as exc:
             logger.warning(
-                _capital_log("ESI rate limit during personal contract sync for character %s: %s"),
+                _capital_log(
+                    "ESI rate limit during personal contract sync for character %s: %s"
+                ),
                 character_id,
                 exc,
             )
@@ -5429,7 +5944,9 @@ def _sync_capital_character_contracts(
             ):
                 continue
 
-            issuer_corporation_id = int(contract_payload.get("issuer_corporation_id") or 0)
+            issuer_corporation_id = int(
+                contract_payload.get("issuer_corporation_id") or 0
+            )
             contract, _created = ESIContract.objects.update_or_create(
                 contract_id=contract_id,
                 defaults={
@@ -5445,8 +5962,10 @@ def _sync_capital_character_contracts(
                     "price": Decimal(str(contract_payload.get("price") or 0)),
                     "reward": Decimal(str(contract_payload.get("reward") or 0)),
                     "collateral": Decimal(str(contract_payload.get("collateral") or 0)),
-                    "date_issued": contract_payload.get("date_issued") or timezone.now(),
-                    "date_expired": contract_payload.get("date_expired") or (timezone.now() + timedelta(days=7)),
+                    "date_issued": contract_payload.get("date_issued")
+                    or timezone.now(),
+                    "date_expired": contract_payload.get("date_expired")
+                    or (timezone.now() + timedelta(days=7)),
                     "date_accepted": contract_payload.get("date_accepted"),
                     "date_completed": contract_payload.get("date_completed"),
                     # Character contracts are not owned by a specific corp cache scope.
@@ -5457,7 +5976,8 @@ def _sync_capital_character_contracts(
 
             contract_status = str(contract_payload.get("status") or "").strip().lower()
             if (
-                str(contract_payload.get("type") or "").strip().lower() != "item_exchange"
+                str(contract_payload.get("type") or "").strip().lower()
+                != "item_exchange"
                 or contract_status not in _CAPITAL_CONTRACT_ITEM_SYNC_STATUSES
                 or contract_id in synced_items_contract_ids
             ):
@@ -5474,19 +5994,25 @@ def _sync_capital_character_contracts(
             except ESIClientError as exc:
                 if "404" in str(exc):
                     logger.debug(
-                        _capital_log("No personal contract items available for contract %s (404)."),
+                        _capital_log(
+                            "No personal contract items available for contract %s (404)."
+                        ),
                         contract_id,
                     )
                 else:
                     logger.warning(
-                        _capital_log("Failed fetching personal contract items for contract %s: %s"),
+                        _capital_log(
+                            "Failed fetching personal contract items for contract %s: %s"
+                        ),
                         contract_id,
                         exc,
                     )
                 continue
             except Exception as exc:
                 logger.warning(
-                    _capital_log("Failed fetching personal contract items for contract %s: %s"),
+                    _capital_log(
+                        "Failed fetching personal contract items for contract %s: %s"
+                    ),
                     contract_id,
                     exc,
                 )
@@ -5494,7 +6020,9 @@ def _sync_capital_character_contracts(
 
             if not isinstance(contract_items, list):
                 logger.warning(
-                    _capital_log("Unexpected payload type for personal contract items (%s): %s"),
+                    _capital_log(
+                        "Unexpected payload type for personal contract items (%s): %s"
+                    ),
                     contract_id,
                     type(contract_items).__name__,
                 )
@@ -5527,10 +6055,16 @@ def _sync_capital_character_contracts(
             synced_item_count,
         )
     else:
-        logger.info(_capital_log("Personal contract sync completed: no relevant contracts or items refreshed."))
+        logger.info(
+            _capital_log(
+                "Personal contract sync completed: no relevant contracts or items refreshed."
+            )
+        )
 
 
-def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfig) -> None:
+def _auto_cancel_capital_orders_for_state_mismatch(
+    config: MaterialExchangeConfig,
+) -> None:
     if not bool(getattr(config, "capital_auto_cancel_on_state_change", False)):
         return
 
@@ -5540,13 +6074,19 @@ def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfi
         if str(status).strip()
     }
     if configured_statuses:
-        eligible_statuses = {status for status in _CAPITAL_ORDER_ACTIVE_STATUSES if status in configured_statuses}
+        eligible_statuses = {
+            status
+            for status in _CAPITAL_ORDER_ACTIVE_STATUSES
+            if status in configured_statuses
+        }
     else:
         eligible_statuses = set(_CAPITAL_ORDER_ACTIVE_STATUSES)
     if not eligible_statuses:
         return
 
-    preapproved_state_names = _normalize_state_name_set(config.get_capital_preapproved_state_names())
+    preapproved_state_names = _normalize_state_name_set(
+        config.get_capital_preapproved_state_names()
+    )
     if not preapproved_state_names:
         preapproved_state_names = {"pre-approved", "preapproved"}
 
@@ -5568,17 +6108,23 @@ def _auto_cancel_capital_orders_for_state_mismatch(config: MaterialExchangeConfi
 
         current_state_name = _get_user_state_name(order.requester)
         in_preapproved_state = (
-            str(current_state_name).strip().casefold() in preapproved_state_names if current_state_name else False
+            str(current_state_name).strip().casefold() in preapproved_state_names
+            if current_state_name
+            else False
         )
         if in_preapproved_state:
             if order.requester_preapproved_mismatch_since:
                 order.requester_preapproved_mismatch_since = None
-                order.save(update_fields=["requester_preapproved_mismatch_since", "updated_at"])
+                order.save(
+                    update_fields=["requester_preapproved_mismatch_since", "updated_at"]
+                )
             continue
 
         if not order.requester_preapproved_mismatch_since:
             order.requester_preapproved_mismatch_since = now
-            order.save(update_fields=["requester_preapproved_mismatch_since", "updated_at"])
+            order.save(
+                update_fields=["requester_preapproved_mismatch_since", "updated_at"]
+            )
             if should_wait_for_grace:
                 continue
 
@@ -5667,14 +6213,20 @@ def process_capital_ship_orders():
     logger.info(_capital_log("Starting capital order processing cycle."))
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info(_capital_log("Buyback disabled; skipping capital order processing."))
+            logger.info(
+                _capital_log("Buyback disabled; skipping capital order processing.")
+            )
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.info(_capital_log("No MaterialExchangeConfig found; skipping capital order processing."))
+        logger.info(
+            _capital_log(
+                "No MaterialExchangeConfig found; skipping capital order processing."
+            )
+        )
         return
 
     try:
@@ -5707,14 +6259,18 @@ def process_capital_ship_orders():
         int(getattr(config, "corporation_id", 0) or 0),
     )
 
-    requester_character_ids_by_user_id = _collect_capital_requester_character_id_map(active_orders)
+    requester_character_ids_by_user_id = _collect_capital_requester_character_id_map(
+        active_orders
+    )
     try:
         _sync_capital_character_contracts(
             orders=active_orders,
             requester_character_ids_by_user_id=requester_character_ids_by_user_id,
         )
     except Exception as exc:
-        logger.warning(_capital_log("Failed personal-contract sync pass: %s"), exc, exc_info=True)
+        logger.warning(
+            _capital_log("Failed personal-contract sync pass: %s"), exc, exc_info=True
+        )
 
     requester_character_ids = sorted(
         {
@@ -5728,7 +6284,8 @@ def process_capital_ship_orders():
     contract_filter = Q(corporation_id=config.corporation_id)
     if requester_character_ids:
         contract_filter |= Q(corporation_id=0) & (
-            Q(assignee_id__in=requester_character_ids) | Q(acceptor_id__in=requester_character_ids)
+            Q(assignee_id__in=requester_character_ids)
+            | Q(acceptor_id__in=requester_character_ids)
         )
 
     contracts = list(
@@ -5751,7 +6308,14 @@ def process_capital_ship_orders():
     )
 
     finished_statuses = {"finished", "finished_issuer", "finished_contractor"}
-    failed_statuses = {"cancelled", "rejected", "failed", "expired", "deleted", "reversed"}
+    failed_statuses = {
+        "cancelled",
+        "rejected",
+        "failed",
+        "expired",
+        "deleted",
+        "reversed",
+    }
     processed_order_count = 0
     created_contract_matches = 0
     completed_contract_matches = 0
@@ -5777,7 +6341,9 @@ def process_capital_ship_orders():
 
             expected_assignee_ids = [
                 int(character_id)
-                for character_id in requester_character_ids_by_user_id.get(int(order.requester_id or 0), [])
+                for character_id in requester_character_ids_by_user_id.get(
+                    int(order.requester_id or 0), []
+                )
                 if int(character_id) > 0
             ]
             if not expected_assignee_ids:
@@ -5788,26 +6354,38 @@ def process_capital_ship_orders():
                 anomaly_count += 1
                 continue
             expected_assignee_id_set = set(expected_assignee_ids)
-            expected_assignee_id_labels = ", ".join(str(cid) for cid in sorted(expected_assignee_id_set))
+            expected_assignee_id_labels = ", ".join(
+                str(cid) for cid in sorted(expected_assignee_id_set)
+            )
 
             candidate_contract = None
             mismatch_reason = None
             sorted_matches = sorted(
                 matching_by_title,
-                key=lambda c: (str(getattr(c, "date_issued", "") or ""), int(c.contract_id)),
+                key=lambda c: (
+                    str(getattr(c, "date_issued", "") or ""),
+                    int(c.contract_id),
+                ),
                 reverse=True,
             )
             for contract in sorted_matches:
-                contract_character_ids = _capital_contract_requester_character_ids(contract)
+                contract_character_ids = _capital_contract_requester_character_ids(
+                    contract
+                )
                 if not contract_character_ids.intersection(expected_assignee_id_set):
-                    found_character_ids = ", ".join(str(cid) for cid in sorted(contract_character_ids)) or "none"
+                    found_character_ids = (
+                        ", ".join(str(cid) for cid in sorted(contract_character_ids))
+                        or "none"
+                    )
                     mismatch_reason = (
                         f"Contract #{contract.contract_id} requester mismatch "
                         f"(expected one of {expected_assignee_id_labels}, got {found_character_ids})."
                     )
                     continue
 
-                contract_status = str(getattr(contract, "status", "") or "").strip().lower()
+                contract_status = (
+                    str(getattr(contract, "status", "") or "").strip().lower()
+                )
                 if not _capital_contract_has_requested_hull(
                     contract,
                     int(order.ship_type_id),
@@ -5852,9 +6430,15 @@ def process_capital_ship_orders():
                         or getattr(candidate_contract, "date_issued", None)
                         or timezone.now()
                     )
-                order.contract_completed_at = getattr(candidate_contract, "date_completed", None) or timezone.now()
+                order.contract_completed_at = (
+                    getattr(candidate_contract, "date_completed", None)
+                    or timezone.now()
+                )
                 order.anomaly_reason = ""
-                order.notes = f"Contract #{candidate_contract.contract_id} completed for " f"{order.ship_type_name}."
+                order.notes = (
+                    f"Contract #{candidate_contract.contract_id} completed for "
+                    f"{order.ship_type_name}."
+                )
                 order.save(
                     update_fields=[
                         "status",
@@ -5900,9 +6484,11 @@ def process_capital_ship_orders():
                 )
                 continue
 
-            status_changed = order.status != CapitalShipOrder.Status.CONTRACT_CREATED or int(
-                order.esi_contract_id or 0
-            ) != int(candidate_contract.contract_id)
+            status_changed = (
+                order.status != CapitalShipOrder.Status.CONTRACT_CREATED
+                or int(order.esi_contract_id or 0)
+                != int(candidate_contract.contract_id)
+            )
             order.status = CapitalShipOrder.Status.CONTRACT_CREATED
             order.esi_contract_id = int(candidate_contract.contract_id)
             if not order.contract_created_at:
@@ -5975,9 +6561,13 @@ def process_capital_ship_orders():
             if order.status == CapitalShipOrder.Status.COMPLETED:
                 continue
             order.status = CapitalShipOrder.Status.COMPLETED
-            order.contract_completed_at = getattr(contract, "date_completed", None) or timezone.now()
+            order.contract_completed_at = (
+                getattr(contract, "date_completed", None) or timezone.now()
+            )
             order.anomaly_reason = ""
-            order.notes = f"Contract #{contract_id} completed for {order.ship_type_name}."
+            order.notes = (
+                f"Contract #{contract_id} completed for {order.ship_type_name}."
+            )
             order.save(
                 update_fields=[
                     "status",
@@ -6031,12 +6621,18 @@ def process_capital_ship_orders():
             anomaly_count += 1
             continue
 
-        if contract_status in {"outstanding", "in_progress"} and not _capital_contract_has_requested_hull(
+        if contract_status in {
+            "outstanding",
+            "in_progress",
+        } and not _capital_contract_has_requested_hull(
             contract, int(order.ship_type_id)
         ):
             _set_capital_order_anomaly(
                 order,
-                reason=(f"Contract #{contract_id} no longer contains requested hull " f"{order.ship_type_name}."),
+                reason=(
+                    f"Contract #{contract_id} no longer contains requested hull "
+                    f"{order.ship_type_name}."
+                ),
                 contract_id=contract_id,
                 contract_status=contract_status,
             )
@@ -6068,14 +6664,20 @@ def check_completed_material_exchange_contracts():
     """
     try:
         if not MaterialExchangeSettings.get_solo().is_enabled:
-            logger.info(_completion_log("Buyback disabled; skipping contract completion check."))
+            logger.info(
+                _completion_log("Buyback disabled; skipping contract completion check.")
+            )
             return
     except Exception:
         pass
 
     config = MaterialExchangeConfig.objects.first()
     if not config:
-        logger.info(_completion_log("No MaterialExchangeConfig found; skipping contract completion check."))
+        logger.info(
+            _completion_log(
+                "No MaterialExchangeConfig found; skipping contract completion check."
+            )
+        )
         return
 
     sell_orders_to_check = MaterialExchangeSellOrder.objects.filter(
@@ -6089,15 +6691,23 @@ def check_completed_material_exchange_contracts():
 
     if not cached_contracts.exists():
         logger.warning(
-            _completion_log("No cached contracts found for corporation %s. Run sync_esi_contracts task first."),
+            _completion_log(
+                "No cached contracts found for corporation %s. Run sync_esi_contracts task first."
+            ),
             config.corporation_id,
         )
         return
 
-    last_synced = cached_contracts.order_by("-last_synced").values_list("last_synced", flat=True).first()
+    last_synced = (
+        cached_contracts.order_by("-last_synced")
+        .values_list("last_synced", flat=True)
+        .first()
+    )
     contracts_by_id = {
         int(contract["contract_id"]): contract
-        for contract in cached_contracts.values("contract_id", "status", "date_completed")
+        for contract in cached_contracts.values(
+            "contract_id", "status", "date_completed"
+        )
     }
 
     logger.info(
@@ -6300,9 +6910,9 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
 
     try:
         # Step 1: Get character IDs from the corporation
-        character_ids = EveCharacter.objects.filter(corporation_id=corporation_id).values_list(
-            "character_id", flat=True
-        )
+        character_ids = EveCharacter.objects.filter(
+            corporation_id=corporation_id
+        ).values_list("character_id", flat=True)
 
         if not character_ids:
             raise ESITokenError(
@@ -6327,7 +6937,9 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
             try:
                 token_scope_names = list(token.scopes.values_list("name", flat=True))
                 if scope in token_scope_names:
-                    logger.debug(f"Found token for {scope} via character {token.character_id}")
+                    logger.debug(
+                        f"Found token for {scope} via character {token.character_id}"
+                    )
                     return token.character_id
             except Exception:
                 continue
@@ -6366,7 +6978,9 @@ def _get_character_for_scope(corporation_id: int, scope: str) -> int:
             f"Error checking tokens for corporation {corporation_id}: {exc}",
             exc_info=True,
         )
-        raise ESITokenError(f"Error checking tokens for corporation {corporation_id}: {exc}")
+        raise ESITokenError(
+            f"Error checking tokens for corporation {corporation_id}: {exc}"
+        )
 
 
 def _get_user_character_ids(user: User) -> list[int]:
@@ -6378,7 +6992,10 @@ def _get_user_character_ids(user: User) -> list[int]:
         from esi.models import Token
 
         for character_id in (
-            Token.objects.filter(user=user).require_valid().values_list("character_id", flat=True).distinct()
+            Token.objects.filter(user=user)
+            .require_valid()
+            .values_list("character_id", flat=True)
+            .distinct()
         ):
             if character_id:
                 character_ids.add(int(character_id))
@@ -6390,7 +7007,9 @@ def _get_user_character_ids(user: User) -> list[int]:
         from allianceauth.authentication.models import CharacterOwnership
 
         for character_id in (
-            CharacterOwnership.objects.filter(user=user).values_list("character__character_id", flat=True).distinct()
+            CharacterOwnership.objects.filter(user=user)
+            .values_list("character__character_id", flat=True)
+            .distinct()
         ):
             if character_id:
                 character_ids.add(int(character_id))

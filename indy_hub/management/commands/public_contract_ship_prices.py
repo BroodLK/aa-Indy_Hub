@@ -1,7 +1,11 @@
 """Print ship public-contract prices in F9-FUV, LXQ2-T and 9WVY-F using AA's ESI client."""
 
+# Django
 from django.core.management.base import BaseCommand
+
+# AA Example App
 from indy_hub.services.public_contract_scanner import scan_public_contracts
+
 
 class Command(BaseCommand):
     help = "Print ship prices from public contracts in F9-FUV, LXQ2-T and 9WVY-F."
@@ -23,7 +27,7 @@ class Command(BaseCommand):
         scan_result = scan_public_contracts(
             character_id=character_id,
             max_pages=max_pages,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
 
         results = scan_result["results"]
@@ -31,8 +35,10 @@ class Command(BaseCommand):
 
         self.stdout.write("\nFinal list:")
         if diagnostics["structure_failures"] > 0 and not scan_result["esi_token_used"]:
-            self.stdout.write("Note: Some structures could not be resolved. Providing --character-id may help resolve 'Location <ID>' entries to system names.")
-        
+            self.stdout.write(
+                "Note: Some structures could not be resolved. Providing --character-id may help resolve 'Location <ID>' entries to system names."
+            )
+
         self.stdout.write(
             f"Diagnostics: target contracts={diagnostics['target_matches']}, "
             f"total contracts={diagnostics['total_contracts']}, "
@@ -40,4 +46,6 @@ class Command(BaseCommand):
             f"unresolved locations={diagnostics['unresolved_locations']}, "
             f"item rows={diagnostics['item_rows']}, ship hulls={diagnostics['ship_hulls']}"
         )
-        self.stdout.write("\n".join(results) if results else "No matching ship contracts found.")
+        self.stdout.write(
+            "\n".join(results) if results else "No matching ship contracts found."
+        )
