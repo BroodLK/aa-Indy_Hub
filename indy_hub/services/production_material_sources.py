@@ -74,7 +74,9 @@ def _npc_station_names(location_ids: Iterable[int]) -> dict[int, str]:
 
         rows = NPCStation.objects.filter(id__in=ids).values_list("id", "name")
         return {
-            int(station_id): str(name).strip() for station_id, name in rows if station_id and str(name or "").strip()
+            int(station_id): str(name).strip()
+            for station_id, name in rows
+            if station_id and str(name or "").strip()
         }
     except Exception:
         logger.debug("SDE station names unavailable", exc_info=True)
@@ -114,7 +116,9 @@ def resolve_cached_location_names(
 
     # Fill gaps, and upgrade placeholders, from the offline station table.
     needs_station_lookup = [
-        location_id for location_id in ids if location_id not in resolved or resolved[location_id]["is_placeholder"]
+        location_id
+        for location_id in ids
+        if location_id not in resolved or resolved[location_id]["is_placeholder"]
     ]
     for location_id, station_name in _npc_station_names(needs_station_lookup).items():
         resolved[location_id] = {
@@ -132,7 +136,9 @@ def _describe_location(location_id: int, names: dict[int, dict[str, Any]]) -> di
         return {
             "location_name": entry["name"],
             "name_is_placeholder": bool(entry["is_placeholder"]),
-            "name_last_resolved": (entry["last_resolved"].isoformat() if entry["last_resolved"] else None),
+            "name_last_resolved": (
+                entry["last_resolved"].isoformat() if entry["last_resolved"] else None
+            ),
         }
     # No cached name yet. Say so rather than presenting an ID as a name.
     return {
@@ -148,7 +154,11 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
     ``blueprints=True`` lists BPC/BPO locations instead of materials.
     """
     base = CachedCharacterAsset.objects.filter(user=user, is_blueprint=blueprints)
-    rows = list(base.values("location_id").annotate(last_synced=Max("synced_at")).order_by("location_id"))
+    rows = list(
+        base.values("location_id")
+        .annotate(last_synced=Max("synced_at"))
+        .order_by("location_id")
+    )
     location_ids = [int(row["location_id"]) for row in rows if row.get("location_id")]
     if not location_ids:
         return {
@@ -168,15 +178,23 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
         # A raw_location_id that differs from the resolved root is a container.
         raw_location_id = row.get("raw_location_id")
         if raw_location_id and int(raw_location_id) != location_id:
-            containers_by_location.setdefault(location_id, {}).setdefault(int(raw_location_id), "")
+            containers_by_location.setdefault(location_id, {}).setdefault(
+                int(raw_location_id), ""
+            )
 
     # Name the containers from their own asset rows.
-    container_item_ids = {item_id for containers in containers_by_location.values() for item_id in containers}
+    container_item_ids = {
+        item_id
+        for containers in containers_by_location.values()
+        for item_id in containers
+    }
     if container_item_ids:
-        for row in base.model.objects.filter(user=user, item_id__in=sorted(container_item_ids)).values(
-            "item_id", "set_name", "type_id"
-        ):
-            label = str(row.get("set_name") or "").strip() or get_type_name(int(row["type_id"]))
+        for row in base.model.objects.filter(
+            user=user, item_id__in=sorted(container_item_ids)
+        ).values("item_id", "set_name", "type_id"):
+            label = str(row.get("set_name") or "").strip() or get_type_name(
+                int(row["type_id"])
+            )
             for containers in containers_by_location.values():
                 if int(row["item_id"]) in containers:
                     containers[int(row["item_id"])] = label
@@ -200,7 +218,9 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
                 "location_flags": sorted(flags_by_location.get(location_id, set())),
                 "containers": [
                     {"item_id": item_id, "name": label or f"Container {item_id}"}
-                    for item_id, label in sorted(containers_by_location.get(location_id, {}).items())
+                    for item_id, label in sorted(
+                        containers_by_location.get(location_id, {}).items()
+                    )
                 ],
             }
         )
@@ -271,11 +291,15 @@ def get_source_assets(
     Returns None when the user has no assets at that location at all, which the
     caller should treat as "not available to you".
     """
-    owns_location = CachedCharacterAsset.objects.filter(user=user, location_id=location_id).exists()
+    owns_location = CachedCharacterAsset.objects.filter(
+        user=user, location_id=location_id
+    ).exists()
     if not owns_location:
         return None
 
-    scoped = CachedCharacterAsset.objects.filter(user=user, location_id=location_id, is_blueprint=blueprints)
+    scoped = CachedCharacterAsset.objects.filter(
+        user=user, location_id=location_id, is_blueprint=blueprints
+    )
 
     # Narrowing by flag or container needs the parent chain, so pull the rows
     # and let the shared helpers walk them.
@@ -294,9 +318,9 @@ def get_source_assets(
         # The index must span every asset at the location, not just the scoped
         # subset, or container parents would be missing from the chain.
         chain_rows = list(
-            CachedCharacterAsset.objects.filter(user=user, location_id=location_id).values(
-                "item_id", "raw_location_id", "location_id", "location_flag"
-            )
+            CachedCharacterAsset.objects.filter(
+                user=user, location_id=location_id
+            ).values("item_id", "raw_location_id", "location_id", "location_flag")
         )
         index = build_asset_index_by_item_id(_rows_as_esi_shape(chain_rows))
 
@@ -310,7 +334,9 @@ def get_source_assets(
                 max_depth=MAX_CONTAINER_DEPTH,
             ):
                 continue
-            if container_item_id and not _has_container_ancestor(asset, index, container_item_id):
+            if container_item_id and not _has_container_ancestor(
+                asset, index, container_item_id
+            ):
                 continue
             matched.append(asset["_row"])
 
@@ -320,7 +346,9 @@ def get_source_assets(
             type_id = int(row["type_id"])
             if wanted and type_id not in wanted:
                 continue
-            entry = grouped.setdefault(type_id, {"quantity": 0, "last_synced": row["synced_at"]})
+            entry = grouped.setdefault(
+                type_id, {"quantity": 0, "last_synced": row["synced_at"]}
+            )
             entry["quantity"] += int(row["quantity"] or 0)
             if row["synced_at"] and row["synced_at"] > entry["last_synced"]:
                 entry["last_synced"] = row["synced_at"]
@@ -341,13 +369,17 @@ def get_source_assets(
                 "quantity": int(row["quantity"] or 0),
                 "last_synced": row["last_synced"],
             }
-            for row in scoped.values("type_id").annotate(quantity=Sum("quantity"), last_synced=Max("synced_at"))
+            for row in scoped.values("type_id").annotate(
+                quantity=Sum("quantity"), last_synced=Max("synced_at")
+            )
         ]
 
     max_age = asset_cache_max_age()
     now = timezone.now()
     names = resolve_cached_location_names([location_id])
-    newest = max((row["last_synced"] for row in aggregated if row["last_synced"]), default=None)
+    newest = max(
+        (row["last_synced"] for row in aggregated if row["last_synced"]), default=None
+    )
 
     return {
         "location_id": location_id,
@@ -362,7 +394,9 @@ def get_source_assets(
                 "type_id": row["type_id"],
                 "type_name": get_type_name(row["type_id"]),
                 "quantity": row["quantity"],
-                "last_synced": (row["last_synced"].isoformat() if row["last_synced"] else None),
+                "last_synced": (
+                    row["last_synced"].isoformat() if row["last_synced"] else None
+                ),
             }
             for row in sorted(aggregated, key=lambda item: item["type_id"])
             if row["quantity"] > 0
@@ -389,7 +423,9 @@ def parse_bpc_source(value: Any) -> tuple[int, int]:
     return location_id, container_item_id
 
 
-def blueprint_item_ids_at_source(user, *, location_id: int, container_item_id: int = 0) -> set[int] | None:
+def blueprint_item_ids_at_source(
+    user, *, location_id: int, container_item_id: int = 0
+) -> set[int] | None:
     """Item IDs of the user's cached blueprints at one source.
 
     Returns None when the user has no cached blueprints there, so a location
@@ -397,11 +433,17 @@ def blueprint_item_ids_at_source(user, *, location_id: int, container_item_id: i
     ever narrows the user's own blueprints to these IDs. A container narrows
     further to blueprints anywhere inside it (nested containers included).
     """
-    scoped = CachedCharacterAsset.objects.filter(user=user, location_id=location_id, is_blueprint=True)
+    scoped = CachedCharacterAsset.objects.filter(
+        user=user, location_id=location_id, is_blueprint=True
+    )
     if not scoped.exists():
         return None
     if not container_item_id:
-        return {int(item_id) for item_id in scoped.values_list("item_id", flat=True) if item_id}
+        return {
+            int(item_id)
+            for item_id in scoped.values_list("item_id", flat=True)
+            if item_id
+        }
 
     chain_rows = list(
         CachedCharacterAsset.objects.filter(user=user, location_id=location_id).values(
@@ -409,7 +451,9 @@ def blueprint_item_ids_at_source(user, *, location_id: int, container_item_id: i
         )
     )
     index = build_asset_index_by_item_id(_rows_as_esi_shape(chain_rows))
-    rows = list(scoped.values("item_id", "raw_location_id", "location_id", "location_flag"))
+    rows = list(
+        scoped.values("item_id", "raw_location_id", "location_id", "location_flag")
+    )
     return {
         int(asset["item_id"])
         for asset in _rows_as_esi_shape(rows)
@@ -426,18 +470,30 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
     """
     location_id, container_item_id = parse_bpc_source(token)
     if not location_id:
-        return {"token": "all", "item_ids": None, "rejected": bool(str(token or "").strip() not in ("", "all"))}
-    item_ids = blueprint_item_ids_at_source(user, location_id=location_id, container_item_id=container_item_id)
+        return {
+            "token": "all",
+            "item_ids": None,
+            "rejected": bool(str(token or "").strip() not in ("", "all")),
+        }
+    item_ids = blueprint_item_ids_at_source(
+        user, location_id=location_id, container_item_id=container_item_id
+    )
     if item_ids is None:
         return {"token": "all", "item_ids": None, "rejected": True}
     names = resolve_cached_location_names([location_id])
     last_synced = (
-        CachedCharacterAsset.objects.filter(user=user, location_id=location_id, is_blueprint=True)
+        CachedCharacterAsset.objects.filter(
+            user=user, location_id=location_id, is_blueprint=True
+        )
         .aggregate(last=Max("synced_at"))
         .get("last")
     )
     return {
-        "token": f"{location_id}:{container_item_id}" if container_item_id else str(location_id),
+        "token": (
+            f"{location_id}:{container_item_id}"
+            if container_item_id
+            else str(location_id)
+        ),
         "item_ids": item_ids,
         "rejected": False,
         "location_id": location_id,

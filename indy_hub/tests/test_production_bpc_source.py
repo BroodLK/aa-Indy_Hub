@@ -12,10 +12,18 @@ from indy_hub.services.production_material_sources import (
     describe_bpc_source,
     parse_bpc_source,
 )
-from indy_hub.services.production_simulation_state import normalize_preference_state
+from indy_hub.services.production_simulation_state import (
+    normalize_preference_state,
+)
 
 INDUSTRY_VIEW = Path(__file__).resolve().parents[1] / "views" / "industry.py"
-CRAFT_TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "indy_hub" / "industry" / "Craft_BP_v2.html"
+CRAFT_TEMPLATE = (
+    Path(__file__).resolve().parents[1]
+    / "templates"
+    / "indy_hub"
+    / "industry"
+    / "Craft_BP_v2.html"
+)
 
 STATION = 60003760
 OTHER_STATION = 60008494
@@ -23,7 +31,9 @@ CAN = 1_000_000_001
 NESTED_CAN = 1_000_000_002
 
 
-def _asset(user, item_id, *, location_id, raw_location_id=None, is_blueprint=True, type_id=1000):
+def _asset(
+    user, item_id, *, location_id, raw_location_id=None, is_blueprint=True, type_id=1000
+):
     return CachedCharacterAsset.objects.create(
         user=user,
         character_id=90000001,
@@ -55,23 +65,36 @@ class BlueprintSourceTests(TestCase):
         _asset(self.user, 501, location_id=STATION)
         # A can, a nested can inside it, and a blueprint in the nested can.
         _asset(self.user, CAN, location_id=STATION, is_blueprint=False, type_id=3467)
-        _asset(self.user, NESTED_CAN, location_id=STATION, raw_location_id=CAN, is_blueprint=False, type_id=3467)
+        _asset(
+            self.user,
+            NESTED_CAN,
+            location_id=STATION,
+            raw_location_id=CAN,
+            is_blueprint=False,
+            type_id=3467,
+        )
         _asset(self.user, 502, location_id=STATION, raw_location_id=NESTED_CAN)
         # Blueprint elsewhere, and another user's blueprint at the same station.
         _asset(self.user, 503, location_id=OTHER_STATION)
         _asset(self.other, 601, location_id=STATION)
 
     def test_location_narrows_to_that_location(self) -> None:
-        self.assertEqual(blueprint_item_ids_at_source(self.user, location_id=STATION), {501, 502})
+        self.assertEqual(
+            blueprint_item_ids_at_source(self.user, location_id=STATION), {501, 502}
+        )
 
     def test_container_includes_nested_containers(self) -> None:
         self.assertEqual(
-            blueprint_item_ids_at_source(self.user, location_id=STATION, container_item_id=CAN),
+            blueprint_item_ids_at_source(
+                self.user, location_id=STATION, container_item_id=CAN
+            ),
             {502},
         )
 
     def test_location_without_own_blueprints_is_not_a_source(self) -> None:
-        self.assertIsNone(blueprint_item_ids_at_source(self.other, location_id=OTHER_STATION))
+        self.assertIsNone(
+            blueprint_item_ids_at_source(self.other, location_id=OTHER_STATION)
+        )
 
     def test_describe_all_means_no_narrowing(self) -> None:
         result = describe_bpc_source(self.user, "all")
@@ -98,7 +121,7 @@ class BlueprintSourceWiringTests(SimpleTestCase):
     def test_view_narrows_owned_blueprints_by_source(self) -> None:
         source = INDUSTRY_VIEW.read_text(encoding="utf-8")
         self.assertIn("describe_bpc_source(request.user, bpc_source_token)", source)
-        self.assertIn('user_blueprints.filter(item_id__in=sorted(bpc_source["item_ids"]))', source)
+        self.assertIn('item_id__in=sorted(bpc_source["item_ids"])', source)
         # The resolved item IDs stay server-side.
         self.assertIn('if key != "item_ids"', source)
 
@@ -116,9 +139,15 @@ class BlueprintSourceWiringTests(SimpleTestCase):
 class PrivatePreferenceTests(SimpleTestCase):
     def test_last_build_location_is_a_validated_preference(self) -> None:
         state = normalize_preference_state(
-            {"lastSystemId": "30000142", "lastStructureId": 1035466617946, "bpcSource": f"{STATION}:{CAN}"}
+            {
+                "lastSystemId": "30000142",
+                "lastStructureId": 1035466617946,
+                "bpcSource": f"{STATION}:{CAN}",
+            }
         )
         self.assertEqual(state["lastSystemId"], "30000142")
         self.assertEqual(state["lastStructureId"], "1035466617946")
         self.assertEqual(state["bpcSource"], f"{STATION}:{CAN}")
-        self.assertNotIn("lastSystemId", normalize_preference_state({"lastSystemId": "Jita"}))
+        self.assertNotIn(
+            "lastSystemId", normalize_preference_state({"lastSystemId": "Jita"})
+        )

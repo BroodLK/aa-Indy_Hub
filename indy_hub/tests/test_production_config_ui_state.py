@@ -262,7 +262,9 @@ class ProductionConfigUiStateTests(TestCase):
         self.assertTrue(body["success"])
 
         simulation = ProductionSimulation.objects.get(id=body["simulation_id"])
-        saved_prices = list(CustomPrice.objects.filter(simulation=simulation).order_by("is_sale_price"))
+        saved_prices = list(
+            CustomPrice.objects.filter(simulation=simulation).order_by("is_sale_price")
+        )
         self.assertEqual(len(saved_prices), 2)
         self.assertEqual(saved_prices[0].item_type_id, 57518)
         self.assertFalse(saved_prices[0].is_sale_price)
@@ -469,8 +471,12 @@ class ProductionConfigUiStateTests(TestCase):
 
     def test_preferences_are_user_scoped(self) -> None:
         other_user = User.objects.create_user("sim-other", password="secret123")
-        first = ProductionSimulationPreference.objects.create(user=self.user, state={"materialsSourceMode": "manual"})
-        ProductionSimulationPreference.objects.create(user=other_user, state={"materialsSourceMode": "designated_bay"})
+        first = ProductionSimulationPreference.objects.create(
+            user=self.user, state={"materialsSourceMode": "manual"}
+        )
+        ProductionSimulationPreference.objects.create(
+            user=other_user, state={"materialsSourceMode": "designated_bay"}
+        )
         request = self.factory.get("/api/production-preferences/")
         request.user = self.user
         response = self._unwrap_view(production_simulation_preferences)(request)
@@ -486,14 +492,18 @@ class ProductionConfigUiStateTests(TestCase):
             type_id=34,
             quantity=10,
         )
-        request = self.factory.get("/api/production-material-source-assets/", {"location_id": 60000001})
+        request = self.factory.get(
+            "/api/production-material-source-assets/", {"location_id": 60000001}
+        )
         request.user = self.user
         response = self._unwrap_view(production_material_source_assets)(request)
         self.assertEqual(response.status_code, 403)
 
     @patch("indy_hub.views.api.refresh_material_exchange_sell_user_assets")
     def test_material_source_refresh_queues_user_asset_task(self, refresh_task) -> None:
-        refresh_task.delay.return_value = type("TaskResult", (), {"id": "asset-task-1"})()
+        refresh_task.delay.return_value = type(
+            "TaskResult", (), {"id": "asset-task-1"}
+        )()
         request = self.factory.post("/api/production-material-sources/refresh/")
         request.user = self.user
         response = self._unwrap_view(refresh_production_material_sources)(request)
@@ -518,7 +528,9 @@ class ProductionConfigUiStateTests(TestCase):
         self.assertEqual(response.status_code, 400)
 
     @patch("indy_hub.views.api.request_manual_refresh", return_value=(True, None))
-    def test_schedule_tracking_matches_owned_selected_character(self, refresh_task) -> None:
+    def test_schedule_tracking_matches_owned_selected_character(
+        self, refresh_task
+    ) -> None:
         now = timezone.now()
         simulation = ProductionSimulation.objects.create(
             user=self.user,
@@ -591,7 +603,9 @@ class SimulationNameUniquenessTests(TestCase):
         for index in range(3):
             self._create("", 81000 + index)
         self.assertEqual(
-            ProductionSimulation.objects.filter(user=self.user, simulation_name_normalized__isnull=True).count(),
+            ProductionSimulation.objects.filter(
+                user=self.user, simulation_name_normalized__isnull=True
+            ).count(),
             3,
         )
 
@@ -605,7 +619,9 @@ class SimulationNameUniquenessTests(TestCase):
             simulation_name="Shared Name",
         )
         self.assertEqual(
-            ProductionSimulation.objects.filter(simulation_name_normalized="shared name").count(),
+            ProductionSimulation.objects.filter(
+                simulation_name_normalized="shared name"
+            ).count(),
             2,
         )
 
@@ -613,7 +629,9 @@ class SimulationNameUniquenessTests(TestCase):
         # A conditional constraint would be silently skipped on MySQL, so
         # assert the index actually exists rather than trusting the model.
         with connection.cursor() as cursor:
-            constraints = connection.introspection.get_constraints(cursor, ProductionSimulation._meta.db_table)
+            constraints = connection.introspection.get_constraints(
+                cursor, ProductionSimulation._meta.db_table
+            )
         self.assertIn("indy_sim_user_name_normalized_uniq", constraints)
 
     def test_partial_save_keeps_the_normalized_key_in_step(self) -> None:
@@ -634,15 +652,21 @@ class SimulationNameUniquenessTests(TestCase):
         second = self._create("Placeholder", 81301)
         # Bypass save() to recreate the pre-migration state: colliding display
         # names whose normalized keys have not been backfilled yet.
-        ProductionSimulation.objects.filter(id=second.id).update(simulation_name="  titan ")
+        ProductionSimulation.objects.filter(id=second.id).update(
+            simulation_name="  titan "
+        )
 
-        migration = import_module("indy_hub.migrations.0131_production_simulation_preferences")
+        migration = import_module(
+            "indy_hub.migrations.0131_production_simulation_preferences"
+        )
         migration.populate_normalized_names(django_apps, None)
 
         first.refresh_from_db()
         second.refresh_from_db()
         self.assertEqual(first.simulation_name_normalized, "titan")
-        self.assertNotEqual(first.simulation_name_normalized, second.simulation_name_normalized)
+        self.assertNotEqual(
+            first.simulation_name_normalized, second.simulation_name_normalized
+        )
         self.assertIn("(2)", second.simulation_name)
 
 
@@ -709,7 +733,9 @@ class ScheduleTrackingEndpointTests(TestCase):
             }
         )
         simulation.refresh_from_db()
-        self.assertEqual(simulation.ui_state["scheduleTracking"]["trackingStartedAt"], anchor)
+        self.assertEqual(
+            simulation.ui_state["scheduleTracking"]["trackingStartedAt"], anchor
+        )
 
     def test_ignores_stale_jobs_outside_the_planned_window(self) -> None:
         now = timezone.now()
@@ -812,7 +838,13 @@ class ShareStateSerializerTests(SimpleTestCase):
     """
 
     def _source(self) -> str:
-        path = Path(__file__).resolve().parent.parent / "static" / "indy_hub" / "js" / "craft_bp.js"
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "static"
+            / "indy_hub"
+            / "js"
+            / "craft_bp.js"
+        )
         return path.read_text(encoding="utf-8")
 
     def test_share_state_does_not_pattern_match_configure_keys(self) -> None:
@@ -898,7 +930,9 @@ class UiStateMigrationTests(TestCase):
             # A v1 row: snake_case version key, no displayPreferences.
             ui_state={"schema_version": 1, "craftMainTab": "buy"},
         )
-        request = self.factory.get("/api/load-production-config/", {"simulation_id": simulation.id})
+        request = self.factory.get(
+            "/api/load-production-config/", {"simulation_id": simulation.id}
+        )
         request.user = self.user
         response = self._unwrap_view(load_production_config)(request)
         ui_state = json.loads(response.content)["ui_state"]
@@ -928,7 +962,9 @@ class UiStateMigrationTests(TestCase):
         self.assertEqual(response.status_code, 413)
         self.assertEqual(body["error"], "ui_state_too_large")
         self.assertIn("too large", body["message"])
-        self.assertFalse(ProductionSimulation.objects.filter(blueprint_type_id=95002).exists())
+        self.assertFalse(
+            ProductionSimulation.objects.filter(blueprint_type_id=95002).exists()
+        )
 
     def test_snapshot_within_the_budget_is_accepted(self) -> None:
         payload = {
@@ -977,7 +1013,9 @@ class PreferenceValueValidationTests(SimpleTestCase):
 
     def test_active_tab_must_be_a_known_tab(self) -> None:
         # showCraftMainTab() interpolates this into a querySelector.
-        self.assertEqual(normalize_preference_state({"activeTab": "buy"}), {"activeTab": "buy"})
+        self.assertEqual(
+            normalize_preference_state({"activeTab": "buy"}), {"activeTab": "buy"}
+        )
         for bad in ("x" * 5000, "plan'], [x", "not_a_tab", 42, None):
             self.assertEqual(normalize_preference_state({"activeTab": bad}), {})
 
@@ -990,7 +1028,9 @@ class PreferenceValueValidationTests(SimpleTestCase):
             normalize_preference_state({"scheduleTrackingOptIn": False}),
             {"scheduleTrackingOptIn": False},
         )
-        self.assertEqual(normalize_preference_state({"scheduleTrackingOptIn": "yes"}), {})
+        self.assertEqual(
+            normalize_preference_state({"scheduleTrackingOptIn": "yes"}), {}
+        )
 
     def test_tax_rate_is_bounded(self) -> None:
         self.assertEqual(normalize_preference_state({"taxRate": 7.5}), {"taxRate": 7.5})
@@ -1002,7 +1042,9 @@ class PreferenceValueValidationTests(SimpleTestCase):
             normalize_preference_state({"materialsSourceMode": "designated_bay"}),
             {"materialsSourceMode": "designated_bay"},
         )
-        self.assertEqual(normalize_preference_state({"materialsSourceMode": "anything"}), {})
+        self.assertEqual(
+            normalize_preference_state({"materialsSourceMode": "anything"}), {}
+        )
 
     def test_location_id_must_be_numeric(self) -> None:
         self.assertEqual(
@@ -1028,7 +1070,9 @@ class PreferenceValueValidationTests(SimpleTestCase):
         )
 
     def test_one_bad_field_does_not_discard_the_payload(self) -> None:
-        cleaned = normalize_preference_state({"activeTab": "nonsense", "scheduleTrackingOptIn": True, "unknown": 1})
+        cleaned = normalize_preference_state(
+            {"activeTab": "nonsense", "scheduleTrackingOptIn": True, "unknown": 1}
+        )
         self.assertEqual(cleaned, {"scheduleTrackingOptIn": True})
 
 
@@ -1066,7 +1110,9 @@ class MaterialSourceNamingTests(TestCase):
 
     def test_cached_structure_name_is_used(self) -> None:
         self._asset()
-        CachedStructureName.objects.create(structure_id=1030000000001, name="1DQ1-A - Test Keepstar")
+        CachedStructureName.objects.create(
+            structure_id=1030000000001, name="1DQ1-A - Test Keepstar"
+        )
         body = self._sources()
         source = body["sources"][0]
         self.assertEqual(source["location_name"], "1DQ1-A - Test Keepstar")
@@ -1082,7 +1128,9 @@ class MaterialSourceNamingTests(TestCase):
 
     def test_placeholder_row_is_still_flagged(self) -> None:
         self._asset()
-        CachedStructureName.objects.create(structure_id=1030000000001, name="Structure 1030000000001")
+        CachedStructureName.objects.create(
+            structure_id=1030000000001, name="Structure 1030000000001"
+        )
         self.assertTrue(self._sources()["sources"][0]["name_is_placeholder"])
 
     def test_response_carries_the_server_freshness_budget(self) -> None:
@@ -1108,9 +1156,11 @@ class MaterialSourceNamingTests(TestCase):
         # 0.3s sleep per structure) and writes rows even with
         # schedule_async=True. A patch-based assertion would not catch a
         # from-import, so guard the source directly.
-        service = (Path(__file__).resolve().parent.parent / "services" / "production_material_sources.py").read_text(
-            encoding="utf-8"
-        )
+        service = (
+            Path(__file__).resolve().parent.parent
+            / "services"
+            / "production_material_sources.py"
+        ).read_text(encoding="utf-8")
         body = service[service.index("def asset_cache_max_age") :]
         self.assertNotIn("resolve_structure_names(", body)
 
@@ -1124,7 +1174,9 @@ class MaterialSourceNamingTests(TestCase):
 
     def test_blueprint_sources_are_a_separate_listing(self) -> None:
         self._asset(item_id=8001, type_id=34, is_blueprint=False)
-        self._asset(item_id=8002, type_id=12345, is_blueprint=True, location_id=60003760)
+        self._asset(
+            item_id=8002, type_id=12345, is_blueprint=True, location_id=60003760
+        )
         materials = self._sources()["sources"]
         blueprints = self._sources(production_bpc_sources)["sources"]
         self.assertEqual([s["location_id"] for s in materials], [1030000000001])
@@ -1183,7 +1235,9 @@ class MaterialSourceAssetFilterTests(TestCase):
         return response.status_code, json.loads(response.content)
 
     def _qty(self, body, type_id=34):
-        return next((a["quantity"] for a in body["assets"] if a["type_id"] == type_id), 0)
+        return next(
+            (a["quantity"] for a in body["assets"] if a["type_id"] == type_id), 0
+        )
 
     def test_whole_location_sums_loose_and_contained(self) -> None:
         status, body = self._get()
@@ -1220,7 +1274,9 @@ class MaterialSourceAssetFilterTests(TestCase):
         self.assertEqual(status, 403)
 
     def test_response_reports_freshness_and_name(self) -> None:
-        CachedStructureName.objects.create(structure_id=1030000000001, name="Test Keepstar")
+        CachedStructureName.objects.create(
+            structure_id=1030000000001, name="Test Keepstar"
+        )
         status, body = self._get()
         self.assertEqual(status, 200)
         self.assertEqual(body["location_name"], "Test Keepstar")
@@ -1228,7 +1284,9 @@ class MaterialSourceAssetFilterTests(TestCase):
         self.assertFalse(body["is_stale"])
 
     def test_stale_assets_are_reported_stale(self) -> None:
-        CachedCharacterAsset.objects.filter(user=self.user).update(synced_at=timezone.now() - timedelta(days=5))
+        CachedCharacterAsset.objects.filter(user=self.user).update(
+            synced_at=timezone.now() - timedelta(days=5)
+        )
         status, body = self._get()
         self.assertEqual(status, 200)
         self.assertTrue(body["is_stale"])
@@ -1508,7 +1566,9 @@ class MaterialSourceRefreshGuardTests(TestCase):
             _production_asset_progress_key(self.user.id),
             {
                 "running": True,
-                "last_progress_at": (timezone.now() - timedelta(minutes=30)).timestamp(),
+                "last_progress_at": (
+                    timezone.now() - timedelta(minutes=30)
+                ).timestamp(),
             },
             600,
         )

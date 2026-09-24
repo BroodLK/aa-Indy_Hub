@@ -48,12 +48,16 @@ class StateTooLargeError(ValueError):
 def _encoded_size(value: Any) -> int:
     """Byte size of the value as it would be stored in the JSONField."""
     try:
-        return len(json.dumps(value, separators=(",", ":"), default=str).encode("utf-8"))
+        return len(
+            json.dumps(value, separators=(",", ":"), default=str).encode("utf-8")
+        )
     except (TypeError, ValueError):
         return 0
 
 
-def migrate_ui_state(value: Any, *, max_bytes: int = MAX_UI_STATE_BYTES) -> dict[str, Any]:
+def migrate_ui_state(
+    value: Any, *, max_bytes: int = MAX_UI_STATE_BYTES
+) -> dict[str, Any]:
     """Return a safe, versioned snapshot while tolerating older payloads.
 
     Applied on write *and* on read, so an old row is normalized before it
@@ -204,7 +208,9 @@ SHARE_INPUT_ALLOWLIST = {
     "buildScheduleMode": "text",
     "buildScheduleTargetDays": "number",
 }
-_SHARE_TEXT_ALLOWED = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")
+_SHARE_TEXT_ALLOWED = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
+)
 
 
 class ShareStateError(ValueError):
@@ -244,7 +250,9 @@ def _share_inputs(entries: Any) -> list[dict[str, Any]]:
         if kind is None or input_id in seen:
             continue
         if kind == "checkbox":
-            safe.append({"id": input_id, "type": kind, "checked": bool(entry.get("checked"))})
+            safe.append(
+                {"id": input_id, "type": kind, "checked": bool(entry.get("checked"))}
+            )
             seen.add(input_id)
             continue
         raw = "" if entry.get("value") is None else str(entry.get("value"))[:32]
@@ -282,7 +290,9 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
     me_te_raw = value.get("me_te") if isinstance(value.get("me_te"), dict) else {}
     configs_raw = me_te_raw.get("blueprintConfigs")
     configs: dict[str, dict[str, int]] = {}
-    for raw_type_id, entry in list((configs_raw if isinstance(configs_raw, dict) else {}).items())[:200]:
+    for raw_type_id, entry in list(
+        (configs_raw if isinstance(configs_raw, dict) else {}).items()
+    )[:200]:
         type_id = _positive_int(raw_type_id)
         if not type_id or not isinstance(entry, dict):
             continue
@@ -313,18 +323,30 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
     shipping = value.get("shipping") if isinstance(value.get("shipping"), dict) else {}
     route = _positive_int(shipping.get("route"))
     display = value.get("display") if isinstance(value.get("display"), dict) else {}
-    tree_open = display.get("tree_open") if isinstance(display.get("tree_open"), list) else []
-    configure_open = display.get("configure_open") if isinstance(display.get("configure_open"), list) else []
+    tree_open = (
+        display.get("tree_open") if isinstance(display.get("tree_open"), list) else []
+    )
+    configure_open = (
+        display.get("configure_open")
+        if isinstance(display.get("configure_open"), list)
+        else []
+    )
 
     return {
         "v": SHARE_SCHEMA_VERSION,
         "blueprint_type_id": blueprint_type_id,
         "runs": max(1, min(MAX_SHARE_RUNS, int(runs))),
         "tab": tab if tab in CRAFT_MAIN_TABS else "plan",
-        "buy": [type_id for type_id in (_positive_int(item) for item in buy) if type_id][:5000],
+        "buy": [
+            type_id for type_id in (_positive_int(item) for item in buy) if type_id
+        ][:5000],
         "me_te": {
-            "mainME": max(0, min(10, int(_finite_number(me_te_raw.get("mainME")) or 0))),
-            "mainTE": max(0, min(20, int(_finite_number(me_te_raw.get("mainTE")) or 0))),
+            "mainME": max(
+                0, min(10, int(_finite_number(me_te_raw.get("mainME")) or 0))
+            ),
+            "mainTE": max(
+                0, min(20, int(_finite_number(me_te_raw.get("mainTE")) or 0))
+            ),
             "blueprintConfigs": configs,
         },
         "prices": prices[:500],
@@ -335,7 +357,9 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
             "configure_open": [
                 item
                 for item in configure_open
-                if isinstance(item, str) and 0 < len(item) <= 64 and item.replace("-", "").replace("_", "").isalnum()
+                if isinstance(item, str)
+                and 0 < len(item) <= 64
+                and item.replace("-", "").replace("_", "").isalnum()
             ][:100],
         },
     }
@@ -358,7 +382,9 @@ def decode_share_param(encoded: Any) -> dict[str, Any]:
         raise ShareStateError("oversized")
     try:
         padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        payload = json.loads(
+            base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        )
     except (binascii.Error, UnicodeError, ValueError):
         raise ShareStateError("malformed") from None
     return normalize_share_state(payload)

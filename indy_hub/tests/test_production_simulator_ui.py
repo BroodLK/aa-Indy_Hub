@@ -46,7 +46,11 @@ class CraftTemplateStructureTests(SimpleTestCase):
     def test_header_include_is_context_isolated(self):
         # Without `only` the view's back_url leaks into the shared partial and
         # renders a Back button next to Save/Load.
-        include_line = next(line for line in self.template.splitlines() if "partials/page_header.html" in line)
+        include_line = next(
+            line
+            for line in self.template.splitlines()
+            if "partials/page_header.html" in line
+        )
         self.assertIn(" only ", f"{include_line} ")
 
     def test_stat_counters_explain_themselves(self):
@@ -64,7 +68,9 @@ class CraftTemplateStructureTests(SimpleTestCase):
         # updateQuickStats() used to count .craft-item-row nodes that
         # updateMaterialsTabFromState() had already removed, so the card
         # permanently showed '-'.
-        self.assertNotIn("document.querySelectorAll('.craft-item-row').length", self.template)
+        self.assertNotIn(
+            "document.querySelectorAll('.craft-item-row').length", self.template
+        )
         self.assertIn("totalMaterialsCount", self.script)
 
     def test_material_groups_render_as_collapsible_cards(self):
@@ -166,7 +172,9 @@ class ShoppingListPresentationTests(SimpleTestCase):
 class DerivedPriceEstimateTests(SimpleTestCase):
     def setUp(self) -> None:
         self.script = CRAFT_JS.read_text(encoding="utf-8")
-        self.api = (STATIC / "js" / "craft_bp_simulation_api.js").read_text(encoding="utf-8")
+        self.api = (STATIC / "js" / "craft_bp_simulation_api.js").read_text(
+            encoding="utf-8"
+        )
 
     def test_estimate_tier_sits_below_market_and_never_above_real(self) -> None:
         start = self.api.index("function getPrice(")
@@ -207,7 +215,9 @@ class ShippingSectionTests(SimpleTestCase):
 class BuyTabTaxDefaultTests(SimpleTestCase):
     def setUp(self) -> None:
         self.script = CRAFT_JS.read_text(encoding="utf-8")
-        self.view = (Path(__file__).resolve().parent.parent / "views" / "industry.py").read_text(encoding="utf-8")
+        self.view = (
+            Path(__file__).resolve().parent.parent / "views" / "industry.py"
+        ).read_text(encoding="utf-8")
 
     def test_industry_fees_default_on(self) -> None:
         block = self.view[self.view.index("industry_fee_config = {") :][:400]
@@ -229,7 +239,11 @@ class RunOptimizedRetiredTests(SimpleTestCase):
     def test_markup_and_code_are_gone(self):
         template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
         script = CRAFT_JS.read_text(encoding="utf-8")
-        for marker in ("run-optimized-pane", 'data-tab-name="run_optimized"', "runOptimizedChart"):
+        for marker in (
+            "run-optimized-pane",
+            'data-tab-name="run_optimized"',
+            "runOptimizedChart",
+        ):
             self.assertNotIn(marker, template)
         for marker in (
             "initializeRunOptimizedTab",
@@ -274,9 +288,13 @@ class RunOptimizedStateMigrationTests(SimpleTestCase):
 
     def test_valid_tab_is_kept(self):
         # AA Example App
-        from indy_hub.services.production_simulation_state import migrate_ui_state
+        from indy_hub.services.production_simulation_state import (
+            migrate_ui_state,
+        )
 
-        self.assertEqual(migrate_ui_state({"craftMainTab": "build"})["craftMainTab"], "build")
+        self.assertEqual(
+            migrate_ui_state({"craftMainTab": "build"})["craftMainTab"], "build"
+        )
 
     def test_retired_tab_is_not_a_valid_preference(self):
         # AA Example App

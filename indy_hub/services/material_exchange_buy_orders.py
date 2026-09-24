@@ -61,7 +61,9 @@ def get_recipient_characters(user) -> list[dict]:
     from allianceauth.authentication.models import CharacterOwnership
 
     recipients = []
-    for ownership in CharacterOwnership.objects.select_related("character").filter(user=user):
+    for ownership in CharacterOwnership.objects.select_related("character").filter(
+        user=user
+    ):
         character = ownership.character
         if character and getattr(character, "character_id", None):
             recipients.append(
@@ -126,7 +128,10 @@ def create_buy_order(
 
     with transaction.atomic():
         recipient_id_raw = str(recipient_character_id or "").strip()
-        recipient = next((row for row in recipient_characters if str(row["id"]) == recipient_id_raw), None)
+        recipient = next(
+            (row for row in recipient_characters if str(row["id"]) == recipient_id_raw),
+            None,
+        )
         if not recipient:
             result.errors.append(
                 BuyOrderError(
@@ -136,7 +141,9 @@ def create_buy_order(
             )
             return result
         locked_stock_items = list(
-            config.stock_items.select_for_update().filter(type_id__in=submitted_type_ids, quantity__gt=0)
+            config.stock_items.select_for_update().filter(
+                type_id__in=submitted_type_ids, quantity__gt=0
+            )
         )
         locked_reserved_quantities = (
             _get_reserved_buy_quantities(
@@ -156,7 +163,9 @@ def create_buy_order(
             # A type can have multiple stock rows (for example, one per
             # source structure).  Reservations are type-wide, so sum all
             # stacks first and subtract the reservation once.
-            current_available_by_type[type_id] = current_available_by_type.get(type_id, 0) + int(stock_item.quantity)
+            current_available_by_type[type_id] = current_available_by_type.get(
+                type_id, 0
+            ) + int(stock_item.quantity)
 
         for type_id, reserved_qty in current_reserved_by_type.items():
             current_available_by_type[type_id] = max(
@@ -194,30 +203,49 @@ def create_buy_order(
 
             row_data = stock_row_by_index.get(int(row_index))
             if not row_data:
-                result.errors.append(BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id}))
+                result.errors.append(
+                    BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id})
+                )
                 continue
 
             row_type_id = int(row_data.get("type_id") or 0)
-            requested_variant = str(submitted_entry.get("blueprint_variant") or "").strip().lower()
-            blueprint_variant = requested_variant if requested_variant in {"bpc", "bpo"} else ""
+            requested_variant = (
+                str(submitted_entry.get("blueprint_variant") or "").strip().lower()
+            )
+            blueprint_variant = (
+                requested_variant if requested_variant in {"bpc", "bpo"} else ""
+            )
             row_variant = str(row_data.get("blueprint_variant") or "").strip().lower()
             row_in_container = bool(str(row_data.get("container_path") or "").strip())
             requested_in_container = bool(submitted_entry.get("in_container"))
             if row_type_id != int(type_id):
-                result.errors.append(BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id}))
+                result.errors.append(
+                    BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id})
+                )
                 continue
             if (blueprint_variant or row_variant) and blueprint_variant != row_variant:
-                result.errors.append(BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id}))
+                result.errors.append(
+                    BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id})
+                )
                 continue
             if requested_in_container != row_in_container:
-                result.errors.append(BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id}))
+                result.errors.append(
+                    BuyOrderError("stale_row", row_refresh_error, {"type_id": type_id})
+                )
                 continue
 
-            display_type_name = str(row_data.get("display_type_name") or get_type_name(type_id))
+            display_type_name = str(
+                row_data.get("display_type_name") or get_type_name(type_id)
+            )
             snapshot_available_qty = int(row_data.get("available_quantity") or 0)
             current_available_qty = int(current_available_by_type.get(type_id, 0) or 0)
             available_qty = min(snapshot_available_qty, current_available_qty)
-            reserved_qty = int(current_reserved_by_type.get(type_id, row_data.get("reserved_quantity") or 0) or 0)
+            reserved_qty = int(
+                current_reserved_by_type.get(
+                    type_id, row_data.get("reserved_quantity") or 0
+                )
+                or 0
+            )
             if qty > available_qty:
                 result.errors.append(
                     BuyOrderError(
@@ -246,7 +274,9 @@ def create_buy_order(
                     continue
             if expected_unit_prices is not None and type_id in expected_unit_prices:
                 expected = Decimal(str(expected_unit_prices[type_id]))
-                if unit_price.quantize(Decimal("0.01")) != expected.quantize(Decimal("0.01")):
+                if unit_price.quantize(Decimal("0.01")) != expected.quantize(
+                    Decimal("0.01")
+                ):
                     result.errors.append(
                         BuyOrderError(
                             "price_changed",
@@ -259,7 +289,9 @@ def create_buy_order(
                     continue
             total_price = unit_price * qty
             total_cost += total_price
-            row_source_structure_ids = _normalize_source_structure_ids(row_data.get("source_structure_ids") or [])
+            row_source_structure_ids = _normalize_source_structure_ids(
+                row_data.get("source_structure_ids") or []
+            )
             selected_source_structure_groups.append(row_source_structure_ids)
 
             items_to_create.append(
@@ -281,7 +313,9 @@ def create_buy_order(
             result.errors.append(no_quantity_error)
             return result
 
-        if len(selected_source_structure_groups) > 1 and not _selected_buy_source_groups_share_source_location(
+        if len(
+            selected_source_structure_groups
+        ) > 1 and not _selected_buy_source_groups_share_source_location(
             selected_source_structure_groups
         ):
             result.errors.append(
@@ -294,9 +328,11 @@ def create_buy_order(
             )
             return result
 
-        selected_buy_location_id, selected_buy_location_name = _resolve_selected_buy_source_location_from_groups(
-            selected_source_structure_groups,
-            buy_name_map=buy_name_map,
+        selected_buy_location_id, selected_buy_location_name = (
+            _resolve_selected_buy_source_location_from_groups(
+                selected_source_structure_groups,
+                buy_name_map=buy_name_map,
+            )
         )
 
         client_order_ref = str(order_reference or "").strip()

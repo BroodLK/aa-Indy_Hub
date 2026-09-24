@@ -96,7 +96,11 @@ from ..tasks.material_exchange import (
     sync_material_exchange_stock,
 )
 from ..utils.analytics import emit_view_analytics_event
-from ..utils.eve import batch_cache_type_names, get_corporation_name, get_type_name
+from ..utils.eve import (
+    batch_cache_type_names,
+    get_corporation_name,
+    get_type_name,
+)
 from ..utils.material_exchange_pricing import (
     apply_markup_with_jita_bounds,
     compute_buy_price_from_member,
@@ -203,7 +207,8 @@ def _get_reserved_sell_quantities(
     ).filter(status_filter)
     if location_id is not None:
         queryset = queryset.filter(
-            Q(order__source_location_id=int(location_id)) | Q(order__source_location_id__isnull=True)
+            Q(order__source_location_id=int(location_id))
+            | Q(order__source_location_id__isnull=True)
         )
     if type_ids:
         queryset = queryset.filter(type_id__in=type_ids)
@@ -256,7 +261,9 @@ def _format_duration_short(delta) -> str:
     return " ".join(parts)
 
 
-def _build_timeline_breadcrumb_for_order(order, order_kind: str, perspective: str = "user"):
+def _build_timeline_breadcrumb_for_order(
+    order, order_kind: str, perspective: str = "user"
+):
     """Build compact timeline breadcrumb for order list cards."""
     breadcrumb = []
 
@@ -305,18 +312,22 @@ def _build_timeline_breadcrumb_for_order(order, order_kind: str, perspective: st
             }
         )
     else:
-        final_acceptance_label = _("User Accept") if perspective == "admin" else _("You Accept")
+        final_acceptance_label = (
+            _("User Accept") if perspective == "admin" else _("You Accept")
+        )
         breadcrumb.append(
             {
                 "status": _("Order Created"),
-                "completed": order.status in ["draft", "awaiting_validation", "validated", "completed"],
+                "completed": order.status
+                in ["draft", "awaiting_validation", "validated", "completed"],
                 "icon": "fa-pen",
             }
         )
         breadcrumb.append(
             {
                 "status": _("Awaiting Corp Contract"),
-                "completed": order.status in ["awaiting_validation", "validated", "completed"],
+                "completed": order.status
+                in ["awaiting_validation", "validated", "completed"],
                 "icon": "fa-file",
             }
         )
@@ -353,11 +364,15 @@ def _annotate_timeline_positions(timeline):
 
 def _attach_order_progress_data(order, order_kind: str, perspective: str = "user"):
     order.order_kind = order_kind
-    order.timeline_breadcrumb = _build_timeline_breadcrumb_for_order(order, order_kind, perspective)
+    order.timeline_breadcrumb = _build_timeline_breadcrumb_for_order(
+        order, order_kind, perspective
+    )
     order.timeline_breadcrumb = _annotate_timeline_positions(order.timeline_breadcrumb)
     order.progress_width = _calc_progress_width(order.timeline_breadcrumb)
     order.progress_total_steps = len(order.timeline_breadcrumb)
-    order.progress_completed_steps = sum(1 for step in order.timeline_breadcrumb if step.get("completed"))
+    order.progress_completed_steps = sum(
+        1 for step in order.timeline_breadcrumb if step.get("completed")
+    )
     order.progress_active_start = 0
     order.progress_active_width = 0
 
@@ -371,8 +386,12 @@ def _attach_order_progress_data(order, order_kind: str, perspective: str = "user
             current_step_index = order.progress_total_steps - 1
 
     if order.timeline_breadcrumb:
-        order.progress_current_label = order.timeline_breadcrumb[current_step_index]["status"]
-        current_step_position = order.timeline_breadcrumb[current_step_index].get("position_percent", 0)
+        order.progress_current_label = order.timeline_breadcrumb[current_step_index][
+            "status"
+        ]
+        current_step_position = order.timeline_breadcrumb[current_step_index].get(
+            "position_percent", 0
+        )
         order.progress_active_start = 0
         order.progress_active_width = max(0, min(100, round(current_step_position, 2)))
     else:
@@ -472,7 +491,9 @@ def _get_industry_market_group_ids() -> set[int]:
         from indy_hub.models import SdeIndustryActivityMaterial
 
         ids = set(
-            SdeIndustryActivityMaterial.objects.exclude(material_eve_type__market_group_id__isnull=True)
+            SdeIndustryActivityMaterial.objects.exclude(
+                material_eve_type__market_group_id__isnull=True
+            )
             .values_list("material_eve_type__market_group_id", flat=True)
             .distinct()
         )
@@ -501,7 +522,9 @@ def _get_market_group_children_map() -> dict[int | None, set[int]]:
         from indy_hub.models import SdeMarketGroup
 
         children_map: dict[int | None, set[int]] = {}
-        for group_id, parent_id in SdeMarketGroup.objects.values_list("id", "parent_id"):
+        for group_id, parent_id in SdeMarketGroup.objects.values_list(
+            "id", "parent_id"
+        ):
             children_map.setdefault(parent_id, set()).add(group_id)
     except Exception as exc:
         logger.warning("Failed to load market group tree: %s", exc)
@@ -559,7 +582,9 @@ def _get_default_market_group_profile_rule(
         if bool(raw_profile.get("allow_all")):
             return True, None
         group_ids: list[int] = []
-        for raw_group_id in raw_profile.get("market_group_ids") or raw_profile.get("group_ids") or []:
+        for raw_group_id in (
+            raw_profile.get("market_group_ids") or raw_profile.get("group_ids") or []
+        ):
             try:
                 group_id = int(raw_group_id)
             except (TypeError, ValueError):
@@ -585,7 +610,9 @@ def _get_type_ids_for_market_group_branches(expanded_group_ids: set[int]) -> set
 
     parent_map = _get_market_group_parent_map()
     allowed_type_ids: set[int] = set()
-    rows = ItemType.objects.exclude(market_group_id__isnull=True).values_list("id", "market_group_id")
+    rows = ItemType.objects.exclude(market_group_id__isnull=True).values_list(
+        "id", "market_group_id"
+    )
     for raw_type_id, raw_market_group_id in rows:
         try:
             type_id = int(raw_type_id)
@@ -630,9 +657,11 @@ def _get_allowed_type_ids_for_config(
                 if raw_group_ids is None:
                     explicit_all_groups = True
             else:
-                has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(
-                    config,
-                    mode="sell",
+                has_default_profile, default_profile_rule = (
+                    _get_default_market_group_profile_rule(
+                        config,
+                        mode="sell",
+                    )
                 )
                 if has_default_profile:
                     raw_group_ids = default_profile_rule
@@ -647,9 +676,11 @@ def _get_allowed_type_ids_for_config(
                 if raw_group_ids is None:
                     explicit_all_groups = True
             else:
-                has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(
-                    config,
-                    mode="buy",
+                has_default_profile, default_profile_rule = (
+                    _get_default_market_group_profile_rule(
+                        config,
+                        mode="buy",
+                    )
                 )
                 if has_default_profile:
                     raw_group_ids = default_profile_rule
@@ -657,15 +688,21 @@ def _get_allowed_type_ids_for_config(
                 else:
                     raw_group_ids = config.allowed_market_groups_buy
         else:
-            has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(
-                config,
-                mode=mode,
+            has_default_profile, default_profile_rule = (
+                _get_default_market_group_profile_rule(
+                    config,
+                    mode=mode,
+                )
             )
             if has_default_profile:
                 raw_group_ids = default_profile_rule
                 explicit_all_groups = default_profile_rule is None
             else:
-                raw_group_ids = config.allowed_market_groups_sell if mode == "sell" else config.allowed_market_groups_buy
+                raw_group_ids = (
+                    config.allowed_market_groups_sell
+                    if mode == "sell"
+                    else config.allowed_market_groups_buy
+                )
 
         if explicit_all_groups:
             return None
@@ -676,8 +713,12 @@ def _get_allowed_type_ids_for_config(
 
         expanded_group_ids = _expand_market_group_ids(group_ids)
         groups_key = ",".join(map(str, sorted(expanded_group_ids)))
-        groups_hash = hashlib.md5(groups_key.encode("utf-8"), usedforsecurity=False).hexdigest()
-        cache_key = "indy_hub:material_exchange:allowed_type_ids:v2:" f"{mode}:{groups_hash}"
+        groups_hash = hashlib.md5(
+            groups_key.encode("utf-8"), usedforsecurity=False
+        ).hexdigest()
+        cache_key = (
+            "indy_hub:material_exchange:allowed_type_ids:v2:" f"{mode}:{groups_hash}"
+        )
         cached = cache.get(cache_key)
         if cached is not None:
             return {int(x) for x in cached}
@@ -746,7 +787,10 @@ def _stock_item_is_allowed_for_buy(
         )
 
     allowed_type_ids = _get_allowed_type_ids_for_config(config, "buy")
-    return allowed_type_ids is None or int(getattr(stock_item, "type_id", 0) or 0) in allowed_type_ids
+    return (
+        allowed_type_ids is None
+        or int(getattr(stock_item, "type_id", 0) or 0) in allowed_type_ids
+    )
 
 
 def _find_sell_locations_for_type(
@@ -762,7 +806,9 @@ def _find_sell_locations_for_type(
     """Return sell locations where the given type is both present and accepted."""
 
     matches: list[dict[str, object]] = []
-    cache_by_location = allowed_type_ids_cache if allowed_type_ids_cache is not None else {}
+    cache_by_location = (
+        allowed_type_ids_cache if allowed_type_ids_cache is not None else {}
+    )
 
     for raw_location_id in sell_structure_ids:
         location_id = int(raw_location_id)
@@ -790,7 +836,8 @@ def _find_sell_locations_for_type(
         matches.append(
             {
                 "id": location_id,
-                "name": sell_structure_name_map.get(location_id) or f"Structure {location_id}",
+                "name": sell_structure_name_map.get(location_id)
+                or f"Structure {location_id}",
                 "quantity": quantity,
             }
         )
@@ -802,7 +849,9 @@ def _get_material_exchange_admins() -> list[User]:
     """Return active admins for Buyback (explicit permission holders only)."""
 
     try:
-        perm = Permission.objects.get(codename="can_manage_material_hub", content_type__app_label="indy_hub")
+        perm = Permission.objects.get(
+            codename="can_manage_material_hub", content_type__app_label="indy_hub"
+        )
         perm_users = User.objects.filter(
             Q(groups__permissions=perm) | Q(user_permissions=perm), is_active=True
         ).distinct()
@@ -820,11 +869,13 @@ def _fetch_user_assets_for_structure(
 ) -> tuple[dict[int, int], bool]:
     """Return aggregated asset quantities for the user's characters at structure(s) using cache."""
 
-    aggregated, _by_character, _by_location, scope_missing = _fetch_user_assets_for_structure_data(
-        user,
-        structure_ids,
-        allow_refresh=allow_refresh,
-        config=config,
+    aggregated, _by_character, _by_location, scope_missing = (
+        _fetch_user_assets_for_structure_data(
+            user,
+            structure_ids,
+            allow_refresh=allow_refresh,
+            config=config,
+        )
     )
     return aggregated, scope_missing
 
@@ -874,7 +925,9 @@ def _build_fitted_ship_excluded_item_ids(assets: list[dict]) -> set[int]:
 
         raw_location_id_raw = asset.get("raw_location_id")
         try:
-            raw_location_id = int(raw_location_id_raw) if raw_location_id_raw is not None else 0
+            raw_location_id = (
+                int(raw_location_id_raw) if raw_location_id_raw is not None else 0
+            )
         except (TypeError, ValueError):
             raw_location_id = 0
         if raw_location_id > 0:
@@ -906,7 +959,9 @@ def _build_fitted_ship_excluded_item_ids(assets: list[dict]) -> set[int]:
         for child in children_by_parent.get(parent_id, []):
             child_item_id_raw = child.get("item_id")
             try:
-                child_item_id = int(child_item_id_raw) if child_item_id_raw is not None else 0
+                child_item_id = (
+                    int(child_item_id_raw) if child_item_id_raw is not None else 0
+                )
             except (TypeError, ValueError):
                 child_item_id = 0
             if child_item_id <= 0 or child_item_id in excluded_item_ids:
@@ -934,7 +989,9 @@ def _fetch_user_assets_for_structure_data(
     """
 
     if assets is None:
-        assets, scope_missing = get_user_assets_cached(user, allow_refresh=allow_refresh)
+        assets, scope_missing = get_user_assets_cached(
+            user, allow_refresh=allow_refresh
+        )
     else:
         scope_missing = False
 
@@ -960,7 +1017,11 @@ def _fetch_user_assets_for_structure_data(
 
     if excluded_item_ids is None:
         exclude_fitted_ships = not bool(getattr(config, "allow_fitted_ships", False))
-        excluded_item_ids = _build_fitted_ship_excluded_item_ids(assets) if exclude_fitted_ships else set()
+        excluded_item_ids = (
+            _build_fitted_ship_excluded_item_ids(assets)
+            if exclude_fitted_ships
+            else set()
+        )
 
     for asset in assets:
         if excluded_item_ids:
@@ -1017,7 +1078,9 @@ def _resolve_user_character_names_map(user) -> dict[int, str]:
         # Alliance Auth
         from allianceauth.authentication.models import CharacterOwnership
 
-        ownerships = CharacterOwnership.objects.select_related("character").filter(user=user)
+        ownerships = CharacterOwnership.objects.select_related("character").filter(
+            user=user
+        )
         for ownership in ownerships:
             character = getattr(ownership, "character", None)
             if not character:
@@ -1047,7 +1110,9 @@ def _ensure_sell_assets_refresh_started(user) -> dict:
     cooldown_until = cache.get(me_sell_assets_esi_cooldown_key(int(user.id)))
     if cooldown_until:
         try:
-            retry_seconds = max(0, int(float(cooldown_until) - timezone.now().timestamp()))
+            retry_seconds = max(
+                0, int(float(cooldown_until) - timezone.now().timestamp())
+            )
         except (TypeError, ValueError):
             retry_seconds = int(ESI_DOWN_COOLDOWN_SECONDS)
         retry_minutes = int((retry_seconds + 59) // 60)
@@ -1087,7 +1152,10 @@ def _ensure_sell_assets_refresh_started(user) -> dict:
         )
 
         has_assets_token = (
-            Token.objects.filter(user=user).require_scopes(["esi-assets.read_assets.v1"]).require_valid().exists()
+            Token.objects.filter(user=user)
+            .require_scopes(["esi-assets.read_assets.v1"])
+            .require_valid()
+            .exists()
         )
     except Exception:
         total = 0
@@ -1143,7 +1211,9 @@ def _ensure_sell_assets_refresh_started(user) -> dict:
 @indy_hub_permission_required("can_access_indy_hub")
 def material_exchange_sell_assets_refresh_status(request):
     """Return JSON progress for sell-page user asset refresh."""
-    emit_view_analytics_event(view_name="material_exchange.sell_assets_refresh_status", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.sell_assets_refresh_status", request=request
+    )
 
     if not _is_material_exchange_enabled():
         return JsonResponse({"running": False, "finished": True, "error": "disabled"})
@@ -1200,7 +1270,9 @@ def _ensure_background_stock_sync_started(config) -> bool:
     if not config:
         return False
 
-    guard_key = f"indy_hub:material_exchange:stock_sync_dispatch:{int(config.corporation_id)}"
+    guard_key = (
+        f"indy_hub:material_exchange:stock_sync_dispatch:{int(config.corporation_id)}"
+    )
     if cache.get(guard_key):
         return False
     cache.set(guard_key, True, STOCK_SYNC_DISPATCH_GUARD_TTL_SECONDS)
@@ -1226,14 +1298,20 @@ def _ensure_background_stock_sync_started(config) -> bool:
 def _ensure_buy_stock_refresh_started(config) -> dict:
     """Start (if needed) an async refresh of buy stock and return the current progress state."""
 
-    progress_key = f"indy_hub:material_exchange:buy_stock_refresh:{int(config.corporation_id)}"
+    progress_key = (
+        f"indy_hub:material_exchange:buy_stock_refresh:{int(config.corporation_id)}"
+    )
     ttl_seconds = 10 * 60
     state = cache.get(progress_key) or {}
 
-    cooldown_until = cache.get(me_buy_stock_esi_cooldown_key(int(config.corporation_id)))
+    cooldown_until = cache.get(
+        me_buy_stock_esi_cooldown_key(int(config.corporation_id))
+    )
     if cooldown_until:
         try:
-            retry_seconds = max(0, int(float(cooldown_until) - timezone.now().timestamp()))
+            retry_seconds = max(
+                0, int(float(cooldown_until) - timezone.now().timestamp())
+            )
         except (TypeError, ValueError):
             retry_seconds = int(ESI_DOWN_COOLDOWN_SECONDS)
         retry_minutes = int((retry_seconds + 59) // 60)
@@ -1257,7 +1335,9 @@ def _ensure_buy_stock_refresh_started(config) -> dict:
     cache.set(progress_key, state, ttl_seconds)
 
     try:
-        task_result = refresh_material_exchange_buy_stock.delay(int(config.corporation_id))
+        task_result = refresh_material_exchange_buy_stock.delay(
+            int(config.corporation_id)
+        )
         logger.info(
             "Started buy stock refresh task for corporation %s (task_id=%s)",
             config.corporation_id,
@@ -1280,14 +1360,20 @@ def _ensure_buy_stock_refresh_started(config) -> dict:
 @indy_hub_permission_required("can_access_indy_hub")
 def material_exchange_buy_stock_refresh_status(request):
     """Return JSON progress for buy-page stock refresh."""
-    emit_view_analytics_event(view_name="material_exchange.buy_stock_refresh_status", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.buy_stock_refresh_status", request=request
+    )
     if not _is_material_exchange_enabled():
         return JsonResponse({"running": False, "finished": True, "error": "disabled"})
 
     config = _get_material_exchange_config()
     if not config:
-        return JsonResponse({"running": False, "finished": True, "error": "not_configured"})
-    progress_key = f"indy_hub:material_exchange:buy_stock_refresh:{int(config.corporation_id)}"
+        return JsonResponse(
+            {"running": False, "finished": True, "error": "not_configured"}
+        )
+    progress_key = (
+        f"indy_hub:material_exchange:buy_stock_refresh:{int(config.corporation_id)}"
+    )
     state = cache.get(progress_key) or {
         "running": False,
         "finished": False,
@@ -1360,7 +1446,9 @@ def material_exchange_buy_multibuy_parse(request):
         _("%(count)s valid line(s) parsed.") % {"count": len(payload_rows)},
     ]
     if invalid_lines:
-        summary_parts.append(_("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)})
+        summary_parts.append(
+            _("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)}
+        )
 
     return JsonResponse(
         {
@@ -1428,7 +1516,9 @@ def material_exchange_sell_multibuy_parse(request):
         _("%(count)s valid line(s) parsed.") % {"count": len(payload_rows)},
     ]
     if invalid_lines:
-        summary_parts.append(_("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)})
+        summary_parts.append(
+            _("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)}
+        )
 
     return JsonResponse(
         {
@@ -1451,7 +1541,10 @@ def _get_group_map(type_ids: list[int]) -> dict[int, str]:
         from eve_sde.models import ItemType
 
         item_types = ItemType.objects.filter(id__in=type_ids).select_related("group")
-        return {it.id: (it.group.name if getattr(it, "group", None) else "Other") for it in item_types}
+        return {
+            it.id: (it.group.name if getattr(it, "group", None) else "Other")
+            for it in item_types
+        }
     except Exception:
         return {}
 
@@ -1475,7 +1568,9 @@ def _get_type_name_map(type_ids: list[int]) -> dict[int, str]:
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
 
-        rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list("id", "name")
+        rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list(
+            "id", "name"
+        )
         type_name_map = {int(raw_id): str(raw_name or "") for raw_id, raw_name in rows}
     except Exception:
         type_name_map = {}
@@ -1520,7 +1615,9 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
     price_map: dict[int, dict[str, Decimal]] = {}
     missing_ids: list[int] = []
     try:
-        cached_entries = cache.get_many([_fuzzwork_price_cache_key(type_id) for type_id in unique_ids])
+        cached_entries = cache.get_many(
+            [_fuzzwork_price_cache_key(type_id) for type_id in unique_ids]
+        )
     except Exception:  # pragma: no cover - defensive (cache backend issues)
         cached_entries = {}
     for type_id in unique_ids:
@@ -1581,7 +1678,9 @@ def _fetch_fuzzwork_prices(type_ids: list[int]) -> dict[int, dict[str, Decimal]]
         if miss_entries:
             cache.set_many(miss_entries, FUZZWORK_PRICE_MISS_CACHE_TTL_SECONDS)
     except Exception:  # pragma: no cover - defensive (cache backend issues)
-        logger.debug("material_exchange: failed to cache fuzzwork prices", exc_info=True)
+        logger.debug(
+            "material_exchange: failed to cache fuzzwork prices", exc_info=True
+        )
 
     return price_map
 
@@ -1651,8 +1750,12 @@ def _build_refined_ore_pricing_context(
         "refined_sell_breakdowns": {},
         "refined_buy_breakdowns": {},
     }
-    sell_enabled = bool(getattr(config, "use_refined_minerals_for_ore_pricing_sell", False))
-    buy_enabled = bool(getattr(config, "use_refined_minerals_for_ore_pricing_buy", False))
+    sell_enabled = bool(
+        getattr(config, "use_refined_minerals_for_ore_pricing_sell", False)
+    )
+    buy_enabled = bool(
+        getattr(config, "use_refined_minerals_for_ore_pricing_buy", False)
+    )
     if not (sell_enabled or buy_enabled):
         return empty
     refine_rate = _to_decimal_or_zero(getattr(config, "ore_refine_rate_percent", 0))
@@ -1725,7 +1828,12 @@ def _build_refined_ore_pricing_context(
         jita = mineral_jita_prices.get(mineral_id) or {}
         jita_buy = Decimal(jita.get("buy") or 0)
         jita_sell = Decimal(jita.get("sell") or 0)
-        if jita_buy <= 0 and jita_sell <= 0 and mineral_id not in sell_override_map and mineral_id not in buy_override_map:
+        if (
+            jita_buy <= 0
+            and jita_sell <= 0
+            and mineral_id not in sell_override_map
+            and mineral_id not in buy_override_map
+        ):
             continue
 
         sell_override_price = _apply_item_override_price(
@@ -1793,10 +1901,19 @@ def _build_refined_ore_pricing_context(
                 minerals_detail.append(
                     {
                         "type_id": int(mineral_id),
-                        "name": str(mineral_name_map.get(int(mineral_id)) or f"Type {int(mineral_id)}"),
-                        "qty_per_unit": format(yield_per_unit.quantize(Decimal("0.00001")), ".5f"),
-                        "effective_price": format(effective_price.quantize(Decimal("0.01")), ".2f"),
-                        "subtotal_per_unit": format(subtotal_per_unit.quantize(Decimal("0.01")), ".2f"),
+                        "name": str(
+                            mineral_name_map.get(int(mineral_id))
+                            or f"Type {int(mineral_id)}"
+                        ),
+                        "qty_per_unit": format(
+                            yield_per_unit.quantize(Decimal("0.00001")), ".5f"
+                        ),
+                        "effective_price": format(
+                            effective_price.quantize(Decimal("0.01")), ".2f"
+                        ),
+                        "subtotal_per_unit": format(
+                            subtotal_per_unit.quantize(Decimal("0.01")), ".2f"
+                        ),
                     }
                 )
             if not usable or not minerals_detail or total_per_unit <= 0:
@@ -1805,13 +1922,17 @@ def _build_refined_ore_pricing_context(
                 "side": side,
                 "refine_rate_percent": refine_rate_str,
                 "portion_size": portion_size,
-                "total_per_unit": format(total_per_unit.quantize(Decimal("0.01")), ".2f"),
+                "total_per_unit": format(
+                    total_per_unit.quantize(Decimal("0.01")), ".2f"
+                ),
                 "minerals": minerals_detail,
             }
         return breakdowns
 
     refined_sell_breakdowns: dict[int, dict[str, object]] = (
-        _build_breakdown_map("sell", mineral_effective_sell_prices) if sell_enabled else {}
+        _build_breakdown_map("sell", mineral_effective_sell_prices)
+        if sell_enabled
+        else {}
     )
     refined_buy_breakdowns: dict[int, dict[str, object]] = (
         _build_breakdown_map("buy", mineral_effective_buy_prices) if buy_enabled else {}
@@ -1827,7 +1948,9 @@ def _build_refined_ore_pricing_context(
     }
 
 
-def _get_stock_jita_price_map(*, config: MaterialExchangeConfig, type_ids: list[int]) -> dict[int, dict[str, Decimal]]:
+def _get_stock_jita_price_map(
+    *, config: MaterialExchangeConfig, type_ids: list[int]
+) -> dict[int, dict[str, Decimal]]:
     """Return cached Jita buy/sell prices from MaterialExchangeStock for a config."""
 
     cleaned_type_ids: set[int] = set()
@@ -2181,15 +2304,23 @@ def _resolve_type_ids_for_sell_estimate_texts(
             continue
 
         if cache_key in _SELL_ESTIMATE_TYPE_LOOKUP_CACHE:
-            resolved_by_cache_key[cache_key] = _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[cache_key]
+            resolved_by_cache_key[cache_key] = _SELL_ESTIMATE_TYPE_LOOKUP_CACHE[
+                cache_key
+            ]
             continue
 
-        unresolved_candidate_keys[cache_key] = _build_sell_estimate_candidate_keys(normalized)
+        unresolved_candidate_keys[cache_key] = _build_sell_estimate_candidate_keys(
+            normalized
+        )
 
     if not unresolved_candidate_keys:
         return resolved_by_cache_key
 
-    candidate_keys: set[str] = {candidate_key for keys in unresolved_candidate_keys.values() for candidate_key in keys}
+    candidate_keys: set[str] = {
+        candidate_key
+        for keys in unresolved_candidate_keys.values()
+        for candidate_key in keys
+    }
     resolved_candidate_map: dict[str, int] = {}
 
     try:
@@ -2205,7 +2336,9 @@ def _resolve_type_ids_for_sell_estimate_texts(
             if raw_lookup_key not in resolved_candidate_map:
                 resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
 
-        unresolved_lookup_keys = {key for key in candidate_keys if key not in resolved_candidate_map}
+        unresolved_lookup_keys = {
+            key for key in candidate_keys if key not in resolved_candidate_map
+        }
         if unresolved_lookup_keys:
             normalized_rows = (
                 ItemType.objects.annotate(
@@ -2272,7 +2405,11 @@ def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], lis
         item_part = ""
         quantity: int | None = None
 
-        tab_parts = [str(part or "").strip() for part in line.split("\t") if str(part or "").strip()]
+        tab_parts = [
+            str(part or "").strip()
+            for part in line.split("\t")
+            if str(part or "").strip()
+        ]
         if len(tab_parts) >= 2:
             item_part = tab_parts[0]
             for quantity_candidate in tab_parts[1:]:
@@ -2281,14 +2418,24 @@ def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], lis
                     break
 
         if not item_part or quantity is None:
-            normalized_line = line.replace("\u00a0", " ").replace("\u202f", " ").replace("\u2009", " ").strip()
+            normalized_line = (
+                line.replace("\u00a0", " ")
+                .replace("\u202f", " ")
+                .replace("\u2009", " ")
+                .strip()
+            )
             match = re.match(r"^(.*\S)[ \t]+([0-9][0-9\s,._']*)$", normalized_line)
             if match:
                 item_part = str(match.group(1) or "").strip()
                 quantity = _parse_sell_estimate_positive_quantity(match.group(2))
 
         if not item_part or quantity is None:
-            normalized_line = line.replace("\u00a0", " ").replace("\u202f", " ").replace("\u2009", " ").strip()
+            normalized_line = (
+                line.replace("\u00a0", " ")
+                .replace("\u202f", " ")
+                .replace("\u2009", " ")
+                .strip()
+            )
             match = re.match(r"^([0-9][0-9\s,._']*)[ \t]+(.*\S)$", normalized_line)
             if match:
                 quantity = _parse_sell_estimate_positive_quantity(match.group(1))
@@ -2357,7 +2504,10 @@ def _get_estimate_accepting_sell_locations(
         allowed_type_ids = allowed_type_ids_cache[structure_id]
         if allowed_type_ids is None or int(type_id) in allowed_type_ids:
             accepted_locations.append(
-                str(sell_structure_name_map.get(int(structure_id)) or f"Structure {int(structure_id)}")
+                str(
+                    sell_structure_name_map.get(int(structure_id))
+                    or f"Structure {int(structure_id)}"
+                )
             )
     return accepted_locations
 
@@ -2394,7 +2544,9 @@ def _build_price_override_entry(
     return {"kind": "markup", "percent": markup_percent, "base": markup_base}
 
 
-def _build_sell_variant_quantities(*, assets: list[dict], location_id: int | None) -> dict[tuple[int, str], int]:
+def _build_sell_variant_quantities(
+    *, assets: list[dict], location_id: int | None
+) -> dict[tuple[int, str], int]:
     """Return available quantities keyed by (type_id, blueprint_variant)."""
 
     quantities: dict[tuple[int, str], int] = {}
@@ -2536,7 +2688,9 @@ def _normalize_saved_market_group_profiles(raw_profiles) -> list[dict[str, objec
                 "name": profile_name,
                 "allow_all": bool(raw_profile.get("allow_all")),
                 "market_group_ids": _normalize_market_group_id_list(
-                    raw_profile.get("market_group_ids") or raw_profile.get("group_ids") or []
+                    raw_profile.get("market_group_ids")
+                    or raw_profile.get("group_ids")
+                    or []
                 ),
             }
         )
@@ -2550,7 +2704,9 @@ def _match_market_group_profile_name(
 ) -> str:
     normalized_profiles = _normalize_saved_market_group_profiles(raw_profiles)
     allow_all = raw_group_rule is None
-    normalized_group_ids = () if allow_all else _normalize_market_group_id_list(raw_group_rule)
+    normalized_group_ids = (
+        () if allow_all else _normalize_market_group_id_list(raw_group_rule)
+    )
     for profile in normalized_profiles:
         if bool(profile.get("allow_all")) != allow_all:
             continue
@@ -2565,20 +2721,30 @@ def _get_structure_profile_name_map(
     mode: str,
 ) -> dict[int, str]:
     if mode == "sell":
-        structure_ids = [int(sid) for sid in (config.get_sell_structure_ids(include_primary=False) or [])]
+        structure_ids = [
+            int(sid)
+            for sid in (config.get_sell_structure_ids(include_primary=False) or [])
+        ]
         structure_group_map = config.get_sell_market_group_map()
         raw_profiles = getattr(config, "sell_market_group_profiles", []) or []
-        has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(config, mode="sell")
+        has_default_profile, default_profile_rule = (
+            _get_default_market_group_profile_rule(config, mode="sell")
+        )
         fallback_rule = (
             default_profile_rule
             if has_default_profile
             else list(getattr(config, "allowed_market_groups_sell", []) or []) or None
         )
     else:
-        structure_ids = [int(sid) for sid in (config.get_buy_structure_ids(include_primary=False) or [])]
+        structure_ids = [
+            int(sid)
+            for sid in (config.get_buy_structure_ids(include_primary=False) or [])
+        ]
         structure_group_map = config.get_buy_market_group_map()
         raw_profiles = getattr(config, "buy_market_group_profiles", []) or []
-        has_default_profile, default_profile_rule = _get_default_market_group_profile_rule(config, mode="buy")
+        has_default_profile, default_profile_rule = (
+            _get_default_market_group_profile_rule(config, mode="buy")
+        )
         fallback_rule = (
             default_profile_rule
             if has_default_profile
@@ -2637,7 +2803,9 @@ def _get_item_price_override_maps(
     sell_overrides: dict[int, dict[str, object]] = {}
     buy_overrides: dict[int, dict[str, object]] = {}
     try:
-        rows = MaterialExchangeItemPriceOverride.objects.filter(config=config).values_list(
+        rows = MaterialExchangeItemPriceOverride.objects.filter(
+            config=config
+        ).values_list(
             "type_id",
             "sell_markup_percent_override",
             "sell_markup_base_override",
@@ -2688,10 +2856,17 @@ def _get_item_price_override_maps(
         if type_id_int <= 0:
             continue
 
-        row_sell_profile_name = str(raw_row.get("sell_profile_name") or "").strip().casefold()
-        row_buy_profile_name = str(raw_row.get("buy_profile_name") or "").strip().casefold()
+        row_sell_profile_name = (
+            str(raw_row.get("sell_profile_name") or "").strip().casefold()
+        )
+        row_buy_profile_name = (
+            str(raw_row.get("buy_profile_name") or "").strip().casefold()
+        )
 
-        if normalized_sell_profile_name and row_sell_profile_name == normalized_sell_profile_name:
+        if (
+            normalized_sell_profile_name
+            and row_sell_profile_name == normalized_sell_profile_name
+        ):
             sell_override_value = _build_price_override_entry(
                 fixed_price_raw=raw_row.get("sell_price_override"),
                 markup_percent_raw=raw_row.get("sell_markup_percent_override"),
@@ -2700,7 +2875,10 @@ def _get_item_price_override_maps(
             if sell_override_value is not None:
                 sell_overrides[type_id_int] = sell_override_value
 
-        if normalized_buy_profile_name and row_buy_profile_name == normalized_buy_profile_name:
+        if (
+            normalized_buy_profile_name
+            and row_buy_profile_name == normalized_buy_profile_name
+        ):
             buy_override_value = _build_price_override_entry(
                 fixed_price_raw=raw_row.get("buy_price_override"),
                 markup_percent_raw=raw_row.get("buy_markup_percent_override"),
@@ -2726,23 +2904,37 @@ def _get_market_group_price_override_maps(
     normalized_sell_profile_name = str(sell_profile_name or "").strip().casefold()
     normalized_buy_profile_name = str(buy_profile_name or "").strip().casefold()
 
-    def _apply_market_group_override_row(raw_row, *, allow_global: bool, allow_profile_match: bool) -> None:
+    def _apply_market_group_override_row(
+        raw_row, *, allow_global: bool, allow_profile_match: bool
+    ) -> None:
         if not isinstance(raw_row, dict):
             return
         try:
-            market_group_id = int(raw_row.get("market_group_id") or raw_row.get("group_id") or 0)
+            market_group_id = int(
+                raw_row.get("market_group_id") or raw_row.get("group_id") or 0
+            )
         except (TypeError, ValueError):
             return
         if market_group_id <= 0:
             return
 
-        row_sell_profile_name = str(raw_row.get("sell_profile_name") or "").strip().casefold()
-        row_buy_profile_name = str(raw_row.get("buy_profile_name") or "").strip().casefold()
+        row_sell_profile_name = (
+            str(raw_row.get("sell_profile_name") or "").strip().casefold()
+        )
+        row_buy_profile_name = (
+            str(raw_row.get("buy_profile_name") or "").strip().casefold()
+        )
 
         is_global_sell_row = not row_sell_profile_name
         is_global_buy_row = not row_buy_profile_name
-        matches_sell_profile = bool(normalized_sell_profile_name) and row_sell_profile_name == normalized_sell_profile_name
-        matches_buy_profile = bool(normalized_buy_profile_name) and row_buy_profile_name == normalized_buy_profile_name
+        matches_sell_profile = (
+            bool(normalized_sell_profile_name)
+            and row_sell_profile_name == normalized_sell_profile_name
+        )
+        matches_buy_profile = (
+            bool(normalized_buy_profile_name)
+            and row_buy_profile_name == normalized_buy_profile_name
+        )
 
         sell_override = _build_price_override_entry(
             fixed_price_raw=raw_row.get("sell_price_override"),
@@ -2767,9 +2959,13 @@ def _get_market_group_price_override_maps(
                 buy_overrides[int(market_group_id)] = buy_override
 
     for raw_row in raw_rows:
-        _apply_market_group_override_row(raw_row, allow_global=True, allow_profile_match=False)
+        _apply_market_group_override_row(
+            raw_row, allow_global=True, allow_profile_match=False
+        )
     for raw_row in raw_rows:
-        _apply_market_group_override_row(raw_row, allow_global=False, allow_profile_match=True)
+        _apply_market_group_override_row(
+            raw_row, allow_global=False, allow_profile_match=True
+        )
 
     return sell_overrides, buy_overrides
 
@@ -2804,7 +3000,9 @@ def _get_market_group_parent_map() -> dict[int, int | None]:
     if cached is not None:
         try:
             return {
-                int(group_id): (int(parent_id) if parent_id not in (None, "", 0, "0") else None)
+                int(group_id): (
+                    int(parent_id) if parent_id not in (None, "", 0, "0") else None
+                )
                 for group_id, parent_id in cached.items()
             }
         except Exception:
@@ -2814,8 +3012,12 @@ def _get_market_group_parent_map() -> dict[int, int | None]:
         from ..models import SdeMarketGroup
 
         parent_map = {
-            int(group_id): (int(parent_id) if parent_id not in (None, "", 0, "0") else None)
-            for group_id, parent_id in SdeMarketGroup.objects.values_list("id", "parent_id")
+            int(group_id): (
+                int(parent_id) if parent_id not in (None, "", 0, "0") else None
+            )
+            for group_id, parent_id in SdeMarketGroup.objects.values_list(
+                "id", "parent_id"
+            )
         }
     except Exception as exc:
         logger.warning("Failed to load market-group parent map: %s", exc)
@@ -2829,7 +3031,9 @@ def _get_market_group_parent_map() -> dict[int, int | None]:
     return parent_map
 
 
-def _get_type_market_group_path_map(type_ids: set[int] | list[int]) -> dict[int, list[int]]:
+def _get_type_market_group_path_map(
+    type_ids: set[int] | list[int],
+) -> dict[int, list[int]]:
     """Return type_id -> market-group path IDs (root to leaf)."""
 
     cleaned_type_ids: set[int] = set()
@@ -2851,7 +3055,9 @@ def _get_type_market_group_path_map(type_ids: set[int] | list[int]) -> dict[int,
 
     parent_map = _get_market_group_parent_map()
     path_map: dict[int, list[int]] = {}
-    rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list("id", "market_group_id")
+    rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list(
+        "id", "market_group_id"
+    )
     for raw_type_id, raw_market_group_id in rows:
         try:
             type_id = int(raw_type_id)
@@ -2901,7 +3107,9 @@ def _build_type_market_group_label_map(
     try:
         from ..models import SdeMarketGroup
 
-        for raw_group_id, raw_name in SdeMarketGroup.objects.filter(id__in=group_ids).values_list("id", "name"):
+        for raw_group_id, raw_name in SdeMarketGroup.objects.filter(
+            id__in=group_ids
+        ).values_list("id", "name"):
             try:
                 group_id = int(raw_group_id)
             except (TypeError, ValueError):
@@ -3009,7 +3217,9 @@ def _compute_effective_sell_unit_price(
         default_unit_price = compute_refined_ore_price(
             reprocessing_outputs=ore_reprocessing_map[int(type_id)],
             portion_size=(ore_portion_size_map or {}).get(int(type_id), 1),
-            refine_rate_percent=Decimal(getattr(config, "ore_refine_rate_percent", 0) or 0),
+            refine_rate_percent=Decimal(
+                getattr(config, "ore_refine_rate_percent", 0) or 0
+            ),
             mineral_effective_prices=mineral_effective_sell_prices or {},
         )
     if default_unit_price is None:
@@ -3066,7 +3276,9 @@ def _compute_effective_buy_unit_price(
     resolved_type_id = int(type_id or 0)
     resolved_jita_buy = Decimal(jita_buy or 0)
     resolved_jita_sell = Decimal(jita_sell or 0)
-    resolved_default_price = Decimal(default_unit_price) if default_unit_price is not None else Decimal("0")
+    resolved_default_price = (
+        Decimal(default_unit_price) if default_unit_price is not None else Decimal("0")
+    )
     resolved_config = config
 
     if stock_item is not None:
@@ -3087,7 +3299,9 @@ def _compute_effective_buy_unit_price(
         refined_default = compute_refined_ore_price(
             reprocessing_outputs=ore_reprocessing_map[resolved_type_id],
             portion_size=(ore_portion_size_map or {}).get(resolved_type_id, 1),
-            refine_rate_percent=Decimal(getattr(resolved_config, "ore_refine_rate_percent", 0) or 0),
+            refine_rate_percent=Decimal(
+                getattr(resolved_config, "ore_refine_rate_percent", 0) or 0
+            ),
             mineral_effective_prices=mineral_effective_buy_prices or {},
         )
     if refined_default is not None:
@@ -3100,7 +3314,9 @@ def _compute_effective_buy_unit_price(
             jita_sell=resolved_jita_sell,
             base_choice=base_choice,
             percent=percent,
-            enforce_bounds=bool(getattr(resolved_config, "enforce_jita_price_bounds", False)),
+            enforce_bounds=bool(
+                getattr(resolved_config, "enforce_jita_price_bounds", False)
+            ),
         )
 
     override_value = _resolve_price_override_for_type(
@@ -3122,7 +3338,9 @@ def _compute_effective_buy_unit_price(
             jita_sell=resolved_jita_sell,
             base_choice=override_base,
             percent=Decimal(override_value.get("percent") or 0),
-            enforce_bounds=bool(getattr(resolved_config, "enforce_jita_price_bounds", False)),
+            enforce_bounds=bool(
+                getattr(resolved_config, "enforce_jita_price_bounds", False)
+            ),
         )
     else:
         effective_price = Decimal(override_value.get("price") or 0)
@@ -3145,7 +3363,9 @@ def _asset_quantity(asset: dict) -> int:
 
 def _asset_is_blueprint(asset: dict) -> bool:
     """Return True when an asset row represents a blueprint."""
-    if bool(asset.get("is_blueprint", False)) or bool(asset.get("is_blueprint_copy", False)):
+    if bool(asset.get("is_blueprint", False)) or bool(
+        asset.get("is_blueprint_copy", False)
+    ):
         return True
     explicit_variant = str(asset.get("blueprint_variant") or "").strip().lower()
     if explicit_variant in {"bpc", "bpo"}:
@@ -3240,8 +3460,12 @@ def _build_eve_type_icon_urls(
     else:
         primary_variant = "icon"
         fallback_variant = "render"
-    primary = f"https://images.evetech.net/types/{type_id_int}/{primary_variant}?size=64"
-    fallback = f"https://images.evetech.net/types/{type_id_int}/{fallback_variant}?size=64"
+    primary = (
+        f"https://images.evetech.net/types/{type_id_int}/{primary_variant}?size=64"
+    )
+    fallback = (
+        f"https://images.evetech.net/types/{type_id_int}/{fallback_variant}?size=64"
+    )
     return primary, fallback
 
 
@@ -3320,14 +3544,22 @@ def _build_sell_material_rows(
                 parent_by_item_id[item_id] = parent_id
 
     container_item_ids = set(children_by_parent.keys())
-    reserved_by_type = {int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()}
-    allowed_types = None if allowed_type_ids is None else {int(type_id) for type_id in allowed_type_ids}
+    reserved_by_type = {
+        int(type_id): int(qty or 0) for type_id, qty in reserved_quantities.items()
+    }
+    allowed_types = (
+        None
+        if allowed_type_ids is None
+        else {int(type_id) for type_id in allowed_type_ids}
+    )
     price_meta_cache: dict[tuple[int, str, bool], dict[str, object] | None] = {}
     not_accepted_reason = _("Item not accepted in its current location")
 
     refined_ore_context = _build_refined_ore_pricing_context(
         config=config,
-        type_ids={int(asset.get("type_id") or 0) for asset in assets if asset.get("type_id")},
+        type_ids={
+            int(asset.get("type_id") or 0) for asset in assets if asset.get("type_id")
+        },
         price_data=price_data,
     )
     ore_reprocessing_map = refined_ore_context["ore_reprocessing_map"]
@@ -3347,13 +3579,17 @@ def _build_sell_material_rows(
             return price_meta_cache[meta_key]
 
         type_name = get_type_name(type_id_int)
-        icon_url, icon_fallback_url = _build_eve_type_icon_urls(type_id_int, blueprint_variant=blueprint_variant)
+        icon_url, icon_fallback_url = _build_eve_type_icon_urls(
+            type_id_int, blueprint_variant=blueprint_variant
+        )
         is_allowed_at_location = allowed_types is None or type_id_int in allowed_types
 
         if blueprint_variant == "bpc":
             meta = {
                 "type_id": type_id_int,
-                "type_name": _format_sell_blueprint_type_name(type_name, blueprint_variant),
+                "type_name": _format_sell_blueprint_type_name(
+                    type_name, blueprint_variant
+                ),
                 "buy_price_from_member": Decimal("0"),
                 "default_buy_price_from_member": Decimal("0"),
                 "has_sell_price_override": False,
@@ -3363,7 +3599,9 @@ def _build_sell_material_rows(
                 "icon_url": icon_url,
                 "icon_fallback_url": icon_fallback_url,
                 "is_disabled": not is_allowed_at_location,
-                "disable_reason": not is_allowed_at_location and str(not_accepted_reason) or "",
+                "disable_reason": not is_allowed_at_location
+                and str(not_accepted_reason)
+                or "",
             }
             price_meta_cache[meta_key] = meta
             return meta
@@ -3371,7 +3609,9 @@ def _build_sell_material_rows(
         if not is_allowed_at_location:
             meta = {
                 "type_id": type_id_int,
-                "type_name": _format_sell_blueprint_type_name(type_name, blueprint_variant),
+                "type_name": _format_sell_blueprint_type_name(
+                    type_name, blueprint_variant
+                ),
                 "buy_price_from_member": Decimal("0"),
                 "default_buy_price_from_member": Decimal("0"),
                 "has_sell_price_override": False,
@@ -3407,25 +3647,29 @@ def _build_sell_material_rows(
             price_meta_cache[meta_key] = None
             return None
 
-        unit_price, default_unit_price, has_override = _compute_effective_sell_unit_price(
-            config=config,
-            type_id=type_id_int,
-            jita_buy=jita_buy,
-            jita_sell=jita_sell,
-            sell_override_map=sell_override_map,
-            sell_market_group_override_map=sell_market_group_override_map,
-            type_market_group_path_map=type_market_group_path_map,
-            sell_container_override=sell_container_override,
-            in_container=bool(in_container),
-            ore_reprocessing_map=ore_reprocessing_map,
-            ore_portion_size_map=ore_portion_size_map,
-            mineral_effective_sell_prices=mineral_effective_sell_prices,
+        unit_price, default_unit_price, has_override = (
+            _compute_effective_sell_unit_price(
+                config=config,
+                type_id=type_id_int,
+                jita_buy=jita_buy,
+                jita_sell=jita_sell,
+                sell_override_map=sell_override_map,
+                sell_market_group_override_map=sell_market_group_override_map,
+                type_market_group_path_map=type_market_group_path_map,
+                sell_container_override=sell_container_override,
+                in_container=bool(in_container),
+                ore_reprocessing_map=ore_reprocessing_map,
+                ore_portion_size_map=ore_portion_size_map,
+                mineral_effective_sell_prices=mineral_effective_sell_prices,
+            )
         )
         if unit_price <= 0:
             price_meta_cache[meta_key] = None
             return None
 
-        breakdown = refined_sell_breakdowns.get(type_id_int) if not bool(has_override) else None
+        breakdown = (
+            refined_sell_breakdowns.get(type_id_int) if not bool(has_override) else None
+        )
         meta = {
             "type_id": type_id_int,
             "type_name": _format_sell_blueprint_type_name(type_name, blueprint_variant),
@@ -3476,7 +3720,9 @@ def _build_sell_material_rows(
         total_qty_by_type[type_id] = total_qty_by_type.get(type_id, 0) + quantity
 
     remaining_by_type = {
-        int(type_id): max(int(total_qty) - int(reserved_by_type.get(int(type_id), 0)), 0)
+        int(type_id): max(
+            int(total_qty) - int(reserved_by_type.get(int(type_id), 0)), 0
+        )
         for type_id, total_qty in total_qty_by_type.items()
     }
 
@@ -3547,14 +3793,18 @@ def _build_sell_material_rows(
         else:
             available_for_type = remaining_by_type.get(int(type_id), 0)
             available_qty = min(int(quantity), int(available_for_type))
-            remaining_by_type[int(type_id)] = max(int(available_for_type) - available_qty, 0)
+            remaining_by_type[int(type_id)] = max(
+                int(available_for_type) - available_qty, 0
+            )
             reserved_qty = max(int(quantity) - available_qty, 0)
         row_idx = next_row_index()
         variant_token = str(meta.get("blueprint_variant") or "") or "std"
         container_scope_token = "incan" if in_container else "root"
 
         market_group_meta = (
-            (type_market_group_label_map or {}).get(int(type_id), {}) if type_market_group_label_map else {}
+            (type_market_group_label_map or {}).get(int(type_id), {})
+            if type_market_group_label_map
+            else {}
         )
         return {
             "row_kind": "item",
@@ -3569,7 +3819,9 @@ def _build_sell_material_rows(
             "blueprint_variant": str(meta.get("blueprint_variant") or ""),
             "icon_url": str(meta.get("icon_url") or ""),
             "icon_fallback_url": str(meta.get("icon_fallback_url") or ""),
-            "form_quantity_field_name": (f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"),
+            "form_quantity_field_name": (
+                f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"
+            ),
             "user_quantity": int(quantity),
             "reserved_quantity": int(reserved_qty),
             "available_quantity": int(available_qty),
@@ -3581,15 +3833,23 @@ def _build_sell_material_rows(
             "character_id": int(character_id) if int(character_id) > 0 else None,
             "character_name": str(character_name or ""),
             "market_group_name": str(market_group_meta.get("name") or ""),
-            "market_group_path": str(market_group_meta.get("path") or market_group_meta.get("name") or ""),
+            "market_group_path": str(
+                market_group_meta.get("path") or market_group_meta.get("name") or ""
+            ),
             "source_location_ids": sorted(
-                {int(location_id) for location_id in (source_location_ids or set()) if int(location_id) > 0}
+                {
+                    int(location_id)
+                    for location_id in (source_location_ids or set())
+                    if int(location_id) > 0
+                }
             ),
             "refined_breakdown": meta.get("refined_breakdown"),
             "refined_breakdown_json": str(meta.get("refined_breakdown_json") or ""),
         }
 
-    def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
+    def build_container_branch(
+        asset: dict, ancestors: list[str], depth: int
+    ) -> list[dict]:
         try:
             container_item_id = int(asset.get("item_id") or 0)
         except (TypeError, ValueError):
@@ -3634,17 +3894,23 @@ def _build_sell_material_rows(
                 child_character_id,
                 child_character_name,
             )
-            grouped_child_items[child_key] = grouped_child_items.get(child_key, 0) + child_qty
+            grouped_child_items[child_key] = (
+                grouped_child_items.get(child_key, 0) + child_qty
+            )
             child_location_id = resolve_asset_location_id(child)
             if child_location_id > 0:
-                grouped_child_location_ids.setdefault(child_key, set()).add(child_location_id)
+                grouped_child_location_ids.setdefault(child_key, set()).add(
+                    child_location_id
+                )
 
         child_rows: list[dict] = []
         grouped_items_sorted = sorted(
             grouped_child_items.items(),
             key=lambda pair: (
                 str(
-                    (get_price_meta(pair[0][0], pair[0][1], in_container=True) or {}).get("type_name")
+                    (
+                        get_price_meta(pair[0][0], pair[0][1], in_container=True) or {}
+                    ).get("type_name")
                     or get_type_name(pair[0][0])
                 ).lower(),
                 int(pair[0][0]),
@@ -3654,7 +3920,12 @@ def _build_sell_material_rows(
             ),
         )
         for child_key, child_qty in grouped_items_sorted:
-            child_type_id, child_blueprint_variant, child_character_id, child_character_name = child_key
+            (
+                child_type_id,
+                child_blueprint_variant,
+                child_character_id,
+                child_character_name,
+            ) = child_key
             row = build_item_row(
                 type_id=child_type_id,
                 quantity=child_qty,
@@ -3691,7 +3962,9 @@ def _build_sell_material_rows(
         container_icon_url = ""
         container_icon_fallback_url = ""
         if container_type_id > 0:
-            container_icon_url, container_icon_fallback_url = _build_eve_type_icon_urls(container_type_id)
+            container_icon_url, container_icon_fallback_url = _build_eve_type_icon_urls(
+                container_type_id
+            )
         container_row = {
             "row_kind": "container",
             "row_index": next_row_index(),
@@ -3703,7 +3976,9 @@ def _build_sell_material_rows(
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
-            "character_id": (int(container_character_id) if int(container_character_id) > 0 else None),
+            "character_id": (
+                int(container_character_id) if int(container_character_id) > 0 else None
+            ),
             "character_name": str(container_character_name or ""),
         }
 
@@ -3756,7 +4031,10 @@ def _build_sell_material_rows(
     root_items_sorted = sorted(
         root_items_by_key.items(),
         key=lambda pair: (
-            str((get_price_meta(pair[0][0], pair[0][1]) or {}).get("type_name") or get_type_name(pair[0][0])).lower(),
+            str(
+                (get_price_meta(pair[0][0], pair[0][1]) or {}).get("type_name")
+                or get_type_name(pair[0][0])
+            ).lower(),
             int(pair[0][0]),
             str(pair[0][1] or ""),
             str(pair[0][3] or "").lower(),
@@ -3811,7 +4089,11 @@ def _build_buy_stock_location_label(
 
     for raw_name in getattr(stock_item, "source_structure_names", []) or []:
         clean_name = str(raw_name or "").strip()
-        if clean_name and clean_name in visible_source_name_map.values() and clean_name not in labels:
+        if (
+            clean_name
+            and clean_name in visible_source_name_map.values()
+            and clean_name not in labels
+        ):
             labels.append(clean_name)
 
     for structure_id in visible_source_ids:
@@ -3834,7 +4116,9 @@ def _get_corp_blueprint_details_by_item_id(
             corporation_id=corporation_id,
         )
         if item_ids:
-            queryset = queryset.filter(item_id__in=[int(iid) for iid in item_ids if int(iid) > 0])
+            queryset = queryset.filter(
+                item_id__in=[int(iid) for iid in item_ids if int(iid) > 0]
+            )
         rows = queryset.values("item_id", "bp_type", "quantity", "runs", "type_name")
     except Exception:
         return {}
@@ -3946,7 +4230,9 @@ def _get_buy_location_scoped_corp_assets(
         return []
 
     try:
-        target_structure_ids = [int(sid) for sid in config.get_buy_structure_ids() or []]
+        target_structure_ids = [
+            int(sid) for sid in config.get_buy_structure_ids() or []
+        ]
     except Exception:
         target_structure_ids = []
     if not target_structure_ids:
@@ -3991,7 +4277,9 @@ def _get_buy_location_scoped_corp_assets(
             context_id_int = int(context_id)
             if context_id_int not in effective_location_ids:
                 effective_location_ids.append(context_id_int)
-            context_to_structure_ids.setdefault(context_id_int, set()).add(structure_id_int)
+            context_to_structure_ids.setdefault(context_id_int, set()).add(
+                structure_id_int
+            )
 
     index_by_item_id = build_asset_index_by_item_id(corp_assets or [])
     resolved_structure_ids_by_item_id: dict[int, tuple[int, ...]] = {}
@@ -4012,11 +4300,16 @@ def _get_buy_location_scoped_corp_assets(
         current_flag = str(asset_row.get("location_flag", "") or "")
         if current_flag == str(target_flag):
             return tuple(sorted(int(sid) for sid in structure_ids))
-        if current_location_id in hangar_fallback_context_ids and current_flag == "Hangar":
+        if (
+            current_location_id in hangar_fallback_context_ids
+            and current_flag == "Hangar"
+        ):
             return tuple(sorted(int(sid) for sid in structure_ids))
         return ()
 
-    def _resolve_structure_ids_for_asset(asset_row: dict, *, depth: int = 0) -> tuple[int, ...]:
+    def _resolve_structure_ids_for_asset(
+        asset_row: dict, *, depth: int = 0
+    ) -> tuple[int, ...]:
         if depth >= 25:
             return ()
 
@@ -4093,7 +4386,9 @@ def _build_current_buy_hangar_inventory_snapshot(
         if not bool(getattr(config, "buy_enabled", True)):
             continue
         try:
-            buy_structure_ids = [int(sid) for sid in config.get_buy_structure_ids() or []]
+            buy_structure_ids = [
+                int(sid) for sid in config.get_buy_structure_ids() or []
+            ]
         except Exception:
             buy_structure_ids = []
         if not buy_structure_ids:
@@ -4115,7 +4410,10 @@ def _build_current_buy_hangar_inventory_snapshot(
         selected_configs.append(config)
         configured_structure_ids.update(buy_structure_ids)
         configured_hangar_keys.update(
-            {(int(structure_id), int(hangar_division)) for structure_id in buy_structure_ids}
+            {
+                (int(structure_id), int(hangar_division))
+                for structure_id in buy_structure_ids
+            }
         )
 
     snapshot["location_count"] = len(configured_structure_ids)
@@ -4165,14 +4463,18 @@ def _build_current_buy_hangar_inventory_snapshot(
             if quantity <= 0:
                 continue
 
-            aggregated_quantities[type_id] = aggregated_quantities.get(type_id, 0) + quantity
+            aggregated_quantities[type_id] = (
+                aggregated_quantities.get(type_id, 0) + quantity
+            )
 
     if not aggregated_quantities:
         return snapshot
 
     stock_price_rows = (
         MaterialExchangeStock.objects.filter(
-            config_id__in=[int(config.id) for config in selected_configs if int(config.id or 0) > 0],
+            config_id__in=[
+                int(config.id) for config in selected_configs if int(config.id or 0) > 0
+            ],
             type_id__in=list(aggregated_quantities.keys()),
         )
         .values("type_id")
@@ -4190,7 +4492,9 @@ def _build_current_buy_hangar_inventory_snapshot(
         jita_sell_price = Decimal(price_map.get(int(type_id)) or 0)
         if jita_sell_price <= 0:
             continue
-        total_value += (jita_sell_price * Decimal(str(quantity))).quantize(Decimal("0.01"))
+        total_value += (jita_sell_price * Decimal(str(quantity))).quantize(
+            Decimal("0.01")
+        )
         priced_type_count += 1
 
     snapshot.update(
@@ -4238,10 +4542,6 @@ def _get_buy_stock_blueprint_variant_map(
         return {}
     if not corp_assets:
         return {}
-
-    wanted_type_ids: set[int] | None = None
-    if type_ids:
-        wanted_type_ids = {int(type_id) for type_id in type_ids if int(type_id) > 0}
 
     scoped_assets = _get_buy_location_scoped_corp_assets(
         config=config,
@@ -4326,7 +4626,9 @@ def _get_buy_stock_blueprint_variant_map_from_scoped_assets(
             elif not is_bpc_likely and (raw_quantity or 0) > 0:
                 is_bpc_likely = True  # Likely BPC runs
             elif not is_bpc_likely:
-                type_name_lower = str(asset.get("type_name") or get_type_name(type_id)).lower()
+                type_name_lower = str(
+                    asset.get("type_name") or get_type_name(type_id)
+                ).lower()
                 if " (bpc)" in type_name_lower or "blueprint copy" in type_name_lower:
                     is_bpc_likely = True
 
@@ -4401,7 +4703,8 @@ def _build_buy_material_rows(
 
     container_item_ids = set(children_by_parent.keys())
     remaining_by_type: dict[int, int] = {
-        int(type_id): max(int(meta.get("available_quantity") or 0), 0) for type_id, meta in stock_meta_by_type.items()
+        int(type_id): max(int(meta.get("available_quantity") or 0), 0)
+        for type_id, meta in stock_meta_by_type.items()
     }
     row_index = 0
     explicit_variant_by_item_id = {
@@ -4449,7 +4752,9 @@ def _build_buy_material_rows(
     def _location_label_from_source_ids(source_ids: list[int]) -> str:
         labels: list[str] = []
         for source_id in source_ids:
-            source_name = (buy_name_map.get(int(source_id)) or f"Structure {int(source_id)}").strip()
+            source_name = (
+                buy_name_map.get(int(source_id)) or f"Structure {int(source_id)}"
+            ).strip()
             if source_name and source_name not in labels:
                 labels.append(source_name)
         return ", ".join(labels).strip() or str(fallback_location_label or "").strip()
@@ -4504,7 +4809,9 @@ def _build_buy_material_rows(
             return None
 
         base_type_name = str(
-            base_meta.get("base_type_name") or base_meta.get("display_type_name") or get_type_name(type_id_int)
+            base_meta.get("base_type_name")
+            or base_meta.get("display_type_name")
+            or get_type_name(type_id_int)
         ).strip()
 
         variant = str(blueprint_variant or "").strip().lower()
@@ -4520,45 +4827,61 @@ def _build_buy_material_rows(
             default_unit_price = Decimal("0")
             has_override = False
         else:
-            normalized_source_ids = tuple(_normalize_source_structure_ids(source_structure_ids))
+            normalized_source_ids = tuple(
+                _normalize_source_structure_ids(source_structure_ids)
+            )
             pricing_context = pricing_context_by_source_ids.get(normalized_source_ids)
             if pricing_context is None:
-                active_buy_profile_name = _resolve_active_profile_name_for_structure_ids(
-                    config,
-                    mode="buy",
-                    structure_ids=normalized_source_ids,
+                active_buy_profile_name = (
+                    _resolve_active_profile_name_for_structure_ids(
+                        config,
+                        mode="buy",
+                        structure_ids=normalized_source_ids,
+                    )
                 )
-                _sell_item_overrides, resolved_buy_override_map = _get_item_price_override_maps(
-                    config,
-                    buy_profile_name=active_buy_profile_name,
+                _sell_item_overrides, resolved_buy_override_map = (
+                    _get_item_price_override_maps(
+                        config,
+                        buy_profile_name=active_buy_profile_name,
+                    )
                 )
-                _sell_group_overrides, resolved_buy_market_group_override_map = _get_market_group_price_override_maps(
-                    config,
-                    buy_profile_name=active_buy_profile_name,
+                _sell_group_overrides, resolved_buy_market_group_override_map = (
+                    _get_market_group_price_override_maps(
+                        config,
+                        buy_profile_name=active_buy_profile_name,
+                    )
                 )
                 pricing_context = (
                     resolved_buy_override_map,
                     resolved_buy_market_group_override_map,
                 )
                 pricing_context_by_source_ids[normalized_source_ids] = pricing_context
-            resolved_buy_override_map, resolved_buy_market_group_override_map = pricing_context
-            unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
-                type_id=type_id_int,
-                jita_buy=Decimal(base_meta.get("jita_buy_price") or 0),
-                jita_sell=Decimal(base_meta.get("jita_sell_price") or 0),
-                default_unit_price=Decimal(base_meta.get("default_sell_price_to_member") or 0),
-                config=config,
-                buy_override_map=resolved_buy_override_map,
-                buy_market_group_override_map=resolved_buy_market_group_override_map,
-                type_market_group_path_map=type_market_group_path_map,
-                buy_container_override=buy_container_override,
-                in_container=bool(in_container),
-                ore_reprocessing_map=ore_reprocessing_map,
-                ore_portion_size_map=ore_portion_size_map,
-                mineral_effective_buy_prices=mineral_effective_buy_prices,
+            resolved_buy_override_map, resolved_buy_market_group_override_map = (
+                pricing_context
+            )
+            unit_price, default_unit_price, has_override = (
+                _compute_effective_buy_unit_price(
+                    type_id=type_id_int,
+                    jita_buy=Decimal(base_meta.get("jita_buy_price") or 0),
+                    jita_sell=Decimal(base_meta.get("jita_sell_price") or 0),
+                    default_unit_price=Decimal(
+                        base_meta.get("default_sell_price_to_member") or 0
+                    ),
+                    config=config,
+                    buy_override_map=resolved_buy_override_map,
+                    buy_market_group_override_map=resolved_buy_market_group_override_map,
+                    type_market_group_path_map=type_market_group_path_map,
+                    buy_container_override=buy_container_override,
+                    in_container=bool(in_container),
+                    ore_reprocessing_map=ore_reprocessing_map,
+                    ore_portion_size_map=ore_portion_size_map,
+                    mineral_effective_buy_prices=mineral_effective_buy_prices,
+                )
             )
 
-        icon_variant = "bpc" if variant == "bpc" else ("bpo" if variant == "bpo" else "")
+        icon_variant = (
+            "bpc" if variant == "bpc" else ("bpo" if variant == "bpo" else "")
+        )
         icon_url, icon_fallback_url = _build_eve_type_icon_urls(
             type_id_int,
             blueprint_variant=icon_variant,
@@ -4574,9 +4897,13 @@ def _build_buy_material_rows(
             "icon_url": icon_url,
             "icon_fallback_url": icon_fallback_url,
             "default_source_structure_ids": [
-                int(sid) for sid in (base_meta.get("source_structure_ids") or []) if int(sid) > 0
+                int(sid)
+                for sid in (base_meta.get("source_structure_ids") or [])
+                if int(sid) > 0
             ],
-            "default_buy_location_label": str(base_meta.get("buy_location_label") or fallback_location_label),
+            "default_buy_location_label": str(
+                base_meta.get("buy_location_label") or fallback_location_label
+            ),
         }
 
     def _resolve_asset_blueprint_variant(asset: dict) -> str:
@@ -4584,7 +4911,9 @@ def _build_buy_material_rows(
             item_id = int(asset.get("item_id") or 0)
         except (TypeError, ValueError):
             item_id = 0
-        explicit_variant = str(explicit_variant_by_item_id.get(item_id) or "").strip().lower()
+        explicit_variant = (
+            str(explicit_variant_by_item_id.get(item_id) or "").strip().lower()
+        )
         if explicit_variant in {"bpc", "bpo"}:
             return explicit_variant
         return _asset_blueprint_variant(asset)
@@ -4603,7 +4932,12 @@ def _build_buy_material_rows(
             return None
 
         in_container = bool(ancestors)
-        item_meta = _resolve_item_meta(type_id, blueprint_variant, in_container=in_container, source_structure_ids=source_structure_ids)
+        item_meta = _resolve_item_meta(
+            type_id,
+            blueprint_variant,
+            in_container=in_container,
+            source_structure_ids=source_structure_ids,
+        )
         if item_meta is None:
             return None
 
@@ -4626,7 +4960,9 @@ def _build_buy_material_rows(
         location_label = (
             _location_label_from_source_ids(clean_source_ids)
             if clean_source_ids
-            else str(item_meta.get("default_buy_location_label") or fallback_location_label)
+            else str(
+                item_meta.get("default_buy_location_label") or fallback_location_label
+            )
         )
         row_idx = next_row_index()
         variant_token = str(item_meta.get("blueprint_variant") or "") or "std"
@@ -4639,11 +4975,18 @@ def _build_buy_material_rows(
                 parsed_runs = 0
             if parsed_runs > 0:
                 clean_bpc_runs = int(parsed_runs)
-        container_names = [_resolve_container_name_for_key(str(container_key)) for container_key in ancestors]
-        container_name_path = " > ".join(container_name for container_name in container_names if container_name)
+        container_names = [
+            _resolve_container_name_for_key(str(container_key))
+            for container_key in ancestors
+        ]
+        container_name_path = " > ".join(
+            container_name for container_name in container_names if container_name
+        )
 
         market_group_meta = (
-            (type_market_group_label_map or {}).get(int(type_id), {}) if type_market_group_label_map else {}
+            (type_market_group_label_map or {}).get(int(type_id), {})
+            if type_market_group_label_map
+            else {}
         )
         return {
             "row_kind": "item",
@@ -4655,20 +4998,30 @@ def _build_buy_material_rows(
             "quantity": int(quantity),
             "reserved_quantity": int(reserved_qty),
             "available_quantity": int(available_qty),
-            "display_sell_price_to_member": item_meta.get("display_sell_price_to_member"),
-            "default_sell_price_to_member": item_meta.get("default_sell_price_to_member"),
-            "has_buy_price_override": bool(item_meta.get("has_buy_price_override", False)),
+            "display_sell_price_to_member": item_meta.get(
+                "display_sell_price_to_member"
+            ),
+            "default_sell_price_to_member": item_meta.get(
+                "default_sell_price_to_member"
+            ),
+            "has_buy_price_override": bool(
+                item_meta.get("has_buy_price_override", False)
+            ),
             "icon_url": str(item_meta.get("icon_url") or ""),
             "icon_fallback_url": str(item_meta.get("icon_fallback_url") or ""),
             "source_structure_ids": clean_source_ids,
             "buy_location_label": location_label,
             "market_group_name": str(market_group_meta.get("name") or ""),
-            "market_group_path": str(market_group_meta.get("path") or market_group_meta.get("name") or ""),
+            "market_group_path": str(
+                market_group_meta.get("path") or market_group_meta.get("name") or ""
+            ),
             "depth": int(depth),
             "container_path": ",".join(ancestors),
             "container_name_path": str(container_name_path),
             "indent_padding_rem": round(max(0, depth) * 1.15, 2),
-            "form_quantity_field_name": (f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"),
+            "form_quantity_field_name": (
+                f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{row_idx}"
+            ),
             "refined_breakdown_json": (
                 json.dumps(refined_buy_breakdowns[int(type_id)])
                 if (
@@ -4679,7 +5032,9 @@ def _build_buy_material_rows(
             ),
         }
 
-    def build_container_branch(asset: dict, ancestors: list[str], depth: int) -> list[dict]:
+    def build_container_branch(
+        asset: dict, ancestors: list[str], depth: int
+    ) -> list[dict]:
         try:
             container_item_id = int(asset.get("item_id") or 0)
         except (TypeError, ValueError):
@@ -4735,7 +5090,9 @@ def _build_buy_material_rows(
                 int(child_runs),
                 tuple(sorted(child_source_ids)),
             )
-            grouped_child_items[group_key] = grouped_child_items.get(group_key, 0) + int(child_qty)
+            grouped_child_items[group_key] = grouped_child_items.get(
+                group_key, 0
+            ) + int(child_qty)
 
         child_rows: list[dict] = []
         grouped_items_sorted = sorted(
@@ -4797,7 +5154,9 @@ def _build_buy_material_rows(
         container_icon_url = ""
         container_icon_fallback_url = ""
         if container_type_id > 0:
-            container_icon_url, container_icon_fallback_url = _build_eve_type_icon_urls(container_type_id)
+            container_icon_url, container_icon_fallback_url = _build_eve_type_icon_urls(
+                container_type_id
+            )
 
         container_row = {
             "row_kind": "container",
@@ -4875,7 +5234,9 @@ def _build_buy_material_rows(
         root_items_by_key.items(),
         key=lambda pair: (
             str(
-                (_resolve_item_meta(pair[0][0], pair[0][1]) or {}).get("display_type_name")
+                (_resolve_item_meta(pair[0][0], pair[0][1]) or {}).get(
+                    "display_type_name"
+                )
                 or get_type_name(pair[0][0])
             ).lower(),
             int(pair[0][0]),
@@ -4918,12 +5279,16 @@ def _normalize_source_structure_ids(
     return normalized_source_ids
 
 
-def _get_buy_location_display_context(config: MaterialExchangeConfig) -> tuple[dict[int, str], str]:
+def _get_buy_location_display_context(
+    config: MaterialExchangeConfig,
+) -> tuple[dict[int, str], str]:
     buy_name_map = config.get_buy_structure_name_map()
     buy_location_names: list[str] = []
     for raw_structure_id in config.get_buy_structure_ids():
         structure_id = int(raw_structure_id)
-        buy_location_names.append(buy_name_map.get(structure_id) or f"Structure {structure_id}")
+        buy_location_names.append(
+            buy_name_map.get(structure_id) or f"Structure {structure_id}"
+        )
     buy_locations_label = ", ".join(buy_location_names).strip() or (
         config.structure_name or f"Structure {config.structure_id}"
     )
@@ -4953,11 +5318,16 @@ def _get_buy_pricing_context_for_structure_ids(
         config,
         buy_profile_name=active_buy_profile_name,
     )
-    _sell_group_overrides, resolved_buy_market_group_override_map = _get_market_group_price_override_maps(
-        config,
-        buy_profile_name=active_buy_profile_name,
+    _sell_group_overrides, resolved_buy_market_group_override_map = (
+        _get_market_group_price_override_maps(
+            config,
+            buy_profile_name=active_buy_profile_name,
+        )
     )
-    resolved_context = (resolved_buy_override_map, resolved_buy_market_group_override_map)
+    resolved_context = (
+        resolved_buy_override_map,
+        resolved_buy_market_group_override_map,
+    )
     buy_pricing_context_cache[normalized_source_ids] = resolved_context
     return resolved_context
 
@@ -4978,27 +5348,43 @@ def _build_current_buy_stock_snapshot(
     if buy_override_map is None:
         _sell_override_map, buy_override_map = _get_item_price_override_maps(config)
     if buy_market_group_override_map is None:
-        _sell_market_group_override_map, buy_market_group_override_map = _get_market_group_price_override_maps(config)
+        _sell_market_group_override_map, buy_market_group_override_map = (
+            _get_market_group_price_override_maps(config)
+        )
     if buy_container_override is None:
-        _sell_container_override, buy_container_override = _get_container_price_override_maps(config)
+        _sell_container_override, buy_container_override = (
+            _get_container_price_override_maps(config)
+        )
 
     buy_pricing_context_cache: dict[
         tuple[int, ...],
         tuple[dict[int, dict[str, object]], dict[int, dict[str, object]]],
     ] = {}
-    snapshot_stock_items = list(stock_items) if stock_items is not None else list(config.stock_items.filter(quantity__gt=0))
+    snapshot_stock_items = (
+        list(stock_items)
+        if stock_items is not None
+        else list(config.stock_items.filter(quantity__gt=0))
+    )
     pre_filter_stock_count = len(snapshot_stock_items)
 
     try:
-        snapshot_stock_items = [item for item in snapshot_stock_items if _stock_item_is_allowed_for_buy(config, item)]
+        snapshot_stock_items = [
+            item
+            for item in snapshot_stock_items
+            if _stock_item_is_allowed_for_buy(config, item)
+        ]
     except Exception as exc:
         logger.warning("Failed to apply market group filter: %s", exc)
     post_group_filter_count = len(snapshot_stock_items)
     stock_items_for_meta = list(snapshot_stock_items)
 
     stock_type_ids = {int(item.type_id) for item in stock_items_for_meta}
-    displayed_type_market_group_path_map = _get_type_market_group_path_map(stock_type_ids)
-    displayed_type_market_group_label_map = _build_type_market_group_label_map(displayed_type_market_group_path_map)
+    displayed_type_market_group_path_map = _get_type_market_group_path_map(
+        stock_type_ids
+    )
+    displayed_type_market_group_label_map = _build_type_market_group_label_map(
+        displayed_type_market_group_path_map
+    )
     stock_price_seed: dict[int, dict[str, Decimal]] = {
         int(item.type_id): {
             "buy": Decimal(item.jita_buy_price or 0),
@@ -5013,7 +5399,9 @@ def _build_current_buy_stock_snapshot(
     )
     stock_ore_reprocessing_map = stock_refined_ore_context["ore_reprocessing_map"]
     stock_ore_portion_size_map = stock_refined_ore_context["ore_portion_size_map"]
-    stock_mineral_effective_buy_prices = stock_refined_ore_context["mineral_effective_buy_prices"]
+    stock_mineral_effective_buy_prices = stock_refined_ore_context[
+        "mineral_effective_buy_prices"
+    ]
     scoped_buy_assets: list[dict] = []
     blueprint_details_by_item_id: dict[int, dict[str, object]] = {}
     try:
@@ -5058,14 +5446,19 @@ def _build_current_buy_stock_snapshot(
         )
 
     for stock_item in stock_items_for_meta:
-        reserved_qty = int(effective_reserved_quantities.get(int(stock_item.type_id), 0) or 0)
+        reserved_qty = int(
+            effective_reserved_quantities.get(int(stock_item.type_id), 0) or 0
+        )
         stock_item.reserved_quantity = reserved_qty
         stock_item.available_quantity = max(int(stock_item.quantity) - reserved_qty, 0)
         try:
-            stock_item.filtered_source_structure_ids = _get_allowed_buy_source_structure_ids_for_type(
-                config,
-                type_id=int(stock_item.type_id),
-                source_structure_ids=getattr(stock_item, "source_structure_ids", []) or [],
+            stock_item.filtered_source_structure_ids = (
+                _get_allowed_buy_source_structure_ids_for_type(
+                    config,
+                    type_id=int(stock_item.type_id),
+                    source_structure_ids=getattr(stock_item, "source_structure_ids", [])
+                    or [],
+                )
             )
         except Exception:
             stock_item.filtered_source_structure_ids = _normalize_source_structure_ids(
@@ -5079,7 +5472,11 @@ def _build_current_buy_stock_snapshot(
 
     priced_stock_items: list[MaterialExchangeStock] = []
     for stock_item in snapshot_stock_items:
-        blueprint_variant = str(stock_blueprint_variants.get(int(stock_item.type_id), "")).strip().lower()
+        blueprint_variant = (
+            str(stock_blueprint_variants.get(int(stock_item.type_id), ""))
+            .strip()
+            .lower()
+        )
         stock_item.blueprint_variant = blueprint_variant
         stock_item.display_type_name = _format_buy_stock_type_name(
             stock_item.type_name or get_type_name(int(stock_item.type_id)),
@@ -5104,26 +5501,32 @@ def _build_current_buy_stock_snapshot(
             default_unit_price = Decimal("0")
             has_override = False
         else:
-            effective_source_structure_ids = getattr(stock_item, "filtered_source_structure_ids", None) or getattr(
+            effective_source_structure_ids = getattr(
+                stock_item, "filtered_source_structure_ids", None
+            ) or getattr(
                 stock_item,
                 "source_structure_ids",
                 [],
             )
-            resolved_buy_override_map, resolved_buy_market_group_override_map = _get_buy_pricing_context_for_structure_ids(
-                config=config,
-                buy_pricing_context_cache=buy_pricing_context_cache,
-                source_structure_ids=effective_source_structure_ids,
+            resolved_buy_override_map, resolved_buy_market_group_override_map = (
+                _get_buy_pricing_context_for_structure_ids(
+                    config=config,
+                    buy_pricing_context_cache=buy_pricing_context_cache,
+                    source_structure_ids=effective_source_structure_ids,
+                )
             )
-            unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
-                stock_item=stock_item,
-                buy_override_map=resolved_buy_override_map,
-                buy_market_group_override_map=resolved_buy_market_group_override_map,
-                type_market_group_path_map=displayed_type_market_group_path_map,
-                buy_container_override=buy_container_override,
-                in_container=False,
-                ore_reprocessing_map=stock_ore_reprocessing_map,
-                ore_portion_size_map=stock_ore_portion_size_map,
-                mineral_effective_buy_prices=stock_mineral_effective_buy_prices,
+            unit_price, default_unit_price, has_override = (
+                _compute_effective_buy_unit_price(
+                    stock_item=stock_item,
+                    buy_override_map=resolved_buy_override_map,
+                    buy_market_group_override_map=resolved_buy_market_group_override_map,
+                    type_market_group_path_map=displayed_type_market_group_path_map,
+                    buy_container_override=buy_container_override,
+                    in_container=False,
+                    ore_reprocessing_map=stock_ore_reprocessing_map,
+                    ore_portion_size_map=stock_ore_portion_size_map,
+                    mineral_effective_buy_prices=stock_mineral_effective_buy_prices,
+                )
             )
         if unit_price <= 0 and blueprint_variant != "bpc":
             continue
@@ -5143,37 +5546,51 @@ def _build_current_buy_stock_snapshot(
 
     stock_meta_by_type: dict[int, dict[str, object]] = {}
     for stock_item in stock_items_for_meta:
-        blueprint_variant = str(stock_blueprint_variants.get(int(stock_item.type_id), "")).strip().lower()
+        blueprint_variant = (
+            str(stock_blueprint_variants.get(int(stock_item.type_id), ""))
+            .strip()
+            .lower()
+        )
         if blueprint_variant == "bpc":
             unit_price = Decimal("0")
             default_unit_price = Decimal("0")
             has_override = False
         else:
-            effective_source_structure_ids = getattr(stock_item, "filtered_source_structure_ids", None) or getattr(
+            effective_source_structure_ids = getattr(
+                stock_item, "filtered_source_structure_ids", None
+            ) or getattr(
                 stock_item,
                 "source_structure_ids",
                 [],
             )
-            resolved_buy_override_map, resolved_buy_market_group_override_map = _get_buy_pricing_context_for_structure_ids(
-                config=config,
-                buy_pricing_context_cache=buy_pricing_context_cache,
-                source_structure_ids=effective_source_structure_ids,
+            resolved_buy_override_map, resolved_buy_market_group_override_map = (
+                _get_buy_pricing_context_for_structure_ids(
+                    config=config,
+                    buy_pricing_context_cache=buy_pricing_context_cache,
+                    source_structure_ids=effective_source_structure_ids,
+                )
             )
-            unit_price, default_unit_price, has_override = _compute_effective_buy_unit_price(
-                stock_item=stock_item,
-                buy_override_map=resolved_buy_override_map,
-                buy_market_group_override_map=resolved_buy_market_group_override_map,
-                type_market_group_path_map=displayed_type_market_group_path_map,
-                buy_container_override=buy_container_override,
-                in_container=False,
-                ore_reprocessing_map=stock_ore_reprocessing_map,
-                ore_portion_size_map=stock_ore_portion_size_map,
-                mineral_effective_buy_prices=stock_mineral_effective_buy_prices,
+            unit_price, default_unit_price, has_override = (
+                _compute_effective_buy_unit_price(
+                    stock_item=stock_item,
+                    buy_override_map=resolved_buy_override_map,
+                    buy_market_group_override_map=resolved_buy_market_group_override_map,
+                    type_market_group_path_map=displayed_type_market_group_path_map,
+                    buy_container_override=buy_container_override,
+                    in_container=False,
+                    ore_reprocessing_map=stock_ore_reprocessing_map,
+                    ore_portion_size_map=stock_ore_portion_size_map,
+                    mineral_effective_buy_prices=stock_mineral_effective_buy_prices,
+                )
             )
         stock_meta_by_type[int(stock_item.type_id)] = {
             "type_id": int(stock_item.type_id),
-            "base_type_name": str(stock_item.type_name or get_type_name(int(stock_item.type_id))),
-            "display_type_name": str(stock_item.display_type_name or stock_item.type_name or ""),
+            "base_type_name": str(
+                stock_item.type_name or get_type_name(int(stock_item.type_id))
+            ),
+            "display_type_name": str(
+                stock_item.display_type_name or stock_item.type_name or ""
+            ),
             "blueprint_variant": str(blueprint_variant or ""),
             "display_sell_price_to_member": unit_price,
             "default_sell_price_to_member": default_unit_price,
@@ -5188,11 +5605,15 @@ def _build_current_buy_stock_snapshot(
                 or getattr(stock_item, "source_structure_ids", [])
                 or []
             ),
-            "buy_location_label": str(stock_item.buy_location_label or buy_locations_label),
+            "buy_location_label": str(
+                stock_item.buy_location_label or buy_locations_label
+            ),
         }
 
     stock_rows: list[dict[str, object]] = []
-    use_detailed_scoped_rows = bool(scoped_buy_assets) and len(scoped_buy_assets) <= int(MAX_BUY_BROWSE_SCOPED_ASSETS)
+    use_detailed_scoped_rows = bool(scoped_buy_assets) and len(
+        scoped_buy_assets
+    ) <= int(MAX_BUY_BROWSE_SCOPED_ASSETS)
     if scoped_buy_assets and not use_detailed_scoped_rows:
         logger.info(
             "Buy browse view falling back to flat stock rows for config %s: scoped asset count %s exceeds limit %s",
@@ -5210,7 +5631,8 @@ def _build_current_buy_stock_snapshot(
         blueprint_runs_by_item_id = {
             int(item_id): int(details.get("runs") or 0)
             for item_id, details in blueprint_details_by_item_id.items()
-            if str(details.get("variant") or "").strip().lower() == "bpc" and int(details.get("runs") or 0) > 0
+            if str(details.get("variant") or "").strip().lower() == "bpc"
+            and int(details.get("runs") or 0) > 0
         }
         stock_rows = _build_buy_material_rows(
             scoped_assets=scoped_buy_assets,
@@ -5229,16 +5651,22 @@ def _build_current_buy_stock_snapshot(
 
     if not stock_rows:
         for index, stock_item in enumerate(snapshot_stock_items):
-            variant_token = str(getattr(stock_item, "blueprint_variant", "") or "") or "std"
+            variant_token = (
+                str(getattr(stock_item, "blueprint_variant", "") or "") or "std"
+            )
             stock_rows.append(
                 {
                     "row_kind": "item",
                     "row_index": int(index),
                     "type_id": int(stock_item.type_id),
                     "display_type_name": str(
-                        getattr(stock_item, "display_type_name", "") or stock_item.type_name or ""
+                        getattr(stock_item, "display_type_name", "")
+                        or stock_item.type_name
+                        or ""
                     ),
-                    "blueprint_variant": str(getattr(stock_item, "blueprint_variant", "") or ""),
+                    "blueprint_variant": str(
+                        getattr(stock_item, "blueprint_variant", "") or ""
+                    ),
                     "bpc_runs": None,
                     "quantity": int(stock_item.quantity),
                     "reserved_quantity": int(stock_item.reserved_quantity),
@@ -5247,19 +5675,37 @@ def _build_current_buy_stock_snapshot(
                     "default_sell_price_to_member": stock_item.default_sell_price_to_member,
                     "has_buy_price_override": bool(stock_item.has_buy_price_override),
                     "icon_url": str(getattr(stock_item, "icon_url", "") or ""),
-                    "icon_fallback_url": str(getattr(stock_item, "icon_fallback_url", "") or ""),
+                    "icon_fallback_url": str(
+                        getattr(stock_item, "icon_fallback_url", "") or ""
+                    ),
                     "source_structure_ids": _normalize_source_structure_ids(
                         getattr(stock_item, "filtered_source_structure_ids", None)
                         or getattr(stock_item, "source_structure_ids", [])
                         or []
                     ),
-                    "buy_location_label": str(getattr(stock_item, "buy_location_label", "") or buy_locations_label),
+                    "buy_location_label": str(
+                        getattr(stock_item, "buy_location_label", "")
+                        or buy_locations_label
+                    ),
                     "market_group_name": str(
-                        (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("name") or ""
+                        (
+                            displayed_type_market_group_label_map.get(
+                                int(stock_item.type_id), {}
+                            )
+                        ).get("name")
+                        or ""
                     ),
                     "market_group_path": str(
-                        (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("path")
-                        or (displayed_type_market_group_label_map.get(int(stock_item.type_id), {})).get("name")
+                        (
+                            displayed_type_market_group_label_map.get(
+                                int(stock_item.type_id), {}
+                            )
+                        ).get("path")
+                        or (
+                            displayed_type_market_group_label_map.get(
+                                int(stock_item.type_id), {}
+                            )
+                        ).get("name")
                         or ""
                     ),
                     "depth": 0,
@@ -5270,7 +5716,9 @@ def _build_current_buy_stock_snapshot(
             )
 
     stock_row_by_index = {
-        int(row.get("row_index")): row for row in stock_rows if str(row.get("row_kind") or "").strip() == "item"
+        int(row.get("row_index")): row
+        for row in stock_rows
+        if str(row.get("row_kind") or "").strip() == "item"
     }
 
     return {
@@ -5309,12 +5757,18 @@ def _get_buy_browse_snapshot_cache_key(config: MaterialExchangeConfig) -> str:
     )
 
 
-def _build_cached_buy_browse_snapshot_value(buy_stock_snapshot: dict[str, object]) -> dict[str, object]:
+def _build_cached_buy_browse_snapshot_value(
+    buy_stock_snapshot: dict[str, object],
+) -> dict[str, object]:
     return {
         "stock_rows": buy_stock_snapshot.get("stock_rows") or [],
         "stock_meta_by_type": buy_stock_snapshot.get("stock_meta_by_type") or {},
-        "pre_filter_stock_count": int(buy_stock_snapshot.get("pre_filter_stock_count") or 0),
-        "post_group_filter_count": int(buy_stock_snapshot.get("post_group_filter_count") or 0),
+        "pre_filter_stock_count": int(
+            buy_stock_snapshot.get("pre_filter_stock_count") or 0
+        ),
+        "post_group_filter_count": int(
+            buy_stock_snapshot.get("post_group_filter_count") or 0
+        ),
         "scoped_asset_count": int(buy_stock_snapshot.get("scoped_asset_count") or 0),
         "used_detailed_rows": bool(buy_stock_snapshot.get("used_detailed_rows")),
     }
@@ -5409,7 +5863,9 @@ def _get_buy_stock_snapshot_for_submission(
         snapshot_cache_key = _get_buy_browse_snapshot_cache_key(config)
         buy_stock_snapshot_static = cache.get(snapshot_cache_key)
     if buy_stock_snapshot_static is None:
-        buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
+        buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(
+            config=config
+        )
 
     effective_reserved_quantities = reserved_quantities
     if effective_reserved_quantities is None:
@@ -5443,12 +5899,15 @@ def _apply_reserved_quantities_to_buy_stock_snapshot(
     reserved_quantities: dict[int, int] | None = None,
 ) -> dict[str, object]:
     effective_reserved_quantities = {
-        int(type_id): int(quantity or 0) for type_id, quantity in (reserved_quantities or {}).items()
+        int(type_id): int(quantity or 0)
+        for type_id, quantity in (reserved_quantities or {}).items()
     }
 
     stock_meta_by_type: dict[int, dict[str, object]] = {}
     remaining_available_by_type: dict[int, int] = {}
-    for raw_type_id, raw_meta in (buy_stock_snapshot.get("stock_meta_by_type") or {}).items():
+    for raw_type_id, raw_meta in (
+        buy_stock_snapshot.get("stock_meta_by_type") or {}
+    ).items():
         type_id = int(raw_type_id)
         meta = dict(raw_meta or {})
         quantity = int(meta.get("quantity") or 0)
@@ -5465,22 +5924,30 @@ def _apply_reserved_quantities_to_buy_stock_snapshot(
         if str(row.get("row_kind") or "").strip() == "item":
             type_id = int(row.get("type_id") or 0)
             quantity = int(row.get("quantity") or 0)
-            available_for_type = max(int(remaining_available_by_type.get(type_id, 0) or 0), 0)
+            available_for_type = max(
+                int(remaining_available_by_type.get(type_id, 0) or 0), 0
+            )
             available_qty = min(quantity, available_for_type)
             reserved_qty = max(quantity - available_qty, 0)
-            remaining_available_by_type[type_id] = max(available_for_type - available_qty, 0)
+            remaining_available_by_type[type_id] = max(
+                available_for_type - available_qty, 0
+            )
             row["reserved_quantity"] = int(reserved_qty)
             row["available_quantity"] = int(available_qty)
 
             variant_token = str(row.get("blueprint_variant") or "") or "std"
-            container_scope_token = "incan" if str(row.get("container_path") or "").strip() else "root"
+            container_scope_token = (
+                "incan" if str(row.get("container_path") or "").strip() else "root"
+            )
             row["form_quantity_field_name"] = (
                 f"qty_{int(type_id)}_{variant_token}_{container_scope_token}_{int(row.get('row_index') or 0)}"
             )
         stock_rows.append(row)
 
     stock_row_by_index = {
-        int(row.get("row_index")): row for row in stock_rows if str(row.get("row_kind") or "").strip() == "item"
+        int(row.get("row_index")): row
+        for row in stock_rows
+        if str(row.get("row_kind") or "").strip() == "item"
     }
 
     snapshot = dict(buy_stock_snapshot)
@@ -5516,7 +5983,9 @@ def _resolve_selected_buy_source_location_from_groups(
         return None, ""
 
     selected_location_id = sorted(common_location_ids)[0]
-    selected_location_name = str((buy_name_map or {}).get(int(selected_location_id), "") or "").strip()
+    selected_location_name = str(
+        (buy_name_map or {}).get(int(selected_location_id), "") or ""
+    ).strip()
     if not selected_location_name:
         selected_location_name = f"Structure {int(selected_location_id)}"
     return int(selected_location_id), selected_location_name
@@ -5527,8 +5996,8 @@ def _selected_buy_source_groups_share_source_location(
 ) -> bool:
     """Return True when selected source-id groups can resolve to one location."""
 
-    selected_location_id, _selected_location_name = _resolve_selected_buy_source_location_from_groups(
-        source_structure_groups
+    selected_location_id, _selected_location_name = (
+        _resolve_selected_buy_source_location_from_groups(source_structure_groups)
     )
     return selected_location_id is not None
 
@@ -5581,7 +6050,9 @@ def material_exchange_index(request):
             build_nav_context(
                 request.user,
                 active_tab="material_hub",
-                can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+                can_manage_corp=request.user.has_perm(
+                    "indy_hub.can_manage_corp_bp_requests"
+                ),
             )
         )
         return render(
@@ -5634,7 +6105,9 @@ def material_exchange_index(request):
         if scope_missing:
             messages.info(
                 request,
-                _("Refreshing via ESI. Make sure you have granted the assets scope to at least one character."),
+                _(
+                    "Refreshing via ESI. Make sure you have granted the assets scope to at least one character."
+                ),
             )
 
         filtered_assets: dict[int, int] = {}
@@ -5648,7 +6121,11 @@ def material_exchange_index(request):
             if allowed_type_ids is None:
                 loc_filtered = loc_assets
             else:
-                loc_filtered = {tid: qty for tid, qty in loc_assets.items() if tid in allowed_type_ids}
+                loc_filtered = {
+                    tid: qty
+                    for tid, qty in loc_assets.items()
+                    if tid in allowed_type_ids
+                }
             for type_id, qty in loc_filtered.items():
                 filtered_assets[type_id] = filtered_assets.get(type_id, 0) + qty
         user_assets = filtered_assets
@@ -5676,7 +6153,9 @@ def material_exchange_index(request):
         # Fall back silently if user assets cannot be loaded
         pass
 
-    pending_sell_orders = config.sell_orders.filter(status=MaterialExchangeSellOrder.Status.DRAFT).count()
+    pending_sell_orders = config.sell_orders.filter(
+        status=MaterialExchangeSellOrder.Status.DRAFT
+    ).count()
     pending_buy_orders = config.buy_orders.filter(status="draft").count()
     capital_orders_active_count = (
         CapitalShipOrder.objects.filter(
@@ -5719,19 +6198,25 @@ def material_exchange_index(request):
     can_admin = request.user.has_perm("indy_hub.can_manage_material_hub")
     explicit_manage_material_hub_perm = False
     try:
-        manage_perm = Permission.objects.get(codename="can_manage_material_hub", content_type__app_label="indy_hub")
+        manage_perm = Permission.objects.get(
+            codename="can_manage_material_hub", content_type__app_label="indy_hub"
+        )
         explicit_manage_material_hub_perm = (
             User.objects.filter(
                 id=request.user.id,
                 is_active=True,
             )
-            .filter(Q(groups__permissions=manage_perm) | Q(user_permissions=manage_perm))
+            .filter(
+                Q(groups__permissions=manage_perm) | Q(user_permissions=manage_perm)
+            )
             .exists()
         )
     except Permission.DoesNotExist:
         explicit_manage_material_hub_perm = False
 
-    superuser_without_material_hub_manage = bool(request.user.is_superuser and not explicit_manage_material_hub_perm)
+    superuser_without_material_hub_manage = bool(
+        request.user.is_superuser and not explicit_manage_material_hub_perm
+    )
     admin_sell_orders = None
     admin_buy_orders = None
     status_filter = None
@@ -5789,7 +6274,9 @@ def material_exchange_index(request):
         build_nav_context(
             request.user,
             active_tab="material_hub",
-            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+            can_manage_corp=request.user.has_perm(
+                "indy_hub.can_manage_corp_bp_requests"
+            ),
         )
     )
 
@@ -5833,7 +6320,9 @@ def material_exchange_sell_estimate(request):
         return JsonResponse(
             {
                 "ok": False,
-                "summary": _("No valid lines were detected. Use: item name <tab> qty or item name <space> qty."),
+                "summary": _(
+                    "No valid lines were detected. Use: item name <tab> qty or item name <space> qty."
+                ),
                 "invalid_lines": invalid_lines,
             },
             status=400,
@@ -5856,7 +6345,9 @@ def material_exchange_sell_estimate(request):
     fetched_price_data: dict[int, dict[str, Decimal]] = {}
     prices_backfilled = 0
     live_lookup_type_ids = missing_price_type_ids[:MAX_ESTIMATE_LIVE_PRICE_LOOKUPS]
-    deferred_live_lookup_count = max(0, len(missing_price_type_ids) - len(live_lookup_type_ids))
+    deferred_live_lookup_count = max(
+        0, len(missing_price_type_ids) - len(live_lookup_type_ids)
+    )
     if live_lookup_type_ids:
         fetched_price_data = _fetch_fuzzwork_prices(live_lookup_type_ids)
         if fetched_price_data:
@@ -5866,8 +6357,12 @@ def material_exchange_sell_estimate(request):
             )
             price_data.update(fetched_price_data)
     sell_override_map, _buy_override_map = _get_item_price_override_maps(config)
-    sell_market_group_override_map, _buy_market_group_override_map = _get_market_group_price_override_maps(config)
-    sell_container_override, _buy_container_override = _get_container_price_override_maps(config)
+    sell_market_group_override_map, _buy_market_group_override_map = (
+        _get_market_group_price_override_maps(config)
+    )
+    sell_container_override, _buy_container_override = (
+        _get_container_price_override_maps(config)
+    )
     type_market_group_path_map = _get_type_market_group_path_map(type_ids)
     type_name_map = _get_type_name_map(type_ids)
 
@@ -5908,19 +6403,21 @@ def material_exchange_sell_estimate(request):
         fuzz_prices = price_data.get(type_id, {})
         jita_buy = Decimal(fuzz_prices.get("buy") or 0)
         jita_sell = Decimal(fuzz_prices.get("sell") or 0)
-        unit_price, _default_unit_price, _has_override = _compute_effective_sell_unit_price(
-            config=config,
-            type_id=type_id,
-            jita_buy=jita_buy,
-            jita_sell=jita_sell,
-            sell_override_map=sell_override_map,
-            sell_market_group_override_map=sell_market_group_override_map,
-            type_market_group_path_map=type_market_group_path_map,
-            sell_container_override=sell_container_override,
-            in_container=False,
-            ore_reprocessing_map=ore_reprocessing_map,
-            ore_portion_size_map=ore_portion_size_map,
-            mineral_effective_sell_prices=mineral_effective_sell_prices,
+        unit_price, _default_unit_price, _has_override = (
+            _compute_effective_sell_unit_price(
+                config=config,
+                type_id=type_id,
+                jita_buy=jita_buy,
+                jita_sell=jita_sell,
+                sell_override_map=sell_override_map,
+                sell_market_group_override_map=sell_market_group_override_map,
+                type_market_group_path_map=type_market_group_path_map,
+                sell_container_override=sell_container_override,
+                in_container=False,
+                ore_reprocessing_map=ore_reprocessing_map,
+                ore_portion_size_map=ore_portion_size_map,
+                mineral_effective_sell_prices=mineral_effective_sell_prices,
+            )
         )
 
         can_quote = bool(accepted_locations) and unit_price > 0
@@ -5955,24 +6452,35 @@ def material_exchange_sell_estimate(request):
             }
         )
 
-    rounded_estimated_total = estimated_total.quantize(Decimal("1"), rounding=ROUND_CEILING)
+    rounded_estimated_total = estimated_total.quantize(
+        Decimal("1"), rounding=ROUND_CEILING
+    )
     summary_parts = [
         _("%(count)s valid line(s) parsed.") % {"count": int(len(parsed_rows))},
         _("%(count)s line(s) quoteable.") % {"count": int(quoteable_count)},
     ]
     if not_accepted_count:
         summary_parts.append(
-            _("%(count)s line(s) not accepted in configured sell locations.") % {"count": int(not_accepted_count)}
+            _("%(count)s line(s) not accepted in configured sell locations.")
+            % {"count": int(not_accepted_count)}
         )
     if no_price_count:
-        summary_parts.append(_("%(count)s line(s) missing price data.") % {"count": int(no_price_count)})
+        summary_parts.append(
+            _("%(count)s line(s) missing price data.") % {"count": int(no_price_count)}
+        )
     if invalid_lines:
-        summary_parts.append(_("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)})
+        summary_parts.append(
+            _("%(count)s line(s) could not be parsed.") % {"count": len(invalid_lines)}
+        )
 
     instructions = [
         _("Click Start Selling, then pick a sell location that accepts your items."),
-        _("Enter the same quantities, submit the sell order, and copy the generated order reference."),
-        _("Create an in-game Item Exchange contract to the listed corporation at the order location."),
+        _(
+            "Enter the same quantities, submit the sell order, and copy the generated order reference."
+        ),
+        _(
+            "Create an in-game Item Exchange contract to the listed corporation at the order location."
+        ),
         _(
             "Use the exact order reference in the contract title/description, then use Paste & Check on the order page before finalizing."
         ),
@@ -6020,12 +6528,20 @@ def material_exchange_history(request):
         history_status_filter = "all"
 
     closed_statuses = ["completed", "rejected", "cancelled"]
-    status_queryset = [history_status_filter] if history_status_filter != "all" else closed_statuses
+    status_queryset = (
+        [history_status_filter] if history_status_filter != "all" else closed_statuses
+    )
 
     sell_history = (
-        config.sell_orders.filter(status__in=status_queryset).select_related("seller").order_by("-created_at")
+        config.sell_orders.filter(status__in=status_queryset)
+        .select_related("seller")
+        .order_by("-created_at")
     )
-    buy_history = config.buy_orders.filter(status__in=status_queryset).select_related("buyer").order_by("-created_at")
+    buy_history = (
+        config.buy_orders.filter(status__in=status_queryset)
+        .select_related("buyer")
+        .order_by("-created_at")
+    )
 
     context = {
         "config": config,
@@ -6041,7 +6557,9 @@ def material_exchange_history(request):
         build_nav_context(
             request.user,
             active_tab="material_hub",
-            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+            can_manage_corp=request.user.has_perm(
+                "indy_hub.can_manage_corp_bp_requests"
+            ),
         )
     )
 
@@ -6074,7 +6592,11 @@ def material_exchange_sell(request, tokens):
         messages.warning(request, _("Sell locations are not configured."))
         return redirect("indy_hub:material_exchange_index")
     sell_structure_name_map = config.get_sell_structure_name_map()
-    missing_name_ids = [int(sid) for sid in sell_structure_ids if int(sid) not in sell_structure_name_map]
+    missing_name_ids = [
+        int(sid)
+        for sid in sell_structure_ids
+        if int(sid) not in sell_structure_name_map
+    ]
     if missing_name_ids:
         try:
             resolved = resolve_structure_names(
@@ -6091,8 +6613,12 @@ def material_exchange_sell(request, tokens):
     materials_with_qty: list[dict] = []
     assets_refreshing = False
     sell_override_map, _buy_override_map = _get_item_price_override_maps(config)
-    sell_market_group_override_map, _buy_market_group_override_map = _get_market_group_price_override_maps(config)
-    sell_container_override, _buy_container_override = _get_container_price_override_maps(config)
+    sell_market_group_override_map, _buy_market_group_override_map = (
+        _get_market_group_price_override_maps(config)
+    )
+    sell_container_override, _buy_container_override = (
+        _get_container_price_override_maps(config)
+    )
 
     sell_last_update = (
         CachedCharacterAsset.objects.filter(user=request.user)
@@ -6104,13 +6630,20 @@ def material_exchange_sell(request, tokens):
     user_assets_version_refresh = False
     try:
         if sell_last_update:
-            current_version = int(cache.get(me_user_assets_cache_version_key(int(request.user.id))) or 0)
-            user_assets_version_refresh = current_version < int(ME_USER_ASSETS_CACHE_VERSION)
+            current_version = int(
+                cache.get(me_user_assets_cache_version_key(int(request.user.id))) or 0
+            )
+            user_assets_version_refresh = current_version < int(
+                ME_USER_ASSETS_CACHE_VERSION
+            )
     except Exception:
         user_assets_version_refresh = False
 
     try:
-        user_assets_stale = not sell_last_update or (timezone.now() - sell_last_update).total_seconds() > 3600
+        user_assets_stale = (
+            not sell_last_update
+            or (timezone.now() - sell_last_update).total_seconds() > 3600
+        )
     except Exception:
         user_assets_stale = True
 
@@ -6123,14 +6656,22 @@ def material_exchange_sell(request, tokens):
             sell_assets_progress = _ensure_sell_assets_refresh_started(request.user)
     assets_refreshing = bool(sell_assets_progress.get("running"))
 
-    if sell_assets_progress.get("error") == "esi_down" and not sell_assets_progress.get("retry_after_minutes"):
-        cooldown_until = cache.get(me_sell_assets_esi_cooldown_key(int(request.user.id)))
+    if sell_assets_progress.get("error") == "esi_down" and not sell_assets_progress.get(
+        "retry_after_minutes"
+    ):
+        cooldown_until = cache.get(
+            me_sell_assets_esi_cooldown_key(int(request.user.id))
+        )
         if cooldown_until:
             try:
-                retry_seconds = max(0, int(float(cooldown_until) - timezone.now().timestamp()))
+                retry_seconds = max(
+                    0, int(float(cooldown_until) - timezone.now().timestamp())
+                )
             except (TypeError, ValueError):
                 retry_seconds = int(ESI_DOWN_COOLDOWN_SECONDS)
-            sell_assets_progress["retry_after_minutes"] = int((retry_seconds + 59) // 60)
+            sell_assets_progress["retry_after_minutes"] = int(
+                (retry_seconds + 59) // 60
+            )
 
     if request.method == "POST":
         selected_location_param = (request.POST.get("sell_location_id") or "").strip()
@@ -6149,7 +6690,11 @@ def material_exchange_sell(request, tokens):
                 selected_character_id = int(selected_character_param)
             except (TypeError, ValueError):
                 selected_character_id = None
-        active_location_name = sell_structure_name_map.get(int(selected_location_id)) if selected_location_id else ""
+        active_location_name = (
+            sell_structure_name_map.get(int(selected_location_id))
+            if selected_location_id
+            else ""
+        )
         if not active_location_name and selected_location_id:
             active_location_name = f"Structure {selected_location_id}"
         active_sell_profile_name = _resolve_active_profile_name_for_structure_ids(
@@ -6161,9 +6706,11 @@ def material_exchange_sell(request, tokens):
             config,
             sell_profile_name=active_sell_profile_name,
         )
-        sell_market_group_override_map, _buy_market_group_override_map = _get_market_group_price_override_maps(
-            config,
-            sell_profile_name=active_sell_profile_name,
+        sell_market_group_override_map, _buy_market_group_override_map = (
+            _get_market_group_price_override_maps(
+                config,
+                sell_profile_name=active_sell_profile_name,
+            )
         )
         sell_redirect_url = reverse("indy_hub:material_exchange_sell")
         redirect_params = []
@@ -6194,7 +6741,9 @@ def material_exchange_sell(request, tokens):
             _ensure_sell_assets_refresh_started(request.user)
             return redirect(sell_redirect_url)
 
-        selected_location_assets_raw = all_sell_assets_by_location.get(int(selected_location_id), {})
+        selected_location_assets_raw = all_sell_assets_by_location.get(
+            int(selected_location_id), {}
+        )
         if selected_character_id:
             selected_location_assets_raw = {}
             valid_character = False
@@ -6205,14 +6754,20 @@ def material_exchange_sell(request, tokens):
                     type_id = int(asset.get("type_id") or 0)
                 except (TypeError, ValueError):
                     continue
-                if asset_location != int(selected_location_id) or asset_character != int(selected_character_id):
+                if asset_location != int(
+                    selected_location_id
+                ) or asset_character != int(selected_character_id):
                     continue
                 valid_character = True
                 quantity = _asset_quantity(asset)
                 if quantity > 0:
-                    selected_location_assets_raw[type_id] = selected_location_assets_raw.get(type_id, 0) + quantity
+                    selected_location_assets_raw[type_id] = (
+                        selected_location_assets_raw.get(type_id, 0) + quantity
+                    )
             if not valid_character:
-                messages.error(request, _("That character is not available at this location."))
+                messages.error(
+                    request, _("That character is not available at this location.")
+                )
                 return redirect(sell_redirect_url)
         if not selected_location_assets_raw:
             messages.error(
@@ -6227,7 +6782,9 @@ def material_exchange_sell(request, tokens):
             "sell",
             structure_id=selected_location_id,
         )
-        allowed_type_ids_cache[int(selected_location_id)] = selected_location_allowed_type_ids
+        allowed_type_ids_cache[int(selected_location_id)] = (
+            selected_location_allowed_type_ids
+        )
 
         user_assets = dict(selected_location_assets_raw)
         pre_filter_count = len(user_assets)
@@ -6236,7 +6793,9 @@ def material_exchange_sell(request, tokens):
         try:
             if selected_location_allowed_type_ids is not None:
                 user_assets = {
-                    tid: qty for tid, qty in user_assets.items() if tid in selected_location_allowed_type_ids
+                    tid: qty
+                    for tid, qty in user_assets.items()
+                    if tid in selected_location_allowed_type_ids
                 }
         except Exception as exc:
             logger.warning("Failed to apply market group filter: %s", exc)
@@ -6248,7 +6807,9 @@ def material_exchange_sell(request, tokens):
                     _("No accepted items available to sell at this location."),
                 )
             else:
-                messages.error(request, _("You have no items to sell at this location."))
+                messages.error(
+                    request, _("You have no items to sell at this location.")
+                )
             return redirect(sell_redirect_url)
 
         # Parse submitted quantities from the form. Do not iterate over `user_assets` here:
@@ -6269,7 +6830,9 @@ def material_exchange_sell(request, tokens):
             )
             return redirect(sell_redirect_url)
 
-        submitted_type_market_group_path_map = _get_type_market_group_path_map(set(submitted_quantities.keys()))
+        submitted_type_market_group_path_map = _get_type_market_group_path_map(
+            set(submitted_quantities.keys())
+        )
 
         assets_last_sync = _get_user_assets_last_sync(request.user)
         reserved_quantities = _get_reserved_sell_quantities(
@@ -6290,15 +6853,22 @@ def material_exchange_sell(request, tokens):
             type_ids=submitted_quantities.keys(),
             price_data=price_data,
         )
-        submitted_ore_reprocessing_map = submitted_refined_ore_context["ore_reprocessing_map"]
-        submitted_ore_portion_size_map = submitted_refined_ore_context["ore_portion_size_map"]
-        submitted_mineral_effective_sell_prices = submitted_refined_ore_context["mineral_effective_sell_prices"]
+        submitted_ore_reprocessing_map = submitted_refined_ore_context[
+            "ore_reprocessing_map"
+        ]
+        submitted_ore_portion_size_map = submitted_refined_ore_context[
+            "ore_portion_size_map"
+        ]
+        submitted_mineral_effective_sell_prices = submitted_refined_ore_context[
+            "mineral_effective_sell_prices"
+        ]
 
         scoped_variant_quantities_available = True
         all_cached_assets_for_pricing = posted_cached_assets
         if selected_character_id:
             all_cached_assets_for_pricing = [
-                asset for asset in all_cached_assets_for_pricing
+                asset
+                for asset in all_cached_assets_for_pricing
                 if int(asset.get("character_id") or 0) == int(selected_character_id)
             ]
         variant_quantities = _build_sell_variant_quantities(
@@ -6318,7 +6888,9 @@ def material_exchange_sell(request, tokens):
             user_qty = user_assets.get(type_id)
             if user_qty is None:
                 type_name = get_type_name(type_id)
-                selected_raw_qty = int(selected_location_assets_raw.get(type_id, 0) or 0)
+                selected_raw_qty = int(
+                    selected_location_assets_raw.get(type_id, 0) or 0
+                )
                 other_locations = _find_sell_locations_for_type(
                     config=config,
                     sell_structure_ids=sell_structure_ids,
@@ -6329,7 +6901,8 @@ def material_exchange_sell(request, tokens):
                     allowed_type_ids_cache=allowed_type_ids_cache,
                 )
                 location_hints = ", ".join(
-                    f"{entry['name']} ({int(entry['quantity']):,})" for entry in other_locations
+                    f"{entry['name']} ({int(entry['quantity']):,})"
+                    for entry in other_locations
                 )
 
                 if (
@@ -6403,17 +6976,23 @@ def material_exchange_sell(request, tokens):
             type_id = int(submitted_entry.get("type_id") or 0)
             qty = int(submitted_entry.get("quantity") or 0)
             in_container = bool(submitted_entry.get("in_container"))
-            blueprint_variant = str(submitted_entry.get("blueprint_variant") or "").strip().lower()
+            blueprint_variant = (
+                str(submitted_entry.get("blueprint_variant") or "").strip().lower()
+            )
             if blueprint_variant not in {"", "bpo", "bpc"}:
                 blueprint_variant = ""
             if type_id <= 0 or qty <= 0:
                 continue
 
             type_name_base = get_type_name(type_id)
-            type_name = _format_sell_blueprint_type_name(type_name_base, blueprint_variant)
+            type_name = _format_sell_blueprint_type_name(
+                type_name_base, blueprint_variant
+            )
 
             if blueprint_variant in {"bpo", "bpc"}:
-                variant_available = int(variant_quantities.get((type_id, blueprint_variant), 0) or 0)
+                variant_available = int(
+                    variant_quantities.get((type_id, blueprint_variant), 0) or 0
+                )
                 if qty > variant_available:
                     errors.append(
                         _(
@@ -6425,10 +7004,17 @@ def material_exchange_sell(request, tokens):
 
             if scoped_variant_quantities_available:
                 scoped_available = int(
-                    scoped_variant_quantities.get((type_id, blueprint_variant, in_container), 0) or 0
+                    scoped_variant_quantities.get(
+                        (type_id, blueprint_variant, in_container), 0
+                    )
+                    or 0
                 )
                 if qty > scoped_available:
-                    scope_label = _("inside containers") if in_container else _("outside containers")
+                    scope_label = (
+                        _("inside containers")
+                        if in_container
+                        else _("outside containers")
+                    )
                     errors.append(
                         _(
                             f"Insufficient {type_name} {scope_label} in {active_location_name}. "
@@ -6438,7 +7024,10 @@ def material_exchange_sell(request, tokens):
                     continue
             elif in_container:
                 errors.append(
-                    _("Unable to validate in-container quantities right now. " "Please refresh and try again.")
+                    _(
+                        "Unable to validate in-container quantities right now. "
+                        "Please refresh and try again."
+                    )
                 )
                 continue
 
@@ -6448,19 +7037,21 @@ def material_exchange_sell(request, tokens):
                 fuzz_prices = price_data.get(type_id, {})
                 jita_buy = Decimal(fuzz_prices.get("buy") or 0)
                 jita_sell = Decimal(fuzz_prices.get("sell") or 0)
-                unit_price, _default_unit_price, _has_override = _compute_effective_sell_unit_price(
-                    config=config,
-                    type_id=type_id,
-                    jita_buy=jita_buy,
-                    jita_sell=jita_sell,
-                    sell_override_map=sell_override_map,
-                    sell_market_group_override_map=sell_market_group_override_map,
-                    type_market_group_path_map=submitted_type_market_group_path_map,
-                    sell_container_override=sell_container_override,
-                    in_container=in_container,
-                    ore_reprocessing_map=submitted_ore_reprocessing_map,
-                    ore_portion_size_map=submitted_ore_portion_size_map,
-                    mineral_effective_sell_prices=submitted_mineral_effective_sell_prices,
+                unit_price, _default_unit_price, _has_override = (
+                    _compute_effective_sell_unit_price(
+                        config=config,
+                        type_id=type_id,
+                        jita_buy=jita_buy,
+                        jita_sell=jita_sell,
+                        sell_override_map=sell_override_map,
+                        sell_market_group_override_map=sell_market_group_override_map,
+                        type_market_group_path_map=submitted_type_market_group_path_map,
+                        sell_container_override=sell_container_override,
+                        in_container=in_container,
+                        ore_reprocessing_map=submitted_ore_reprocessing_map,
+                        ore_portion_size_map=submitted_ore_portion_size_map,
+                        mineral_effective_sell_prices=submitted_mineral_effective_sell_prices,
+                    )
                 )
                 if unit_price <= 0:
                     errors.append(_(f"{type_name} has no valid market price."))
@@ -6501,7 +7092,9 @@ def material_exchange_sell(request, tokens):
             for item_data in items_to_create:
                 MaterialExchangeSellOrderItem.objects.create(order=order, **item_data)
 
-            rounded_total_payout = total_payout.quantize(Decimal("1"), rounding=ROUND_CEILING)
+            rounded_total_payout = total_payout.quantize(
+                Decimal("1"), rounding=ROUND_CEILING
+            )
             order.rounded_total_price = rounded_total_payout
             order.save(update_fields=["rounded_total_price", "updated_at"])
 
@@ -6521,7 +7114,9 @@ def material_exchange_sell(request, tokens):
     # GET branch: trigger stock sync only if stale (> 1h) or never synced
     try:
         last_sync = config.last_stock_sync
-        needs_refresh = not last_sync or (timezone.now() - last_sync).total_seconds() > 3600
+        needs_refresh = (
+            not last_sync or (timezone.now() - last_sync).total_seconds() > 3600
+        )
     except Exception:
         needs_refresh = True
 
@@ -6529,7 +7124,10 @@ def material_exchange_sell(request, tokens):
     try:
         # Only trigger the version refresh if there is already synced data.
         if config.last_stock_sync:
-            current_version = int(cache.get(me_stock_sync_cache_version_key(int(config.corporation_id))) or 0)
+            current_version = int(
+                cache.get(me_stock_sync_cache_version_key(int(config.corporation_id)))
+                or 0
+            )
             stock_version_refresh = current_version < int(ME_STOCK_SYNC_CACHE_VERSION)
     except Exception:
         stock_version_refresh = False
@@ -6546,7 +7144,9 @@ def material_exchange_sell(request, tokens):
 
     current_user_assets_version = 0
     try:
-        current_user_assets_version = int(cache.get(me_user_assets_cache_version_key(int(request.user.id))) or 0)
+        current_user_assets_version = int(
+            cache.get(me_user_assets_cache_version_key(int(request.user.id))) or 0
+        )
     except Exception:
         current_user_assets_version = 0
     needs_user_assets_version_refresh = has_cached_assets and (
@@ -6554,13 +7154,20 @@ def material_exchange_sell(request, tokens):
     )
 
     allow_refresh = (
-        not bool(sell_assets_progress.get("running")) or sell_assets_progress.get("error") == "task_start_failed"
-    ) and (request.GET.get("refreshed") != "1" or not has_cached_assets or needs_user_assets_version_refresh)
+        not bool(sell_assets_progress.get("running"))
+        or sell_assets_progress.get("error") == "task_start_failed"
+    ) and (
+        request.GET.get("refreshed") != "1"
+        or not has_cached_assets
+        or needs_user_assets_version_refresh
+    )
 
     # Materialize the user's cached assets exactly once: both the per-location aggregation
     # and the row builder below work off this same list.
     assets_load_started_at = perf_counter()
-    all_cached_assets, scope_missing = get_user_assets_cached(request.user, allow_refresh=allow_refresh)
+    all_cached_assets, scope_missing = get_user_assets_cached(
+        request.user, allow_refresh=allow_refresh
+    )
     excluded_item_ids: set[int] = set()
     try:
         if not bool(getattr(config, "allow_fitted_ships", False)):
@@ -6569,16 +7176,21 @@ def material_exchange_sell(request, tokens):
         excluded_item_ids = set()
     assets_load_seconds = perf_counter() - assets_load_started_at
 
-    user_assets, user_assets_by_character, user_assets_by_location, _aggregate_scope_missing = (
-        _fetch_user_assets_for_structure_data(
-            request.user,
-            sell_structure_ids,
-            config=config,
-            assets=all_cached_assets,
-            excluded_item_ids=excluded_item_ids,
-        )
+    (
+        user_assets,
+        user_assets_by_character,
+        user_assets_by_location,
+        _aggregate_scope_missing,
+    ) = _fetch_user_assets_for_structure_data(
+        request.user,
+        sell_structure_ids,
+        config=config,
+        assets=all_cached_assets,
+        excluded_item_ids=excluded_item_ids,
     )
-    if sell_assets_progress.get("error") == "no_assets_fetched" and (has_cached_assets or user_assets):
+    if sell_assets_progress.get("error") == "no_assets_fetched" and (
+        has_cached_assets or user_assets
+    ):
         sell_assets_progress = dict(sell_assets_progress)
         sell_assets_progress["error"] = None
         cache.set(
@@ -6587,7 +7199,11 @@ def material_exchange_sell(request, tokens):
             10 * 60,
         )
     active_location_id = str(sell_structure_ids[0]) if sell_structure_ids else ""
-    active_location_name = sell_structure_name_map.get(int(sell_structure_ids[0]), "") if sell_structure_ids else ""
+    active_location_name = (
+        sell_structure_name_map.get(int(sell_structure_ids[0]), "")
+        if sell_structure_ids
+        else ""
+    )
     if not active_location_name and sell_structure_ids:
         active_location_name = f"Structure {sell_structure_ids[0]}"
     location_tabs: list[dict] = []
@@ -6615,21 +7231,30 @@ def material_exchange_sell(request, tokens):
                 if allowed_type_ids is None:
                     filtered_loc_assets = dict(loc_assets)
                 else:
-                    filtered_loc_assets = {tid: qty for tid, qty in loc_assets.items() if tid in allowed_type_ids}
+                    filtered_loc_assets = {
+                        tid: qty
+                        for tid, qty in loc_assets.items()
+                        if tid in allowed_type_ids
+                    }
                 filtered_by_location[int(location_id)] = filtered_loc_assets
             user_assets_by_location = filtered_by_location
 
             filtered_user_assets: dict[int, int] = {}
             for loc_assets in user_assets_by_location.values():
                 for type_id, qty in loc_assets.items():
-                    filtered_user_assets[type_id] = filtered_user_assets.get(type_id, 0) + qty
+                    filtered_user_assets[type_id] = (
+                        filtered_user_assets.get(type_id, 0) + qty
+                    )
             user_assets = filtered_user_assets
 
             logger.info(
                 "SELL DEBUG[user=%s]: %s types after market group filter (union of all locations); per-location: %s",
                 request.user.id,
                 len(user_assets),
-                {int(loc): len(loc_assets) for loc, loc_assets in sorted(user_assets_by_location.items())},
+                {
+                    int(loc): len(loc_assets)
+                    for loc, loc_assets in sorted(user_assets_by_location.items())
+                },
             )
         except Exception as exc:
             logger.warning("Failed to apply market group filter (GET): %s", exc)
@@ -6638,16 +7263,26 @@ def material_exchange_sell(request, tokens):
         price_data = _fetch_fuzzwork_prices(list(user_assets.keys()))
         price_fetch_seconds = perf_counter() - price_fetch_started_at
         logger.info(f"SELL DEBUG: Got prices for {len(price_data)} items from Fuzzwork")
-        display_type_market_group_path_map = _get_type_market_group_path_map(set(user_assets.keys()))
-        display_type_market_group_label_map = _build_type_market_group_label_map(display_type_market_group_path_map)
+        display_type_market_group_path_map = _get_type_market_group_path_map(
+            set(user_assets.keys())
+        )
+        display_type_market_group_label_map = _build_type_market_group_label_map(
+            display_type_market_group_path_map
+        )
         display_refined_ore_context = _build_refined_ore_pricing_context(
             config=config,
             type_ids=user_assets.keys(),
             price_data=price_data,
         )
-        display_ore_reprocessing_map = display_refined_ore_context["ore_reprocessing_map"]
-        display_ore_portion_size_map = display_refined_ore_context["ore_portion_size_map"]
-        display_mineral_effective_sell_prices = display_refined_ore_context["mineral_effective_sell_prices"]
+        display_ore_reprocessing_map = display_refined_ore_context[
+            "ore_reprocessing_map"
+        ]
+        display_ore_portion_size_map = display_refined_ore_context[
+            "ore_portion_size_map"
+        ]
+        display_mineral_effective_sell_prices = display_refined_ore_context[
+            "mineral_effective_sell_prices"
+        ]
 
         # Sellability is asked for the same type many times per render (once per location
         # tab, then once per raw asset row), so memoize it per pricing profile.
@@ -6668,7 +7303,9 @@ def material_exchange_sell(request, tokens):
             passed maps belong to, so memoized results are never shared across profiles.
             """
             effective_profile_key = (
-                profile_key if profile_key is not None else f"location:{active_sell_profile_name or ''}"
+                profile_key
+                if profile_key is not None
+                else f"location:{active_sell_profile_name or ''}"
             )
             memo_key = (int(type_id), str(effective_profile_key))
             memoized_result = sellable_type_cache.get(memo_key)
@@ -6678,23 +7315,27 @@ def material_exchange_sell(request, tokens):
             fuzz_prices = price_data.get(type_id, {})
             jita_buy = Decimal(fuzz_prices.get("buy") or 0)
             jita_sell = Decimal(fuzz_prices.get("sell") or 0)
-            buy_price, _default_buy_price, _has_override = _compute_effective_sell_unit_price(
-                config=config,
-                type_id=type_id,
-                jita_buy=jita_buy,
-                jita_sell=jita_sell,
-                sell_override_map=sell_override_map if override_map is None else override_map,
-                sell_market_group_override_map=(
-                    sell_market_group_override_map
-                    if market_group_override_map is None
-                    else market_group_override_map
-                ),
-                type_market_group_path_map=display_type_market_group_path_map,
-                sell_container_override=sell_container_override,
-                in_container=bool(sell_container_override is not None),
-                ore_reprocessing_map=display_ore_reprocessing_map,
-                ore_portion_size_map=display_ore_portion_size_map,
-                mineral_effective_sell_prices=display_mineral_effective_sell_prices,
+            buy_price, _default_buy_price, _has_override = (
+                _compute_effective_sell_unit_price(
+                    config=config,
+                    type_id=type_id,
+                    jita_buy=jita_buy,
+                    jita_sell=jita_sell,
+                    sell_override_map=(
+                        sell_override_map if override_map is None else override_map
+                    ),
+                    sell_market_group_override_map=(
+                        sell_market_group_override_map
+                        if market_group_override_map is None
+                        else market_group_override_map
+                    ),
+                    type_market_group_path_map=display_type_market_group_path_map,
+                    sell_container_override=sell_container_override,
+                    in_container=bool(sell_container_override is not None),
+                    ore_reprocessing_map=display_ore_reprocessing_map,
+                    ore_portion_size_map=display_ore_portion_size_map,
+                    mineral_effective_sell_prices=display_mineral_effective_sell_prices,
+                )
             )
             is_sellable = buy_price > 0
             sellable_type_cache[memo_key] = is_sellable
@@ -6718,7 +7359,9 @@ def material_exchange_sell(request, tokens):
             selected_location_id = sell_structure_ids[0]
         active_location_id = str(selected_location_id) if selected_location_id else ""
 
-        active_location_name = sell_structure_name_map.get(int(selected_location_id), "")
+        active_location_name = sell_structure_name_map.get(
+            int(selected_location_id), ""
+        )
         if not active_location_name and selected_location_id:
             active_location_name = f"Structure {selected_location_id}"
         active_sell_profile_name = _resolve_active_profile_name_for_structure_ids(
@@ -6730,9 +7373,11 @@ def material_exchange_sell(request, tokens):
             config,
             sell_profile_name=active_sell_profile_name,
         )
-        sell_market_group_override_map, _buy_market_group_override_map = _get_market_group_price_override_maps(
-            config,
-            sell_profile_name=active_sell_profile_name,
+        sell_market_group_override_map, _buy_market_group_override_map = (
+            _get_market_group_price_override_maps(
+                config,
+                sell_profile_name=active_sell_profile_name,
+            )
         )
         # The active override maps were just rebound; drop anything memoized against the
         # previous (pre-profile) maps.
@@ -6756,9 +7401,11 @@ def material_exchange_sell(request, tokens):
                 config,
                 sell_profile_name=profile_name,
             )
-            loc_group_override_map, _loc_buy_group_override_map = _get_market_group_price_override_maps(
-                config,
-                sell_profile_name=profile_name,
+            loc_group_override_map, _loc_buy_group_override_map = (
+                _get_market_group_price_override_maps(
+                    config,
+                    sell_profile_name=profile_name,
+                )
             )
             maps = (loc_override_map, loc_group_override_map, str(profile_name or ""))
             location_override_maps_cache[int(loc_id)] = maps
@@ -6766,11 +7413,14 @@ def material_exchange_sell(request, tokens):
 
         for loc_id in sell_structure_ids:
             loc_assets = user_assets_by_location.get(int(loc_id), {})
-            loc_override_map, loc_group_override_map, loc_profile_name = _override_maps_for_location(int(loc_id))
+            loc_override_map, loc_group_override_map, loc_profile_name = (
+                _override_maps_for_location(int(loc_id))
+            )
             location_tabs.append(
                 {
                     "id": str(loc_id),
-                    "name": sell_structure_name_map.get(int(loc_id), "") or f"Structure {loc_id}",
+                    "name": sell_structure_name_map.get(int(loc_id), "")
+                    or f"Structure {loc_id}",
                     "item_count": sum(
                         1
                         for type_id in loc_assets
@@ -6840,15 +7490,22 @@ def material_exchange_sell(request, tokens):
                     asset_type_id = int(asset.get("type_id") or 0)
                 except (TypeError, ValueError):
                     continue
-                if asset_location_id != int(selected_location_id or 0) or asset_character_id <= 0:
+                if (
+                    asset_location_id != int(selected_location_id or 0)
+                    or asset_character_id <= 0
+                ):
                     continue
                 if not _asset_yields_sell_row(asset):
                     continue
-                character_types_by_id.setdefault(asset_character_id, set()).add(asset_type_id)
+                character_types_by_id.setdefault(asset_character_id, set()).add(
+                    asset_type_id
+                )
 
             sorted_characters = sorted(
                 character_types_by_id.keys(),
-                key=lambda character_id: character_names_map.get(character_id, str(character_id)).lower(),
+                key=lambda character_id: character_names_map.get(
+                    character_id, str(character_id)
+                ).lower(),
             )
             for character_id in sorted_characters:
                 tab_count = len(character_types_by_id.get(character_id, set()))
@@ -6857,7 +7514,9 @@ def material_exchange_sell(request, tokens):
                 character_tabs.append(
                     {
                         "id": str(character_id),
-                        "name": character_names_map.get(character_id, _("Character %(id)s") % {"id": character_id}),
+                        "name": character_names_map.get(
+                            character_id, _("Character %(id)s") % {"id": character_id}
+                        ),
                         "item_count": tab_count,
                         "url": f"{sell_page_base_url}?location={selected_location_id}&character={character_id}",
                     }
@@ -6870,7 +7529,11 @@ def material_exchange_sell(request, tokens):
                 except (TypeError, ValueError):
                     selected_character_id = None
 
-            available_character_ids = {int(tab["id"]) for tab in character_tabs if str(tab.get("id", "")).isdigit()}
+            available_character_ids = {
+                int(tab["id"])
+                for tab in character_tabs
+                if str(tab.get("id", "")).isdigit()
+            }
 
             if selected_character_id in available_character_ids:
                 active_character_tab = str(selected_character_id)
@@ -6898,18 +7561,25 @@ def material_exchange_sell(request, tokens):
         else:
             for loc_id in sell_structure_ids:
                 loc_assets = user_assets_by_location.get(int(loc_id), {})
-                tab_count = sum(1 for type_id in loc_assets if _is_sellable_type(type_id))
+                tab_count = sum(
+                    1 for type_id in loc_assets if _is_sellable_type(type_id)
+                )
                 location_tabs.append(
                     {
                         "id": str(loc_id),
-                        "name": sell_structure_name_map.get(int(loc_id), "") or f"Structure {loc_id}",
+                        "name": sell_structure_name_map.get(int(loc_id), "")
+                        or f"Structure {loc_id}",
                         "item_count": tab_count,
                         "url": f"{sell_page_base_url}?location={loc_id}",
                     }
                 )
             if not selected_location_param:
                 first_with_items = next(
-                    (int(tab.get("id")) for tab in location_tabs if int(tab.get("item_count") or 0) > 0),
+                    (
+                        int(tab.get("id"))
+                        for tab in location_tabs
+                        if int(tab.get("item_count") or 0) > 0
+                    ),
                     None,
                 )
                 if first_with_items and first_with_items != int(selected_location_id):
@@ -6962,7 +7632,8 @@ def material_exchange_sell(request, tokens):
             sum(
                 1
                 for asset in all_cached_assets
-                if str(asset.get("location_id") or "") == str(selected_location_id or "")
+                if str(asset.get("location_id") or "")
+                == str(selected_location_id or "")
             ),
             len(excluded_item_ids),
         )
@@ -6975,15 +7646,21 @@ def material_exchange_sell(request, tokens):
                 continue
             if asset_type_id > 0:
                 display_type_ids.add(asset_type_id)
-        display_type_market_group_path_map = _get_type_market_group_path_map(display_type_ids)
-        display_type_market_group_label_map = _build_type_market_group_label_map(display_type_market_group_path_map)
+        display_type_market_group_path_map = _get_type_market_group_path_map(
+            display_type_ids
+        )
+        display_type_market_group_label_map = _build_type_market_group_label_map(
+            display_type_market_group_path_map
+        )
 
         # Resolve every displayed type name in one query; the row builder otherwise falls
         # back to a per-type lookup for each name it has not seen in this process yet.
         try:
             batch_cache_type_names(display_type_ids)
         except Exception:  # pragma: no cover - defensive
-            logger.debug("Failed to prewarm type names for the sell page", exc_info=True)
+            logger.debug(
+                "Failed to prewarm type names for the sell page", exc_info=True
+            )
 
         row_build_started_at = perf_counter()
         materials_with_qty = _build_sell_material_rows(
@@ -7018,7 +7695,9 @@ def material_exchange_sell(request, tokens):
         if scope_missing:
             messages.info(
                 request,
-                _("Refreshing via ESI. Make sure you have granted the assets scope to at least one character."),
+                _(
+                    "Refreshing via ESI. Make sure you have granted the assets scope to at least one character."
+                ),
             )
         else:
             messages.info(
@@ -7052,7 +7731,9 @@ def material_exchange_sell(request, tokens):
         build_nav_context(
             request.user,
             active_tab="material_hub",
-            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+            can_manage_corp=request.user.has_perm(
+                "indy_hub.can_manage_corp_bp_requests"
+            ),
         )
     )
 
@@ -7149,20 +7830,30 @@ def material_exchange_buy(request, tokens):
         # Django
         from django.utils import timezone
 
-        needs_refresh = not last_sync or (timezone.now() - last_sync).total_seconds() > 3600
+        needs_refresh = (
+            not last_sync or (timezone.now() - last_sync).total_seconds() > 3600
+        )
     except Exception:
         needs_refresh = True
 
     stock_version_refresh = False
     try:
         if config.last_stock_sync:
-            current_version = int(cache.get(me_stock_sync_cache_version_key(int(config.corporation_id))) or 0)
+            current_version = int(
+                cache.get(me_stock_sync_cache_version_key(int(config.corporation_id)))
+                or 0
+            )
             stock_version_refresh = current_version < int(ME_STOCK_SYNC_CACHE_VERSION)
     except Exception:
         stock_version_refresh = False
 
     stock_refreshing = False
-    buy_stock_progress = cache.get(f"indy_hub:material_exchange:buy_stock_refresh:{int(config.corporation_id)}") or {}
+    buy_stock_progress = (
+        cache.get(
+            f"indy_hub:material_exchange:buy_stock_refresh:{int(config.corporation_id)}"
+        )
+        or {}
+    )
 
     if request.method == "GET" and (needs_refresh or stock_version_refresh):
         # The refreshed=1 guard prevents loops, but version migrations should override it.
@@ -7170,29 +7861,50 @@ def material_exchange_buy(request, tokens):
             buy_stock_progress = _ensure_buy_stock_refresh_started(config)
     stock_refreshing = bool(buy_stock_progress.get("running"))
 
-    if buy_stock_progress.get("error") == "esi_down" and not buy_stock_progress.get("retry_after_minutes"):
-        cooldown_until = cache.get(me_buy_stock_esi_cooldown_key(int(config.corporation_id)))
+    if buy_stock_progress.get("error") == "esi_down" and not buy_stock_progress.get(
+        "retry_after_minutes"
+    ):
+        cooldown_until = cache.get(
+            me_buy_stock_esi_cooldown_key(int(config.corporation_id))
+        )
         if cooldown_until:
             try:
-                retry_seconds = max(0, int(float(cooldown_until) - timezone.now().timestamp()))
+                retry_seconds = max(
+                    0, int(float(cooldown_until) - timezone.now().timestamp())
+                )
             except (TypeError, ValueError):
                 retry_seconds = int(ESI_DOWN_COOLDOWN_SECONDS)
             buy_stock_progress["retry_after_minutes"] = int((retry_seconds + 59) // 60)
 
     # GET: ensure prices are populated if stock exists without prices
     base_stock_qs = config.stock_items.filter(quantity__gt=0)
-    if base_stock_qs.exists() and not base_stock_qs.filter(jita_buy_price__gt=0).exists():
-        price_refresh_key = f"indy_hub:material_exchange:buy_price_refresh:{int(config.corporation_id)}"
+    if (
+        base_stock_qs.exists()
+        and not base_stock_qs.filter(jita_buy_price__gt=0).exists()
+    ):
+        price_refresh_key = (
+            f"indy_hub:material_exchange:buy_price_refresh:{int(config.corporation_id)}"
+        )
         if not cache.get(price_refresh_key):
             cache.set(price_refresh_key, True, 10 * 60)
             try:
                 sync_material_exchange_prices.delay()
             except Exception as exc:  # pragma: no cover - defensive
                 cache.delete(price_refresh_key)
-                logger.warning("Failed to start background buy price sync for corporation %s: %s", config.corporation_id, exc)
+                logger.warning(
+                    "Failed to start background buy price sync for corporation %s: %s",
+                    config.corporation_id,
+                    exc,
+                )
 
-    buy_stock_snapshot_cache_key = _get_buy_browse_snapshot_cache_key(config) if request.method == "GET" else ""
-    buy_stock_snapshot_static = cache.get(buy_stock_snapshot_cache_key) if buy_stock_snapshot_cache_key else None
+    buy_stock_snapshot_cache_key = (
+        _get_buy_browse_snapshot_cache_key(config) if request.method == "GET" else ""
+    )
+    buy_stock_snapshot_static = (
+        cache.get(buy_stock_snapshot_cache_key)
+        if buy_stock_snapshot_cache_key
+        else None
+    )
     if buy_stock_snapshot_static is not None:
         logger.info(
             "Buy browse snapshot cache hit for config %s (rendered_rows=%s)",
@@ -7200,7 +7912,9 @@ def material_exchange_buy(request, tokens):
             len(buy_stock_snapshot_static.get("stock_rows") or []),
         )
     else:
-        buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(config=config)
+        buy_stock_snapshot_static = rebuild_material_exchange_buy_browse_snapshot_cache(
+            config=config
+        )
     if request.method == "GET":
         buy_submission_snapshot_token = _store_buy_submission_snapshot(
             config=config,
@@ -7208,7 +7922,12 @@ def material_exchange_buy(request, tokens):
             buy_stock_snapshot_static=buy_stock_snapshot_static,
         )
 
-    reserved_type_ids = {int(type_id) for type_id in (buy_stock_snapshot_static.get("stock_meta_by_type") or {}).keys()}
+    reserved_type_ids = {
+        int(type_id)
+        for type_id in (
+            buy_stock_snapshot_static.get("stock_meta_by_type") or {}
+        ).keys()
+    }
     reserved_quantities = (
         _get_reserved_buy_quantities(
             config=config,
@@ -7230,7 +7949,9 @@ def material_exchange_buy(request, tokens):
     if pre_filter_stock_count > 0 and post_group_filter_count == 0:
         messages.info(
             request,
-            _("Stock exists, but none of it matches the allowed Market Groups based on the current configuration."),
+            _(
+                "Stock exists, but none of it matches the allowed Market Groups based on the current configuration."
+            ),
         )
 
     buy_last_update = None
@@ -7242,12 +7963,18 @@ def material_exchange_buy(request, tokens):
         buy_last_update = None
 
     try:
-        div_map, _div_scope_missing = get_corp_divisions_cached(int(config.corporation_id), allow_refresh=False)
-        hangar_division_label = div_map.get(int(config.hangar_division)) if div_map else None
+        div_map, _div_scope_missing = get_corp_divisions_cached(
+            int(config.corporation_id), allow_refresh=False
+        )
+        hangar_division_label = (
+            div_map.get(int(config.hangar_division)) if div_map else None
+        )
     except Exception:
         hangar_division_label = None
 
-    hangar_division_label = (hangar_division_label or "").strip() or f"Hangar Division {int(config.hangar_division)}"
+    hangar_division_label = (
+        hangar_division_label or ""
+    ).strip() or f"Hangar Division {int(config.hangar_division)}"
 
     context = {
         "config": config,
@@ -7268,7 +7995,9 @@ def material_exchange_buy(request, tokens):
         build_nav_context(
             request.user,
             active_tab="material_hub",
-            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+            can_manage_corp=request.user.has_perm(
+                "indy_hub.can_manage_corp_bp_requests"
+            ),
         )
     )
 
@@ -7323,7 +8052,9 @@ def material_exchange_sync_prices(request):
     Force an immediate sync of Jita prices for current stock items.
     Updates MaterialExchangeStock jita_buy_price/jita_sell_price and redirects back.
     """
-    emit_view_analytics_event(view_name="material_exchange.sync_prices", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.sync_prices", request=request
+    )
     if not _is_material_exchange_enabled():
         messages.warning(request, _("Buyback is disabled."))
         return redirect("indy_hub:material_exchange_index")
@@ -7359,7 +8090,9 @@ def material_exchange_sync_prices(request):
 @require_http_methods(["POST"])
 def material_exchange_approve_sell(request, order_id):
     """Approve a sell order (member → hub)."""
-    emit_view_analytics_event(view_name="material_exchange.approve_sell", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.approve_sell", request=request
+    )
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
         return redirect("indy_hub:material_exchange_index")
@@ -7397,7 +8130,11 @@ def _restore_sell_order_status(order: MaterialExchangeSellOrder) -> str:
         MaterialExchangeSellOrder.Status.ANOMALY_REJECTED,
         MaterialExchangeSellOrder.Status.VALIDATED,
     }
-    restored_status = previous_status if previous_status in valid_statuses else MaterialExchangeSellOrder.Status.DRAFT
+    restored_status = (
+        previous_status
+        if previous_status in valid_statuses
+        else MaterialExchangeSellOrder.Status.DRAFT
+    )
     order.status = restored_status
     order.status_before_rejection = ""
     order.save(update_fields=["status", "status_before_rejection", "updated_at"])
@@ -7407,7 +8144,9 @@ def _restore_sell_order_status(order: MaterialExchangeSellOrder) -> str:
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_reject_sell(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.reject_sell", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.reject_sell", request=request
+    )
     """Reject a sell order."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
@@ -7427,13 +8166,17 @@ def material_exchange_reject_sell(request, order_id):
     _reject_sell_order(order)
 
     messages.warning(request, _(f"Sell order #{order.id} rejected."))
-    return _redirect_material_exchange(request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel")
+    return _redirect_material_exchange(
+        request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel"
+    )
 
 
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_reopen_sell(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.reopen_sell", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.reopen_sell", request=request
+    )
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
         return redirect("indy_hub:material_exchange_index")
@@ -7446,7 +8189,9 @@ def material_exchange_reopen_sell(request, order_id):
     restored_status = _restore_sell_order_status(order)
     messages.success(
         request,
-        _(f"Sell order #{order.id} reopened and restored to {order.get_status_display()}."),
+        _(
+            f"Sell order #{order.id} reopened and restored to {order.get_status_display()}."
+        ),
     )
     logger.info(
         "Reopened sell order %s to status %s by user %s",
@@ -7454,19 +8199,25 @@ def material_exchange_reopen_sell(request, order_id):
         restored_status,
         request.user.id,
     )
-    return _redirect_material_exchange(request, reverse("indy_hub:material_exchange_history"))
+    return _redirect_material_exchange(
+        request, reverse("indy_hub:material_exchange_history")
+    )
 
 
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_verify_payment_sell(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.verify_payment_sell", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.verify_payment_sell", request=request
+    )
     """Mark sell order as completed (contract accepted in-game)."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
         return redirect("indy_hub:material_exchange_index")
 
-    order = get_object_or_404(MaterialExchangeSellOrder, id=order_id, status="validated")
+    order = get_object_or_404(
+        MaterialExchangeSellOrder, id=order_id, status="validated"
+    )
 
     order.status = "completed"
     order.payment_verified_by = request.user
@@ -7480,13 +8231,17 @@ def material_exchange_verify_payment_sell(request, order_id):
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_complete_sell(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.complete_sell", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.complete_sell", request=request
+    )
     """Mark sell order as fully completed and create transaction logs for each item."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
         return redirect("indy_hub:material_exchange_index")
 
-    order = get_object_or_404(MaterialExchangeSellOrder, id=order_id, status="completed")
+    order = get_object_or_404(
+        MaterialExchangeSellOrder, id=order_id, status="completed"
+    )
 
     with transaction.atomic():
         order.status = "completed"
@@ -7532,7 +8287,9 @@ def material_exchange_complete_sell(request, order_id):
                 sell_structure_ids=order.config.get_sell_structure_ids(),
                 hangar_division=int(getattr(order.config, "hangar_division", 1) or 1),
                 added_quantities_by_type=added_quantities_by_type,
-                preferred_structure_id=int(getattr(order, "source_location_id", 0) or 0),
+                preferred_structure_id=int(
+                    getattr(order, "source_location_id", 0) or 0
+                ),
             )
         except Exception:
             logger.warning(
@@ -7541,14 +8298,18 @@ def material_exchange_complete_sell(request, order_id):
                 exc_info=True,
             )
 
-    messages.success(request, _(f"Sell order #{order.id} completed and transaction logged."))
+    messages.success(
+        request, _(f"Sell order #{order.id} completed and transaction logged.")
+    )
     return redirect("indy_hub:material_exchange_index")
 
 
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_approve_buy(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.approve_buy", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.approve_buy", request=request
+    )
     """Approve a buy order (hub → member) - Creates contract permission."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
@@ -7609,13 +8370,21 @@ def material_exchange_reject_buy(request, order_id):
     _reject_buy_order(order, notify_buyer=notify_buyer)
 
     if notify_buyer:
-        messages.warning(request, _(f"Buy order #{order.id} rejected and buyer notified."))
+        messages.warning(
+            request, _(f"Buy order #{order.id} rejected and buyer notified.")
+        )
     else:
-        messages.warning(request, _(f"Buy order #{order.id} rejected without notifying the buyer."))
-    return _redirect_material_exchange(request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel")
+        messages.warning(
+            request, _(f"Buy order #{order.id} rejected without notifying the buyer.")
+        )
+    return _redirect_material_exchange(
+        request, f"{reverse('indy_hub:material_exchange_index')}#admin-panel"
+    )
 
 
-def _reject_buy_order(order: MaterialExchangeBuyOrder, *, notify_buyer: bool = True) -> None:
+def _reject_buy_order(
+    order: MaterialExchangeBuyOrder, *, notify_buyer: bool = True
+) -> None:
     if notify_buyer:
         from ..notifications import notify_user
 
@@ -7643,7 +8412,11 @@ def _restore_buy_order_status(order: MaterialExchangeBuyOrder) -> str:
         MaterialExchangeBuyOrder.Status.AWAITING_VALIDATION,
         MaterialExchangeBuyOrder.Status.VALIDATED,
     }
-    restored_status = previous_status if previous_status in valid_statuses else MaterialExchangeBuyOrder.Status.DRAFT
+    restored_status = (
+        previous_status
+        if previous_status in valid_statuses
+        else MaterialExchangeBuyOrder.Status.DRAFT
+    )
     order.status = restored_status
     order.status_before_rejection = ""
     order.save(update_fields=["status", "status_before_rejection", "updated_at"])
@@ -7666,7 +8439,9 @@ def material_exchange_reopen_buy(request, order_id):
     restored_status = _restore_buy_order_status(order)
     messages.success(
         request,
-        _(f"Buy order #{order.id} reopened and restored to {order.get_status_display()}."),
+        _(
+            f"Buy order #{order.id} reopened and restored to {order.get_status_display()}."
+        ),
     )
     logger.info(
         "Reopened buy order %s to status %s by user %s",
@@ -7674,13 +8449,17 @@ def material_exchange_reopen_buy(request, order_id):
         restored_status,
         request.user.id,
     )
-    return _redirect_material_exchange(request, reverse("indy_hub:material_exchange_history"))
+    return _redirect_material_exchange(
+        request, reverse("indy_hub:material_exchange_history")
+    )
 
 
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_mark_delivered_buy(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.mark_delivered_buy", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.mark_delivered_buy", request=request
+    )
     """Mark buy order as delivered."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
@@ -7693,7 +8472,9 @@ def material_exchange_mark_delivered_buy(request, order_id):
     )
     delivery_method = request.POST.get("delivery_method", "contract")
 
-    _complete_buy_order(order, delivered_by=request.user, delivery_method=delivery_method)
+    _complete_buy_order(
+        order, delivered_by=request.user, delivery_method=delivery_method
+    )
 
     messages.success(request, _(f"Buy order #{order.id} marked as delivered."))
     return redirect("indy_hub:material_exchange_index")
@@ -7702,7 +8483,9 @@ def material_exchange_mark_delivered_buy(request, order_id):
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_complete_buy(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.complete_buy", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.complete_buy", request=request
+    )
     """Mark buy order as completed and create transaction logs for each item."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))
@@ -7716,7 +8499,9 @@ def material_exchange_complete_buy(request, order_id):
 
     _complete_buy_order(order)
 
-    messages.success(request, _(f"Buy order #{order.id} completed and transaction logged."))
+    messages.success(
+        request, _(f"Buy order #{order.id} completed and transaction logged.")
+    )
     return redirect("indy_hub:material_exchange_index")
 
 
@@ -7780,7 +8565,9 @@ def _complete_buy_order(order, *, delivered_by=None, delivery_method=None):
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
 def material_exchange_transactions(request):
-    emit_view_analytics_event(view_name="material_exchange.transactions", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.transactions", request=request
+    )
     """
     Transaction history and finance reporting.
     Shows all completed transactions with filters and monthly aggregates.
@@ -7800,11 +8587,17 @@ def material_exchange_transactions(request):
         transaction_type = ""
     user_filter = str(request.GET.get("user", "") or "").strip()
 
-    transactions_base_qs = config.transactions.select_related("user", "sell_order", "buy_order")
+    transactions_base_qs = config.transactions.select_related(
+        "user", "sell_order", "buy_order"
+    )
     if transaction_type:
-        transactions_base_qs = transactions_base_qs.filter(transaction_type=transaction_type)
+        transactions_base_qs = transactions_base_qs.filter(
+            transaction_type=transaction_type
+        )
     if user_filter:
-        transactions_base_qs = transactions_base_qs.filter(user__username__icontains=user_filter)
+        transactions_base_qs = transactions_base_qs.filter(
+            user__username__icontains=user_filter
+        )
 
     grouped_rows: list[dict] = []
 
@@ -7833,7 +8626,8 @@ def material_exchange_transactions(request):
             grouped_rows.append(
                 {
                     "transaction_type": MaterialExchangeTransaction.TransactionType.SELL,
-                    "order_reference": str(row.get("sell_order__order_reference") or "") or f"SELL-{order_id}",
+                    "order_reference": str(row.get("sell_order__order_reference") or "")
+                    or f"SELL-{order_id}",
                     "user_id": int(row.get("user_id") or 0),
                     "username": str(row.get("user__username") or ""),
                     "created_at": row.get("sell_order__created_at"),
@@ -7869,7 +8663,8 @@ def material_exchange_transactions(request):
             grouped_rows.append(
                 {
                     "transaction_type": MaterialExchangeTransaction.TransactionType.BUY,
-                    "order_reference": str(row.get("buy_order__order_reference") or "") or f"BUY-{order_id}",
+                    "order_reference": str(row.get("buy_order__order_reference") or "")
+                    or f"BUY-{order_id}",
                     "user_id": int(row.get("user_id") or 0),
                     "username": str(row.get("user__username") or ""),
                     "created_at": row.get("buy_order__created_at"),
@@ -7880,20 +8675,35 @@ def material_exchange_transactions(request):
                 }
             )
 
-    contract_ids = {int(row.get("contract_id") or 0) for row in grouped_rows if int(row.get("contract_id") or 0) > 0}
+    contract_ids = {
+        int(row.get("contract_id") or 0)
+        for row in grouped_rows
+        if int(row.get("contract_id") or 0) > 0
+    }
     contract_accepted_map = {
         int(contract_id): accepted_at
-        for contract_id, accepted_at in ESIContract.objects.filter(contract_id__in=list(contract_ids)).values_list(
-            "contract_id", "date_accepted"
-        )
+        for contract_id, accepted_at in ESIContract.objects.filter(
+            contract_id__in=list(contract_ids)
+        ).values_list("contract_id", "date_accepted")
     }
 
-    grouped_user_ids = {int(row.get("user_id") or 0) for row in grouped_rows if int(row.get("user_id") or 0) > 0}
-    users_by_id = {int(user.id): user for user in User.objects.filter(id__in=list(grouped_user_ids))}
+    grouped_user_ids = {
+        int(row.get("user_id") or 0)
+        for row in grouped_rows
+        if int(row.get("user_id") or 0) > 0
+    }
+    users_by_id = {
+        int(user.id): user
+        for user in User.objects.filter(id__in=list(grouped_user_ids))
+    }
 
     for row in grouped_rows:
         user = users_by_id.get(int(row.get("user_id") or 0))
-        main_character = _resolve_main_character_name(user) if user else str(row.get("username") or "")
+        main_character = (
+            _resolve_main_character_name(user)
+            if user
+            else str(row.get("username") or "")
+        )
         row["who"] = main_character or str(row.get("username") or "")
         if row["transaction_type"] == MaterialExchangeTransaction.TransactionType.SELL:
             row["party_from"] = row["who"]
@@ -7905,12 +8715,16 @@ def material_exchange_transactions(request):
         row["accepted_at"] = accepted_at
         created_at = row.get("created_at")
         if created_at and accepted_at and accepted_at >= created_at:
-            row["acceptance_duration_display"] = _format_duration_short(accepted_at - created_at)
+            row["acceptance_duration_display"] = _format_duration_short(
+                accepted_at - created_at
+            )
         else:
             row["acceptance_duration_display"] = "-"
 
     grouped_rows.sort(
-        key=lambda item: item.get("completed_at") or item.get("created_at") or timezone.now(),
+        key=lambda item: item.get("completed_at")
+        or item.get("created_at")
+        or timezone.now(),
         reverse=True,
     )
 
@@ -7937,10 +8751,17 @@ def material_exchange_transactions(request):
         )
         bucket["orders"] = int(bucket.get("orders") or 0) + 1
         total_price = Decimal(str(row.get("total_price") or 0))
-        if row.get("transaction_type") == MaterialExchangeTransaction.TransactionType.BUY:
-            bucket["buy_total"] = Decimal(str(bucket.get("buy_total") or 0)) + total_price
+        if (
+            row.get("transaction_type")
+            == MaterialExchangeTransaction.TransactionType.BUY
+        ):
+            bucket["buy_total"] = (
+                Decimal(str(bucket.get("buy_total") or 0)) + total_price
+            )
         else:
-            bucket["sell_total"] = Decimal(str(bucket.get("sell_total") or 0)) + total_price
+            bucket["sell_total"] = (
+                Decimal(str(bucket.get("sell_total") or 0)) + total_price
+            )
 
     top_users = []
     for _user_id, bucket in top_user_rollup.items():
@@ -7956,7 +8777,9 @@ def material_exchange_transactions(request):
                 "total_volume": buy_total + sell_total,
             }
         )
-    top_users.sort(key=lambda row: Decimal(str(row.get("total_volume") or 0)), reverse=True)
+    top_users.sort(
+        key=lambda row: Decimal(str(row.get("total_volume") or 0)), reverse=True
+    )
     top_users = top_users[:10]
 
     # Aggregates for current month
@@ -7964,8 +8787,12 @@ def material_exchange_transactions(request):
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     month_stats = config.transactions.filter(completed_at__gte=month_start).aggregate(
-        total_sell_volume=Sum("total_price", filter=Q(transaction_type="sell"), default=0),
-        total_buy_volume=Sum("total_price", filter=Q(transaction_type="buy"), default=0),
+        total_sell_volume=Sum(
+            "total_price", filter=Q(transaction_type="sell"), default=0
+        ),
+        total_buy_volume=Sum(
+            "total_price", filter=Q(transaction_type="buy"), default=0
+        ),
         sell_count=Count("id", filter=Q(transaction_type="sell")),
         buy_count=Count("id", filter=Q(transaction_type="buy")),
     )
@@ -7986,7 +8813,9 @@ def material_exchange_transactions(request):
         build_nav_context(
             request.user,
             active_tab="material_hub",
-            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+            can_manage_corp=request.user.has_perm(
+                "indy_hub.can_manage_corp_bp_requests"
+            ),
         )
     )
 
@@ -7996,7 +8825,9 @@ def material_exchange_transactions(request):
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
 def material_exchange_stats_history(request):
-    emit_view_analytics_event(view_name="material_exchange.stats_history", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.stats_history", request=request
+    )
     """Buyback stats based on all non-capital orders."""
     if not _is_material_exchange_enabled():
         messages.warning(request, _("Buyback is disabled."))
@@ -8075,7 +8906,9 @@ def material_exchange_stats_history(request):
     available_corp_ids = sorted(
         {
             int(corp_id)
-            for corp_id in MaterialExchangeConfig.objects.values_list("corporation_id", flat=True)
+            for corp_id in MaterialExchangeConfig.objects.values_list(
+                "corporation_id", flat=True
+            )
             if int(corp_id or 0) > 0
         }
     )
@@ -8086,7 +8919,9 @@ def material_exchange_stats_history(request):
     available_corp_ids = sorted(set(available_corp_ids))
 
     chosen_corporation_id = int(
-        getattr(settings_obj, "stats_selected_corporation_id", 0) or int(config.corporation_id) or 0
+        getattr(settings_obj, "stats_selected_corporation_id", 0)
+        or int(config.corporation_id)
+        or 0
     )
     if chosen_corporation_id <= 0 and available_corp_ids:
         chosen_corporation_id = int(available_corp_ids[0])
@@ -8100,7 +8935,9 @@ def material_exchange_stats_history(request):
             if int(div or 0) in range(1, 8)
         }
     )
-    saved_wallet_division = int(getattr(settings_obj, "stats_selected_wallet_division", 0) or 0)
+    saved_wallet_division = int(
+        getattr(settings_obj, "stats_selected_wallet_division", 0) or 0
+    )
     if saved_wallet_division in range(1, 8):
         chosen_wallet_division = int(saved_wallet_division)
     elif corp_config_divisions:
@@ -8111,8 +8948,12 @@ def material_exchange_stats_history(request):
     if request.method == "POST":
         post_action = str(request.POST.get("action") or "").strip()
         if post_action in {"save_stats_preferences", "run_manual_snapshot"}:
-            chosen_corporation_raw = str(request.POST.get("chosen_corporation_id") or "").strip()
-            chosen_wallet_raw = str(request.POST.get("chosen_wallet_division") or "").strip()
+            chosen_corporation_raw = str(
+                request.POST.get("chosen_corporation_id") or ""
+            ).strip()
+            chosen_wallet_raw = str(
+                request.POST.get("chosen_wallet_division") or ""
+            ).strip()
 
             try:
                 post_corp_id = int(chosen_corporation_raw)
@@ -8145,7 +8986,9 @@ def material_exchange_stats_history(request):
                 return redirect("indy_hub:material_exchange_stats_history")
 
             try:
-                snapshot_report = capture_material_exchange_daily_holdings(corporation_id=int(post_corp_id))
+                snapshot_report = capture_material_exchange_daily_holdings(
+                    corporation_id=int(post_corp_id)
+                )
             except Exception as exc:
                 logger.exception(
                     "Manual Buyback snapshot failed for corporation %s: %s",
@@ -8164,7 +9007,9 @@ def material_exchange_stats_history(request):
             if saved_rows > 0:
                 messages.success(
                     request,
-                    _("Manual snapshot saved %(rows)s wallet snapshot row(s) for %(corp)s on %(date)s.")
+                    _(
+                        "Manual snapshot saved %(rows)s wallet snapshot row(s) for %(corp)s on %(date)s."
+                    )
                     % {
                         "rows": saved_rows,
                         "corp": corp_name,
@@ -8174,7 +9019,8 @@ def material_exchange_stats_history(request):
             else:
                 messages.warning(
                     request,
-                    _("Manual snapshot completed, but no rows were saved for %(corp)s.") % {"corp": corp_name},
+                    _("Manual snapshot completed, but no rows were saved for %(corp)s.")
+                    % {"corp": corp_name},
                 )
 
             for warning in list(snapshot_report.get("warnings") or [])[:5]:
@@ -8193,9 +9039,11 @@ def material_exchange_stats_history(request):
 
     division_scope_missing = False
     try:
-        wallet_division_names, division_scope_missing = get_corp_wallet_divisions_cached(
-            int(chosen_corporation_id),
-            allow_refresh=False,
+        wallet_division_names, division_scope_missing = (
+            get_corp_wallet_divisions_cached(
+                int(chosen_corporation_id),
+                allow_refresh=False,
+            )
         )
     except Exception:
         wallet_division_names = {}
@@ -8238,9 +9086,12 @@ def material_exchange_stats_history(request):
         }
         for idx in range(1, 8)
     ]
-    chosen_corporation_name = get_corporation_name(int(chosen_corporation_id)) or str(chosen_corporation_id)
+    chosen_corporation_name = get_corporation_name(int(chosen_corporation_id)) or str(
+        chosen_corporation_id
+    )
     chosen_wallet_division_name = str(
-        wallet_division_names.get(int(chosen_wallet_division)) or f"Wallet Division {int(chosen_wallet_division)}"
+        wallet_division_names.get(int(chosen_wallet_division))
+        or f"Wallet Division {int(chosen_wallet_division)}"
     )
 
     period_start = None
@@ -8248,9 +9099,13 @@ def material_exchange_stats_history(request):
     filter_end = None
     if custom_start_date or custom_end_date:
         if custom_start_date:
-            filter_start = timezone.make_aware(datetime.combine(custom_start_date, time.min))
+            filter_start = timezone.make_aware(
+                datetime.combine(custom_start_date, time.min)
+            )
         if custom_end_date:
-            filter_end = timezone.make_aware(datetime.combine(custom_end_date, time.max))
+            filter_end = timezone.make_aware(
+                datetime.combine(custom_end_date, time.max)
+            )
     elif selected_period in period_months_map:
         months = period_months_map[selected_period]
         month_anchor = timezone.now().replace(
@@ -8272,15 +9127,23 @@ def material_exchange_stats_history(request):
         ).values_list("id", flat=True)
     )
     selected_config_ids = list(corp_config_ids)
-    selected_configs = list(MaterialExchangeConfig.objects.filter(id__in=selected_config_ids))
+    selected_configs = list(
+        MaterialExchangeConfig.objects.filter(id__in=selected_config_ids)
+    )
     stats_scope_mode = "corp"
     stats_scope_note = ""
     if not selected_config_ids:
         stats_scope_mode = "empty"
         stats_scope_note = _("No Buyback configs found for this corporation yet.")
-    current_buy_hangar_inventory = _build_current_buy_hangar_inventory_snapshot(configs=selected_configs)
-    buy_orders_qs = MaterialExchangeBuyOrder.objects.filter(config_id__in=selected_config_ids)
-    sell_orders_qs = MaterialExchangeSellOrder.objects.filter(config_id__in=selected_config_ids)
+    current_buy_hangar_inventory = _build_current_buy_hangar_inventory_snapshot(
+        configs=selected_configs
+    )
+    buy_orders_qs = MaterialExchangeBuyOrder.objects.filter(
+        config_id__in=selected_config_ids
+    )
+    sell_orders_qs = MaterialExchangeSellOrder.objects.filter(
+        config_id__in=selected_config_ids
+    )
     if filter_start:
         buy_orders_qs = buy_orders_qs.filter(created_at__gte=filter_start)
         sell_orders_qs = sell_orders_qs.filter(created_at__gte=filter_start)
@@ -8330,7 +9193,9 @@ def material_exchange_stats_history(request):
     buy_order_ids = [int(row["id"]) for row in buy_rows]
 
     all_contract_ids = {
-        int(row["esi_contract_id"]) for row in (sell_rows + buy_rows) if int(row.get("esi_contract_id") or 0) > 0
+        int(row["esi_contract_id"])
+        for row in (sell_rows + buy_rows)
+        if int(row.get("esi_contract_id") or 0) > 0
     }
 
     wallet_scope_missing = False
@@ -8359,12 +9224,17 @@ def material_exchange_stats_history(request):
     }
 
     if int(chosen_corporation_id or 0) > 0:
-        if CorporationWalletJournalEntry is not None and CorporationMarketOrder is not None:
+        if (
+            CorporationWalletJournalEntry is not None
+            and CorporationMarketOrder is not None
+        ):
             wallet_data_source = "corptools"
             try:
                 wallet_journal_rows = list(
                     CorporationWalletJournalEntry.objects.filter(
-                        division__corporation__corporation__corporation_id=int(chosen_corporation_id),
+                        division__corporation__corporation__corporation_id=int(
+                            chosen_corporation_id
+                        ),
                         division__division=int(chosen_wallet_division),
                     ).values(
                         "date",
@@ -8392,7 +9262,9 @@ def material_exchange_stats_history(request):
                         "price": row.get("price"),
                     }
                     for row in CorporationMarketOrder.objects.filter(
-                        wallet_division__corporation__corporation__corporation_id=int(chosen_corporation_id),
+                        wallet_division__corporation__corporation__corporation_id=int(
+                            chosen_corporation_id
+                        ),
                         wallet_division__division=int(chosen_wallet_division),
                         state="active",
                     ).values(
@@ -8505,7 +9377,9 @@ def material_exchange_stats_history(request):
             wallet_market_activity_total += amount
             if posted_at:
                 month_key = posted_at.strftime("%Y-%m")
-                wallet_market_monthly_map[month_key] = int(wallet_market_monthly_map.get(month_key, 0)) + 1
+                wallet_market_monthly_map[month_key] = (
+                    int(wallet_market_monthly_map.get(month_key, 0)) + 1
+                )
             if ref_type == "market_transaction":
                 wallet_market_transaction_count += 1
                 wallet_market_transaction_total += amount
@@ -8573,11 +9447,15 @@ def material_exchange_stats_history(request):
             else str(is_buy_raw).strip().lower() in {"1", "true", "yes"}
         )
         try:
-            remaining_qty = int(row.get("volume_remain") or row.get("volume_total") or 0)
+            remaining_qty = int(
+                row.get("volume_remain") or row.get("volume_total") or 0
+            )
         except (TypeError, ValueError):
             remaining_qty = 0
         remaining_qty = max(remaining_qty, 0)
-        open_value = (_to_decimal(row.get("price")) * Decimal(str(remaining_qty))).quantize(Decimal("0.01"))
+        open_value = (
+            _to_decimal(row.get("price")) * Decimal(str(remaining_qty))
+        ).quantize(Decimal("0.01"))
         wallet_open_order_value += open_value
         if is_buy:
             wallet_open_buy_orders += 1
@@ -8606,11 +9484,15 @@ def material_exchange_stats_history(request):
         else 0
     )
     wallet_daily_net = (
-        (wallet_net_total / Decimal(str(wallet_analysis_window_days))).quantize(Decimal("0.01"))
+        (wallet_net_total / Decimal(str(wallet_analysis_window_days))).quantize(
+            Decimal("0.01")
+        )
         if wallet_analysis_window_days > 0
         else Decimal("0")
     )
-    wallet_net_projected_30d = (wallet_daily_net * Decimal("30")).quantize(Decimal("0.01"))
+    wallet_net_projected_30d = (wallet_daily_net * Decimal("30")).quantize(
+        Decimal("0.01")
+    )
 
     market_trend_source_label = _("Wallet Market Activity")
     if not wallet_market_monthly_map:
@@ -8626,10 +9508,12 @@ def material_exchange_stats_history(request):
         ).values_list("contract_id", "price", "date_accepted")
     }
     contract_price_map = {
-        int(contract_id): _to_decimal(meta.get("price")) for contract_id, meta in contract_meta_map.items()
+        int(contract_id): _to_decimal(meta.get("price"))
+        for contract_id, meta in contract_meta_map.items()
     }
     contract_accepted_at_map = {
-        int(contract_id): meta.get("date_accepted") for contract_id, meta in contract_meta_map.items()
+        int(contract_id): meta.get("date_accepted")
+        for contract_id, meta in contract_meta_map.items()
     }
 
     sell_expected_cost_total = sum(
@@ -8684,33 +9568,49 @@ def material_exchange_stats_history(request):
         expected_jita_buy=Sum("jita_buy_total_value_snapshot", default=0),
         expected_jita_sell=Sum("jita_sell_total_value_snapshot", default=0),
         expected_jita_split=Sum("jita_split_total_value_snapshot", default=0),
-        snapshot_count=Count("id", filter=Q(jita_sell_total_value_snapshot__isnull=False)),
+        snapshot_count=Count(
+            "id", filter=Q(jita_sell_total_value_snapshot__isnull=False)
+        ),
         total_count=Count("id"),
     )
     buy_snapshot_rollup = buy_tx_qs.aggregate(
         expected_jita_buy=Sum("jita_buy_total_value_snapshot", default=0),
         expected_jita_sell=Sum("jita_sell_total_value_snapshot", default=0),
         expected_jita_split=Sum("jita_split_total_value_snapshot", default=0),
-        snapshot_count=Count("id", filter=Q(jita_sell_total_value_snapshot__isnull=False)),
+        snapshot_count=Count(
+            "id", filter=Q(jita_sell_total_value_snapshot__isnull=False)
+        ),
         total_count=Count("id"),
     )
 
-    sell_expected_jita_buy_total = _to_decimal(sell_snapshot_rollup["expected_jita_buy"])
-    sell_expected_jita_sell_total = _to_decimal(sell_snapshot_rollup["expected_jita_sell"])
-    sell_expected_jita_split_total = _to_decimal(sell_snapshot_rollup["expected_jita_split"])
+    sell_expected_jita_buy_total = _to_decimal(
+        sell_snapshot_rollup["expected_jita_buy"]
+    )
+    sell_expected_jita_sell_total = _to_decimal(
+        sell_snapshot_rollup["expected_jita_sell"]
+    )
+    sell_expected_jita_split_total = _to_decimal(
+        sell_snapshot_rollup["expected_jita_split"]
+    )
     buy_expected_jita_buy_total = _to_decimal(buy_snapshot_rollup["expected_jita_buy"])
-    buy_expected_jita_sell_total = _to_decimal(buy_snapshot_rollup["expected_jita_sell"])
-    buy_expected_jita_split_total = _to_decimal(buy_snapshot_rollup["expected_jita_split"])
+    buy_expected_jita_sell_total = _to_decimal(
+        buy_snapshot_rollup["expected_jita_sell"]
+    )
+    buy_expected_jita_split_total = _to_decimal(
+        buy_snapshot_rollup["expected_jita_split"]
+    )
 
     buy_snapshot_count = int(buy_snapshot_rollup["snapshot_count"] or 0)
     buy_snapshot_total_count = int(buy_snapshot_rollup["total_count"] or 0)
     snapshot_coverage_pct = (
-        round((buy_snapshot_count / buy_snapshot_total_count) * 100, 1) if buy_snapshot_total_count else 0
+        round((buy_snapshot_count / buy_snapshot_total_count) * 100, 1)
+        if buy_snapshot_total_count
+        else 0
     )
 
-    tx_rows = MaterialExchangeTransaction.objects.filter(config_id__in=selected_config_ids).filter(
-        Q(sell_order_id__in=sell_order_ids) | Q(buy_order_id__in=buy_order_ids)
-    )
+    tx_rows = MaterialExchangeTransaction.objects.filter(
+        config_id__in=selected_config_ids
+    ).filter(Q(sell_order_id__in=sell_order_ids) | Q(buy_order_id__in=buy_order_ids))
     if filter_start:
         tx_rows = tx_rows.filter(completed_at__gte=filter_start)
     if filter_end:
@@ -8722,14 +9622,14 @@ def material_exchange_stats_history(request):
     )
 
     tx_buy_total = _to_decimal(
-        tx_rows.filter(transaction_type=MaterialExchangeTransaction.TransactionType.BUY).aggregate(
-            total=Sum("total_price", default=0)
-        )["total"]
+        tx_rows.filter(
+            transaction_type=MaterialExchangeTransaction.TransactionType.BUY
+        ).aggregate(total=Sum("total_price", default=0))["total"]
     )
     tx_sell_total = _to_decimal(
-        tx_rows.filter(transaction_type=MaterialExchangeTransaction.TransactionType.SELL).aggregate(
-            total=Sum("total_price", default=0)
-        )["total"]
+        tx_rows.filter(
+            transaction_type=MaterialExchangeTransaction.TransactionType.SELL
+        ).aggregate(total=Sum("total_price", default=0))["total"]
     )
     contract_transaction_count = int(tx_rows.count())
 
@@ -8784,8 +9684,12 @@ def material_exchange_stats_history(request):
     average_order_completion_seconds = None
     average_order_completion_duration_display = "-"
     if completion_durations:
-        total_completion_seconds = sum(int(duration.total_seconds()) for duration in completion_durations)
-        average_order_completion_seconds = int(total_completion_seconds / len(completion_durations))
+        total_completion_seconds = sum(
+            int(duration.total_seconds()) for duration in completion_durations
+        )
+        average_order_completion_seconds = int(
+            total_completion_seconds / len(completion_durations)
+        )
         average_order_completion_duration_display = _format_duration_short(
             timedelta(seconds=average_order_completion_seconds)
         )
@@ -8826,10 +9730,17 @@ def material_exchange_stats_history(request):
     )
     actual_exchange_profit = total_buy_volume - total_sell_volume
     has_actual_contract_activity = (
-        total_buy_volume > 0 or total_sell_volume > 0 or tx_buy_total > 0 or tx_sell_total > 0
+        total_buy_volume > 0
+        or total_sell_volume > 0
+        or tx_buy_total > 0
+        or tx_sell_total > 0
     )
-    wallet_supplemental_applied = wallet_supplemental_total if has_actual_contract_activity else Decimal("0")
-    actual_exchange_profit_with_wallet = actual_exchange_profit + wallet_supplemental_applied
+    wallet_supplemental_applied = (
+        wallet_supplemental_total if has_actual_contract_activity else Decimal("0")
+    )
+    actual_exchange_profit_with_wallet = (
+        actual_exchange_profit + wallet_supplemental_applied
+    )
     sell_cost_delta = total_sell_volume - sell_expected_cost_total
     buy_revenue_delta_jita_sell = total_buy_volume - buy_expected_jita_sell_total
     buy_revenue_delta_jita_buy = total_buy_volume - buy_expected_jita_buy_total
@@ -8879,9 +9790,15 @@ def material_exchange_stats_history(request):
         elif tx_type == MaterialExchangeTransaction.TransactionType.BUY:
             data["sold_qty"] += qty
             data["sold_revenue"] += total_value
-            data["sold_jita_buy"] += Decimal(str(row.get("jita_buy_total_value_snapshot") or 0))
-            data["sold_jita_sell"] += Decimal(str(row.get("jita_sell_total_value_snapshot") or 0))
-            data["sold_jita_split"] += Decimal(str(row.get("jita_split_total_value_snapshot") or 0))
+            data["sold_jita_buy"] += Decimal(
+                str(row.get("jita_buy_total_value_snapshot") or 0)
+            )
+            data["sold_jita_sell"] += Decimal(
+                str(row.get("jita_sell_total_value_snapshot") or 0)
+            )
+            data["sold_jita_split"] += Decimal(
+                str(row.get("jita_split_total_value_snapshot") or 0)
+            )
 
     unrealized_inventory_value = Decimal("0")
     unrealized_inventory_cost_basis = Decimal("0")
@@ -8895,7 +9812,10 @@ def material_exchange_stats_history(request):
             .values("type_id")
             .annotate(jita_sell_price=Max("jita_sell_price"))
         )
-        stock_prices = {int(row["type_id"]): _to_decimal(row.get("jita_sell_price")) for row in stock_price_rows}
+        stock_prices = {
+            int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
+            for row in stock_price_rows
+        }
         for type_id, rollup in type_rollup.items():
             acquired_qty = rollup["acquired_qty"]
             sold_qty = rollup["sold_qty"]
@@ -8906,7 +9826,9 @@ def material_exchange_stats_history(request):
             if remaining_qty <= 0:
                 continue
 
-            avg_cost = (rollup["acquired_cost"] / acquired_qty).quantize(Decimal("0.0001"))
+            avg_cost = (rollup["acquired_cost"] / acquired_qty).quantize(
+                Decimal("0.0001")
+            )
             remaining_cost = (avg_cost * remaining_qty).quantize(Decimal("0.01"))
             unrealized_inventory_cost_basis += remaining_cost
 
@@ -8914,7 +9836,9 @@ def material_exchange_stats_history(request):
             if jita_sell_price <= 0:
                 continue
 
-            remaining_value = (jita_sell_price * remaining_qty).quantize(Decimal("0.01"))
+            remaining_value = (jita_sell_price * remaining_qty).quantize(
+                Decimal("0.01")
+            )
             unrealized_inventory_value += remaining_value
             unrealized_earnings_potential += remaining_value - remaining_cost
 
@@ -8941,43 +9865,81 @@ def material_exchange_stats_history(request):
         potential_profit_jita_split += rollup["sold_jita_split"] - cogs_for_sold
         potential_priced_type_count += 1
 
-    expected_profit_jita_buy_with_wallet = potential_profit_jita_buy + wallet_supplemental_applied
-    expected_profit_jita_sell_with_wallet = potential_profit_jita_sell + wallet_supplemental_applied
-    expected_profit_jita_split_with_wallet = potential_profit_jita_split + wallet_supplemental_applied
-    projected_profit = actual_exchange_profit_with_wallet + unrealized_earnings_potential
+    expected_profit_jita_buy_with_wallet = (
+        potential_profit_jita_buy + wallet_supplemental_applied
+    )
+    expected_profit_jita_sell_with_wallet = (
+        potential_profit_jita_sell + wallet_supplemental_applied
+    )
+    expected_profit_jita_split_with_wallet = (
+        potential_profit_jita_split + wallet_supplemental_applied
+    )
+    projected_profit = (
+        actual_exchange_profit_with_wallet + unrealized_earnings_potential
+    )
     projected_revenue = total_buy_volume + unrealized_inventory_value
 
     contract_profit_margin_pct = (
-        round((actual_exchange_profit / total_buy_volume) * 100, 2) if total_buy_volume > 0 else 0
+        round((actual_exchange_profit / total_buy_volume) * 100, 2)
+        if total_buy_volume > 0
+        else 0
     )
     net_profit_margin_pct = (
-        round((actual_exchange_profit_with_wallet / total_buy_volume) * 100, 2) if total_buy_volume > 0 else 0
+        round((actual_exchange_profit_with_wallet / total_buy_volume) * 100, 2)
+        if total_buy_volume > 0
+        else 0
     )
     expected_margin_jita_split_pct = (
-        round((expected_profit_jita_split_with_wallet / jita_split_value) * 100, 2) if jita_split_value > 0 else 0
+        round((expected_profit_jita_split_with_wallet / jita_split_value) * 100, 2)
+        if jita_split_value > 0
+        else 0
     )
     expected_margin_jita_buy_pct = (
-        round((expected_profit_jita_buy_with_wallet / jita_buy_value) * 100, 2) if jita_buy_value > 0 else 0
+        round((expected_profit_jita_buy_with_wallet / jita_buy_value) * 100, 2)
+        if jita_buy_value > 0
+        else 0
     )
     expected_margin_jita_sell_pct = (
-        round((expected_profit_jita_sell_with_wallet / jita_sell_value) * 100, 2) if jita_sell_value > 0 else 0
+        round((expected_profit_jita_sell_with_wallet / jita_sell_value) * 100, 2)
+        if jita_sell_value > 0
+        else 0
     )
-    projected_margin_pct = round((projected_profit / projected_revenue) * 100, 2) if projected_revenue > 0 else 0
-    realized_vs_jita_buy_pct = round((member_sales_volume / jita_buy_value) * 100, 2) if jita_buy_value > 0 else 0
-    realized_vs_jita_sell_pct = round((member_sales_volume / jita_sell_value) * 100, 2) if jita_sell_value > 0 else 0
+    projected_margin_pct = (
+        round((projected_profit / projected_revenue) * 100, 2)
+        if projected_revenue > 0
+        else 0
+    )
+    realized_vs_jita_buy_pct = (
+        round((member_sales_volume / jita_buy_value) * 100, 2)
+        if jita_buy_value > 0
+        else 0
+    )
+    realized_vs_jita_sell_pct = (
+        round((member_sales_volume / jita_sell_value) * 100, 2)
+        if jita_sell_value > 0
+        else 0
+    )
     realized_vs_jita_split_pct = (
-        round((member_sales_volume / jita_split_value) * 100, 2) if jita_split_value > 0 else 0
+        round((member_sales_volume / jita_split_value) * 100, 2)
+        if jita_split_value > 0
+        else 0
     )
     wallet_adjustment_pct_of_revenue = (
-        round((wallet_supplemental_applied / total_buy_volume) * 100, 2) if total_buy_volume > 0 else 0
+        round((wallet_supplemental_applied / total_buy_volume) * 100, 2)
+        if total_buy_volume > 0
+        else 0
     )
     unrealized_roi_pct = (
-        round((unrealized_earnings_potential / unrealized_inventory_cost_basis) * 100, 2)
+        round(
+            (unrealized_earnings_potential / unrealized_inventory_cost_basis) * 100, 2
+        )
         if unrealized_inventory_cost_basis > 0
         else 0
     )
 
-    analysis_window_start = filter_start or period_start or tx_time_rollup.get("first_completed")
+    analysis_window_start = (
+        filter_start or period_start or tx_time_rollup.get("first_completed")
+    )
     analysis_window_end = filter_end or timezone.now()
     if not analysis_window_start:
         analysis_window_start = tx_time_rollup.get("first_completed")
@@ -8994,25 +9956,39 @@ def material_exchange_stats_history(request):
     )
 
     average_daily_revenue = (
-        (total_buy_volume / Decimal(str(analysis_window_days))).quantize(Decimal("0.01"))
+        (total_buy_volume / Decimal(str(analysis_window_days))).quantize(
+            Decimal("0.01")
+        )
         if analysis_window_days > 0
         else Decimal("0")
     )
     average_daily_cost = (
-        (total_sell_volume / Decimal(str(analysis_window_days))).quantize(Decimal("0.01"))
+        (total_sell_volume / Decimal(str(analysis_window_days))).quantize(
+            Decimal("0.01")
+        )
         if analysis_window_days > 0
         else Decimal("0")
     )
     average_daily_net_profit = (
-        (actual_exchange_profit_with_wallet / Decimal(str(analysis_window_days))).quantize(Decimal("0.01"))
+        (
+            actual_exchange_profit_with_wallet / Decimal(str(analysis_window_days))
+        ).quantize(Decimal("0.01"))
         if analysis_window_days > 0
         else Decimal("0")
     )
-    forecast_30d_revenue = (average_daily_revenue * Decimal("30")).quantize(Decimal("0.01"))
-    forecast_30d_profit = (average_daily_net_profit * Decimal("30")).quantize(Decimal("0.01"))
-    forecast_90d_profit = (average_daily_net_profit * Decimal("90")).quantize(Decimal("0.01"))
+    forecast_30d_revenue = (average_daily_revenue * Decimal("30")).quantize(
+        Decimal("0.01")
+    )
+    forecast_30d_profit = (average_daily_net_profit * Decimal("30")).quantize(
+        Decimal("0.01")
+    )
+    forecast_90d_profit = (average_daily_net_profit * Decimal("90")).quantize(
+        Decimal("0.01")
+    )
     forecast_30d_margin_pct = (
-        round((forecast_30d_profit / forecast_30d_revenue) * 100, 2) if forecast_30d_revenue > 0 else 0
+        round((forecast_30d_profit / forecast_30d_revenue) * 100, 2)
+        if forecast_30d_revenue > 0
+        else 0
     )
 
     contracts_qs = ESIContract.objects.filter(contract_type="item_exchange")
@@ -9025,7 +10001,9 @@ def material_exchange_stats_history(request):
 
     contract_counts_raw = {
         str(row["status"]): int(row["count"])
-        for row in contracts_qs.values("status").annotate(count=Count("contract_id")).order_by("status")
+        for row in contracts_qs.values("status")
+        .annotate(count=Count("contract_id"))
+        .order_by("status")
     }
     contract_stats = {
         "total": int(sum(contract_counts_raw.values())),
@@ -9042,17 +10020,25 @@ def material_exchange_stats_history(request):
         "expired": int(contract_counts_raw.get("expired", 0)),
         "deleted": int(contract_counts_raw.get("deleted", 0)),
         "reversed": int(contract_counts_raw.get("reversed", 0)),
-        "deleted_before_acceptance": int(contracts_qs.filter(status="deleted", date_accepted__isnull=True).count()),
-        "deleted_after_acceptance": int(contracts_qs.filter(status="deleted", date_accepted__isnull=False).count()),
+        "deleted_before_acceptance": int(
+            contracts_qs.filter(status="deleted", date_accepted__isnull=True).count()
+        ),
+        "deleted_after_acceptance": int(
+            contracts_qs.filter(status="deleted", date_accepted__isnull=False).count()
+        ),
     }
 
     buy_order_status_counts = {
         str(row["status"]): int(row["count"])
-        for row in buy_orders_qs.values("status").annotate(count=Count("id")).order_by("status")
+        for row in buy_orders_qs.values("status")
+        .annotate(count=Count("id"))
+        .order_by("status")
     }
     sell_order_status_counts = {
         str(row["status"]): int(row["count"])
-        for row in sell_orders_qs.values("status").annotate(count=Count("id")).order_by("status")
+        for row in sell_orders_qs.values("status")
+        .annotate(count=Count("id"))
+        .order_by("status")
     }
 
     buy_order_status_display_counts = {
@@ -9071,7 +10057,11 @@ def material_exchange_stats_history(request):
                         else (
                             _("Awaiting Auth Validation")
                             if status == "awaiting_validation"
-                            else _("Order Created - Awaiting Contract") if status == "draft" else status
+                            else (
+                                _("Order Created - Awaiting Contract")
+                                if status == "draft"
+                                else status
+                            )
                         )
                     )
                 )
@@ -9101,7 +10091,11 @@ def material_exchange_stats_history(request):
                                 else (
                                     _("Awaiting Auth Validation")
                                     if status == "awaiting_validation"
-                                    else _("Order Created - Awaiting Contract") if status == "draft" else status
+                                    else (
+                                        _("Order Created - Awaiting Contract")
+                                        if status == "draft"
+                                        else status
+                                    )
                                 )
                             )
                         )
@@ -9114,18 +10108,29 @@ def material_exchange_stats_history(request):
 
     contract_progress_stats = {
         "made": len(sell_rows) + len(buy_rows),
-        "completed": int(buy_order_status_counts.get("completed", 0) + sell_order_status_counts.get("completed", 0)),
-        "cancelled": int(buy_order_status_counts.get("cancelled", 0) + sell_order_status_counts.get("cancelled", 0)),
-        "rejected": int(buy_order_status_counts.get("rejected", 0) + sell_order_status_counts.get("rejected", 0)),
+        "completed": int(
+            buy_order_status_counts.get("completed", 0)
+            + sell_order_status_counts.get("completed", 0)
+        ),
+        "cancelled": int(
+            buy_order_status_counts.get("cancelled", 0)
+            + sell_order_status_counts.get("cancelled", 0)
+        ),
+        "rejected": int(
+            buy_order_status_counts.get("rejected", 0)
+            + sell_order_status_counts.get("rejected", 0)
+        ),
         "current_validated": int(
-            buy_order_status_counts.get("validated", 0) + sell_order_status_counts.get("validated", 0)
+            buy_order_status_counts.get("validated", 0)
+            + sell_order_status_counts.get("validated", 0)
         ),
         "current_awaiting_validation": int(
             buy_order_status_counts.get("awaiting_validation", 0)
             + sell_order_status_counts.get("awaiting_validation", 0)
         ),
         "current_anomaly": int(
-            sell_order_status_counts.get("anomaly", 0) + sell_order_status_counts.get("anomaly_rejected", 0)
+            sell_order_status_counts.get("anomaly", 0)
+            + sell_order_status_counts.get("anomaly_rejected", 0)
         ),
     }
 
@@ -9140,7 +10145,9 @@ def material_exchange_stats_history(request):
     )
 
     if all_contract_ids:
-        buyback_contracts_qs = contracts_qs.filter(contract_id__in=list(all_contract_ids))
+        buyback_contracts_qs = contracts_qs.filter(
+            contract_id__in=list(all_contract_ids)
+        )
     else:
         buyback_contracts_qs = contracts_qs.none()
 
@@ -9171,7 +10178,8 @@ def material_exchange_stats_history(request):
         )
         target[key] = {
             "count": int(existing.get("count") or 0) + int(row.get("order_count") or 0),
-            "value": _to_decimal(existing.get("value")) + _to_decimal(row.get("total_value")),
+            "value": _to_decimal(existing.get("value"))
+            + _to_decimal(row.get("total_value")),
         }
         month_keys.add(key)
 
@@ -9228,7 +10236,8 @@ def material_exchange_stats_history(request):
         reward=0,
     )
     donation_contract_ids = [
-        int(contract_id) for contract_id in donation_contracts_qs.values_list("contract_id", flat=True)
+        int(contract_id)
+        for contract_id in donation_contracts_qs.values_list("contract_id", flat=True)
     ]
     donation_item_rows = []
     if donation_contract_ids:
@@ -9253,7 +10262,8 @@ def material_exchange_stats_history(request):
             .annotate(jita_sell_price=Max("jita_sell_price"))
         )
         donation_price_map = {
-            int(row["type_id"]): _to_decimal(row.get("jita_sell_price")) for row in donation_stock_rows
+            int(row["type_id"]): _to_decimal(row.get("jita_sell_price"))
+            for row in donation_stock_rows
         }
         for row in donation_item_rows:
             type_id = int(row.get("type_id") or 0)
@@ -9300,7 +10310,9 @@ def material_exchange_stats_history(request):
         "open_order_value": wallet_open_order_value,
     }
 
-    snapshot_start_date = custom_start_date or (period_start.date() if period_start else None)
+    snapshot_start_date = custom_start_date or (
+        period_start.date() if period_start else None
+    )
     snapshot_end_date = custom_end_date or (filter_end.date() if filter_end else None)
 
     capital_trend_rows: list[dict[str, object]] = []
@@ -9338,7 +10350,9 @@ def material_exchange_stats_history(request):
         total_asset_value = row.get("total_asset_value")
         total_asset_delta = None
         if total_asset_value is not None and previous_total_asset_value is not None:
-            total_asset_delta = (_to_decimal(total_asset_value) - previous_total_asset_value).quantize(Decimal("0.01"))
+            total_asset_delta = (
+                _to_decimal(total_asset_value) - previous_total_asset_value
+            ).quantize(Decimal("0.01"))
         if total_asset_value is not None:
             previous_total_asset_value = _to_decimal(total_asset_value)
 
@@ -9347,24 +10361,42 @@ def material_exchange_stats_history(request):
                 "month": snapshot_date.isoformat(),
                 "snapshot_date": snapshot_date,
                 "wallet_balance": (
-                    _to_decimal(row.get("wallet_balance")) if row.get("wallet_balance") is not None else None
+                    _to_decimal(row.get("wallet_balance"))
+                    if row.get("wallet_balance") is not None
+                    else None
                 ),
-                "inventory_market_value": _to_decimal(row.get("inventory_market_value")),
+                "inventory_market_value": _to_decimal(
+                    row.get("inventory_market_value")
+                ),
                 "inventory_item_count": int(row.get("inventory_item_count") or 0),
                 "inventory_type_count": int(row.get("inventory_type_count") or 0),
-                "inventory_priced_type_count": int(row.get("inventory_priced_type_count") or 0),
-                "inventory_location_count": int(row.get("inventory_location_count") or 0),
+                "inventory_priced_type_count": int(
+                    row.get("inventory_priced_type_count") or 0
+                ),
+                "inventory_location_count": int(
+                    row.get("inventory_location_count") or 0
+                ),
                 "inventory_hangar_count": int(row.get("inventory_hangar_count") or 0),
-                "total_asset_value": (_to_decimal(total_asset_value) if total_asset_value is not None else None),
+                "total_asset_value": (
+                    _to_decimal(total_asset_value)
+                    if total_asset_value is not None
+                    else None
+                ),
                 "total_asset_delta": total_asset_delta,
                 "wallet_balance_available": bool(row.get("wallet_balance_available")),
                 "assets_scope_missing": bool(row.get("assets_scope_missing")),
             }
         )
 
-    capital_trend_chart_labels = [str(row.get("month") or "") for row in capital_trend_rows]
+    capital_trend_chart_labels = [
+        str(row.get("month") or "") for row in capital_trend_rows
+    ]
     capital_trend_wallet_values = [
-        float(_to_decimal(row.get("wallet_balance"))) if row.get("wallet_balance") is not None else None
+        (
+            float(_to_decimal(row.get("wallet_balance")))
+            if row.get("wallet_balance") is not None
+            else None
+        )
         for row in capital_trend_rows
     ]
     capital_trend_inventory_values = [
@@ -9376,7 +10408,11 @@ def material_exchange_stats_history(request):
         for row in capital_trend_rows
     ]
     capital_trend_total_values = [
-        float(_to_decimal(row.get("total_asset_value"))) if row.get("total_asset_value") is not None else None
+        (
+            float(_to_decimal(row.get("total_asset_value")))
+            if row.get("total_asset_value") is not None
+            else None
+        )
         for row in capital_trend_rows
     ]
     current_total_asset_value = (
@@ -9386,8 +10422,12 @@ def material_exchange_stats_history(request):
     capital_trend_wallet_history_available = bool(capital_trend_rows) and all(
         row.get("wallet_balance") is not None for row in capital_trend_rows
     )
-    capital_trend_assets_scope_missing = any(bool(row.get("assets_scope_missing")) for row in capital_trend_rows)
-    capital_trend_latest_snapshot_date = str(capital_trend_rows[-1].get("month") or "") if capital_trend_rows else ""
+    capital_trend_assets_scope_missing = any(
+        bool(row.get("assets_scope_missing")) for row in capital_trend_rows
+    )
+    capital_trend_latest_snapshot_date = (
+        str(capital_trend_rows[-1].get("month") or "") if capital_trend_rows else ""
+    )
     capital_trend_total_series = [
         _to_decimal(row.get("total_asset_value"))
         for row in capital_trend_rows
@@ -9395,14 +10435,16 @@ def material_exchange_stats_history(request):
     ]
     capital_trend_total_change = None
     if len(capital_trend_total_series) >= 2:
-        capital_trend_total_change = (capital_trend_total_series[-1] - capital_trend_total_series[0]).quantize(
-            Decimal("0.01")
-        )
+        capital_trend_total_change = (
+            capital_trend_total_series[-1] - capital_trend_total_series[0]
+        ).quantize(Decimal("0.01"))
 
-    user_ids = {int(row["seller_id"]) for row in sell_rows if int(row.get("seller_id") or 0) > 0} | {
-        int(row["buyer_id"]) for row in buy_rows if int(row.get("buyer_id") or 0) > 0
+    user_ids = {
+        int(row["seller_id"]) for row in sell_rows if int(row.get("seller_id") or 0) > 0
+    } | {int(row["buyer_id"]) for row in buy_rows if int(row.get("buyer_id") or 0) > 0}
+    user_map = {
+        int(user.id): user for user in User.objects.filter(id__in=list(user_ids))
     }
-    user_map = {int(user.id): user for user in User.objects.filter(id__in=list(user_ids))}
 
     sold_rollup: dict[int, dict[str, Decimal | int]] = {}
     bought_rollup: dict[int, dict[str, Decimal | int]] = {}
@@ -9416,7 +10458,9 @@ def material_exchange_stats_history(request):
             {"orders": 0, "value": Decimal("0"), "quantity": 0},
         )
         bucket["orders"] = int(bucket["orders"]) + 1
-        bucket["value"] = _to_decimal(bucket["value"]) + _to_decimal(row.get("expected_total"))
+        bucket["value"] = _to_decimal(bucket["value"]) + _to_decimal(
+            row.get("expected_total")
+        )
         bucket["quantity"] = int(bucket["quantity"]) + int(row.get("expected_qty") or 0)
 
     for row in buy_rows:
@@ -9428,7 +10472,9 @@ def material_exchange_stats_history(request):
             {"orders": 0, "value": Decimal("0"), "quantity": 0},
         )
         bucket["orders"] = int(bucket["orders"]) + 1
-        bucket["value"] = _to_decimal(bucket["value"]) + _to_decimal(row.get("expected_total"))
+        bucket["value"] = _to_decimal(bucket["value"]) + _to_decimal(
+            row.get("expected_total")
+        )
         bucket["quantity"] = int(bucket["quantity"]) + int(row.get("expected_qty") or 0)
 
     def _ranked_users(rollup: dict[int, dict[str, Decimal | int]], *, top_n: int = 10):
@@ -9440,7 +10486,9 @@ def material_exchange_stats_history(request):
                 {
                     "user_id": int(user_id),
                     "username": username,
-                    "main_character": _resolve_main_character_name(user) if user else username,
+                    "main_character": (
+                        _resolve_main_character_name(user) if user else username
+                    ),
                     "orders": int(bucket.get("orders") or 0),
                     "total_value": _to_decimal(bucket.get("value")),
                     "quantity": int(bucket.get("quantity") or 0),
@@ -9470,12 +10518,15 @@ def material_exchange_stats_history(request):
                 "sell_volume": _to_decimal(sold.get("value")),
                 "buy_orders": int(bought.get("orders") or 0),
                 "sell_orders": int(sold.get("orders") or 0),
-                "total_orders": int(bought.get("orders") or 0) + int(sold.get("orders") or 0),
-                "net_flow": _to_decimal(bought.get("value")) - _to_decimal(sold.get("value")),
+                "total_orders": int(bought.get("orders") or 0)
+                + int(sold.get("orders") or 0),
+                "net_flow": _to_decimal(bought.get("value"))
+                - _to_decimal(sold.get("value")),
             }
         )
     top_user_stats.sort(
-        key=lambda item: _to_decimal(item["buy_volume"]) + _to_decimal(item["sell_volume"]),
+        key=lambda item: _to_decimal(item["buy_volume"])
+        + _to_decimal(item["sell_volume"]),
         reverse=True,
     )
     top_user_stats = top_user_stats[:10]
@@ -9500,7 +10551,8 @@ def material_exchange_stats_history(request):
             duration_display = _format_duration_short(accepted_at - created_at)
         recent_transactions.append(
             {
-                "order_reference": str(order_row.get("order_reference") or "") or f"SELL-{int(order_id)}",
+                "order_reference": str(order_row.get("order_reference") or "")
+                or f"SELL-{int(order_id)}",
                 "transaction_type": MaterialExchangeTransaction.TransactionType.SELL,
                 "who": who,
                 "party_from": who,
@@ -9529,7 +10581,8 @@ def material_exchange_stats_history(request):
             duration_display = _format_duration_short(accepted_at - created_at)
         recent_transactions.append(
             {
-                "order_reference": str(order_row.get("order_reference") or "") or f"BUY-{int(order_id)}",
+                "order_reference": str(order_row.get("order_reference") or "")
+                or f"BUY-{int(order_id)}",
                 "transaction_type": MaterialExchangeTransaction.TransactionType.BUY,
                 "who": who,
                 "party_from": "Hub",
@@ -9543,7 +10596,9 @@ def material_exchange_stats_history(request):
         )
 
     recent_transactions.sort(
-        key=lambda row: row.get("completed_at") or row.get("created_at") or timezone.now(),
+        key=lambda row: row.get("completed_at")
+        or row.get("created_at")
+        or timezone.now(),
         reverse=True,
     )
     recent_transactions = recent_transactions[:25]
@@ -9567,12 +10622,22 @@ def material_exchange_stats_history(request):
         "corp_config_count": len(corp_config_ids),
         "selected_config_count": len(selected_config_ids),
         "current_buy_hangar_inventory_value": current_buy_hangar_inventory["value"],
-        "current_buy_hangar_inventory_item_count": current_buy_hangar_inventory["item_count"],
-        "current_buy_hangar_inventory_type_count": current_buy_hangar_inventory["type_count"],
-        "current_buy_hangar_inventory_priced_type_count": current_buy_hangar_inventory["priced_type_count"],
-        "current_buy_hangar_location_count": current_buy_hangar_inventory["location_count"],
+        "current_buy_hangar_inventory_item_count": current_buy_hangar_inventory[
+            "item_count"
+        ],
+        "current_buy_hangar_inventory_type_count": current_buy_hangar_inventory[
+            "type_count"
+        ],
+        "current_buy_hangar_inventory_priced_type_count": current_buy_hangar_inventory[
+            "priced_type_count"
+        ],
+        "current_buy_hangar_location_count": current_buy_hangar_inventory[
+            "location_count"
+        ],
         "current_buy_hangar_count": current_buy_hangar_inventory["hangar_count"],
-        "current_buy_hangar_assets_scope_missing": current_buy_hangar_inventory["assets_scope_missing"],
+        "current_buy_hangar_assets_scope_missing": current_buy_hangar_inventory[
+            "assets_scope_missing"
+        ],
         "current_total_asset_value": current_total_asset_value,
         "current_total_asset_value_partial": current_total_asset_value_partial,
         "capital_trend_rows": capital_trend_rows,
@@ -9686,7 +10751,9 @@ def material_exchange_stats_history(request):
         build_nav_context(
             request.user,
             active_tab="stats",
-            can_manage_corp=request.user.has_perm("indy_hub.can_manage_corp_bp_requests"),
+            can_manage_corp=request.user.has_perm(
+                "indy_hub.can_manage_corp_bp_requests"
+            ),
         )
     )
 
@@ -9696,7 +10763,9 @@ def material_exchange_stats_history(request):
 @login_required
 @require_http_methods(["POST"])
 def material_exchange_assign_contract(request, order_id):
-    emit_view_analytics_event(view_name="material_exchange.assign_contract", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange.assign_contract", request=request
+    )
     """Assign ESI contract ID to a sell or buy order."""
     if not request.user.has_perm("indy_hub.can_manage_material_hub"):
         messages.error(request, _("Permission denied."))

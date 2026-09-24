@@ -47,7 +47,9 @@ def build_real_schedule(
         total_time_seconds=duration,
         activity_id=activity_id,
     )
-    slot = IndustrySlot(slot_id=1, character_id=character_id, character_name="Pilot One")
+    slot = IndustrySlot(
+        slot_id=1, character_id=character_id, character_name="Pilot One"
+    )
     slot.add_job(job, 0)
     return BuildSchedule(
         jobs=[job],
@@ -93,7 +95,9 @@ class RealSchedulePayloadTests(SimpleTestCase):
         anchor = timezone.now()
         with_anchor = normalize_planned_chunks(schedule, anchor=anchor)
         self.assertEqual(with_anchor[0]["planned_start"], anchor)
-        self.assertEqual(with_anchor[0]["planned_end"], anchor + timedelta(seconds=DURATION))
+        self.assertEqual(
+            with_anchor[0]["planned_end"], anchor + timedelta(seconds=DURATION)
+        )
 
     def test_matches_a_real_payload_against_a_live_job(self):
         anchor = timezone.now()
@@ -108,7 +112,9 @@ class RealSchedulePayloadTests(SimpleTestCase):
 
     def test_planned_window_bounds_the_candidate_search(self):
         anchor = timezone.now()
-        start, end = planned_window(normalize_planned_chunks(build_real_schedule(), anchor=anchor))
+        start, end = planned_window(
+            normalize_planned_chunks(build_real_schedule(), anchor=anchor)
+        )
         self.assertLess(start, anchor)
         self.assertGreater(end, anchor + timedelta(seconds=DURATION))
 
@@ -119,7 +125,9 @@ class ConservativeMatchingTests(SimpleTestCase):
         result = reconcile_schedule_jobs({"jobs": [{"item_name": "Same Item"}]}, [job])
         self.assertEqual(result["matched"], 0)
         self.assertEqual(result["results"][0]["status"], "unmatched")
-        self.assertEqual(result["results"][0]["reason"], "insufficient identifying fields")
+        self.assertEqual(
+            result["results"][0]["reason"], "insufficient identifying fields"
+        )
 
     def test_does_not_match_without_a_character(self):
         schedule = build_real_schedule()
@@ -129,7 +137,9 @@ class ConservativeMatchingTests(SimpleTestCase):
         job = esi_job(start_date=anchor, end_date=anchor + timedelta(seconds=DURATION))
         result = reconcile_schedule_jobs(schedule, [job], anchor=anchor)
         self.assertEqual(result["matched"], 0)
-        self.assertEqual(result["results"][0]["reason"], "insufficient identifying fields")
+        self.assertEqual(
+            result["results"][0]["reason"], "insufficient identifying fields"
+        )
 
     def test_other_character_job_is_not_matched(self):
         anchor = timezone.now()
@@ -151,7 +161,9 @@ class ConservativeMatchingTests(SimpleTestCase):
             start_date=anchor,
             end_date=anchor + timedelta(seconds=DURATION),
         )
-        result = reconcile_schedule_jobs(build_real_schedule(activity_id=1), [job], anchor=anchor)
+        result = reconcile_schedule_jobs(
+            build_real_schedule(activity_id=1), [job], anchor=anchor
+        )
         self.assertEqual(result["matched"], 0)
 
     def test_job_outside_the_planned_window_is_not_matched(self):
@@ -167,8 +179,12 @@ class ConservativeMatchingTests(SimpleTestCase):
 
     def test_run_count_mismatch_is_not_matched(self):
         anchor = timezone.now()
-        job = esi_job(runs=7, start_date=anchor, end_date=anchor + timedelta(seconds=DURATION))
-        result = reconcile_schedule_jobs(build_real_schedule(runs=2), [job], anchor=anchor)
+        job = esi_job(
+            runs=7, start_date=anchor, end_date=anchor + timedelta(seconds=DURATION)
+        )
+        result = reconcile_schedule_jobs(
+            build_real_schedule(runs=2), [job], anchor=anchor
+        )
         self.assertEqual(result["matched"], 0)
 
     def test_product_id_is_never_compared_against_a_blueprint_id(self):
@@ -181,7 +197,9 @@ class ConservativeMatchingTests(SimpleTestCase):
             start_date=anchor,
             end_date=anchor + timedelta(seconds=DURATION),
         )
-        result = reconcile_schedule_jobs(build_real_schedule(product_type_id=7001), [job], anchor=anchor)
+        result = reconcile_schedule_jobs(
+            build_real_schedule(product_type_id=7001), [job], anchor=anchor
+        )
         self.assertEqual(result["matched"], 0)
 
     def test_one_job_cannot_satisfy_two_chunks(self):
@@ -236,7 +254,9 @@ class JobStatusTests(SimpleTestCase):
     def test_results_are_json_serializable(self):
         anchor = timezone.now().replace(microsecond=0)
         job = esi_job(start_date=anchor, end_date=anchor + timedelta(seconds=DURATION))
-        result = reconcile_schedule_jobs(build_real_schedule(), [job], anchor=anchor.isoformat())
+        result = reconcile_schedule_jobs(
+            build_real_schedule(), [job], anchor=anchor.isoformat()
+        )
         self.assertIsInstance(result["refreshed_at"], str)
         self.assertIsInstance(result["anchor"], str)
         self.assertIsInstance(result["results"][0]["observed_start"], str)
@@ -265,16 +285,22 @@ class TrackingStateTests(SimpleTestCase):
         self.assertEqual(row["status"], "running")
 
     def test_job_ending_well_after_plan_is_delayed(self) -> None:
-        row = self._reconcile(job_end_offset=DURATION * 2, refreshed_offset=DURATION // 2)
+        row = self._reconcile(
+            job_end_offset=DURATION * 2, refreshed_offset=DURATION // 2
+        )
         self.assertEqual(row["status"], "delayed")
         self.assertEqual(row["duration_delta_seconds"], DURATION)
 
     def test_small_overrun_within_tolerance_is_still_running(self) -> None:
-        row = self._reconcile(job_end_offset=DURATION + 300, refreshed_offset=DURATION // 2)
+        row = self._reconcile(
+            job_end_offset=DURATION + 300, refreshed_offset=DURATION // 2
+        )
         self.assertEqual(row["status"], "running")
 
     def test_finished_job_is_completed_even_if_late(self) -> None:
-        row = self._reconcile(job_end_offset=DURATION * 2, refreshed_offset=DURATION * 3)
+        row = self._reconcile(
+            job_end_offset=DURATION * 2, refreshed_offset=DURATION * 3
+        )
         self.assertEqual(row["status"], "completed")
 
 
@@ -303,6 +329,8 @@ class TrackingFreshnessTests(SimpleTestCase):
         # AA Example App
         from indy_hub.services.schedule_tracking import tracking_freshness
 
-        result = tracking_freshness(timezone.now() - timedelta(minutes=5), has_scope=True)
+        result = tracking_freshness(
+            timezone.now() - timedelta(minutes=5), has_scope=True
+        )
         self.assertEqual(result["state"], "fresh")
         self.assertTrue(result["jobs_last_synced"])

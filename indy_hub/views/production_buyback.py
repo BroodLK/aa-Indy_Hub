@@ -146,7 +146,9 @@ def _pick_plain_rows(stock_rows) -> dict[int, dict]:
         if type_id <= 0:
             continue
         current = best.get(type_id)
-        if current is None or int(row.get("available_quantity") or 0) > int(current.get("available_quantity") or 0):
+        if current is None or int(row.get("available_quantity") or 0) > int(
+            current.get("available_quantity") or 0
+        ):
             best[type_id] = row
     return best
 
@@ -165,17 +167,21 @@ def production_buyback_availability(request):
     order_ids = _parse_int_list(request.GET.get("order_ids", ""), MAX_ORDER_IDS)
     orders = [
         _serialize_order(order)
-        for order in MaterialExchangeBuyOrder.objects.filter(buyer=request.user, id__in=order_ids).prefetch_related(
-            "items"
-        )
+        for order in MaterialExchangeBuyOrder.objects.filter(
+            buyer=request.user, id__in=order_ids
+        ).prefetch_related("items")
     ]
 
     config, reason = _get_buy_config_or_reason()
     if config is None:
-        return JsonResponse({"enabled": False, "reason": reason, "items": {}, "orders": orders})
+        return JsonResponse(
+            {"enabled": False, "reason": reason, "items": {}, "orders": orders}
+        )
 
     # AA Example App
-    from indy_hub.views.material_exchange import _get_buy_stock_snapshot_for_submission
+    from indy_hub.views.material_exchange import (
+        _get_buy_stock_snapshot_for_submission,
+    )
 
     type_ids = _parse_int_list(request.GET.get("type_ids", ""), MAX_TYPE_IDS)
     items: dict[str, dict] = {}
@@ -203,7 +209,11 @@ def production_buyback_availability(request):
                 "available_quantity": int(row.get("available_quantity") or 0),
                 "reserved_quantity": int(row.get("reserved_quantity") or 0),
                 "unit_price": str(unit_price),
-                "price_source": ("buyback_override" if row.get("has_buy_price_override") else "buyback_market"),
+                "price_source": (
+                    "buyback_override"
+                    if row.get("has_buy_price_override")
+                    else "buyback_market"
+                ),
                 "location_label": str(row.get("buy_location_label") or ""),
             }
 
@@ -251,25 +261,47 @@ def submit_production_buyback_order(request, tokens):
         row_index = int(payload.get("row_index"))
         expected_price = Decimal(str(payload.get("expected_unit_price")))
     except (TypeError, ValueError, InvalidOperation):
-        return _error("invalid_payload", "type_id, quantity, row_index and expected_unit_price are required.", 400)
-    if type_id <= 0 or quantity <= 0 or row_index < 0 or not expected_price.is_finite() or expected_price <= 0:
-        return _error("invalid_payload", "type_id, quantity, row_index and expected_unit_price are required.", 400)
+        return _error(
+            "invalid_payload",
+            "type_id, quantity, row_index and expected_unit_price are required.",
+            400,
+        )
+    if (
+        type_id <= 0
+        or quantity <= 0
+        or row_index < 0
+        or not expected_price.is_finite()
+        or expected_price <= 0
+    ):
+        return _error(
+            "invalid_payload",
+            "type_id, quantity, row_index and expected_unit_price are required.",
+            400,
+        )
 
     client_request_id = str(payload.get("client_request_id") or "").strip()
     if not _CLIENT_REQUEST_ID_RE.match(client_request_id):
         return _error("invalid_payload", "client_request_id is required.", 400)
     idempotency_key = f"indy_hub:sim_buyback:{request.user.id}:{client_request_id}"
-    if not cache.add(idempotency_key, {"state": "in_progress"}, IDEMPOTENCY_TTL_SECONDS):
+    if not cache.add(
+        idempotency_key, {"state": "in_progress"}, IDEMPOTENCY_TTL_SECONDS
+    ):
         previous = cache.get(idempotency_key) or {}
         previous_order_id = int(previous.get("order_id") or 0)
         order = (
-            MaterialExchangeBuyOrder.objects.filter(id=previous_order_id, buyer=request.user)
+            MaterialExchangeBuyOrder.objects.filter(
+                id=previous_order_id, buyer=request.user
+            )
             .prefetch_related("items")
             .first()
         )
         if order is not None:
-            return JsonResponse({"success": True, "duplicate": True, "order": _serialize_order(order)})
-        return _error("duplicate_submission", "This order is already being submitted.", 409)
+            return JsonResponse(
+                {"success": True, "duplicate": True, "order": _serialize_order(order)}
+            )
+        return _error(
+            "duplicate_submission", "This order is already being submitted.", 409
+        )
 
     try:
         result = create_buy_order(
@@ -290,8 +322,16 @@ def submit_production_buyback_order(request, tokens):
         )
     except Exception:
         cache.delete(idempotency_key)
-        logger.exception("Simulator buyback order failed for user %s type %s", request.user.id, type_id)
-        return _error("order_failed", "The order could not be created. Try again from the buyback page.", 500)
+        logger.exception(
+            "Simulator buyback order failed for user %s type %s",
+            request.user.id,
+            type_id,
+        )
+        return _error(
+            "order_failed",
+            "The order could not be created. Try again from the buyback page.",
+            500,
+        )
 
     if not result.ok:
         # Failed attempts may be retried with the same key after a fix.
@@ -316,5 +356,9 @@ def submit_production_buyback_order(request, tokens):
         type_id,
         quantity,
     )
-    order = MaterialExchangeBuyOrder.objects.prefetch_related("items").get(id=result.order.id)
-    return JsonResponse({"success": True, "duplicate": False, "order": _serialize_order(order)})
+    order = MaterialExchangeBuyOrder.objects.prefetch_related("items").get(
+        id=result.order.id
+    )
+    return JsonResponse(
+        {"success": True, "duplicate": False, "order": _serialize_order(order)}
+    )

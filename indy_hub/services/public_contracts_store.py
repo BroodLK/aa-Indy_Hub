@@ -59,7 +59,9 @@ def _to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
 
 
 def _is_candidate_contract(contract: dict, now: timezone.datetime) -> bool:
-    contract_type = str(_row_value(contract, "contract_type", "type") or "").strip().lower()
+    contract_type = (
+        str(_row_value(contract, "contract_type", "type") or "").strip().lower()
+    )
     if contract_type and contract_type != "item_exchange":
         return False
 
@@ -137,7 +139,11 @@ def _get_last_sync_at() -> timezone.datetime | None:
         if synced_at is not None:
             return synced_at
 
-    return PublicJitaContract.objects.order_by("-last_synced").values_list("last_synced", flat=True).first()
+    return (
+        PublicJitaContract.objects.order_by("-last_synced")
+        .values_list("last_synced", flat=True)
+        .first()
+    )
 
 
 def _build_rate_limited_result(*, now: timezone.datetime) -> dict[str, Any] | None:
@@ -199,13 +205,18 @@ def _upsert_contract_rows(
     for contract_id, row in candidate_rows.items():
         payload = {
             "region_id": _to_int(_row_value(row, "region_id"), 10000002),
-            "contract_type": str(_row_value(row, "contract_type", "type") or "").strip(),
+            "contract_type": str(
+                _row_value(row, "contract_type", "type") or ""
+            ).strip(),
             "status": str(_row_value(row, "status") or "").strip(),
             "title": str(_row_value(row, "title") or "").strip(),
             "issuer_id": _to_int(_row_value(row, "issuer_id"), 0),
-            "issuer_corporation_id": _to_int(_row_value(row, "issuer_corporation_id"), 0),
+            "issuer_corporation_id": _to_int(
+                _row_value(row, "issuer_corporation_id"), 0
+            ),
             "for_corporation": bool(_row_value(row, "for_corporation") or False),
-            "start_location_id": _to_int(_row_value(row, "start_location_id"), 0) or None,
+            "start_location_id": _to_int(_row_value(row, "start_location_id"), 0)
+            or None,
             "end_location_id": _to_int(_row_value(row, "end_location_id"), 0) or None,
             "is_jita": True,
             "price": _to_decimal(_row_value(row, "price"), Decimal("0")),
@@ -249,7 +260,9 @@ def _sync_contract_items(*, contract_ids: list[int]) -> tuple[int, int, int]:
     if not contract_ids:
         return 0, 0, 0
 
-    operation = _resolve_operation("Contracts", "get_contracts_public_items_contract_id")
+    operation = _resolve_operation(
+        "Contracts", "get_contracts_public_items_contract_id"
+    )
     if not callable(operation):
         raise PublicContractsError("Contracts public items operation is unavailable")
 
@@ -290,9 +303,13 @@ def _sync_contract_items(*, contract_ids: list[int]) -> tuple[int, int, int]:
                     quantity=max(0, _to_int(_row_value(row, "quantity"), 0)),
                     runs=max(0, _to_int(_row_value(row, "runs"), 0)),
                     is_included=bool(_row_value(row, "is_included") or False),
-                    is_blueprint_copy=bool(_row_value(row, "is_blueprint_copy") or False),
+                    is_blueprint_copy=bool(
+                        _row_value(row, "is_blueprint_copy") or False
+                    ),
                     is_singleton=bool(_row_value(row, "is_singleton") or False),
-                    material_efficiency=_to_int(_row_value(row, "material_efficiency"), 0),
+                    material_efficiency=_to_int(
+                        _row_value(row, "material_efficiency"), 0
+                    ),
                     time_efficiency=_to_int(_row_value(row, "time_efficiency"), 0),
                 )
             )
@@ -365,7 +382,9 @@ def sync_public_jita_contract_cache(
 
         with transaction.atomic():
             if candidate_ids:
-                stale_qs = PublicJitaContract.objects.exclude(contract_id__in=candidate_ids)
+                stale_qs = PublicJitaContract.objects.exclude(
+                    contract_id__in=candidate_ids
+                )
                 stale_deleted = stale_qs.count()
                 stale_qs.delete()
 
@@ -420,7 +439,9 @@ def _get_sync_failure(*, last_synced_at) -> dict[str, Any]:
         return {"refresh_failed": False, "last_error": "", "last_failure_at": ""}
     failed_at = _parse_esi_datetime(failure.get("failed_at"))
     # A failure older than the last good sync is no longer relevant.
-    if failed_at is None or (last_synced_at is not None and failed_at <= last_synced_at):
+    if failed_at is None or (
+        last_synced_at is not None and failed_at <= last_synced_at
+    ):
         return {"refresh_failed": False, "last_error": "", "last_failure_at": ""}
     return {
         "refresh_failed": True,
@@ -474,9 +495,15 @@ def get_public_jita_contract_cache_meta() -> dict[str, Any]:
         if synced_at is not None:
             return _build_cache_meta(synced_at=synced_at, extra=meta)
 
-    latest_sync = PublicJitaContract.objects.order_by("-last_synced").values_list("last_synced", flat=True).first()
+    latest_sync = (
+        PublicJitaContract.objects.order_by("-last_synced")
+        .values_list("last_synced", flat=True)
+        .first()
+    )
     if latest_sync is None:
-        return _build_cache_meta(synced_at=None, extra={"active_contracts": 0, "active_items": 0})
+        return _build_cache_meta(
+            synced_at=None, extra={"active_contracts": 0, "active_items": 0}
+        )
     return _build_cache_meta(
         synced_at=latest_sync,
         extra={
@@ -496,7 +523,9 @@ def request_public_jita_contract_refresh() -> bool:
     meta = get_public_jita_contract_cache_meta()
     if meta.get("is_cached"):
         return False
-    if not cache.add(REFRESH_QUEUED_KEY, timezone.now().isoformat(), REFRESH_QUEUED_TTL_SECONDS):
+    if not cache.add(
+        REFRESH_QUEUED_KEY, timezone.now().isoformat(), REFRESH_QUEUED_TTL_SECONDS
+    ):
         return False
     try:
         # AA Example App
@@ -559,8 +588,12 @@ def get_public_jita_bpc_offers(
                 "me": int(item.material_efficiency or 0),
                 "te": int(item.time_efficiency or 0),
                 "mixed_stats": False,
-                "issued_at": contract.date_issued.isoformat() if contract.date_issued else "",
-                "expires_at": contract.date_expired.isoformat() if contract.date_expired else "",
+                "issued_at": (
+                    contract.date_issued.isoformat() if contract.date_issued else ""
+                ),
+                "expires_at": (
+                    contract.date_expired.isoformat() if contract.date_expired else ""
+                ),
                 "_me_values": set(),
                 "_te_values": set(),
             }
@@ -580,7 +613,10 @@ def get_public_jita_bpc_offers(
         runs = max(1, int(offer.get("runs") or 0))
         price_total = float(offer.get("price_total") or 0)
         offer["price_per_run"] = price_total / runs if runs > 0 else price_total
-        offer["mixed_stats"] = len(offer.get("_me_values") or set()) > 1 or len(offer.get("_te_values") or set()) > 1
+        offer["mixed_stats"] = (
+            len(offer.get("_me_values") or set()) > 1
+            or len(offer.get("_te_values") or set()) > 1
+        )
         offer.pop("_me_values", None)
         offer.pop("_te_values", None)
         offers.append(offer)

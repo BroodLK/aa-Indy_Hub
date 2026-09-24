@@ -184,7 +184,10 @@ def _coerce_openapi_value(value, *, _depth: int = 0):
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
-        return {str(key): _coerce_openapi_value(item, _depth=_depth + 1) for key, item in value.items()}
+        return {
+            str(key): _coerce_openapi_value(item, _depth=_depth + 1)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set)):
         return [_coerce_openapi_value(item, _depth=_depth + 1) for item in value]
 
@@ -239,7 +242,9 @@ def _fetch_esi_industry_system_rows() -> list[dict]:
                 logger.debug("Industry.get_industry_systems failed: %s", exc)
 
         if payload is None:
-            logger.debug("Unable to resolve Industry.get_industry_systems via OpenAPI; using empty payload")
+            logger.debug(
+                "Unable to resolve Industry.get_industry_systems via OpenAPI; using empty payload"
+            )
             payload = []
 
         rows = _normalize_openapi_rows(payload)
@@ -272,7 +277,9 @@ def _fetch_esi_industry_facility_rows() -> list[dict]:
                 logger.debug("Industry.get_industry_facilities failed: %s", exc)
 
         if payload is None:
-            logger.debug("Unable to resolve Industry.get_industry_facilities via OpenAPI; using empty payload")
+            logger.debug(
+                "Unable to resolve Industry.get_industry_facilities via OpenAPI; using empty payload"
+            )
             payload = []
 
         rows = _normalize_openapi_rows(payload)
@@ -347,7 +354,9 @@ def _get_industry_facility_tax_map() -> dict[int, float]:
     if isinstance(cached, dict):
         try:
             return {
-                int(facility_id): float(tax_value) for facility_id, tax_value in cached.items() if int(facility_id) > 0
+                int(facility_id): float(tax_value)
+                for facility_id, tax_value in cached.items()
+                if int(facility_id) > 0
             }
         except Exception:
             pass
@@ -446,7 +455,9 @@ def resolve_solar_system(
                 for field in ("name", "name_en", "name_en_us"):
                     try:
                         resolved_row = (
-                            model.objects.filter(**{f"{field}__{lookup}": query_text}).order_by("name").first()
+                            model.objects.filter(**{f"{field}__{lookup}": query_text})
+                            .order_by("name")
+                            .first()
                         )
                     except Exception:
                         resolved_row = None
@@ -482,9 +493,9 @@ def _get_user_alliance_corporation_ids(user) -> list[int]:
 
     if alliance_ids:
         try:
-            alliance_corp_rows = EveCorporationInfo.objects.filter(alliance_id__in=sorted(alliance_ids)).values_list(
-                "corporation_id", flat=True
-            )
+            alliance_corp_rows = EveCorporationInfo.objects.filter(
+                alliance_id__in=sorted(alliance_ids)
+            ).values_list("corporation_id", flat=True)
             for corp_id in alliance_corp_rows:
                 try:
                     corp_id_int = int(corp_id or 0)
@@ -513,9 +524,9 @@ def _load_corptools_engineering_structures(
         return []
 
     try:
-        corp_audits = CorporationAudit.objects.filter(corporation__corporation_id__in=corp_ids).select_related(
-            "corporation"
-        )
+        corp_audits = CorporationAudit.objects.filter(
+            corporation__corporation_id__in=corp_ids
+        ).select_related("corporation")
         rows = (
             Structure.objects.filter(
                 corporation__in=corp_audits,
@@ -553,27 +564,38 @@ def _load_corptools_engineering_structures(
         owner_corporation_name = ""
         owner_corporation = getattr(row, "corporation", None)
         owner_corporation_eve = (
-            getattr(owner_corporation, "corporation", None) if owner_corporation is not None else None
+            getattr(owner_corporation, "corporation", None)
+            if owner_corporation is not None
+            else None
         )
         try:
-            owner_corporation_id = int(getattr(owner_corporation_eve, "corporation_id", 0) or 0) or None
+            owner_corporation_id = (
+                int(getattr(owner_corporation_eve, "corporation_id", 0) or 0) or None
+            )
         except (TypeError, ValueError):
             owner_corporation_id = None
 
         if owner_corporation_id:
-            owner_corporation_name = str(getattr(owner_corporation_eve, "corporation_name", "") or "").strip()
+            owner_corporation_name = str(
+                getattr(owner_corporation_eve, "corporation_name", "") or ""
+            ).strip()
             if not owner_corporation_name:
-                owner_corporation_name = str(get_corporation_name(owner_corporation_id) or "")
+                owner_corporation_name = str(
+                    get_corporation_name(owner_corporation_id) or ""
+                )
 
         # Structures come from the corporation audit's stored copy, which is
         # why a viewer without director roles can still pick them. Report how
         # old that copy is so the UI never presents it as a live ESI read.
-        structures_updated_at = getattr(owner_corporation, "last_update_structures", None)
+        structures_updated_at = getattr(
+            owner_corporation, "last_update_structures", None
+        )
 
         structures.append(
             {
                 "structure_id": structure_id,
-                "structure_name": str(getattr(row, "name", "") or "").strip() or f"Structure {structure_id}",
+                "structure_name": str(getattr(row, "name", "") or "").strip()
+                or f"Structure {structure_id}",
                 "structure_type_id": structure_type_id,
                 "structure_type_key": str(type_info["key"]),
                 "structure_type_name": str(type_info["label"]),
@@ -586,7 +608,9 @@ def _load_corptools_engineering_structures(
                 "rig_type_ids": [],
                 "facility_tax": None,
                 "is_cached": True,
-                "cached_at": structures_updated_at.isoformat() if structures_updated_at else None,
+                "cached_at": (
+                    structures_updated_at.isoformat() if structures_updated_at else None
+                ),
             }
         )
     return structures
@@ -621,18 +645,26 @@ def _infer_engineering_rigs_from_corptools_assets(
         return {}, {}
 
     corp_ids = [int(corp_id) for corp_id in corporation_ids if int(corp_id) > 0]
-    structure_id_set = {int(structure_id) for structure_id in structure_ids if int(structure_id) > 0}
+    structure_id_set = {
+        int(structure_id) for structure_id in structure_ids if int(structure_id) > 0
+    }
     if not corp_ids or not structure_id_set:
         return {}, {}
 
     try:
-        corp_audits = CorporationAudit.objects.filter(corporation__corporation_id__in=corp_ids)
+        corp_audits = CorporationAudit.objects.filter(
+            corporation__corporation_id__in=corp_ids
+        )
         assets_qs = CorpAsset.objects.filter(corporation__in=corp_audits)
     except Exception:
         return {}, {}
 
-    rig_keys_by_structure: dict[int, set[str]] = {structure_id: set() for structure_id in structure_id_set}
-    rig_type_ids_by_structure: dict[int, set[int]] = {structure_id: set() for structure_id in structure_id_set}
+    rig_keys_by_structure: dict[int, set[str]] = {
+        structure_id: set() for structure_id in structure_id_set
+    }
+    rig_type_ids_by_structure: dict[int, set[int]] = {
+        structure_id: set() for structure_id in structure_id_set
+    }
     type_name_by_id: dict[int, str] = {}
 
     frontier_root_by_location: dict[int, int] = {
@@ -669,11 +701,17 @@ def _infer_engineering_rigs_from_corptools_assets(
             except (TypeError, ValueError):
                 continue
             structure_id = int(frontier_root_by_location.get(parent_location_id) or 0)
-            if structure_id <= 0 or structure_id not in structure_id_set or type_id_int <= 0:
+            if (
+                structure_id <= 0
+                or structure_id not in structure_id_set
+                or type_id_int <= 0
+            ):
                 continue
 
             flag_text = str(location_flag or "").strip().lower()
-            if not flag_text or any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
+            if not flag_text or any(
+                hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS
+            ):
                 type_name_text = str(type_name or "").strip()
                 if not type_name_text:
                     cached_type_name = type_name_by_id.get(type_id_int)
@@ -683,14 +721,22 @@ def _infer_engineering_rigs_from_corptools_assets(
                     type_name_text = cached_type_name
                 candidate_key = _infer_rig_key_from_type_name(type_name_text)
                 if candidate_key:
-                    rig_keys_by_structure.setdefault(structure_id, set()).add(candidate_key)
-                    rig_type_ids_by_structure.setdefault(structure_id, set()).add(type_id_int)
+                    rig_keys_by_structure.setdefault(structure_id, set()).add(
+                        candidate_key
+                    )
+                    rig_type_ids_by_structure.setdefault(structure_id, set()).add(
+                        type_id_int
+                    )
 
             try:
                 item_id_int = int(item_id or 0)
             except (TypeError, ValueError):
                 item_id_int = 0
-            if item_id_int > 0 and item_id_int not in visited_location_ids and item_id_int not in next_frontier:
+            if (
+                item_id_int > 0
+                and item_id_int not in visited_location_ids
+                and item_id_int not in next_frontier
+            ):
                 next_frontier[item_id_int] = structure_id
 
         frontier_root_by_location = next_frontier
@@ -702,7 +748,9 @@ def _infer_engineering_rigs_from_corptools_assets(
             if rig_keys
         },
         {
-            structure_id: sorted(int(type_id) for type_id in type_ids if int(type_id) > 0)
+            structure_id: sorted(
+                int(type_id) for type_id in type_ids if int(type_id) > 0
+            )
             for structure_id, type_ids in rig_type_ids_by_structure.items()
             if type_ids
         },
@@ -713,12 +761,18 @@ def _infer_engineering_rigs_from_cached_assets(
     corporation_ids: list[int],
     structure_ids: list[int],
 ) -> tuple[dict[int, list[str]], dict[int, list[int]]]:
-    structure_id_set = {int(structure_id) for structure_id in structure_ids if int(structure_id) > 0}
+    structure_id_set = {
+        int(structure_id) for structure_id in structure_ids if int(structure_id) > 0
+    }
     if not structure_id_set:
         return {}, {}
 
-    rig_keys_by_structure: dict[int, set[str]] = {structure_id: set() for structure_id in structure_id_set}
-    rig_type_ids_by_structure: dict[int, set[int]] = {structure_id: set() for structure_id in structure_id_set}
+    rig_keys_by_structure: dict[int, set[str]] = {
+        structure_id: set() for structure_id in structure_id_set
+    }
+    rig_type_ids_by_structure: dict[int, set[int]] = {
+        structure_id: set() for structure_id in structure_id_set
+    }
 
     type_name_by_id: dict[int, str] = {}
     for corp_id in corporation_ids:
@@ -758,26 +812,42 @@ def _infer_engineering_rigs_from_cached_assets(
                     type_id = int(asset.get("type_id") or 0)
                 except (TypeError, ValueError, AttributeError):
                     continue
-                structure_id = int(frontier_root_by_location.get(parent_location_id) or 0)
-                if structure_id <= 0 or structure_id not in structure_id_set or type_id <= 0:
+                structure_id = int(
+                    frontier_root_by_location.get(parent_location_id) or 0
+                )
+                if (
+                    structure_id <= 0
+                    or structure_id not in structure_id_set
+                    or type_id <= 0
+                ):
                     continue
 
                 flag_text = str(asset.get("location_flag") or "").strip().lower()
-                if not flag_text or any(hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS):
+                if not flag_text or any(
+                    hint in flag_text for hint in _RIG_LOCATION_FLAG_HINTS
+                ):
                     type_name = type_name_by_id.get(type_id)
                     if type_name is None:
                         type_name = str(get_type_name(type_id) or "")
                         type_name_by_id[type_id] = type_name
                     candidate_key = _infer_rig_key_from_type_name(type_name)
                     if candidate_key:
-                        rig_keys_by_structure.setdefault(structure_id, set()).add(candidate_key)
-                        rig_type_ids_by_structure.setdefault(structure_id, set()).add(type_id)
+                        rig_keys_by_structure.setdefault(structure_id, set()).add(
+                            candidate_key
+                        )
+                        rig_type_ids_by_structure.setdefault(structure_id, set()).add(
+                            type_id
+                        )
 
                 try:
                     item_id = int(asset.get("item_id") or 0)
                 except (TypeError, ValueError, AttributeError):
                     item_id = 0
-                if item_id > 0 and item_id not in visited_location_ids and item_id not in next_frontier:
+                if (
+                    item_id > 0
+                    and item_id not in visited_location_ids
+                    and item_id not in next_frontier
+                ):
                     next_frontier[item_id] = structure_id
 
             frontier_root_by_location = next_frontier
@@ -789,7 +859,9 @@ def _infer_engineering_rigs_from_cached_assets(
             if rig_keys
         },
         {
-            structure_id: sorted(int(type_id) for type_id in type_ids if int(type_id) > 0)
+            structure_id: sorted(
+                int(type_id) for type_id in type_ids if int(type_id) > 0
+            )
             for structure_id, type_ids in rig_type_ids_by_structure.items()
             if type_ids
         },
@@ -815,7 +887,9 @@ def _merge_rig_data(
             if sid <= 0:
                 continue
             rig_type_ids_by_structure.setdefault(sid, set()).update(
-                int(rig_type_id) for rig_type_id in (rig_type_ids or []) if int(rig_type_id) > 0
+                int(rig_type_id)
+                for rig_type_id in (rig_type_ids or [])
+                if int(rig_type_id) > 0
             )
 
     return (
@@ -849,7 +923,9 @@ def fetch_engineering_structures_for_user(
     else:
         structures = _load_corptools_engineering_structures(corp_ids)
         structure_ids = [
-            int(row.get("structure_id") or 0) for row in structures if int(row.get("structure_id") or 0) > 0
+            int(row.get("structure_id") or 0)
+            for row in structures
+            if int(row.get("structure_id") or 0) > 0
         ]
         rig_data_corptools = _infer_engineering_rigs_from_corptools_assets(
             corp_ids,
@@ -880,7 +956,9 @@ def fetch_engineering_structures_for_user(
 
     if system_id and int(system_id) > 0:
         sid = int(system_id)
-        structures = [row for row in structures if int(row.get("location_id") or 0) == sid]
+        structures = [
+            row for row in structures if int(row.get("location_id") or 0) == sid
+        ]
 
     structures.sort(
         key=lambda row: (

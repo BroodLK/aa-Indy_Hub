@@ -58,6 +58,49 @@ except Exception:
     pass
 
 
+def _normalize_cron_value(value, *, field: str) -> str:
+    if not isinstance(value, (set, list, tuple)):
+        return str(value)
+
+    values = sorted({int(item) for item in value})
+    if not values:
+        return "*"
+
+    if field == "minute":
+        full_range = list(range(0, 60))
+    elif field == "hour":
+        full_range = list(range(0, 24))
+    elif field == "day_of_week":
+        full_range = list(range(0, 7))
+    elif field == "month_of_year":
+        full_range = list(range(1, 13))
+    elif field == "day_of_month":
+        full_range = list(range(1, 32))
+    else:
+        full_range = None
+
+    if full_range is not None and values == full_range:
+        return "*"
+
+    if len(values) > 1:
+        step = values[1] - values[0]
+        if step > 0 and all(
+            values[i] - values[i - 1] == step for i in range(1, len(values))
+        ):
+            if values[0] == 0:
+                return f"*/{step}"
+            return f"{values[0]}-{values[-1]}/{step}"
+
+    return ",".join(str(item) for item in values)
+
+
+def _cron_value(schedule, field: str, *, apply_offset: bool) -> str:
+    original = getattr(schedule, f"_orig_{field}", None)
+    if original is not None and not apply_offset:
+        return _normalize_cron_value(original, field=field)
+    return _normalize_cron_value(getattr(schedule, field), field=field)
+
+
 # Import the setup function from the main tasks module
 def setup_periodic_tasks():
     """Setup periodic tasks for IndyHub module."""
@@ -95,61 +138,34 @@ def setup_periodic_tasks():
                 # If offset_cron is unavailable, fall back to original schedule.
                 schedule = conf["schedule"]
 
-        def _normalize_cron_value(value, *, field: str) -> str:
-            if not isinstance(value, (set, list, tuple)):
-                return str(value)
-
-            values = sorted({int(item) for item in value})
-            if not values:
-                return "*"
-
-            if field == "minute":
-                full_range = list(range(0, 60))
-            elif field == "hour":
-                full_range = list(range(0, 24))
-            elif field == "day_of_week":
-                full_range = list(range(0, 7))
-            elif field == "month_of_year":
-                full_range = list(range(1, 13))
-            elif field == "day_of_month":
-                full_range = list(range(1, 32))
-            else:
-                full_range = None
-
-            if full_range is not None and values == full_range:
-                return "*"
-
-            if len(values) > 1:
-                step = values[1] - values[0]
-                if step > 0 and all(values[i] - values[i - 1] == step for i in range(1, len(values))):
-                    if values[0] == 0:
-                        return f"*/{step}"
-                    return f"{values[0]}-{values[-1]}/{step}"
-
-            return ",".join(str(item) for item in values)
-
-        def _cron_value(field: str) -> str:
-            original = getattr(schedule, f"_orig_{field}", None)
-            if original is not None and not apply_offset:
-                return _normalize_cron_value(original, field=field)
-            return _normalize_cron_value(getattr(schedule, field), field=field)
+        minute_val = _cron_value(schedule, "minute", apply_offset=apply_offset)
+        hour_val = _cron_value(schedule, "hour", apply_offset=apply_offset)
+        day_of_week_val = _cron_value(
+            schedule, "day_of_week", apply_offset=apply_offset
+        )
+        day_of_month_val = _cron_value(
+            schedule, "day_of_month", apply_offset=apply_offset
+        )
+        month_of_year_val = _cron_value(
+            schedule, "month_of_year", apply_offset=apply_offset
+        )
 
         crontabs = CrontabSchedule.objects.filter(
-            minute=_cron_value("minute"),
-            hour=_cron_value("hour"),
-            day_of_week=_cron_value("day_of_week"),
-            day_of_month=_cron_value("day_of_month"),
-            month_of_year=_cron_value("month_of_year"),
+            minute=minute_val,
+            hour=hour_val,
+            day_of_week=day_of_week_val,
+            day_of_month=day_of_month_val,
+            month_of_year=month_of_year_val,
         )
         if crontabs.exists():
             crontab = crontabs.first()
         else:
             crontab = CrontabSchedule.objects.create(
-                minute=_cron_value("minute"),
-                hour=_cron_value("hour"),
-                day_of_week=_cron_value("day_of_week"),
-                day_of_month=_cron_value("day_of_month"),
-                month_of_year=_cron_value("month_of_year"),
+                minute=minute_val,
+                hour=hour_val,
+                day_of_week=day_of_week_val,
+                day_of_month=day_of_month_val,
+                month_of_year=month_of_year_val,
             )
         enabled = True
 
@@ -214,7 +230,9 @@ def setup_periodic_tasks():
 
     # Remove any stale IndyHub tasks not present in the current schedule.
     valid_names = set(INDY_HUB_BEAT_SCHEDULE.keys())
-    stale_qs = PeriodicTask.objects.filter(name__startswith="indy-hub-").exclude(name__in=valid_names)
+    stale_qs = PeriodicTask.objects.filter(name__startswith="indy-hub-").exclude(
+        name__in=valid_names
+    )
     stale_removed, _ = stale_qs.delete()
     if stale_removed:
         logger.info("Removed %s stale IndyHub periodic tasks", stale_removed)

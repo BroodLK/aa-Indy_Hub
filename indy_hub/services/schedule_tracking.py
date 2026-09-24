@@ -59,7 +59,10 @@ def _seconds(value: Any) -> int | None:
 def _overlaps(left_start, left_end, right_start, right_end) -> bool:
     if not all((left_start, left_end, right_start, right_end)):
         return False
-    return left_start <= right_end + MATCH_WINDOW and right_start <= left_end + MATCH_WINDOW
+    return (
+        left_start <= right_end + MATCH_WINDOW
+        and right_start <= left_end + MATCH_WINDOW
+    )
 
 
 def _slot_characters(schedule: dict[str, Any]) -> dict[int, int]:
@@ -81,7 +84,9 @@ def _slot_characters(schedule: dict[str, Any]) -> dict[int, int]:
     return mapping
 
 
-def normalize_planned_chunks(schedule: dict[str, Any], *, anchor=None) -> list[dict[str, Any]]:
+def normalize_planned_chunks(
+    schedule: dict[str, Any], *, anchor=None
+) -> list[dict[str, Any]]:
     """Flatten a schedule payload into comparable planned chunks.
 
     start_time_seconds and end_time_seconds are offsets from the start of the
@@ -102,9 +107,9 @@ def normalize_planned_chunks(schedule: dict[str, Any], *, anchor=None) -> list[d
             chunks.append({"index": index})
             continue
 
-        character_id = _number(chunk.get("character_id") or chunk.get("installer_id")) or slot_characters.get(
-            _number(chunk.get("assigned_slot")) or 0
-        )
+        character_id = _number(
+            chunk.get("character_id") or chunk.get("installer_id")
+        ) or slot_characters.get(_number(chunk.get("assigned_slot")) or 0)
 
         planned_start = _datetime(chunk.get("planned_start") or chunk.get("start"))
         planned_end = _datetime(chunk.get("planned_end") or chunk.get("end"))
@@ -124,7 +129,9 @@ def normalize_planned_chunks(schedule: dict[str, Any], *, anchor=None) -> list[d
                 "index": index,
                 "label": str(chunk.get("job_label") or chunk.get("item_name") or ""),
                 "character_id": character_id,
-                "product_type_id": _number(chunk.get("product_type_id") or chunk.get("item_type_id")),
+                "product_type_id": _number(
+                    chunk.get("product_type_id") or chunk.get("item_type_id")
+                ),
                 "blueprint_type_id": _number(chunk.get("blueprint_type_id")),
                 "station_id": _number(chunk.get("station_id")),
                 "activity_id": _number(chunk.get("activity_id")),
@@ -158,7 +165,9 @@ def _job_status(job, observed_end, refreshed_at, planned_end=None) -> str:
     # Still running, but it will end (or should already have ended) later than
     # planned by more than the matching tolerance.
     if planned_end is not None:
-        late_by_end = observed_end is not None and observed_end > planned_end + MATCH_WINDOW
+        late_by_end = (
+            observed_end is not None and observed_end > planned_end + MATCH_WINDOW
+        )
         late_by_clock = refreshed_at > planned_end + MATCH_WINDOW
         if late_by_end or late_by_clock:
             return "delayed"
@@ -184,12 +193,18 @@ def _is_candidate(chunk: dict[str, Any], job) -> bool:
         if job_product:
             if chunk["product_type_id"] != job_product:
                 return False
-        elif not (chunk["blueprint_type_id"] and chunk["blueprint_type_id"] == job_blueprint):
+        elif not (
+            chunk["blueprint_type_id"] and chunk["blueprint_type_id"] == job_blueprint
+        ):
             # The job exposes no product, so only an explicit blueprint match is
             # acceptable. Comparing a product ID to a blueprint ID is not.
             return False
 
-    if chunk["blueprint_type_id"] and job_blueprint and chunk["blueprint_type_id"] != job_blueprint:
+    if (
+        chunk["blueprint_type_id"]
+        and job_blueprint
+        and chunk["blueprint_type_id"] != job_blueprint
+    ):
         return False
 
     job_station = _number(getattr(job, "station_id", None))
@@ -229,7 +244,9 @@ def reconcile_schedule_jobs(
 
     for chunk in chunks:
         index = chunk.get("index", 0)
-        if not chunk.get("character_id") or not (chunk.get("product_type_id") or chunk.get("blueprint_type_id")):
+        if not chunk.get("character_id") or not (
+            chunk.get("product_type_id") or chunk.get("blueprint_type_id")
+        ):
             results.append(
                 {
                     "index": index,
@@ -252,7 +269,11 @@ def reconcile_schedule_jobs(
                 {
                     "index": index,
                     "status": "unmatched",
-                    "reason": ("multiple conservative matches" if candidates else "no conservative match"),
+                    "reason": (
+                        "multiple conservative matches"
+                        if candidates
+                        else "no conservative match"
+                    ),
                 }
             )
             continue
@@ -262,19 +283,31 @@ def reconcile_schedule_jobs(
         observed_start = _datetime(getattr(job, "start_date", None))
         observed_end = _datetime(getattr(job, "end_date", None))
         observed_duration = (
-            int((observed_end - observed_start).total_seconds()) if observed_start and observed_end else None
+            int((observed_end - observed_start).total_seconds())
+            if observed_start and observed_end
+            else None
         )
         planned_duration = chunk.get("planned_duration_seconds")
         results.append(
             {
                 "index": index,
-                "status": _job_status(job, observed_end, refreshed_at, chunk.get("planned_end")),
+                "status": _job_status(
+                    job, observed_end, refreshed_at, chunk.get("planned_end")
+                ),
                 "job_id": int(job.job_id),
                 "character_id": chunk["character_id"],
-                "observed_start": (observed_start.isoformat() if observed_start else None),
+                "observed_start": (
+                    observed_start.isoformat() if observed_start else None
+                ),
                 "observed_end": observed_end.isoformat() if observed_end else None,
-                "planned_start": (chunk["planned_start"].isoformat() if chunk["planned_start"] else None),
-                "planned_end": (chunk["planned_end"].isoformat() if chunk["planned_end"] else None),
+                "planned_start": (
+                    chunk["planned_start"].isoformat()
+                    if chunk["planned_start"]
+                    else None
+                ),
+                "planned_end": (
+                    chunk["planned_end"].isoformat() if chunk["planned_end"] else None
+                ),
                 "planned_duration_seconds": planned_duration,
                 "observed_duration_seconds": observed_duration,
                 "duration_delta_seconds": (
@@ -299,7 +332,11 @@ def reconcile_schedule_jobs(
 
 
 def tracking_freshness(
-    jobs_last_synced, *, has_scope: bool, now=None, stale_after: timedelta = TRACKING_STALE_AFTER
+    jobs_last_synced,
+    *,
+    has_scope: bool,
+    now=None,
+    stale_after: timedelta = TRACKING_STALE_AFTER,
 ) -> dict[str, Any]:
     """How far the reconciled job data can be trusted.
 
@@ -319,5 +356,9 @@ def tracking_freshness(
     if last is None:
         return {"state": "stale", "reason": "never_synced", "jobs_last_synced": None}
     if now - last > stale_after:
-        return {"state": "stale", "reason": "sync_overdue", "jobs_last_synced": last.isoformat()}
+        return {
+            "state": "stale",
+            "reason": "sync_overdue",
+            "jobs_last_synced": last.isoformat(),
+        }
     return {"state": "fresh", "reason": "", "jobs_last_synced": last.isoformat()}

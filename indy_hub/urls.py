@@ -23,10 +23,7 @@ from .views.api import (
     refresh_production_schedule_tracking,
     save_production_config,
 )
-from .views.hubs import (
-    settings_hub,
-    test_darkly_theme,
-)
+from .views.hubs import settings_hub, test_darkly_theme
 from .views.industry import (
     all_bp_list,
     bp_accept_copy_request,
@@ -320,7 +317,9 @@ urlpatterns = [
         craft_industry_fees,
         name="craft_industry_fees",
     ),
-    path("api/craft-bp-payload/<int:type_id>/", craft_bp_payload, name="craft_bp_payload"),
+    path(
+        "api/craft-bp-payload/<int:type_id>/", craft_bp_payload, name="craft_bp_payload"
+    ),
     path(
         "api/production-config/save/",
         save_production_config,
@@ -372,7 +371,9 @@ urlpatterns = [
         name="submit_production_buyback_order",
     ),
     path("api/menu-badge-count/", menu_badge_count, name="menu_badge_count"),
-    path("simulations/", production_simulations_list, name="production_simulations_list"),
+    path(
+        "simulations/", production_simulations_list, name="production_simulations_list"
+    ),
     path(
         "simulations/<int:simulation_id>/delete/",
         delete_production_simulation_view,
@@ -394,10 +395,14 @@ urlpatterns = [
         name="rename_production_simulation",
     ),
     path("bp-copy/request/", bp_copy_request_page, name="bp_copy_request_page"),
-    path("bp-copy/request/create/", bp_copy_request_create, name="bp_copy_request_create"),
+    path(
+        "bp-copy/request/create/", bp_copy_request_create, name="bp_copy_request_create"
+    ),
     path("bp-copy/fulfill/", bp_copy_fulfill_requests, name="bp_copy_fulfill_requests"),
     path("bp-copy/history/", bp_copy_history, name="bp_copy_history"),
-    path("bp-copy/my-requests/", bp_copy_my_requests, name="bp_copy_my_requests"),  # my requests
+    path(
+        "bp-copy/my-requests/", bp_copy_my_requests, name="bp_copy_my_requests"
+    ),  # my requests
     path(
         "bp-copy/my-requests/<int:request_id>/update/",
         bp_update_copy_request,

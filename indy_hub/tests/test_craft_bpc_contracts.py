@@ -24,13 +24,23 @@ from indy_hub.services.public_contracts_store import (
 )
 from indy_hub.views.api import craft_bpc_contracts
 
-CRAFT_JS = Path(__file__).resolve().parents[1] / "static" / "indy_hub" / "js" / "craft_bp.js"
-CRAFT_TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "indy_hub" / "industry" / "Craft_BP_v2.html"
+CRAFT_JS = (
+    Path(__file__).resolve().parents[1] / "static" / "indy_hub" / "js" / "craft_bp.js"
+)
+CRAFT_TEMPLATE = (
+    Path(__file__).resolve().parents[1]
+    / "templates"
+    / "indy_hub"
+    / "industry"
+    / "Craft_BP_v2.html"
+)
 
 BLUEPRINT_TYPE_ID = 81100
 
 
-def _make_contract(contract_id: int, *, expires_in: timedelta, issued_ago=timedelta(hours=2)):
+def _make_contract(
+    contract_id: int, *, expires_in: timedelta, issued_ago=timedelta(hours=2)
+):
     now = timezone.now()
     contract = PublicJitaContract.objects.create(
         contract_id=contract_id,
@@ -99,7 +109,10 @@ class PublicContractCacheMetaTests(TestCase):
     def test_failure_older_than_last_sync_is_ignored(self) -> None:
         cache.set(
             SYNC_FAILURE_KEY,
-            {"failed_at": (timezone.now() - timedelta(hours=5)).isoformat(), "error": "HTTPError"},
+            {
+                "failed_at": (timezone.now() - timedelta(hours=5)).isoformat(),
+                "error": "HTTPError",
+            },
         )
         cache.set(SYNC_META_KEY, {"ok": True, "synced_at": timezone.now().isoformat()})
 
@@ -146,7 +159,10 @@ class RequestPublicContractRefreshTests(TestCase):
     def test_stale_cache_queues_once(self, mock_delay) -> None:
         cache.set(
             SYNC_META_KEY,
-            {"ok": True, "synced_at": (timezone.now() - timedelta(hours=3)).isoformat()},
+            {
+                "ok": True,
+                "synced_at": (timezone.now() - timedelta(hours=3)).isoformat(),
+            },
         )
 
         self.assertTrue(request_public_jita_contract_refresh())
@@ -161,7 +177,9 @@ class CraftBpcContractsEndpointTests(TestCase):
         cache.delete(REFRESH_QUEUED_KEY)
         self.factory = RequestFactory()
         self.user = User.objects.create_user("bpc-contracts", password="secret123")
-        self.user.user_permissions.add(Permission.objects.get(codename="can_access_indy_hub"))
+        self.user.user_permissions.add(
+            Permission.objects.get(codename="can_access_indy_hub")
+        )
 
     def _get(self, **params):
         view = craft_bpc_contracts
@@ -190,9 +208,15 @@ class CraftBpcContractsEndpointTests(TestCase):
     def test_stale_failed_cache_is_not_reported_as_current(self) -> None:
         cache.set(
             SYNC_META_KEY,
-            {"ok": True, "synced_at": (timezone.now() - timedelta(hours=4)).isoformat()},
+            {
+                "ok": True,
+                "synced_at": (timezone.now() - timedelta(hours=4)).isoformat(),
+            },
         )
-        cache.set(SYNC_FAILURE_KEY, {"failed_at": timezone.now().isoformat(), "error": "Timeout"})
+        cache.set(
+            SYNC_FAILURE_KEY,
+            {"failed_at": timezone.now().isoformat(), "error": "Timeout"},
+        )
 
         payload = self._get(blueprint_type_ids=str(BLUEPRINT_TYPE_ID))
 
@@ -209,7 +233,10 @@ class CraftBpcContractsEndpointTests(TestCase):
 
         cache.set(
             SYNC_META_KEY,
-            {"ok": True, "synced_at": (timezone.now() - timedelta(hours=2)).isoformat()},
+            {
+                "ok": True,
+                "synced_at": (timezone.now() - timedelta(hours=2)).isoformat(),
+            },
         )
         payload = self._get(blueprint_type_ids=str(BLUEPRINT_TYPE_ID), force="1")
         self.assertTrue(payload["refresh_queued"])
@@ -234,13 +261,17 @@ class BuyBpcsFreshnessUiTests(SimpleTestCase):
             "Expired",
         ):
             self.assertIn(marker, source)
-        self.assertIn('id="buyBpcsFreshness"', CRAFT_TEMPLATE.read_text(encoding="utf-8"))
+        self.assertIn(
+            'id="buyBpcsFreshness"', CRAFT_TEMPLATE.read_text(encoding="utf-8")
+        )
 
     def test_selected_contracts_are_revalidated(self) -> None:
         source = CRAFT_JS.read_text(encoding="utf-8")
         self.assertIn("function revalidateSelectedBpcContracts()", source)
         # A stored selection must not stand in for a live snapshot that no
         # longer lists it, nor for an expired offer.
-        known_offer = source.split("function getKnownOfferForBlueprintContract", 1)[1].split("\nfunction ", 1)[0]
+        known_offer = source.split("function getKnownOfferForBlueprintContract", 1)[
+            1
+        ].split("\nfunction ", 1)[0]
         self.assertIn("isBpcOfferExpired(selectedOffer)", known_offer)
         self.assertIn("offersByBlueprintType.has(numericBlueprintTypeId)", known_offer)

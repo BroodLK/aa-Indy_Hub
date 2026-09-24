@@ -756,7 +756,10 @@ def fuzzwork_price(request):
         # Remove duplicates and join back
         unique_type_ids = list(set(type_ids))
         # Local
-        from ..services.fuzzwork import FuzzworkError, fetch_fuzzwork_aggregates
+        from ..services.fuzzwork import (
+            FuzzworkError,
+            fetch_fuzzwork_aggregates,
+        )
 
         # Fetch price data from Fuzzwork API
         data = fetch_fuzzwork_aggregates(unique_type_ids, timeout=10)
@@ -1949,7 +1952,9 @@ def convert_minerals_to_compressed_ore(request):
     """
     try:
         # Local import to avoid circular dependency
-        from ..services.reprocessing import calculate_compressed_ore_for_minerals
+        from ..services.reprocessing import (
+            calculate_compressed_ore_for_minerals,
+        )
 
         # Parse request body
         try:

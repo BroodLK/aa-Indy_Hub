@@ -34,8 +34,16 @@ from indy_hub.views.production_buyback import (
     submit_production_buyback_order,
 )
 
-CRAFT_JS = Path(__file__).resolve().parents[1] / "static" / "indy_hub" / "js" / "craft_bp.js"
-CRAFT_TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "indy_hub" / "industry" / "Craft_BP_v2.html"
+CRAFT_JS = (
+    Path(__file__).resolve().parents[1] / "static" / "indy_hub" / "js" / "craft_bp.js"
+)
+CRAFT_TEMPLATE = (
+    Path(__file__).resolve().parents[1]
+    / "templates"
+    / "indy_hub"
+    / "industry"
+    / "Craft_BP_v2.html"
+)
 
 TRITANIUM = 34
 PYERITE = 35
@@ -53,7 +61,9 @@ class BuybackFixtureMixin:
         cache.clear()
         self.factory = RequestFactory()
         self.user = User.objects.create_user("sim-buyback", password="secret123")
-        self.user.user_permissions.add(Permission.objects.get(codename="can_access_indy_hub"))
+        self.user.user_permissions.add(
+            Permission.objects.get(codename="can_access_indy_hub")
+        )
         character, _created = EveCharacter.objects.get_or_create(
             character_id=CHARACTER_ID,
             defaults={
@@ -96,7 +106,9 @@ class BuybackFixtureMixin:
         # The key embeds DB timestamps, so derive it from a fresh DB copy exactly
         # as the views will.
         cache.set(
-            _get_buy_browse_snapshot_cache_key(MaterialExchangeConfig.objects.get(pk=self.config.pk)),
+            _get_buy_browse_snapshot_cache_key(
+                MaterialExchangeConfig.objects.get(pk=self.config.pk)
+            ),
             {
                 "stock_rows": [
                     {
@@ -125,7 +137,9 @@ class BuybackFixtureMixin:
                         "buy_location_label": "Structure Alpha",
                     },
                 ],
-                "stock_meta_by_type": {TRITANIUM: {"type_id": TRITANIUM, "quantity": quantity}},
+                "stock_meta_by_type": {
+                    TRITANIUM: {"type_id": TRITANIUM, "quantity": quantity}
+                },
             },
             600,
         )
@@ -168,7 +182,9 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         self.assertEqual(item["price_source"], "buyback_market")
         self.assertEqual(item["location_label"], "Structure Alpha")
         self.assertNotIn(str(PYERITE), payload["items"])
-        self.assertEqual(payload["recipients"], [{"id": CHARACTER_ID, "name": "Buyback Pilot"}])
+        self.assertEqual(
+            payload["recipients"], [{"id": CHARACTER_ID, "name": "Buyback Pilot"}]
+        )
         self.assertFalse(payload["stock_stale"])
 
     def test_disabled_buyback_reports_reason(self) -> None:
@@ -183,10 +199,16 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
 
     def test_order_status_is_only_reported_for_own_orders(self) -> None:
         other = User.objects.create_user("someone-else", password="x")
-        own = MaterialExchangeBuyOrder.objects.create(config=self.config, buyer=self.user)
-        foreign = MaterialExchangeBuyOrder.objects.create(config=self.config, buyer=other)
+        own = MaterialExchangeBuyOrder.objects.create(
+            config=self.config, buyer=self.user
+        )
+        foreign = MaterialExchangeBuyOrder.objects.create(
+            config=self.config, buyer=other
+        )
 
-        payload = self._availability(type_ids=str(TRITANIUM), order_ids=f"{own.id},{foreign.id}")
+        payload = self._availability(
+            type_ids=str(TRITANIUM), order_ids=f"{own.id},{foreign.id}"
+        )
 
         self.assertEqual([order["id"] for order in payload["orders"]], [own.id])
         self.assertEqual(payload["orders"][0]["progress"], "pending")
@@ -228,7 +250,9 @@ class BuybackSubmitTests(BuybackFixtureMixin, TestCase):
         self.assertFalse(MaterialExchangeBuyOrder.objects.exists())
 
     def test_quantity_above_unreserved_stock_is_refused(self) -> None:
-        existing = MaterialExchangeBuyOrder.objects.create(config=self.config, buyer=self.user)
+        existing = MaterialExchangeBuyOrder.objects.create(
+            config=self.config, buyer=self.user
+        )
         existing.items.create(
             type_id=TRITANIUM,
             type_name="Tritanium",
@@ -294,7 +318,9 @@ class BuybackSubmitTests(BuybackFixtureMixin, TestCase):
 
 class BuybackReconciliationTests(BuybackFixtureMixin, TestCase):
     def _order_with_status(self, status):
-        order = MaterialExchangeBuyOrder.objects.create(config=self.config, buyer=self.user)
+        order = MaterialExchangeBuyOrder.objects.create(
+            config=self.config, buyer=self.user
+        )
         MaterialExchangeBuyOrder.objects.filter(id=order.id).update(status=status)
         return order
 
@@ -304,7 +330,11 @@ class BuybackReconciliationTests(BuybackFixtureMixin, TestCase):
         rejected = self._order_with_status(MaterialExchangeBuyOrder.Status.REJECTED)
         cancelled = self._order_with_status(MaterialExchangeBuyOrder.Status.CANCELLED)
 
-        payload = self._availability(order_ids=",".join(str(o.id) for o in (pending, delivered, rejected, cancelled)))
+        payload = self._availability(
+            order_ids=",".join(
+                str(o.id) for o in (pending, delivered, rejected, cancelled)
+            )
+        )
 
         progress = {order["id"]: order["progress"] for order in payload["orders"]}
         self.assertEqual(progress[pending.id], "pending")
@@ -342,13 +372,22 @@ class BuyPageRegressionTests(BuybackFixtureMixin, TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(MaterialExchangeBuyOrder.objects.exists())
-        self.assertTrue(any("Insufficient unlocked stock" in message for message in messages))
+        self.assertTrue(
+            any("Insufficient unlocked stock" in message for message in messages)
+        )
 
     def test_service_rejects_mixed_blueprint_variant(self) -> None:
         result = create_buy_order(
             user=self.user,
             config=self.config,
-            submitted_entries=[{"type_id": TRITANIUM, "quantity": 1, "row_index": 0, "blueprint_variant": "bpc"}],
+            submitted_entries=[
+                {
+                    "type_id": TRITANIUM,
+                    "quantity": 1,
+                    "row_index": 0,
+                    "blueprint_variant": "bpc",
+                }
+            ],
             recipient_character_id=CHARACTER_ID,
         )
 
@@ -375,5 +414,7 @@ class BuybackUiTests(SimpleTestCase):
         self.assertIn("Reserved (pending)", source)
         self.assertIn("buybackOrders: collectBuybackOrdersSnapshot()", source)
         # The share allowlist must not pick buyback orders up.
-        share_builder = source.split("function collectCraftShareState", 1)[1].split("\nfunction ", 1)[0]
+        share_builder = source.split("function collectCraftShareState", 1)[1].split(
+            "\nfunction ", 1
+        )[0]
         self.assertNotIn("buyback", share_builder.lower())

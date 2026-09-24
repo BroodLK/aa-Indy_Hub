@@ -116,7 +116,9 @@ def _get_operation(resource_name: str, snake_name: str, camel_name: str):
     resource = getattr(shared_client.client, resource_name, None)
     if resource is None:
         return None
-    operation = getattr(resource, snake_name, None) or getattr(resource, camel_name, None)
+    operation = getattr(resource, snake_name, None) or getattr(
+        resource, camel_name, None
+    )
     return operation if callable(operation) else None
 
 
@@ -208,7 +210,10 @@ def _get_corptools_character_audit(character_id: int):
     try:
         return (
             CharacterAudit.objects.select_related("character")
-            .filter(Q(character__character_id=int(character_id)) | Q(character_id=int(character_id)))
+            .filter(
+                Q(character__character_id=int(character_id))
+                | Q(character_id=int(character_id))
+            )
             .first()
         )
     except Exception:
@@ -259,7 +264,11 @@ def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]
         return []
 
     try:
-        clones = list(JumpClone.objects.filter(character=audit).select_related("location_name").order_by("id"))
+        clones = list(
+            JumpClone.objects.filter(character=audit)
+            .select_related("location_name")
+            .order_by("id")
+        )
     except Exception:
         return []
     if not clones:
@@ -267,7 +276,9 @@ def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]
 
     implants_by_clone: dict[int, list[tuple[int, str]]] = {}
     try:
-        implants = list(Implant.objects.filter(clone__in=clones).select_related("type_name"))
+        implants = list(
+            Implant.objects.filter(clone__in=clones).select_related("type_name")
+        )
     except Exception:
         implants = []
     for implant in implants:
@@ -300,12 +311,16 @@ def _fetch_corptools_clone_options(character_id: int) -> list[dict[str, object]]
             location_id = 0
 
         if row_clone_id <= 0:
-            row_clone_id = location_id if location_id > 0 else int(getattr(clone, "id", 0) or 0)
+            row_clone_id = (
+                location_id if location_id > 0 else int(getattr(clone, "id", 0) or 0)
+            )
 
         location_name = ""
         location_obj = getattr(clone, "location_name", None)
         if location_obj is not None:
-            location_name = str(getattr(location_obj, "location_name", "") or "").strip()
+            location_name = str(
+                getattr(location_obj, "location_name", "") or ""
+            ).strip()
 
         implant_pairs = implants_by_clone.get(int(getattr(clone, "id", 0) or 0), [])
         implant_type_ids = [type_id for type_id, _ in implant_pairs if type_id > 0]
@@ -376,17 +391,29 @@ def build_reprocessing_skill_snapshot(
             skill_id = int(raw_skill_id)
         except (TypeError, ValueError):
             continue
-        level = int((raw_level or {}).get("active") or 0) if isinstance(raw_level, dict) else int(raw_level or 0)
+        level = (
+            int((raw_level or {}).get("active") or 0)
+            if isinstance(raw_level, dict)
+            else int(raw_level or 0)
+        )
         if level <= 0:
             continue
         skill_name = str(get_type_name(skill_id) or "").lower()
-        if "processing" in skill_name and "reprocessing" not in skill_name and "efficiency" not in skill_name:
+        if (
+            "processing" in skill_name
+            and "reprocessing" not in skill_name
+            and "efficiency" not in skill_name
+        ):
             processing_level = max(processing_level, level)
 
     return {
         "reprocessing": _active(REPROCESSING_SKILL_TYPE_IDS["reprocessing"]),
-        "reprocessing_efficiency": _active(REPROCESSING_SKILL_TYPE_IDS["reprocessing_efficiency"]),
-        "scrapmetal_processing": _active(REPROCESSING_SKILL_TYPE_IDS["scrapmetal_processing"]),
+        "reprocessing_efficiency": _active(
+            REPROCESSING_SKILL_TYPE_IDS["reprocessing_efficiency"]
+        ),
+        "scrapmetal_processing": _active(
+            REPROCESSING_SKILL_TYPE_IDS["scrapmetal_processing"]
+        ),
         "processing": processing_level,
     }
 
@@ -403,7 +430,9 @@ def compute_estimated_yield_percent(
     # Upwell formula:
     # (50 + Rm) * (1 + Sec) * (1 + Sm) * (1 + R*0.03) * (1 + Re*0.02) * (1 + Op*0.02) * (1 + Im)
     rig_modifier = _normalize_rig_modifier(_to_decimal(rig_bonus_percent))
-    structure_modifier = _normalize_structure_modifier(_to_decimal(structure_bonus_percent))
+    structure_modifier = _normalize_structure_modifier(
+        _to_decimal(structure_bonus_percent)
+    )
 
     security_modifier = _to_decimal(security_bonus_percent)
     if security_modifier >= Decimal("1"):
@@ -413,7 +442,9 @@ def compute_estimated_yield_percent(
 
     implant_modifier = _to_decimal(implant_bonus_percent) / Decimal("100")
     reprocessing_level = Decimal(str(int(skill_snapshot.get("reprocessing", 0))))
-    efficiency_level = Decimal(str(int(skill_snapshot.get("reprocessing_efficiency", 0))))
+    efficiency_level = Decimal(
+        str(int(skill_snapshot.get("reprocessing_efficiency", 0)))
+    )
     processing_level = Decimal(str(int(skill_snapshot.get("processing", 0))))
 
     total = (
@@ -460,7 +491,9 @@ def _query_type_material_rows(type_id: int) -> list[tuple[int, int]]:
         if qty_field not in field_names:
             continue
         filters = {source_field: int(type_id)}
-        rows = list(model.objects.filter(**filters).values_list(output_field, qty_field))
+        rows = list(
+            model.objects.filter(**filters).values_list(output_field, qty_field)
+        )
         normalized: list[tuple[int, int]] = []
         for material_type_id, qty in rows:
             try:
@@ -480,7 +513,9 @@ def get_reprocessing_outputs_for_type(type_id: int) -> dict[int, int]:
     rows = _query_type_material_rows(int(type_id))
     outputs: dict[int, int] = {}
     for material_type_id, quantity in rows:
-        outputs[int(material_type_id)] = outputs.get(int(material_type_id), 0) + int(quantity)
+        outputs[int(material_type_id)] = outputs.get(int(material_type_id), 0) + int(
+            quantity
+        )
     return outputs
 
 
@@ -496,7 +531,11 @@ def get_reprocessing_portion_size(type_id: int) -> int:
     if item_type_model is None:
         return 1
     try:
-        raw_value = item_type_model.objects.filter(id=int(type_id)).values_list("portion_size", flat=True).first()
+        raw_value = (
+            item_type_model.objects.filter(id=int(type_id))
+            .values_list("portion_size", flat=True)
+            .first()
+        )
         value = int(raw_value or 1)
     except Exception:
         value = 1
@@ -539,17 +578,23 @@ def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
         market_group_filter = models.Q()
         relation = "market_group"
         for _ in range(4):
-            market_group_filter |= models.Q(**{f"{relation}__name__icontains": "compressed"}) & models.Q(
-                **{f"{relation}__name__icontains": "ore"}
-            )
+            market_group_filter |= models.Q(
+                **{f"{relation}__name__icontains": "compressed"}
+            ) & models.Q(**{f"{relation}__name__icontains": "ore"})
             relation = f"{relation}__parent_group"
         compressed_ore_filter = (
             models.Q(name__icontains="Compressed")
             & ~models.Q(name__icontains="Batch Compressed")
             & (models.Q(group__category_id__in=ORE_CATEGORY_IDS) | market_group_filter)
         )
-        combined_filter = models.Q(group__category_id__in=ORE_CATEGORY_IDS) | compressed_ore_filter
-        rows = item_type_model.objects.filter(id__in=cleaned).filter(combined_filter).values_list("id", flat=True)
+        combined_filter = (
+            models.Q(group__category_id__in=ORE_CATEGORY_IDS) | compressed_ore_filter
+        )
+        rows = (
+            item_type_model.objects.filter(id__in=cleaned)
+            .filter(combined_filter)
+            .values_list("id", flat=True)
+        )
         return {int(row) for row in rows}
     except Exception:
         return set()
@@ -593,7 +638,11 @@ def get_reprocessing_outputs_map(type_ids: Iterable[int]) -> dict[int, dict[int,
         if model is None:
             continue
         field_names = {field.name for field in model._meta.get_fields()}
-        if source_field not in field_names or output_field not in field_names or qty_field not in field_names:
+        if (
+            source_field not in field_names
+            or output_field not in field_names
+            or qty_field not in field_names
+        ):
             continue
         try:
             rows = list(
@@ -647,7 +696,9 @@ def get_portion_size_map(type_ids: Iterable[int]) -> dict[int, int]:
     if item_type_model is None:
         return result
     try:
-        rows = item_type_model.objects.filter(id__in=cleaned).values_list("id", "portion_size")
+        rows = item_type_model.objects.filter(id__in=cleaned).values_list(
+            "id", "portion_size"
+        )
     except Exception:
         return result
 
@@ -782,11 +833,15 @@ def _get_processing_skill_candidates_from_sde() -> tuple[tuple[int, str], ...]:
 
 
 def _normalize_processing_text(value: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
+    return re.sub(
+        r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+    ).strip()
 
 
 def _extract_processing_subject(skill_name: str) -> str:
-    normalized = re.sub(r"\s+processing$", "", str(skill_name or "").strip(), flags=re.IGNORECASE)
+    normalized = re.sub(
+        r"\s+processing$", "", str(skill_name or "").strip(), flags=re.IGNORECASE
+    )
     return normalized.strip()
 
 
@@ -845,7 +900,10 @@ def _infer_processing_skill_type_id_for_item(
             continue
 
         if not any(
-            text == subject or text.endswith(f" {subject}") or f" {subject} " in f" {text} " for text in context_texts
+            text == subject
+            or text.endswith(f" {subject}")
+            or f" {subject} " in f" {text} "
+            for text in context_texts
         ):
             continue
 
@@ -932,9 +990,13 @@ def build_reprocessing_estimate(
             continue
         output_map = get_reprocessing_outputs_for_type(source_type_id)
         if not output_map:
-            unsupported_inputs.append({"type_id": source_type_id, "quantity": source_qty})
+            unsupported_inputs.append(
+                {"type_id": source_type_id, "quantity": source_qty}
+            )
             continue
-        type_yield_percent = _to_decimal((yield_percent_by_type or {}).get(int(source_type_id), yield_percent))
+        type_yield_percent = _to_decimal(
+            (yield_percent_by_type or {}).get(int(source_type_id), yield_percent)
+        )
         type_yield_ratio = type_yield_percent / Decimal("100")
         if type_yield_ratio < Decimal("0"):
             type_yield_ratio = Decimal("0")
@@ -944,10 +1006,14 @@ def build_reprocessing_estimate(
             continue
         for output_type_id, output_qty_per_unit in output_map.items():
             refined_quantity = (
-                _to_decimal(processable_portions) * _to_decimal(output_qty_per_unit) * type_yield_ratio
+                _to_decimal(processable_portions)
+                * _to_decimal(output_qty_per_unit)
+                * type_yield_ratio
             ).quantize(Decimal("1"), rounding=ROUND_FLOOR)
             refined_int = max(int(refined_quantity), 0)
-            expected_outputs[int(output_type_id)] = expected_outputs.get(int(output_type_id), 0) + refined_int
+            expected_outputs[int(output_type_id)] = (
+                expected_outputs.get(int(output_type_id), 0) + refined_int
+            )
 
     output_type_ids = sorted(expected_outputs.keys())
     try:
@@ -976,9 +1042,9 @@ def build_reprocessing_estimate(
         )
 
     # EVE contracts effectively operate in whole ISK; floor to avoid false mismatches.
-    reward_isk = (total_value * (_to_decimal(margin_percent) / Decimal("100"))).quantize(
-        Decimal("1"), rounding=ROUND_FLOOR
-    )
+    reward_isk = (
+        total_value * (_to_decimal(margin_percent) / Decimal("100"))
+    ).quantize(Decimal("1"), rounding=ROUND_FLOOR)
 
     return {
         "outputs": output_rows,
@@ -1012,7 +1078,9 @@ def contract_items_match_exact(
     contract_items: Iterable[object],
     expected_by_type: dict[int, int],
 ) -> bool:
-    expected = {int(k): int(v) for k, v in (expected_by_type or {}).items() if int(v) > 0}
+    expected = {
+        int(k): int(v) for k, v in (expected_by_type or {}).items() if int(v) > 0
+    }
     actual = aggregate_contract_items_by_type(contract_items)
     return actual == expected
 
@@ -1024,7 +1092,9 @@ def contract_items_match_with_tolerance(
     tolerance_percent: Decimal = Decimal("1.00"),
 ) -> tuple[bool, list[str]]:
     """Validate contract items with tolerance and no substitutions."""
-    expected = {int(k): int(v) for k, v in (expected_by_type or {}).items() if int(v) > 0}
+    expected = {
+        int(k): int(v) for k, v in (expected_by_type or {}).items() if int(v) > 0
+    }
     actual = aggregate_contract_items_by_type(contract_items)
     errors: list[str] = []
 
@@ -1034,16 +1104,24 @@ def contract_items_match_with_tolerance(
         missing = sorted(expected_types - actual_types)
         extras = sorted(actual_types - expected_types)
         if missing:
-            errors.append("Missing types: " + ", ".join(get_type_name(type_id) for type_id in missing))
+            errors.append(
+                "Missing types: "
+                + ", ".join(get_type_name(type_id) for type_id in missing)
+            )
         if extras:
-            errors.append("Unexpected types: " + ", ".join(get_type_name(type_id) for type_id in extras))
+            errors.append(
+                "Unexpected types: "
+                + ", ".join(get_type_name(type_id) for type_id in extras)
+            )
         return False, errors
 
     tolerance_ratio = _to_decimal(tolerance_percent) / Decimal("100")
     for type_id in sorted(expected_types):
         expected_qty = int(expected.get(type_id, 0))
         actual_qty = int(actual.get(type_id, 0))
-        max_delta = max(1, int(math.ceil(float(_to_decimal(expected_qty) * tolerance_ratio))))
+        max_delta = max(
+            1, int(math.ceil(float(_to_decimal(expected_qty) * tolerance_ratio)))
+        )
         delta = abs(actual_qty - expected_qty)
         if delta > max_delta:
             errors.append(
@@ -1068,7 +1146,9 @@ def clear_compressed_ore_cache():
 
 
 ASTEROID_CATEGORY_ID = 25
-COMPRESSED_ORE_CACHE_LOAD_COMMAND = "python manage.py indy_hub_load_compressed_ore_cache"
+COMPRESSED_ORE_CACHE_LOAD_COMMAND = (
+    "python manage.py indy_hub_load_compressed_ore_cache"
+)
 
 
 def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
@@ -1076,9 +1156,9 @@ def _compressed_ore_market_group_filter(*, max_depth: int = 4) -> models.Q:
     relation = "market_group"
     market_group_filter = models.Q()
     for _ in range(max_depth):
-        market_group_filter |= models.Q(**{f"{relation}__name__icontains": "compressed"}) & models.Q(
-            **{f"{relation}__name__icontains": "ore"}
-        )
+        market_group_filter |= models.Q(
+            **{f"{relation}__name__icontains": "compressed"}
+        ) & models.Q(**{f"{relation}__name__icontains": "ore"})
         relation = f"{relation}__parent_group"
     return market_group_filter
 
@@ -1088,7 +1168,10 @@ def _compressed_ore_type_filter() -> models.Q:
     return (
         models.Q(name__icontains="Compressed")
         & ~models.Q(name__icontains="Batch Compressed")
-        & (models.Q(group__category_id=ASTEROID_CATEGORY_ID) | _compressed_ore_market_group_filter())
+        & (
+            models.Q(group__category_id=ASTEROID_CATEGORY_ID)
+            | _compressed_ore_market_group_filter()
+        )
     )
 
 
@@ -1126,7 +1209,10 @@ def _populate_compressed_ore_cache() -> tuple[bool, str]:
 
     item_type_materials_model = getattr(sde_models, "ItemTypeMaterials", None)
     try:
-        if item_type_materials_model is not None and not item_type_materials_model.objects.exists():
+        if (
+            item_type_materials_model is not None
+            and not item_type_materials_model.objects.exists()
+        ):
             return (
                 False,
                 "EVE SDE reprocessing material data is empty. Run `python manage.py esde_load_sde` in your Alliance Auth installation.",
@@ -1200,7 +1286,9 @@ def _update_compressed_ore_prices() -> tuple[bool, str]:
     # AA Example App
     from indy_hub.models import CompressedOreCache
 
-    ore_type_ids = list(CompressedOreCache.objects.values_list("ore_type_id", flat=True))
+    ore_type_ids = list(
+        CompressedOreCache.objects.values_list("ore_type_id", flat=True)
+    )
 
     if not ore_type_ids:
         return False, "No ores in cache to update prices for"
@@ -1286,12 +1374,16 @@ def calculate_compressed_ore_for_minerals(
         update_progress("Queueing a market price refresh...")
         try:
             # AA Example App
-            from indy_hub.tasks.reprocessing import refresh_compressed_ore_prices
+            from indy_hub.tasks.reprocessing import (
+                refresh_compressed_ore_prices,
+            )
 
             refresh_compressed_ore_prices.delay()
             refresh_queued = True
         except Exception:
-            logger.warning("Unable to queue compressed ore price refresh", exc_info=True)
+            logger.warning(
+                "Unable to queue compressed ore price refresh", exc_info=True
+            )
 
     # Load ore data from cache
     update_progress("Running calculation...")
@@ -1369,7 +1461,10 @@ def calculate_compressed_ore_for_minerals(
     max_iterations = max(16, len(remaining_minerals) * 8)
     iteration = 0
 
-    while any(qty > 0 for qty in remaining_minerals.values()) and iteration < max_iterations:
+    while (
+        any(qty > 0 for qty in remaining_minerals.values())
+        and iteration < max_iterations
+    ):
         iteration += 1
         best_ore_id = None
         best_cost_per_need = None
@@ -1411,7 +1506,9 @@ def calculate_compressed_ore_for_minerals(
             remaining_qty = remaining_minerals.get(mineral_id, 0)
             if remaining_qty <= 0 or produced_qty <= 0:
                 continue
-            portions_needed = (Decimal(remaining_qty) / produced_qty).to_integral_value(rounding=ROUND_CEILING)
+            portions_needed = (Decimal(remaining_qty) / produced_qty).to_integral_value(
+                rounding=ROUND_CEILING
+            )
             if portions_needed > 0:
                 relevant_portion_counts.append(int(portions_needed))
 
@@ -1419,7 +1516,9 @@ def calculate_compressed_ore_for_minerals(
             break
 
         portions_to_add = max(1, min(relevant_portion_counts))
-        selected_ores[best_ore_id] = selected_ores.get(best_ore_id, 0) + (portion_size * portions_to_add)
+        selected_ores[best_ore_id] = selected_ores.get(best_ore_id, 0) + (
+            portion_size * portions_to_add
+        )
 
         # Update remaining minerals
         for mineral_id, refined_per_portion in best_refined_per_portion.items():
@@ -1440,14 +1539,18 @@ def calculate_compressed_ore_for_minerals(
         portion_size = int(ore_portion_data[ore_type_id]["portion_size"])
         num_portions = ore_qty // portion_size
 
-        for mineral_id, refined_per_portion in ore_portion_data[ore_type_id]["refined_per_portion"].items():
+        for mineral_id, refined_per_portion in ore_portion_data[ore_type_id][
+            "refined_per_portion"
+        ].items():
             refined_qty = int(
                 (refined_per_portion * Decimal(num_portions)).quantize(
                     Decimal("1"),
                     rounding=ROUND_FLOOR,
                 )
             )
-            total_minerals_produced[mineral_id] = total_minerals_produced.get(mineral_id, 0) + refined_qty
+            total_minerals_produced[mineral_id] = (
+                total_minerals_produced.get(mineral_id, 0) + refined_qty
+            )
 
     excess_minerals: dict[int, int] = {}
     for mineral_id, produced in total_minerals_produced.items():
@@ -1461,8 +1564,12 @@ def calculate_compressed_ore_for_minerals(
 
     for ore_type_id, ore_qty in selected_ores.items():
         ore_prices = price_map.get(ore_type_id, {})
-        ore_unit_price = _to_decimal(ore_prices.get("sell", 0)).quantize(Decimal("0.01"))
-        ore_total_cost = (_to_decimal(ore_qty) * ore_unit_price).quantize(Decimal("0.01"))
+        ore_unit_price = _to_decimal(ore_prices.get("sell", 0)).quantize(
+            Decimal("0.01")
+        )
+        ore_total_cost = (_to_decimal(ore_qty) * ore_unit_price).quantize(
+            Decimal("0.01")
+        )
         total_cost += ore_total_cost
 
         compressed_ore_list.append(
@@ -1497,7 +1604,9 @@ def calculate_compressed_ore_for_minerals(
             "price_source": "fuzzwork_cache",
             "prices_stale": bool(prices_are_stale),
             "refresh_queued": bool(refresh_queued),
-            "oldest_price_at": (oldest_price_at.isoformat() if oldest_price_at else None),
+            "oldest_price_at": (
+                oldest_price_at.isoformat() if oldest_price_at else None
+            ),
             "ores_considered": len(ore_mineral_yields),
             # Ores at or below 1 ISK sell are dropped as having no usable
             # market; say so rather than silently omitting them.

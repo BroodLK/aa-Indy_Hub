@@ -17,7 +17,13 @@ from indy_hub.services.build_scheduler import (
 STATIC = Path(__file__).resolve().parent.parent / "static" / "indy_hub"
 CRAFT_JS = STATIC / "js" / "craft_bp.js"
 CRAFT_CSS = STATIC / "css" / "craft_bp.css"
-CRAFT_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "indy_hub" / "industry" / "Craft_BP_v2.html"
+CRAFT_TEMPLATE = (
+    Path(__file__).resolve().parent.parent
+    / "templates"
+    / "indy_hub"
+    / "industry"
+    / "Craft_BP_v2.html"
+)
 
 
 def make_job(job_id, *, item_type_id=7001, name="Widget", runs=1, duration=1000):
@@ -99,7 +105,9 @@ class RecommendationStructureTests(SimpleTestCase):
         lane_b = IndustrySlot(slot_id=1, character_id=2, character_name="Bob")
         lane_a.add_job(busy, 0)
         lane_b.add_job(idle_job, 0)
-        return generate_recommendations([busy, idle_job], [lane_a, lane_b], 2000, [], {})
+        return generate_recommendations(
+            [busy, idle_job], [lane_a, lane_b], 2000, [], {}
+        )
 
     def test_recommendations_are_structured_not_strings(self):
         for rec in self._recommend():
@@ -110,7 +118,9 @@ class RecommendationStructureTests(SimpleTestCase):
             self.assertIn("params", rec)
 
     def test_rebalance_states_a_measured_bound_not_a_promise(self):
-        rebalance = next((r for r in self._recommend() if r["code"] == "rebalance_lanes"), None)
+        rebalance = next(
+            (r for r in self._recommend() if r["code"] == "rebalance_lanes"), None
+        )
         self.assertIsNotNone(rebalance)
         self.assertIn("at most", rebalance["message"])
         self.assertGreater(rebalance["params"]["max_saving_seconds"], 0)
