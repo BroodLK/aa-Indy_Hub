@@ -1639,6 +1639,9 @@ function collectFullUiState() {
     const trackingOptIn = document.getElementById('scheduleTrackingOptIn');
     const materialsSourceMode = document.getElementById('materialsSourceMode');
     const materialsSourceLocation = document.getElementById('materialsSourceLocation');
+    const materialsSourceContainer = document.getElementById('materialsSourceContainer');
+    const selectedOption = materialsSourceLocation?.selectedOptions?.[0];
+    const materialsSourceCharacterId = selectedOption?.dataset?.characterId || materialsSourceLocation?.dataset?.preferredCharacter || '';
     return {
         version: CRAFT_FULL_UI_STATE_VERSION,
         blueprintTab: getActiveBlueprintTabId(),
@@ -1651,7 +1654,9 @@ function collectFullUiState() {
         customPrices: collectCustomPriceStateSnapshot(),
         ownedMaterialsText: ownedMaterialsInput ? String(ownedMaterialsInput.value || '') : '',
         materialsSourceMode: materialsSourceMode ? String(materialsSourceMode.value || 'manual') : 'manual',
-        materialsSourceLocationId: materialsSourceLocation ? String(materialsSourceLocation.value || '') : '',
+        materialsSourceLocationId: materialsSourceLocation ? String(materialsSourceLocation.value || materialsSourceLocation.dataset.preferredLocation || '') : '',
+        materialsSourceCharacterId: String(materialsSourceCharacterId || ''),
+        materialsSourceContainerId: materialsSourceContainer ? String(materialsSourceContainer.value || materialsSourceContainer.dataset.preferredContainer || '') : '',
         computedNeededRows: collectComputedNeededRowsSnapshot(),
         buildPlannerSlots: serializeBuildPlannerSlotAssignments(),
         buildSchedule: collectBuildScheduleStateSnapshot(),
@@ -2022,14 +2027,31 @@ function applyFullUiState(snapshot, options = {}) {
         if (trackingOptIn && snapshot.scheduleTracking && typeof snapshot.scheduleTracking === 'object') {
             trackingOptIn.checked = snapshot.scheduleTracking.optIn === true;
         }
-        const materialsSourceMode = document.getElementById('materialsSourceMode');
-        if (materialsSourceMode && ['manual', 'designated_bay'].includes(String(snapshot.materialsSourceMode || ''))) {
-            materialsSourceMode.value = String(snapshot.materialsSourceMode);
-        }
-        const materialsSourceLocation = document.getElementById('materialsSourceLocation');
-        if (materialsSourceLocation && snapshot.materialsSourceLocationId) {
-            materialsSourceLocation.dataset.preferredLocation = String(snapshot.materialsSourceLocationId);
-            materialsSourceLocation.value = String(snapshot.materialsSourceLocationId);
+        if (typeof window.applyMaterialsSourceSelection === 'function') {
+            window.applyMaterialsSourceSelection({
+                mode: snapshot.materialsSourceMode,
+                locationId: snapshot.materialsSourceLocationId,
+                characterId: snapshot.materialsSourceCharacterId,
+                containerId: snapshot.materialsSourceContainerId,
+            });
+        } else {
+            const materialsSourceMode = document.getElementById('materialsSourceMode');
+            if (materialsSourceMode && ['manual', 'designated_bay'].includes(String(snapshot.materialsSourceMode || ''))) {
+                materialsSourceMode.value = String(snapshot.materialsSourceMode);
+            }
+            const materialsSourceLocation = document.getElementById('materialsSourceLocation');
+            if (materialsSourceLocation && snapshot.materialsSourceLocationId) {
+                materialsSourceLocation.dataset.preferredLocation = String(snapshot.materialsSourceLocationId);
+                if (snapshot.materialsSourceCharacterId) {
+                    materialsSourceLocation.dataset.preferredCharacter = String(snapshot.materialsSourceCharacterId);
+                }
+                materialsSourceLocation.value = String(snapshot.materialsSourceLocationId);
+            }
+            const materialsSourceContainer = document.getElementById('materialsSourceContainer');
+            if (materialsSourceContainer && snapshot.materialsSourceContainerId !== undefined) {
+                materialsSourceContainer.dataset.preferredContainer = String(snapshot.materialsSourceContainerId || '');
+                materialsSourceContainer.value = String(snapshot.materialsSourceContainerId || '');
+            }
         }
         applyMineralConversionStateSnapshot(snapshot.mineralConversion);
         applyBuybackOrdersSnapshot(snapshot.buybackOrders);
@@ -2217,6 +2239,10 @@ window.CraftBP = {
 
     scheduleDraftSave: function(delayMs = 150) {
         scheduleCraftUiStateSave(delayMs);
+    },
+
+    isRestoreInProgress: function() {
+        return Boolean(CRAFT_FULL_UI_STATE.restoreInProgress);
     },
 
     setSimulationScope: function(simulationId, options = {}) {

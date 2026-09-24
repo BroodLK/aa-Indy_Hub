@@ -1060,6 +1060,14 @@ class PreferenceValueValidationTests(SimpleTestCase):
             normalize_preference_state({"materialsSourceLocationId": "60000001; DROP"}),
             {},
         )
+        self.assertEqual(
+            normalize_preference_state({"materialsSourceCharacterId": "90000001"}),
+            {"materialsSourceCharacterId": "90000001"},
+        )
+        self.assertEqual(
+            normalize_preference_state({"materialsSourceContainerId": "10000000001"}),
+            {"materialsSourceContainerId": "10000000001"},
+        )
 
     def test_oversized_nested_blob_is_dropped(self) -> None:
         big = {"k": "x" * (MAX_PREFERENCE_BYTES + 1024)}

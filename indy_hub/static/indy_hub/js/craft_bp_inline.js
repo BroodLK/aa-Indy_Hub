@@ -728,5 +728,8 @@
             window.CraftBPTabs.init();
         }
         attachEventHandlers();
+        if (currentSimulationId) {
+            loadSimulation({ id: currentSimulationId });
+        }
     });
 })();

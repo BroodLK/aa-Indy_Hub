@@ -158,6 +158,8 @@ _PREFERENCE_VALIDATORS = {
     "scheduleTrackingOptIn": _clean_bool,
     "materialsSourceMode": lambda v: _clean_string(v, choices=MATERIALS_SOURCE_MODES),
     "materialsSourceLocationId": _clean_location_id,
+    "materialsSourceCharacterId": _clean_location_id,
+    "materialsSourceContainerId": _clean_location_id,
     # Private defaults for Configure; never part of a share link. These are
     # only hints: the client selects the structure only when the server lists
     # it for this user and system.

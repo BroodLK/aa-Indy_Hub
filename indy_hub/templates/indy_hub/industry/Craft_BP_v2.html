@@ -2572,7 +2572,18 @@
                     const materialsSourceEl = document.getElementById('materialsSourceMode');
                     if (materialsSourceEl && ['manual', 'designated_bay'].includes(state.materialsSourceMode)) materialsSourceEl.value = state.materialsSourceMode;
                     const locationSelectEl = document.getElementById('materialsSourceLocation');
-                    if (locationSelectEl && state.materialsSourceLocationId) locationSelectEl.dataset.preferredLocation = String(state.materialsSourceLocationId);
+                    if (locationSelectEl) {
+                        if (state.materialsSourceLocationId) locationSelectEl.dataset.preferredLocation = String(state.materialsSourceLocationId);
+                        if (state.materialsSourceCharacterId) locationSelectEl.dataset.preferredCharacter = String(state.materialsSourceCharacterId);
+                    }
+                    const containerSelectEl = document.getElementById('materialsSourceContainer');
+                    if (containerSelectEl && state.materialsSourceContainerId) {
+                        containerSelectEl.dataset.preferredContainer = String(state.materialsSourceContainerId);
+                    }
+                    updateLocationVisibility();
+                    updateMaterialsSourceStatus();
+                    applyPreferredLocationSelection();
+                    syncSelectedSource();
                     applyLastBuildLocation(state);
                     if (privateOnly) return;
                     const tracking = document.getElementById('scheduleTrackingOptIn');
@@ -2680,12 +2691,32 @@
                     ? `{% trans "Cached asset data is stale. Last refresh:" %} ${when}.${nameNote}`
                     : `{% trans "Last cached refresh:" %} ${when}.${nameNote}`;
             };
+            const applyPreferredLocationSelection = () => {
+                if (!locationSelect) return;
+                const prefLoc = locationSelect.dataset.preferredLocation;
+                const prefChar = locationSelect.dataset.preferredCharacter;
+                if (!prefLoc) return;
+                const options = Array.from(locationSelect.options);
+                let targetOption = null;
+                if (prefChar) {
+                    targetOption = options.find((opt) => String(opt.value) === String(prefLoc) && String(opt.dataset.characterId || '') === String(prefChar));
+                }
+                if (!targetOption) {
+                    targetOption = options.find((opt) => String(opt.value) === String(prefLoc));
+                }
+                if (targetOption) {
+                    targetOption.selected = true;
+                }
+            };
             const renderContainerOptions = (source) => {
                 if (!containerSelect) return;
                 const containers = Array.isArray(source?.containers) ? source.containers : [];
                 containerSelect.innerHTML = [`<option value="">{% trans "Whole location (all containers)" %}</option>`]
                     .concat(containers.map((c) => `<option value="${esc(c.item_id)}">${esc(c.name)}</option>`))
                     .join('');
+                if (containerSelect.dataset.preferredContainer) {
+                    containerSelect.value = containerSelect.dataset.preferredContainer;
+                }
                 containerSelect.parentElement?.classList.toggle('d-none', containers.length === 0);
             };
             const renderLocationOptions = (sources) => {
@@ -2723,7 +2754,7 @@
             };
             const syncSelectedSource = () => {
                 const selectedOption = locationSelect?.selectedOptions?.[0];
-                const selectedCharId = selectedOption?.dataset?.characterId;
+                const selectedCharId = selectedOption?.dataset?.characterId || locationSelect?.dataset?.preferredCharacter;
                 const selected = materialsSourceRows.find((source) =>
                     String(source.location_id) === String(locationSelect?.value) &&
                     (!selectedCharId || String(source.character_id || '') === String(selectedCharId))
@@ -2740,8 +2771,11 @@
                     materialsSourceRows = Array.isArray(payload?.sources) ? payload.sources : [];
                     materialsSourceMaxAgeMs = Math.max(0, Number(payload?.max_age_seconds) || 0) * 1000;
                     renderLocationOptions(materialsSourceRows);
-                    if (locationSelect.dataset.preferredLocation) locationSelect.value = locationSelect.dataset.preferredLocation;
+                    applyPreferredLocationSelection();
                     syncSelectedSource();
+                    if (materialsSource?.value === 'designated_bay') {
+                        await revalidateDesignatedBay();
+                    }
                 } catch (error) {
                     locationSelect.innerHTML = `<option value="">{% trans "Unable to load cached locations" %}</option>`;
                 }
@@ -2756,6 +2790,32 @@
             };
             materialsSource?.addEventListener('change', updateMaterialsSourceStatus);
             updateMaterialsSourceStatus();
+            window.applyMaterialsSourceSelection = function({ mode, locationId, characterId, containerId } = {}) {
+                if (materialsSource && ['manual', 'designated_bay'].includes(String(mode || ''))) {
+                    materialsSource.value = String(mode);
+                    updateLocationVisibility();
+                    updateMaterialsSourceStatus();
+                }
+                if (locationSelect) {
+                    if (locationId !== undefined && locationId !== null) {
+                        locationSelect.dataset.preferredLocation = String(locationId || '');
+                    }
+                    if (characterId !== undefined && characterId !== null) {
+                        locationSelect.dataset.preferredCharacter = String(characterId || '');
+                    }
+                    applyPreferredLocationSelection();
+                }
+                if (containerSelect) {
+                    if (containerId !== undefined && containerId !== null) {
+                        containerSelect.dataset.preferredContainer = String(containerId || '');
+                        containerSelect.value = String(containerId || '');
+                    }
+                }
+                syncSelectedSource();
+                if (materialsSource?.value === 'designated_bay') {
+                    revalidateDesignatedBay();
+                }
+            };
             const savePreference = async (state) => {
                 try {
                     await fetch(preferenceUrl, {
@@ -2771,9 +2831,42 @@
             tracking?.addEventListener('change', () => savePreference({ scheduleTrackingOptIn: tracking.checked }));
             const feesEnabledInput = document.getElementById('industryFeeEnabledInput');
             feesEnabledInput?.addEventListener('change', () => savePreference({ taxesEnabled: feesEnabledInput.checked }));
-            materialsSource?.addEventListener('change', () => { updateLocationVisibility(); savePreference({ materialsSourceMode: materialsSource.value }); });
-            locationSelect?.addEventListener('change', () => { syncSelectedSource(); savePreference({ materialsSourceLocationId: locationSelect.value }); });
-            containerSelect?.addEventListener('change', () => { const el = ownedMaterialsInput(); if (el) el.dataset.sourceLoaded = ''; });
+            materialsSource?.addEventListener('change', () => {
+                updateLocationVisibility();
+                updateMaterialsSourceStatus();
+                if (materialsSource.value === 'designated_bay') {
+                    applyPreferredLocationSelection();
+                    syncSelectedSource();
+                    revalidateDesignatedBay();
+                }
+                if (!window.CraftBP?.isRestoreInProgress?.()) {
+                    savePreference({ materialsSourceMode: materialsSource.value });
+                }
+            });
+            locationSelect?.addEventListener('change', () => {
+                const selectedOption = locationSelect.selectedOptions?.[0];
+                locationSelect.dataset.preferredLocation = locationSelect.value;
+                locationSelect.dataset.preferredCharacter = selectedOption?.dataset?.characterId || '';
+                syncSelectedSource();
+                const el = ownedMaterialsInput();
+                if (el) el.dataset.sourceLoaded = '';
+                revalidateDesignatedBay();
+                if (!window.CraftBP?.isRestoreInProgress?.()) {
+                    savePreference({
+                        materialsSourceLocationId: locationSelect.value,
+                        materialsSourceCharacterId: locationSelect.dataset.preferredCharacter,
+                    });
+                }
+            });
+            containerSelect?.addEventListener('change', () => {
+                containerSelect.dataset.preferredContainer = containerSelect.value;
+                const el = ownedMaterialsInput();
+                if (el) el.dataset.sourceLoaded = '';
+                revalidateDesignatedBay();
+                if (!window.CraftBP?.isRestoreInProgress?.()) {
+                    savePreference({ materialsSourceContainerId: containerSelect.value });
+                }
+            });
             // BPC/BPO coverage source. The server already applied the saved (or
             // URL) choice when rendering; this only offers the options, explains
             // what is active, and saves + reloads on Apply.
