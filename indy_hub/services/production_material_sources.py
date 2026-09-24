@@ -313,6 +313,7 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
     all_user_assets = list(
         CachedCharacterAsset.objects.filter(user=user).values(
             "item_id",
+            "character_id",
             "raw_location_id",
             "location_id",
             "location_flag",
@@ -330,29 +331,65 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
             "supports_divisions": False,
         }
 
+    # Resolve character names for the user's characters
+    character_names: dict[int, str] = {}
+    try:
+        # Alliance Auth
+        from allianceauth.authentication.models import CharacterOwnership
+
+        for ownership in CharacterOwnership.objects.filter(user=user).select_related(
+            "character"
+        ):
+            if ownership.character:
+                cid = int(ownership.character.character_id)
+                character_names[cid] = str(ownership.character.character_name or cid)
+    except Exception:
+        pass
+
+    all_char_ids = {
+        int(r["character_id"]) for r in all_user_assets if r.get("character_id")
+    }
+    missing_cids = all_char_ids - set(character_names.keys())
+    if missing_cids:
+        try:
+            # Alliance Auth
+            from allianceauth.eveonline.models import EveCharacter
+
+            for ec in EveCharacter.objects.filter(character_id__in=missing_cids):
+                character_names[int(ec.character_id)] = str(
+                    ec.character_name or ec.character_id
+                )
+        except Exception:
+            pass
+
     all_type_ids = {
         int(row["type_id"]) for row in all_user_assets if row.get("type_id")
     }
     ship_type_ids = _get_ship_type_ids(all_type_ids)
 
-    # Group assets by root location_id
-    assets_by_location: dict[int, list[dict]] = {}
+    # Group assets by (character_id, root location_id)
+    assets_by_char_and_loc: dict[tuple[int, int], list[dict]] = {}
     for row in all_user_assets:
         loc_id = row.get("location_id")
+        char_id = int(row.get("character_id") or 0)
         if loc_id:
-            assets_by_location.setdefault(int(loc_id), []).append(row)
+            assets_by_char_and_loc.setdefault((char_id, int(loc_id)), []).append(row)
 
     max_age = asset_cache_max_age()
     now = timezone.now()
-    resolved_names = resolve_cached_location_names(list(assets_by_location.keys()))
+    unique_location_ids = list({loc_id for _, loc_id in assets_by_char_and_loc.keys()})
+    resolved_names = resolve_cached_location_names(unique_location_ids)
 
     sources = []
-    for location_id in sorted(assets_by_location.keys()):
-        location_rows = assets_by_location[location_id]
+    for char_id, location_id in sorted(
+        assets_by_char_and_loc.keys(),
+        key=lambda k: (character_names.get(k[0], ""), k[0], k[1]),
+    ):
+        location_rows = assets_by_char_and_loc[(char_id, location_id)]
         esi_rows = _rows_as_esi_shape(location_rows)
         index = build_asset_index_by_item_id(esi_rows)
 
-        # Identify all valid personal item hangar assets at this location
+        # Identify all valid personal item hangar assets at this location for this character
         valid_hangar_assets = []
         for asset in esi_rows:
             raw_row = asset["_row"]
@@ -405,8 +442,14 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
             default=None,
         )
 
+        char_name = character_names.get(char_id) or (
+            f"Character {char_id}" if char_id else "Personal Assets"
+        )
+
         sources.append(
             {
+                "character_id": char_id,
+                "character_name": char_name,
                 "location_id": location_id,
                 **_describe_location(location_id, resolved_names),
                 "last_synced": last_synced.isoformat() if last_synced else None,
@@ -475,6 +518,7 @@ def get_source_assets(
     user,
     *,
     location_id: int,
+    character_id: int = 0,
     type_ids: list[int] | None = None,
     location_flag: str = "",
     container_item_id: int = 0,
@@ -485,9 +529,17 @@ def get_source_assets(
     Returns None when the user has no hangar assets at that location at all.
     Excludes ships, ship cargo, and fitted modules.
     """
+    filter_kwargs: dict[str, Any] = {
+        "user": user,
+        "location_id": location_id,
+    }
+    if int(character_id or 0) > 0:
+        filter_kwargs["character_id"] = int(character_id)
+
     location_assets = list(
-        CachedCharacterAsset.objects.filter(user=user, location_id=location_id).values(
+        CachedCharacterAsset.objects.filter(**filter_kwargs).values(
             "item_id",
+            "character_id",
             "raw_location_id",
             "location_id",
             "location_flag",
@@ -655,7 +707,11 @@ def parse_bpc_source(value: Any) -> tuple[int, int]:
 
 
 def blueprint_item_ids_at_source(
-    user, *, location_id: int, container_item_id: int = 0
+    user,
+    *,
+    location_id: int,
+    character_id: int = 0,
+    container_item_id: int = 0,
 ) -> set[int] | None:
     """Item IDs of the user's cached blueprints at one source (personal item hangar).
 
@@ -665,9 +721,17 @@ def blueprint_item_ids_at_source(
     further to blueprints anywhere inside it (nested containers included).
     Excludes ships and blueprints inside ships.
     """
+    filter_kwargs: dict[str, Any] = {
+        "user": user,
+        "location_id": location_id,
+    }
+    if int(character_id or 0) > 0:
+        filter_kwargs["character_id"] = int(character_id)
+
     location_assets = list(
-        CachedCharacterAsset.objects.filter(user=user, location_id=location_id).values(
+        CachedCharacterAsset.objects.filter(**filter_kwargs).values(
             "item_id",
+            "character_id",
             "raw_location_id",
             "location_id",
             "location_flag",

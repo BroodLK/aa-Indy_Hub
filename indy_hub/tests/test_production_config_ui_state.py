@@ -36,6 +36,7 @@ from indy_hub.views.api import (
     production_material_sources,
     production_simulation_preferences,
     refresh_production_material_sources,
+    refresh_production_material_sources_status,
     refresh_production_schedule_tracking,
     save_production_config,
 )
@@ -1229,6 +1230,27 @@ class MaterialSourceNamingTests(TestCase):
         self.assertEqual(containers[0]["name"], "Mineral Can")
         self.assertEqual(sources[0]["location_flags"], ["Hangar"])
 
+    def test_sources_are_delineated_by_character(self) -> None:
+        self._asset(
+            item_id=7299,
+            character_id=9001,
+            location_id=1030000000001,
+            type_id=34,
+            quantity=100,
+        )
+        self._asset(
+            item_id=7300,
+            character_id=9002,
+            location_id=1030000000001,
+            type_id=34,
+            quantity=50,
+        )
+        sources = self._sources()["sources"]
+        # Both characters have assets at the same station; returned as distinct sources with character metadata.
+        self.assertEqual(len(sources), 2)
+        char_ids = {s["character_id"] for s in sources}
+        self.assertEqual(char_ids, {9001, 9002})
+
 
 class MaterialSourceAssetFilterTests(TestCase):
     """Container narrowing: everything at a location used to be summed as one."""
@@ -1383,6 +1405,31 @@ class MaterialSourceAssetFilterTests(TestCase):
         status, body = self._get(container_item_id=8001)
         self.assertEqual(status, 200)
         self.assertEqual(self._qty(body), 0)
+
+    def test_character_filter_narrows_to_single_character(self) -> None:
+        CachedCharacterAsset.objects.create(
+            user=self.user,
+            character_id=9002,
+            item_id=9001,
+            location_id=1030000000001,
+            type_id=34,
+            quantity=250,
+            location_flag="Hangar",
+        )
+        # Without character_id: returns all characters at location (100 + 500 + 250 = 850)
+        status, body = self._get()
+        self.assertEqual(status, 200)
+        self.assertEqual(self._qty(body), 850)
+
+        # Narrowing by character 9002: returns 250
+        status, body = self._get(character_id=9002)
+        self.assertEqual(status, 200)
+        self.assertEqual(self._qty(body), 250)
+
+        # Narrowing by character 9001: returns 600
+        status, body = self._get(character_id=9001)
+        self.assertEqual(status, 200)
+        self.assertEqual(self._qty(body), 600)
 
 
 class ScheduleTrackingCooldownTests(TestCase):
@@ -1668,3 +1715,57 @@ class MaterialSourceRefreshGuardTests(TestCase):
         status, body = self._post()
         self.assertTrue(body["scheduled"])
         task.delay.assert_called_once()
+
+    def test_status_endpoint_reports_idle_running_and_finished_states(self) -> None:
+        def _get_status():
+            request = self.factory.get(
+                "/api/production-material-sources/refresh/status/"
+            )
+            request.user = self.user
+            response = self._unwrap_view(refresh_production_material_sources_status)(
+                request
+            )
+            return response.status_code, json.loads(response.content)
+
+        # 1. Idle state
+        status, body = _get_status()
+        self.assertEqual(status, 200)
+        self.assertFalse(body["running"])
+        self.assertFalse(body["finished"])
+
+        # 2. Running state
+        cache.set(
+            _production_asset_progress_key(self.user.id),
+            {
+                "running": True,
+                "finished": False,
+                "error": None,
+                "started_at": timezone.now().timestamp(),
+                "last_progress_at": timezone.now().timestamp(),
+                "total": 3,
+                "done": 1,
+            },
+            600,
+        )
+        status, body = _get_status()
+        self.assertEqual(status, 200)
+        self.assertTrue(body["running"])
+        self.assertEqual(body["done"], 1)
+        self.assertEqual(body["total"], 3)
+
+        # 3. Finished state
+        cache.set(
+            _production_asset_progress_key(self.user.id),
+            {
+                "running": False,
+                "finished": True,
+                "error": None,
+                "total": 3,
+                "done": 3,
+            },
+            600,
+        )
+        status, body = _get_status()
+        self.assertEqual(status, 200)
+        self.assertFalse(body["running"])
+        self.assertTrue(body["finished"])

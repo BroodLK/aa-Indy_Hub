@@ -757,9 +757,10 @@
                                         <div class="form-text">
                                             {% trans "Personal assets have no corporation hangar divisions, so only the location and its containers can be selected here." %}
                                         </div>
-                                        <div class="d-flex flex-wrap gap-2 mt-2">
+                                        <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
                                             <button type="button" class="btn btn-outline-primary btn-sm" id="refreshMaterialsSourceBtn">{% trans "Load cached quantities" %}</button>
                                             <button type="button" class="btn btn-outline-secondary btn-sm" id="queueMaterialsSourceRefreshBtn">{% trans "Refresh asset cache" %}</button>
+                                            <span id="materialsSourceTaskStatus" class="badge bg-secondary-subtle text-secondary-emphasis d-none align-self-center py-2 px-2" aria-live="polite"></span>
                                         </div>
                                         <div class="form-text" id="materialsSourceFreshness"></div>
                                     </div>
@@ -2293,6 +2294,7 @@
             const materialSourcesUrl = '{% url "indy_hub:production_material_sources" %}';
             const materialSourceAssetsUrl = '{% url "indy_hub:production_material_source_assets" %}';
             const materialSourceRefreshUrl = '{% url "indy_hub:refresh_production_material_sources" %}';
+            const materialSourceRefreshStatusUrl = '{% url "indy_hub:refresh_production_material_sources_status" %}';
             const bpcSourcesUrl = '{% url "indy_hub:production_bpc_sources" %}';
             const query = new URLSearchParams(window.location.search);
             // Layering: user preferences are defaults; a saved simulation (sim)
@@ -2357,6 +2359,72 @@
             let materialsSourceMaxAgeMs = 0;
             let materialsSourceRows = [];
             const containerSelect = document.getElementById('materialsSourceContainer');
+            const taskStatusBadge = document.getElementById('materialsSourceTaskStatus');
+            let refreshPollTimer = null;
+
+            const setTaskStatusState = (state, details = '') => {
+                if (!taskStatusBadge) return;
+                if (!state) {
+                    taskStatusBadge.className = 'badge bg-secondary-subtle text-secondary-emphasis d-none align-self-center py-2 px-2';
+                    taskStatusBadge.innerHTML = '';
+                    return;
+                }
+                taskStatusBadge.classList.remove('d-none');
+                if (state === 'waiting') {
+                    taskStatusBadge.className = 'badge bg-info-subtle text-info-emphasis border border-info-subtle d-inline-flex align-items-center align-self-center py-1 px-2';
+                    taskStatusBadge.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" style="width: 0.75rem; height: 0.75rem;"></span>{% trans "waiting for task" %}`;
+                } else if (state === 'running') {
+                    taskStatusBadge.className = 'badge bg-primary-subtle text-primary-emphasis border border-primary-subtle d-inline-flex align-items-center align-self-center py-1 px-2';
+                    const progressText = details ? ` {% trans "task running" %} (${esc(details)})` : ` {% trans "task running" %}`;
+                    taskStatusBadge.innerHTML = `<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" style="width: 0.75rem; height: 0.75rem;"></span>${progressText}`;
+                } else if (state === 'complete') {
+                    taskStatusBadge.className = 'badge bg-success-subtle text-success-emphasis border border-success-subtle d-inline-flex align-items-center align-self-center py-1 px-2';
+                    taskStatusBadge.innerHTML = `<i class="fas fa-check text-success me-1"></i>{% trans "update complete" %}`;
+                } else if (state === 'error') {
+                    taskStatusBadge.className = 'badge bg-warning-subtle text-warning-emphasis border border-warning-subtle d-inline-flex align-items-center align-self-center py-1 px-2';
+                    taskStatusBadge.innerHTML = `<i class="fas fa-exclamation-triangle text-warning me-1"></i>${esc(details || '{% trans "Refresh unavailable" %}')}`;
+                }
+            };
+
+            const pollAssetRefreshStatus = () => {
+                window.clearTimeout(refreshPollTimer);
+                const checkStatus = async () => {
+                    try {
+                        const response = await fetch(materialSourceRefreshStatusUrl, {
+                            credentials: 'same-origin',
+                            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        });
+                        if (!response.ok) throw new Error('status_failed');
+                        const data = await response.json();
+                        if (data.running) {
+                            const details = data.total && data.total > 1 ? `${data.done || 0}/${data.total}` : '';
+                            setTaskStatusState('running', details);
+                            refreshPollTimer = window.setTimeout(checkStatus, 1500);
+                        } else if (data.finished) {
+                            if (data.error && data.error !== 'no_characters') {
+                                setTaskStatusState('error', data.error === 'esi_down' ? '{% trans "ESI unavailable" %}' : '{% trans "Update failed" %}');
+                                if (queueMaterialsSourceRefreshBtn) queueMaterialsSourceRefreshBtn.disabled = false;
+                            } else {
+                                setTaskStatusState('complete');
+                                if (queueMaterialsSourceRefreshBtn) queueMaterialsSourceRefreshBtn.disabled = false;
+                                await loadMaterialSources();
+                                await loadBpcSources();
+                                await loadCachedQuantities({ silent: false });
+                                window.setTimeout(() => {
+                                    setTaskStatusState(null);
+                                }, 6000);
+                            }
+                        } else {
+                            refreshPollTimer = window.setTimeout(checkStatus, 1500);
+                        }
+                    } catch (err) {
+                        setTaskStatusState('error', '{% trans "Status check failed" %}');
+                        if (queueMaterialsSourceRefreshBtn) queueMaterialsSourceRefreshBtn.disabled = false;
+                    }
+                };
+                refreshPollTimer = window.setTimeout(checkStatus, 1000);
+            };
+
             const describeSourceFreshness = (source) => {
                 if (!source || !source.last_synced) return '{% trans "No cached asset data for this location yet." %}';
                 const when = new Date(source.last_synced).toLocaleString();
@@ -2375,8 +2443,46 @@
                     .join('');
                 containerSelect.parentElement?.classList.toggle('d-none', containers.length === 0);
             };
+            const renderLocationOptions = (sources) => {
+                if (!locationSelect) return;
+                if (!sources.length) {
+                    locationSelect.innerHTML = `<option value="">{% trans "No cached asset locations available" %}</option>`;
+                    return;
+                }
+                const grouped = new Map();
+                sources.forEach((source) => {
+                    const charName = source.character_name || (source.character_id ? `Character ${source.character_id}` : '{% trans "Personal Assets" %}');
+                    if (!grouped.has(charName)) {
+                        grouped.set(charName, []);
+                    }
+                    grouped.get(charName).push(source);
+                });
+
+                if (grouped.size <= 1) {
+                    locationSelect.innerHTML = sources.map((source) => {
+                        const charAttr = source.character_id ? ` data-character-id="${esc(source.character_id)}"` : '';
+                        return `<option value="${esc(source.location_id)}"${charAttr}>${esc(source.location_name || source.location_id)}</option>`;
+                    }).join('');
+                } else {
+                    let html = '';
+                    for (const [charName, charSources] of grouped.entries()) {
+                        html += `<optgroup label="${esc(charName)}">`;
+                        charSources.forEach((source) => {
+                            const charAttr = source.character_id ? ` data-character-id="${esc(source.character_id)}"` : '';
+                            html += `<option value="${esc(source.location_id)}"${charAttr}>${esc(source.location_name || source.location_id)}</option>`;
+                        });
+                        html += `</optgroup>`;
+                    }
+                    locationSelect.innerHTML = html;
+                }
+            };
             const syncSelectedSource = () => {
-                const selected = materialsSourceRows.find((source) => String(source.location_id) === String(locationSelect?.value));
+                const selectedOption = locationSelect?.selectedOptions?.[0];
+                const selectedCharId = selectedOption?.dataset?.characterId;
+                const selected = materialsSourceRows.find((source) =>
+                    String(source.location_id) === String(locationSelect?.value) &&
+                    (!selectedCharId || String(source.character_id || '') === String(selectedCharId))
+                ) || materialsSourceRows.find((source) => String(source.location_id) === String(locationSelect?.value));
                 if (freshness) freshness.textContent = describeSourceFreshness(selected);
                 renderContainerOptions(selected);
                 return selected;
@@ -2388,12 +2494,7 @@
                     const payload = await response.json();
                     materialsSourceRows = Array.isArray(payload?.sources) ? payload.sources : [];
                     materialsSourceMaxAgeMs = Math.max(0, Number(payload?.max_age_seconds) || 0) * 1000;
-                    locationSelect.innerHTML = materialsSourceRows.length
-                        ? materialsSourceRows.map((source) => {
-                            // Show the clean resolved name without raw slot flag clutter.
-                            return `<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}</option>`;
-                        }).join('')
-                        : `<option value="">{% trans "No cached asset locations available" %}</option>`;
+                    renderLocationOptions(materialsSourceRows);
                     if (locationSelect.dataset.preferredLocation) locationSelect.value = locationSelect.dataset.preferredLocation;
                     syncSelectedSource();
                 } catch (error) {
@@ -2458,13 +2559,33 @@
                     const payload = response.ok ? await response.json() : {};
                     const sources = Array.isArray(payload?.sources) ? payload.sources : [];
                     const options = [`<option value="all">{% trans "All eligible locations" %}</option>`];
+                    const grouped = new Map();
                     sources.forEach((source) => {
-                        const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
-                        options.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
-                        (Array.isArray(source.containers) ? source.containers : []).forEach((container) => {
-                            options.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
-                        });
+                        const charName = source.character_name || (source.character_id ? `Character ${source.character_id}` : '{% trans "Personal Assets" %}');
+                        if (!grouped.has(charName)) grouped.set(charName, []);
+                        grouped.get(charName).push(source);
                     });
+                    if (grouped.size <= 1) {
+                        sources.forEach((source) => {
+                            const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
+                            options.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
+                            (Array.isArray(source.containers) ? source.containers : []).forEach((container) => {
+                                options.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
+                            });
+                        });
+                    } else {
+                        for (const [charName, charSources] of grouped.entries()) {
+                            options.push(`<optgroup label="${esc(charName)}">`);
+                            charSources.forEach((source) => {
+                                const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
+                                options.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
+                                (Array.isArray(source.containers) ? source.containers : []).forEach((container) => {
+                                    options.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
+                                });
+                            });
+                            options.push(`</optgroup>`);
+                        }
+                    }
                     bpcSourceSelect.innerHTML = options.join('');
                 } catch (error) {
                     // Keep "All eligible locations" only.
@@ -2486,6 +2607,18 @@
             });
             renderBpcSourceStatus();
             loadBpcSources();
+
+            // Check if a background refresh task is already active on page load
+            fetch(materialSourceRefreshStatusUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then((r) => r.ok ? r.json() : {})
+                .then((data) => {
+                    if (data && data.running) {
+                        if (queueMaterialsSourceRefreshBtn) queueMaterialsSourceRefreshBtn.disabled = true;
+                        setTaskStatusState('running', data.total && data.total > 1 ? `${data.done || 0}/${data.total}` : '');
+                        pollAssetRefreshStatus();
+                    }
+                })
+                .catch(() => {});
 
             // Remember the last build system/structure (private; never shared).
             // The system ID is filled in asynchronously once the name resolves,
@@ -2518,6 +2651,9 @@
                     .filter((value, index, values) => value > 0 && values.indexOf(value) === index)
                     .slice(0, 500);
                 const params = new URLSearchParams({ location_id: String(locationId), type_ids: typeIds.join(',') });
+                const selectedOption = locationSelect?.selectedOptions?.[0];
+                const charId = selectedOption?.dataset?.characterId;
+                if (charId) params.set('character_id', charId);
                 if (containerSelect?.value) params.set('container_item_id', containerSelect.value);
                 try {
                     const response = await fetch(`${materialSourceAssetsUrl}?${params.toString()}`, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
@@ -2573,6 +2709,7 @@
 
             queueMaterialsSourceRefreshBtn?.addEventListener('click', async () => {
                 queueMaterialsSourceRefreshBtn.disabled = true;
+                setTaskStatusState('waiting');
                 try {
                     const response = await fetch(materialSourceRefreshUrl, {
                         method: 'POST', credentials: 'same-origin',
@@ -2580,10 +2717,16 @@
                     });
                     const payload = await response.json();
                     if (!response.ok) throw new Error(payload?.error || 'asset_refresh_queue_failed');
-                    setStatus('{% trans "Asset cache refresh queued. Load cached quantities again when it completes." %}', 'info');
+                    if (payload.error === 'esi_down') {
+                        setTaskStatusState('error', '{% trans "ESI unavailable" %}');
+                        setStatus('{% trans "The asset service is temporarily unavailable. Cached quantities are still usable." %}', 'warning');
+                        queueMaterialsSourceRefreshBtn.disabled = false;
+                        return;
+                    }
+                    pollAssetRefreshStatus();
                 } catch (error) {
+                    setTaskStatusState('error', '{% trans "Could not queue refresh" %}');
                     setStatus('{% trans "Asset cache refresh could not be queued." %}', 'warning');
-                } finally {
                     queueMaterialsSourceRefreshBtn.disabled = false;
                 }
             });

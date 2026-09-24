@@ -20,6 +20,7 @@ from .views.api import (
     production_material_sources,
     production_simulation_preferences,
     refresh_production_material_sources,
+    refresh_production_material_sources_status,
     refresh_production_schedule_tracking,
     save_production_config,
 )
@@ -344,6 +345,11 @@ urlpatterns = [
         "api/production-material-sources/refresh/",
         refresh_production_material_sources,
         name="refresh_production_material_sources",
+    ),
+    path(
+        "api/production-material-sources/refresh/status/",
+        refresh_production_material_sources_status,
+        name="refresh_production_material_sources_status",
     ),
     path(
         "api/production-material-source-assets/",

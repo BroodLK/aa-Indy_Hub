@@ -1592,10 +1592,41 @@ def refresh_production_material_sources(request):
 @indy_hub_permission_required("can_access_indy_hub")
 @login_required
 @require_http_methods(["GET"])
+def refresh_production_material_sources_status(request):
+    """Return progress state of the personal asset cache refresh task."""
+    user_id = int(request.user.id)
+    progress_key = _production_asset_progress_key(user_id)
+    state = cache.get(progress_key) or {
+        "running": False,
+        "finished": False,
+        "error": None,
+        "total": 0,
+        "done": 0,
+        "failed": 0,
+    }
+    if state.get("running"):
+        try:
+            started_at = float(state.get("started_at") or 0)
+            last_progress_at = float(state.get("last_progress_at") or started_at or 0)
+            elapsed = timezone.now().timestamp() - last_progress_at
+        except (TypeError, ValueError):
+            elapsed = 0
+        if not state.get("started_at") and not state.get("last_progress_at"):
+            elapsed = 999999
+        if elapsed > ASSET_REFRESH_PROGRESS_STALE_SECONDS:
+            state.update({"running": False, "finished": True, "error": "timeout"})
+            cache.set(progress_key, state, 10 * 60)
+    return JsonResponse(state)
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
 def production_material_source_assets(request):
     """Cached quantities for one user-authorized asset location.
 
-    Optional narrowing by location_flag (e.g. Hangar) and by container item_id;
+    Optional narrowing by character_id, location_flag (e.g. Hangar), and container item_id;
     both follow the container parent chain.
     """
     try:
@@ -1604,6 +1635,11 @@ def production_material_source_assets(request):
         return JsonResponse({"error": "location_id must be an integer"}, status=400)
     if location_id <= 0:
         return JsonResponse({"error": "location_id is required"}, status=400)
+
+    try:
+        character_id = int(request.GET.get("character_id", "0") or 0)
+    except (TypeError, ValueError):
+        character_id = 0
 
     try:
         container_item_id = int(request.GET.get("container_item_id", "0") or 0)
@@ -1615,6 +1651,7 @@ def production_material_source_assets(request):
     result = get_source_assets(
         request.user,
         location_id=location_id,
+        character_id=max(0, character_id),
         type_ids=_parse_type_ids(request.GET.get("type_ids", "")),
         location_flag=str(request.GET.get("location_flag", "") or "").strip()[:50],
         container_item_id=max(0, container_item_id),

@@ -360,3 +360,22 @@ class SimulationLoadingTests(SimpleTestCase):
         )
         self.assertIn("data-indy-loading", template)
         self.assertIn("View Craft", template)
+
+
+class CraftAssetRefreshReactiveUITests(SimpleTestCase):
+    """Verify that Craft_BP_v2.html contains reactive UI status elements and polling lifecycle handlers."""
+
+    def setUp(self) -> None:
+        self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+
+    def test_materials_source_has_task_status_badge(self) -> None:
+        self.assertIn('id="materialsSourceTaskStatus"', self.template)
+        self.assertIn('id="refreshMaterialsSourceBtn"', self.template)
+        self.assertIn('id="queueMaterialsSourceRefreshBtn"', self.template)
+
+    def test_template_contains_reactive_task_lifecycle_states(self) -> None:
+        self.assertIn("waiting for task", self.template)
+        self.assertIn("task running", self.template)
+        self.assertIn("update complete", self.template)
+        self.assertIn("pollAssetRefreshStatus", self.template)
+        self.assertIn("renderLocationOptions", self.template)
