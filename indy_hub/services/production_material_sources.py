@@ -21,7 +21,7 @@ from datetime import timedelta
 from typing import Any, Iterable
 
 # Django
-from django.db.models import Max, Sum
+from django.db.models import Max
 from django.utils import timezone
 
 # Alliance Auth
@@ -43,6 +43,161 @@ MAX_CONTAINER_DEPTH = 25
 
 # Cap the type filter so a crafted query cannot fan out unboundedly.
 MAX_TYPE_FILTER = 500
+
+NON_HANGAR_FLAGS = {
+    "Cargo",
+    "DroneBay",
+    "FighterBay",
+    "FighterTube0",
+    "FighterTube1",
+    "FighterTube2",
+    "FighterTube3",
+    "FighterTube4",
+    "FleetHangar",
+    "SpecializedOreHold",
+    "SpecializedGasHold",
+    "SpecializedMineralHold",
+    "SpecializedSalvageHold",
+    "SpecializedShipHold",
+    "SpecializedSmallShipHold",
+    "SpecializedMediumShipHold",
+    "SpecializedLargeShipHold",
+    "SpecializedIndustrialShipHold",
+    "SpecializedAmmoHold",
+    "SpecializedCommandCenterHold",
+    "SpecializedPlanetaryCommoditiesHold",
+    "SpecializedMaterialBay",
+    "SpecializedQuafeHold",
+    "SpecializedFuelBay",
+    "ShipHangar",
+    "ShipMaintenanceBay",
+    "AutoFit",
+    "HiSlot0",
+    "HiSlot1",
+    "HiSlot2",
+    "HiSlot3",
+    "HiSlot4",
+    "HiSlot5",
+    "HiSlot6",
+    "HiSlot7",
+    "MedSlot0",
+    "MedSlot1",
+    "MedSlot2",
+    "MedSlot3",
+    "MedSlot4",
+    "MedSlot5",
+    "MedSlot6",
+    "MedSlot7",
+    "LoSlot0",
+    "LoSlot1",
+    "LoSlot2",
+    "LoSlot3",
+    "LoSlot4",
+    "LoSlot5",
+    "LoSlot6",
+    "LoSlot7",
+    "RigSlot0",
+    "RigSlot1",
+    "RigSlot2",
+    "RigSlot3",
+    "RigSlot4",
+    "RigSlot5",
+    "RigSlot6",
+    "RigSlot7",
+    "SubSlot0",
+    "SubSlot1",
+    "SubSlot2",
+    "SubSlot3",
+    "SubSlot4",
+    "SubSlot5",
+    "SubSlot6",
+    "SubSlot7",
+    "ServiceSlot0",
+    "ServiceSlot1",
+    "ServiceSlot2",
+    "ServiceSlot3",
+    "ServiceSlot4",
+    "ServiceSlot5",
+    "ServiceSlot6",
+    "ServiceSlot7",
+    "Deliveries",
+    "AssetSafety",
+    "Skill",
+    "Booster",
+    "Implant",
+    "Capsule",
+}
+
+
+def _get_ship_type_ids(type_ids: Iterable[int]) -> set[int]:
+    """Return type IDs that are ships (category 6)."""
+    cleaned = {int(tid) for tid in type_ids if int(tid or 0) > 0}
+    if not cleaned:
+        return set()
+    try:
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemType
+
+        return set(
+            ItemType.objects.filter(
+                id__in=cleaned,
+                group__category_id=6,
+            ).values_list("id", flat=True)
+        )
+    except Exception:
+        return set()
+
+
+def _is_personal_hangar_asset(
+    asset: dict,
+    index: dict[int, dict],
+    *,
+    ship_type_ids: set[int],
+    location_id: int,
+    max_depth: int = MAX_CONTAINER_DEPTH,
+) -> bool:
+    """Return True if the asset resides in the personal character item hangar (or container in hangar).
+
+    Excludes ships, ship contents (cargo, drone bay, fitted modules), and non-hangar slots.
+    """
+    current = asset
+    seen: set[int] = set()
+
+    for _ in range(max_depth):
+        try:
+            current_type_id = int(
+                current.get("_row", {}).get("type_id") or current.get("type_id", 0) or 0
+            )
+        except (TypeError, ValueError):
+            current_type_id = 0
+
+        # Any ship in the ancestry or as the asset itself is excluded
+        if current_type_id in ship_type_ids:
+            return False
+
+        current_flag = str(current.get("location_flag", "") or "")
+        if current_flag in NON_HANGAR_FLAGS:
+            return False
+
+        try:
+            parent_id = int(current.get("location_id", 0) or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+
+        # When the parent reaches the top-level location (structure/station)
+        if parent_id == int(location_id):
+            return current_flag == "Hangar" or not current_flag
+
+        if parent_id in seen or parent_id <= 0:
+            return False
+        seen.add(parent_id)
+
+        parent = index.get(parent_id)
+        if not parent:
+            return False
+        current = parent
+
+    return False
 
 
 def asset_cache_max_age() -> timedelta:
@@ -149,78 +304,117 @@ def _describe_location(location_id: int, names: dict[int, dict[str, Any]]) -> di
 
 
 def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
-    """Locations where the user has cached assets, with names and freshness.
+    """Locations where the user has cached personal item hangar assets, with names and freshness.
 
     ``blueprints=True`` lists BPC/BPO locations instead of materials.
+    Excludes non-hangar locations, fitted ships, and ship contents.
+    Containers include only genuine containers, excluding ships.
     """
-    base = CachedCharacterAsset.objects.filter(user=user, is_blueprint=blueprints)
-    rows = list(
-        base.values("location_id")
-        .annotate(last_synced=Max("synced_at"))
-        .order_by("location_id")
+    all_user_assets = list(
+        CachedCharacterAsset.objects.filter(user=user).values(
+            "item_id",
+            "raw_location_id",
+            "location_id",
+            "location_flag",
+            "type_id",
+            "set_name",
+            "quantity",
+            "is_blueprint",
+            "synced_at",
+        )
     )
-    location_ids = [int(row["location_id"]) for row in rows if row.get("location_id")]
-    if not location_ids:
+    if not all_user_assets:
         return {
             "sources": [],
             "max_age_seconds": int(asset_cache_max_age().total_seconds()),
+            "supports_divisions": False,
         }
 
-    flags_by_location: dict[int, set[str]] = {}
-    containers_by_location: dict[int, dict[int, str]] = {}
-    for row in base.filter(location_id__in=location_ids).values(
-        "location_id", "location_flag", "raw_location_id", "item_id", "set_name"
-    ):
-        location_id = int(row["location_id"])
-        flag = str(row.get("location_flag") or "").strip()
-        if flag:
-            flags_by_location.setdefault(location_id, set()).add(flag)
-        # A raw_location_id that differs from the resolved root is a container.
-        raw_location_id = row.get("raw_location_id")
-        if raw_location_id and int(raw_location_id) != location_id:
-            containers_by_location.setdefault(location_id, {}).setdefault(
-                int(raw_location_id), ""
-            )
-
-    # Name the containers from their own asset rows.
-    container_item_ids = {
-        item_id
-        for containers in containers_by_location.values()
-        for item_id in containers
+    all_type_ids = {
+        int(row["type_id"]) for row in all_user_assets if row.get("type_id")
     }
-    if container_item_ids:
-        for row in base.model.objects.filter(
-            user=user, item_id__in=sorted(container_item_ids)
-        ).values("item_id", "set_name", "type_id"):
-            label = str(row.get("set_name") or "").strip() or get_type_name(
-                int(row["type_id"])
-            )
-            for containers in containers_by_location.values():
-                if int(row["item_id"]) in containers:
-                    containers[int(row["item_id"])] = label
+    ship_type_ids = _get_ship_type_ids(all_type_ids)
+
+    # Group assets by root location_id
+    assets_by_location: dict[int, list[dict]] = {}
+    for row in all_user_assets:
+        loc_id = row.get("location_id")
+        if loc_id:
+            assets_by_location.setdefault(int(loc_id), []).append(row)
 
     max_age = asset_cache_max_age()
     now = timezone.now()
-    names = resolve_cached_location_names(location_ids)
+    resolved_names = resolve_cached_location_names(list(assets_by_location.keys()))
 
     sources = []
-    for row in rows:
-        if not row.get("location_id"):
+    for location_id in sorted(assets_by_location.keys()):
+        location_rows = assets_by_location[location_id]
+        esi_rows = _rows_as_esi_shape(location_rows)
+        index = build_asset_index_by_item_id(esi_rows)
+
+        # Identify all valid personal item hangar assets at this location
+        valid_hangar_assets = []
+        for asset in esi_rows:
+            raw_row = asset["_row"]
+            if bool(raw_row.get("is_blueprint", False)) != blueprints:
+                continue
+            if _is_personal_hangar_asset(
+                asset,
+                index,
+                ship_type_ids=ship_type_ids,
+                location_id=location_id,
+            ):
+                valid_hangar_assets.append(raw_row)
+
+        # If no valid hangar assets for this mode at this location, skip
+        if not valid_hangar_assets:
             continue
-        location_id = int(row["location_id"])
-        last_synced = row["last_synced"]
+
+        # Find all containers for this location:
+        # Parent items that reside in the hangar, are NOT ships, and are referenced by raw_location_id of hangar assets
+        container_item_ids = {
+            int(row["raw_location_id"])
+            for row in valid_hangar_assets
+            if row.get("raw_location_id") and int(row["raw_location_id"]) != location_id
+        }
+
+        # Validate that container items themselves are non-ship hangar containers
+        valid_containers: dict[int, str] = {}
+        for container_id in sorted(container_item_ids):
+            parent_asset = index.get(container_id)
+            if not parent_asset:
+                continue
+            parent_type_id = int(parent_asset.get("_row", {}).get("type_id", 0) or 0)
+            if parent_type_id in ship_type_ids:
+                continue
+            if not _is_personal_hangar_asset(
+                parent_asset,
+                index,
+                ship_type_ids=ship_type_ids,
+                location_id=location_id,
+            ):
+                continue
+            parent_row = parent_asset.get("_row", {})
+            label = str(parent_row.get("set_name") or "").strip() or get_type_name(
+                parent_type_id
+            )
+            valid_containers[container_id] = label or f"Container {container_id}"
+
+        last_synced = max(
+            (row["synced_at"] for row in valid_hangar_assets if row.get("synced_at")),
+            default=None,
+        )
+
         sources.append(
             {
                 "location_id": location_id,
-                **_describe_location(location_id, names),
+                **_describe_location(location_id, resolved_names),
                 "last_synced": last_synced.isoformat() if last_synced else None,
                 "is_stale": bool(last_synced and (now - last_synced) > max_age),
-                "location_flags": sorted(flags_by_location.get(location_id, set())),
+                "location_flags": ["Hangar"],
                 "containers": [
-                    {"item_id": item_id, "name": label or f"Container {item_id}"}
-                    for item_id, label in sorted(
-                        containers_by_location.get(location_id, {}).items()
-                    )
+                    {"item_id": item_id, "name": name}
+                    for item_id, name in valid_containers.items()
                 ],
             }
         )
@@ -286,93 +480,130 @@ def get_source_assets(
     container_item_id: int = 0,
     blueprints: bool = False,
 ) -> dict[str, Any] | None:
-    """Cached quantities at one user-authorized location.
+    """Cached quantities at one user-authorized location for personal item hangars.
 
-    Returns None when the user has no assets at that location at all, which the
-    caller should treat as "not available to you".
+    Returns None when the user has no hangar assets at that location at all.
+    Excludes ships, ship cargo, and fitted modules.
     """
-    owns_location = CachedCharacterAsset.objects.filter(
-        user=user, location_id=location_id
-    ).exists()
-    if not owns_location:
+    location_assets = list(
+        CachedCharacterAsset.objects.filter(user=user, location_id=location_id).values(
+            "item_id",
+            "raw_location_id",
+            "location_id",
+            "location_flag",
+            "type_id",
+            "quantity",
+            "is_blueprint",
+            "synced_at",
+            "set_name",
+        )
+    )
+    if not location_assets:
         return None
 
-    scoped = CachedCharacterAsset.objects.filter(
-        user=user, location_id=location_id, is_blueprint=blueprints
-    )
+    all_type_ids = {
+        int(row["type_id"]) for row in location_assets if row.get("type_id")
+    }
+    ship_type_ids = _get_ship_type_ids(all_type_ids)
+    esi_rows = _rows_as_esi_shape(location_assets)
+    index = build_asset_index_by_item_id(esi_rows)
 
-    # Narrowing by flag or container needs the parent chain, so pull the rows
-    # and let the shared helpers walk them.
-    if location_flag or container_item_id:
-        rows = list(
-            scoped.values(
-                "item_id",
-                "raw_location_id",
-                "location_id",
-                "location_flag",
-                "type_id",
-                "quantity",
-                "synced_at",
-            )
-        )
-        # The index must span every asset at the location, not just the scoped
-        # subset, or container parents would be missing from the chain.
-        chain_rows = list(
-            CachedCharacterAsset.objects.filter(
-                user=user, location_id=location_id
-            ).values("item_id", "raw_location_id", "location_id", "location_flag")
-        )
-        index = build_asset_index_by_item_id(_rows_as_esi_shape(chain_rows))
-
-        matched = []
-        for asset in _rows_as_esi_shape(rows):
-            if location_flag and not asset_chain_has_context(
-                asset,
-                index,
-                location_id=location_id,
-                location_flag=location_flag,
-                max_depth=MAX_CONTAINER_DEPTH,
-            ):
-                continue
-            if container_item_id and not _has_container_ancestor(
-                asset, index, container_item_id
-            ):
-                continue
-            matched.append(asset["_row"])
-
-        wanted = set(type_ids or [])
-        grouped: dict[int, dict[str, Any]] = {}
-        for row in matched:
-            type_id = int(row["type_id"])
-            if wanted and type_id not in wanted:
-                continue
-            entry = grouped.setdefault(
-                type_id, {"quantity": 0, "last_synced": row["synced_at"]}
-            )
-            entry["quantity"] += int(row["quantity"] or 0)
-            if row["synced_at"] and row["synced_at"] > entry["last_synced"]:
-                entry["last_synced"] = row["synced_at"]
-        aggregated = [
-            {
-                "type_id": type_id,
-                "quantity": data["quantity"],
-                "last_synced": data["last_synced"],
+    # If container_item_id is specified, ensure it is a valid non-ship container
+    if container_item_id:
+        container_asset = index.get(int(container_item_id))
+        if not container_asset:
+            return {
+                "location_id": location_id,
+                **_describe_location(
+                    location_id, resolve_cached_location_names([location_id])
+                ),
+                "location_flag": location_flag,
+                "container_item_id": container_item_id,
+                "max_age_seconds": int(asset_cache_max_age().total_seconds()),
+                "last_synced": None,
+                "is_stale": False,
+                "assets": [],
             }
-            for type_id, data in grouped.items()
-        ]
-    else:
-        if type_ids:
-            scoped = scoped.filter(type_id__in=type_ids[:MAX_TYPE_FILTER])
-        aggregated = [
-            {
-                "type_id": int(row["type_id"]),
-                "quantity": int(row["quantity"] or 0),
-                "last_synced": row["last_synced"],
+        c_type_id = int(container_asset.get("_row", {}).get("type_id", 0) or 0)
+        if c_type_id in ship_type_ids or not _is_personal_hangar_asset(
+            container_asset,
+            index,
+            ship_type_ids=ship_type_ids,
+            location_id=location_id,
+        ):
+            return {
+                "location_id": location_id,
+                **_describe_location(
+                    location_id, resolve_cached_location_names([location_id])
+                ),
+                "location_flag": location_flag,
+                "container_item_id": container_item_id,
+                "max_age_seconds": int(asset_cache_max_age().total_seconds()),
+                "last_synced": None,
+                "is_stale": False,
+                "assets": [],
             }
-            for row in scoped.values("type_id").annotate(
-                quantity=Sum("quantity"), last_synced=Max("synced_at")
+
+    matched = []
+    for asset in esi_rows:
+        raw_row = asset["_row"]
+        if bool(raw_row.get("is_blueprint", False)) != blueprints:
+            continue
+        if not _is_personal_hangar_asset(
+            asset,
+            index,
+            ship_type_ids=ship_type_ids,
+            location_id=location_id,
+        ):
+            continue
+        if location_flag and not asset_chain_has_context(
+            asset,
+            index,
+            location_id=location_id,
+            location_flag=location_flag,
+            max_depth=MAX_CONTAINER_DEPTH,
+        ):
+            continue
+        if container_item_id and not _has_container_ancestor(
+            asset, index, container_item_id
+        ):
+            continue
+        matched.append(raw_row)
+
+    if not matched and not container_item_id and not location_flag:
+        # Check if user had any personal hangar asset at this location at all
+        has_any_hangar = any(
+            _is_personal_hangar_asset(
+                a, index, ship_type_ids=ship_type_ids, location_id=location_id
             )
-        ]
+            for a in esi_rows
+        )
+        if not has_any_hangar:
+            return None
+
+    wanted = set(type_ids or [])
+    grouped: dict[int, dict[str, Any]] = {}
+    for row in matched:
+        type_id = int(row["type_id"])
+        if wanted and type_id not in wanted:
+            continue
+        entry = grouped.setdefault(
+            type_id, {"quantity": 0, "last_synced": row["synced_at"]}
+        )
+        entry["quantity"] += int(row["quantity"] or 0)
+        if row["synced_at"] and (
+            not entry["last_synced"] or row["synced_at"] > entry["last_synced"]
+        ):
+            entry["last_synced"] = row["synced_at"]
+
+    aggregated = [
+        {
+            "type_id": type_id,
+            "quantity": data["quantity"],
+            "last_synced": data["last_synced"],
+        }
+        for type_id, data in grouped.items()
+    ]
 
     max_age = asset_cache_max_age()
     now = timezone.now()
@@ -426,39 +657,73 @@ def parse_bpc_source(value: Any) -> tuple[int, int]:
 def blueprint_item_ids_at_source(
     user, *, location_id: int, container_item_id: int = 0
 ) -> set[int] | None:
-    """Item IDs of the user's cached blueprints at one source.
+    """Item IDs of the user's cached blueprints at one source (personal item hangar).
 
     Returns None when the user has no cached blueprints there, so a location
     ID from a browser or preference is never proof of access: the caller only
     ever narrows the user's own blueprints to these IDs. A container narrows
     further to blueprints anywhere inside it (nested containers included).
+    Excludes ships and blueprints inside ships.
     """
-    scoped = CachedCharacterAsset.objects.filter(
-        user=user, location_id=location_id, is_blueprint=True
-    )
-    if not scoped.exists():
-        return None
-    if not container_item_id:
-        return {
-            int(item_id)
-            for item_id in scoped.values_list("item_id", flat=True)
-            if item_id
-        }
-
-    chain_rows = list(
+    location_assets = list(
         CachedCharacterAsset.objects.filter(user=user, location_id=location_id).values(
-            "item_id", "raw_location_id", "location_id", "location_flag"
+            "item_id",
+            "raw_location_id",
+            "location_id",
+            "location_flag",
+            "type_id",
+            "is_blueprint",
+            "synced_at",
+            "set_name",
         )
     )
-    index = build_asset_index_by_item_id(_rows_as_esi_shape(chain_rows))
-    rows = list(
-        scoped.values("item_id", "raw_location_id", "location_id", "location_flag")
-    )
-    return {
-        int(asset["item_id"])
-        for asset in _rows_as_esi_shape(rows)
-        if asset["item_id"] and _has_container_ancestor(asset, index, container_item_id)
+    if not location_assets:
+        return None
+
+    all_type_ids = {
+        int(row["type_id"]) for row in location_assets if row.get("type_id")
     }
+    ship_type_ids = _get_ship_type_ids(all_type_ids)
+    esi_rows = _rows_as_esi_shape(location_assets)
+    index = build_asset_index_by_item_id(esi_rows)
+
+    if container_item_id:
+        container_asset = index.get(int(container_item_id))
+        if not container_asset:
+            return set()
+        c_type_id = int(container_asset.get("_row", {}).get("type_id", 0) or 0)
+        if c_type_id in ship_type_ids or not _is_personal_hangar_asset(
+            container_asset,
+            index,
+            ship_type_ids=ship_type_ids,
+            location_id=location_id,
+        ):
+            return set()
+
+    matched_ids = set()
+    for asset in esi_rows:
+        raw_row = asset["_row"]
+        if not bool(raw_row.get("is_blueprint", False)):
+            continue
+        if not _is_personal_hangar_asset(
+            asset,
+            index,
+            ship_type_ids=ship_type_ids,
+            location_id=location_id,
+        ):
+            continue
+        if container_item_id and not _has_container_ancestor(
+            asset, index, container_item_id
+        ):
+            continue
+        item_id = raw_row.get("item_id")
+        if item_id:
+            matched_ids.add(int(item_id))
+
+    if not matched_ids and not container_item_id:
+        return None
+
+    return matched_ids
 
 
 def describe_bpc_source(user, token: Any) -> dict[str, Any]:

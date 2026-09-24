@@ -689,7 +689,7 @@
                                 </div>
                             </div>
                         </section>
-
+                        <br>
                         <section class="craft-section">
                             <div class="craft-section-header-with-actions">
                                 <h3 class="craft-section-title">
@@ -2390,10 +2390,8 @@
                     materialsSourceMaxAgeMs = Math.max(0, Number(payload?.max_age_seconds) || 0) * 1000;
                     locationSelect.innerHTML = materialsSourceRows.length
                         ? materialsSourceRows.map((source) => {
-                            const flags = Array.isArray(source.location_flags) && source.location_flags.length
-                                ? ` · ${source.location_flags.map((flag) => esc(flag)).join(', ')}` : '';
-                            // Show the resolved name, not the raw ID.
-                            return `<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${flags}</option>`;
+                            // Show the clean resolved name without raw slot flag clutter.
+                            return `<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}</option>`;
                         }).join('')
                         : `<option value="">{% trans "No cached asset locations available" %}</option>`;
                     if (locationSelect.dataset.preferredLocation) locationSelect.value = locationSelect.dataset.preferredLocation;

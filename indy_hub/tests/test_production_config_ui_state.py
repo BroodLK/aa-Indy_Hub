@@ -1182,6 +1182,53 @@ class MaterialSourceNamingTests(TestCase):
         self.assertEqual([s["location_id"] for s in materials], [1030000000001])
         self.assertEqual([s["location_id"] for s in blueprints], [60003760])
 
+    @patch("indy_hub.services.production_material_sources._get_ship_type_ids")
+    def test_ships_are_excluded_from_containers_and_non_hangar_locations_excluded(
+        self, mock_ship_ids
+    ) -> None:
+        mock_ship_ids.return_value = {649}  # Tayra is a ship
+        # A ship in the hangar with cargo
+        self._asset(
+            item_id=7100, type_id=649, set_name="My Tayra", location_flag="Hangar"
+        )
+        self._asset(
+            item_id=7101,
+            type_id=34,
+            raw_location_id=7100,
+            quantity=200,
+            location_flag="Cargo",
+        )
+        # A container in the hangar with materials
+        self._asset(
+            item_id=7200,
+            type_id=3468,
+            set_name="Mineral Can",
+            location_flag="Hangar",
+        )
+        self._asset(
+            item_id=7201,
+            type_id=34,
+            raw_location_id=7200,
+            quantity=300,
+            location_flag="Unlocked",
+        )
+        # Another location with ONLY rig slots (should be excluded from sources)
+        self._asset(
+            item_id=8100,
+            type_id=26082,
+            location_id=1099999999999,
+            location_flag="RigSlot0",
+            quantity=1,
+        )
+
+        sources = self._sources()["sources"]
+        self.assertEqual([s["location_id"] for s in sources], [1030000000001])
+        containers = sources[0]["containers"]
+        # Only the Mineral Can should be listed as a container; the ship is excluded.
+        self.assertEqual([c["item_id"] for c in containers], [7200])
+        self.assertEqual(containers[0]["name"], "Mineral Can")
+        self.assertEqual(sources[0]["location_flags"], ["Hangar"])
+
 
 class MaterialSourceAssetFilterTests(TestCase):
     """Container narrowing: everything at a location used to be summed as one."""
@@ -1290,6 +1337,52 @@ class MaterialSourceAssetFilterTests(TestCase):
         status, body = self._get()
         self.assertEqual(status, 200)
         self.assertTrue(body["is_stale"])
+
+    @patch("indy_hub.services.production_material_sources._get_ship_type_ids")
+    def test_ship_cargo_and_fittings_are_excluded_from_assets(
+        self, mock_ship_ids
+    ) -> None:
+        mock_ship_ids.return_value = {649}
+        # Add a ship in the hangar and items in its cargo & high slot
+        CachedCharacterAsset.objects.create(
+            user=self.user,
+            character_id=9001,
+            item_id=8001,
+            location_id=1030000000001,
+            raw_location_id=1030000000001,
+            type_id=649,
+            quantity=1,
+            location_flag="Hangar",
+        )
+        CachedCharacterAsset.objects.create(
+            user=self.user,
+            character_id=9001,
+            item_id=8002,
+            location_id=1030000000001,
+            raw_location_id=8001,
+            type_id=34,
+            quantity=1000,
+            location_flag="Cargo",
+        )
+        CachedCharacterAsset.objects.create(
+            user=self.user,
+            character_id=9001,
+            item_id=8003,
+            location_id=1030000000001,
+            raw_location_id=8001,
+            type_id=34,
+            quantity=200,
+            location_flag="HiSlot0",
+        )
+        # Whole location query: 100 loose + 500 in Mineral Can = 600 (the 1000 cargo and 200 fitting in Tayra are excluded)
+        status, body = self._get()
+        self.assertEqual(status, 200)
+        self.assertEqual(self._qty(body), 600)
+
+        # Attempting to query the ship as a container should return empty list
+        status, body = self._get(container_item_id=8001)
+        self.assertEqual(status, 200)
+        self.assertEqual(self._qty(body), 0)
 
 
 class ScheduleTrackingCooldownTests(TestCase):
