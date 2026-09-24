@@ -226,7 +226,9 @@
                                         <span class="location-tag ms-2"><i class="fas fa-map-marker-alt me-1"></i>{{ bp.location_path }}</span>
                                     {% endif %}
                                     <a href="{% url 'indy_hub:craft_bp' bp.type_id %}?me={{ bp.material_efficiency|default:0 }}&te={{ bp.time_efficiency|default:0 }}&next={{ request.get_full_path|urlencode }}#plan-pane"
-                                       class="btn btn-primary btn-sm">
+                                       class="btn btn-primary btn-sm"
+                                       data-indy-loading="{% trans 'Loading Production Simulator' %}"
+                                       data-indy-loading-detail="{% trans 'Preparing craft workspace and manufacturing tree...' %}">
                                         <i class="fas fa-flask me-1"></i>{% trans "Production Simulator" %}
                                     </a>
                                     <small class="d-block text-muted mt-1">

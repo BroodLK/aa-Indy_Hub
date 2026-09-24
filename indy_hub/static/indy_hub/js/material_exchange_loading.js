@@ -1,18 +1,21 @@
 /**
- * Buyback navigation loading overlay.
+ * IndyHub navigation & action loading overlay.
  *
- * Some Buyback pages (sell item list, buy stock browse) need a server round-trip that can
- * take a few seconds, which used to look like a dead click. Any element marked with
- * data-me-loading shows the shared overlay as soon as it is activated:
+ * Pages and actions that require significant server-side processing (e.g., loading
+ * blueprints catalog, creating/loading simulations, filtering large datasets, or submitting orders)
+ * can take several seconds. Any element marked with data-indy-loading or data-me-loading
+ * shows the shared overlay as soon as it is activated:
  *
+ *   <a href="..." data-indy-loading="Loading Blueprints" data-indy-loading-detail="Fetching blueprint catalog from EVE SDE...">
  *   <a href="..." data-me-loading="Loading Jita 4-4" data-me-loading-detail="Reading your hangars">
- *   <form ... data-me-loading="Submitting sell order">
+ *   <form ... data-indy-loading="Filtering Blueprints">
  *
- * The overlay markup lives in material_exchange/includes/page_loading_overlay.html.
+ * The overlay markup lives in indy_hub/includes/page_loading_overlay.html.
  */
 
 (function() {
     const OVERLAY_ID = 'mePageLoadingOverlay';
+    const TRIGGER_SELECTOR = '[data-indy-loading], [data-me-loading], [data-loading-overlay]';
 
     function getOverlay() {
         return document.getElementById(OVERLAY_ID);
@@ -30,8 +33,12 @@
         if (!overlay) {
             return;
         }
-        setText(overlay, '[data-me-loading-title]', title);
-        setText(overlay, '[data-me-loading-detail]', detail);
+        if (title) {
+            setText(overlay, '[data-me-loading-title]', title);
+        }
+        if (detail) {
+            setText(overlay, '[data-me-loading-detail]', detail);
+        }
         overlay.classList.remove('d-none');
         overlay.setAttribute('aria-hidden', 'false');
     }
@@ -46,10 +53,15 @@
     }
 
     function showFromTrigger(trigger) {
-        showOverlay(
-            trigger.getAttribute('data-me-loading'),
-            trigger.getAttribute('data-me-loading-detail')
-        );
+        const title = trigger.getAttribute('data-indy-loading') ||
+                      trigger.getAttribute('data-loading-overlay') ||
+                      trigger.getAttribute('data-me-loading') ||
+                      '';
+        const detail = trigger.getAttribute('data-indy-loading-detail') ||
+                       trigger.getAttribute('data-loading-detail') ||
+                       trigger.getAttribute('data-me-loading-detail') ||
+                       '';
+        showOverlay(title, detail);
     }
 
     /** True for clicks the browser handles itself (new tab/window, download, ...). */
@@ -75,7 +87,7 @@
     }
 
     document.addEventListener('click', function(event) {
-        const trigger = event.target.closest('[data-me-loading]');
+        const trigger = event.target.closest(TRIGGER_SELECTOR);
         if (!trigger || trigger.tagName === 'FORM') {
             return;
         }
@@ -89,8 +101,8 @@
     });
 
     document.addEventListener('submit', function(event) {
-        const form = event.target.closest('form[data-me-loading]');
-        if (!form || event.defaultPrevented) {
+        const form = event.target.closest(TRIGGER_SELECTOR);
+        if (!form || form.tagName !== 'FORM' || event.defaultPrevented) {
             return;
         }
         showFromTrigger(form);

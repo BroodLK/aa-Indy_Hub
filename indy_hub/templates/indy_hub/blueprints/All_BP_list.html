@@ -35,7 +35,9 @@
 
         <!-- Filters -->
         <div class="filter-section mb-4">
-            <form method="get">
+            <form method="get"
+                  data-indy-loading="{% trans 'Filtering Blueprints' %}"
+                  data-indy-loading-detail="{% trans 'Searching blueprint catalog...' %}">
                 <div class="row g-3 align-items-end">
                     <div class="col-lg-4">
                         <label class="form-label text-muted fw-bold">{% trans 'Search' %}</label>
@@ -72,7 +74,10 @@
                         <button type="submit" class="btn btn-primary" name="applied" value="1">
                             <i class="fas fa-filter me-1"></i>{% trans 'Apply Filters' %}
                         </button>
-                        <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-outline-secondary ms-2">
+                        <a href="{% url 'indy_hub:all_bp_list' %}"
+                           class="btn btn-outline-secondary ms-2"
+                           data-indy-loading="{% trans 'Loading Blueprints' %}"
+                           data-indy-loading-detail="{% trans 'Resetting filters...' %}">
                             <i class="fas fa-undo-alt me-1"></i>{% trans 'Reset Filters' %}
                         </a>
                     </div>
@@ -95,7 +100,9 @@
                             <div class="blueprint-meta mb-0">
                                 <h5 class="blueprint-title mb-0">{{ bp.type_name|default:unknown_blueprint_label }}</h5>
                                 <a href="{% url 'indy_hub:craft_bp' bp.type_id %}?next={{ request.get_full_path|urlencode }}"
-                                   class="btn btn-outline-info btn-sm">
+                                   class="btn btn-outline-info btn-sm"
+                                   data-indy-loading="{% trans 'Loading Simulation' %}"
+                                   data-indy-loading-detail="{% trans 'Preparing craft workspace and manufacturing tree...' %}">
                                     <i class="fas fa-tools me-1"></i>{% trans "View Craft" %}
                                 </a>
                             </div>
@@ -106,7 +113,9 @@
         </div>
 
         <div class="d-flex flex-wrap justify-content-between align-items-center mt-4 mb-2 gap-2">
-            <form method="get" class="d-flex align-items-center gap-2 mb-0">
+            <form method="get"
+                  class="d-flex align-items-center gap-2 mb-0"
+                  data-indy-loading="{% trans 'Loading Blueprints' %}">
                 <label for="perPage" class="form-label mb-0 text-muted small">{% trans "Per page" %}</label>
                 <select name="per_page" id="perPage" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
                     {% for n in per_page_options %}
@@ -126,6 +135,7 @@
                             <li class="page-item">
                                 <a class="page-link"
                                    href="?page={{ blueprints.previous_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
+                                   data-indy-loading="{% trans 'Loading Blueprints' %}"
                                    aria-label="{% trans 'Previous' %}">
                                     <span aria-hidden="true">&laquo;</span>
                                 </a>
@@ -139,12 +149,14 @@
                             {% elif num >= blueprints.number|add:'-2' and num <= blueprints.number|add:'2' %}
                                 <li class="page-item">
                                     <a class="page-link"
-                                       href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1">{{ num }}</a>
+                                       href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
+                                       data-indy-loading="{% trans 'Loading Blueprints' %}">{{ num }}</a>
                                 </li>
                             {% elif num == 1 or num == blueprints.paginator.num_pages %}
                                 <li class="page-item">
                                     <a class="page-link"
-                                       href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1">{{ num }}</a>
+                                       href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
+                                       data-indy-loading="{% trans 'Loading Blueprints' %}">{{ num }}</a>
                                 </li>
                                 {% if num < blueprints.number|add:'-2' or num > blueprints.number|add:'2' %}
                                     <li class="page-item disabled">
@@ -157,6 +169,7 @@
                             <li class="page-item">
                                 <a class="page-link"
                                    href="?page={{ blueprints.next_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ filters.search }}&activity_id={{ filters.activity_id }}&market_group_id={{ filters.market_group_id }}&applied=1"
+                                   data-indy-loading="{% trans 'Loading Blueprints' %}"
                                    aria-label="{% trans 'Next' %}">
                                     <span aria-hidden="true">&raquo;</span>
                                 </a>

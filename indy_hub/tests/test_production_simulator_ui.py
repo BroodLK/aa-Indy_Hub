@@ -303,3 +303,60 @@ class RunOptimizedStateMigrationTests(SimpleTestCase):
         )
 
         self.assertEqual(normalize_preference_state({"activeTab": "run_optimized"}), {})
+
+
+class PageLoadingOverlayTests(SimpleTestCase):
+    """Loading spinner overlay tests for slow server round-trips."""
+
+    def test_shared_overlay_template_renders_dialog_and_spinner(self) -> None:
+        html = render_to_string("indy_hub/includes/page_loading_overlay.html")
+        self.assertIn('id="mePageLoadingOverlay"', html)
+        self.assertIn("spinner-border", html)
+        self.assertIn("data-me-loading-title", html)
+        self.assertIn("data-me-loading-detail", html)
+        self.assertIn("material_exchange_loading.js", html)
+
+    def test_base_template_includes_loading_overlay(self) -> None:
+        base_template = (TEMPLATES / "base.html").read_text(encoding="utf-8")
+        self.assertIn(
+            'include "indy_hub/includes/page_loading_overlay.html"', base_template
+        )
+
+    def test_loading_script_handles_indy_loading_triggers(self) -> None:
+        script = (STATIC / "js" / "material_exchange_loading.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[data-indy-loading]", script)
+        self.assertIn("mePageLoadingOverlay", script)
+        self.assertIn("showOverlay", script)
+        self.assertIn("hideOverlay", script)
+
+
+class SimulationLoadingTests(SimpleTestCase):
+    """Verify that simulation creation and listing buttons carry loading attributes."""
+
+    def test_production_simulations_list_has_loading_on_new_simulation(self) -> None:
+        template = (
+            TEMPLATES / "industry" / "production_simulations_list.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "data-indy-loading=\"{% trans 'Loading Blueprints' %}\"", template
+        )
+        self.assertIn("New Simulation", template)
+        self.assertIn("Create Your First Simulation", template)
+
+    def test_production_simulations_compact_has_loading_on_new_simulation(self) -> None:
+        template = (TEMPLATES / "industry" / "production_simulations.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "data-indy-loading=\"{% trans 'Loading Blueprints' %}\"", template
+        )
+        self.assertIn("New simulation", template)
+
+    def test_all_bp_list_has_loading_on_views_and_filters(self) -> None:
+        template = (TEMPLATES / "blueprints" / "All_BP_list.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("data-indy-loading", template)
+        self.assertIn("View Craft", template)

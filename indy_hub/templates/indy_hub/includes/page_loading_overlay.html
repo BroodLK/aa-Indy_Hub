@@ -1,0 +1,22 @@
+{% load i18n %}
+{% load static %}
+{% comment %}
+Shared navigation and action loading overlay for IndyHub.
+
+Add data-indy-loading="Title" (and optionally data-indy-loading-detail="Subtitle")
+or data-me-loading="Title" to any link, button, or form that triggers a slow server round-trip.
+material_exchange_loading.js displays this overlay on activation and hides it on page restoration.
+{% endcomment %}
+<link rel="stylesheet" href="{% static 'indy_hub/css/material_exchange_loading.css' %}">
+<div id="mePageLoadingOverlay" class="me-page-loading-overlay d-none" aria-hidden="true">
+    <div class="me-page-loading-dialog" role="status" aria-live="assertive" aria-atomic="true">
+        <span class="spinner-border text-info" aria-hidden="true"></span>
+        <div>
+            <div class="fw-semibold" data-me-loading-title>{% trans "Loading" %}</div>
+            <div class="small text-muted" data-me-loading-detail>
+                {% trans "This can take a few seconds. Please wait..." %}
+            </div>
+        </div>
+    </div>
+</div>
+<script src="{% static 'indy_hub/js/material_exchange_loading.js' %}" defer></script>

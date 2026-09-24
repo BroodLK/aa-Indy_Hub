@@ -57,7 +57,10 @@
                                         {% else %}
                                             <span class="badge rounded-pill bg-secondary-subtle text-secondary">{% trans "No token" %}</span>
                                         {% endif %}
-                                        <a class="btn btn-sm btn-outline-primary" href="{% url 'indy_hub:all_bp_list' %}">{% trans "Open" %}</a>
+                                        <a class="btn btn-sm btn-outline-primary"
+                                           href="{% url 'indy_hub:all_bp_list' %}"
+                                           data-indy-loading="{% trans 'Loading Blueprints' %}"
+                                           data-indy-loading-detail="{% trans 'Fetching blueprint catalog from EVE SDE...' %}">{% trans "Open" %}</a>
                                     </div>
                                 </div>
 

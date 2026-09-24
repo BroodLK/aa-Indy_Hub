@@ -94,7 +94,9 @@
                         <hr class="dropdown-divider">
                     </li>
                     <li>
-                        <a class="dropdown-item" href="{% url 'indy_hub:all_bp_list' %}">
+                        <a class="dropdown-item" href="{% url 'indy_hub:all_bp_list' %}"
+                           data-indy-loading="{% trans 'Loading Blueprints' %}"
+                           data-indy-loading-detail="{% trans 'Fetching blueprint catalog from EVE SDE...' %}">
                             <i class="fas fa-list-check me-2"></i>{% trans "All Buildable" %}
                         </a>
                     </li>
@@ -198,7 +200,9 @@
                         <hr class="dropdown-divider">
                     </li>
                     <li>
-                        <a class="dropdown-item" href="{% url 'indy_hub:production_simulations_list' %}">
+                        <a class="dropdown-item" href="{% url 'indy_hub:production_simulations_list' %}"
+                           data-indy-loading="{% trans 'Loading Production Simulations' %}"
+                           data-indy-loading-detail="{% trans 'Fetching your saved scenarios...' %}">
                             <i class="fas fa-flask me-2"></i>{% trans "Production Simulator" %}
                             <small class="d-block text-muted text-wrap ms-4" style="max-width: 18rem;">
                                 {% trans "Choose Buy or Produce for the blueprint tree, estimate material cost and profit, schedule build slots, and save or share the scenario." %}
@@ -241,5 +245,6 @@
 {% block extra_page_content %}
     {{ block.super }}
     {% block indy_hub_global_modals %}{% endblock %}
+    {% include "indy_hub/includes/page_loading_overlay.html" %}
     {% include "framework/svg/sprite.svg" %}
 {% endblock extra_page_content %}

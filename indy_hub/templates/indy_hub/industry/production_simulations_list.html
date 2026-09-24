@@ -35,7 +35,9 @@
                     <p class="description mb-0">{% trans "Stay ahead of your industrial queue with curated simulation dashboards." %}</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">
-                    <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-light btn-action">
+                    <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-light btn-action"
+                       data-indy-loading="{% trans 'Loading Blueprints' %}"
+                       data-indy-loading-detail="{% trans 'Fetching blueprint catalog from EVE SDE...' %}">
                         <i class="fas fa-plus me-2"></i>{% trans "New Simulation" %}
                     </a>
                     <a href="{% url 'indy_hub:index' %}" class="btn btn-outline-light btn-action">
@@ -131,7 +133,10 @@
                     <a href="{% url 'indy_hub:production_simulations' %}" class="btn btn-outline-secondary btn-slim">
                         <i class="fas fa-table me-1"></i>{% trans "Compact view" %}
                     </a>
-                    <a href="{% url 'indy_hub:production_simulations_list' %}?refresh=1" class="btn btn-outline-primary btn-slim">
+                    <a href="{% url 'indy_hub:production_simulations_list' %}?refresh=1"
+                       class="btn btn-outline-primary btn-slim"
+                       data-indy-loading="{% trans 'Refreshing Simulations' %}"
+                       data-indy-loading-detail="{% trans 'Recalculating saved simulation metrics...' %}">
                         <i class="fas fa-sync-alt me-1"></i>{% trans "Refresh" %}
                     </a>
                 </div>
@@ -223,6 +228,8 @@
                             <div class="btn-group" role="group">
                                 <a href="{% url 'indy_hub:craft_bp' simulation.blueprint_type_id %}?runs={{ simulation.runs }}"
                                    class="btn btn-outline-primary btn-sm"
+                                   data-indy-loading="{% trans 'Loading Simulation' %}"
+                                   data-indy-loading-detail="{% trans 'Preparing craft workspace and manufacturing tree...' %}"
                                    title="{% trans 'Open Simulation' %}">
                                     <i class="fas fa-play"></i>
                                 </a>
@@ -247,7 +254,9 @@
                     <ul class="pagination justify-content-center">
                         {% if simulations.has_previous %}
                             <li class="page-item">
-                                <a class="page-link" href="?page={{ simulations.previous_page_number }}">
+                                <a class="page-link"
+                                   href="?page={{ simulations.previous_page_number }}"
+                                   data-indy-loading="{% trans 'Loading Simulations' %}">
                                     <i class="fas fa-chevron-left"></i>
                                 </a>
                             </li>
@@ -260,14 +269,18 @@
                                 </li>
                             {% elif num > simulations.number|add:'-3' and num < simulations.number|add:'3' %}
                                 <li class="page-item">
-                                    <a class="page-link" href="?page={{ num }}">{{ num }}</a>
+                                    <a class="page-link"
+                                       href="?page={{ num }}"
+                                       data-indy-loading="{% trans 'Loading Simulations' %}">{{ num }}</a>
                                 </li>
                             {% endif %}
                         {% endfor %}
 
                         {% if simulations.has_next %}
                             <li class="page-item">
-                                <a class="page-link" href="?page={{ simulations.next_page_number }}">
+                                <a class="page-link"
+                                   href="?page={{ simulations.next_page_number }}"
+                                   data-indy-loading="{% trans 'Loading Simulations' %}">
                                     <i class="fas fa-chevron-right"></i>
                                 </a>
                             </li>
@@ -284,7 +297,10 @@
                 <p class="mb-4">
                     {% trans "Explore your blueprints and save a scenario to keep track of your production planning." %}
                 </p>
-                <a href="{% url 'indy_hub:all_bp_list' %}" class="btn btn-primary btn-lg">
+                <a href="{% url 'indy_hub:all_bp_list' %}"
+                   class="btn btn-primary btn-lg"
+                   data-indy-loading="{% trans 'Loading Blueprints' %}"
+                   data-indy-loading-detail="{% trans 'Fetching blueprint catalog from EVE SDE...' %}">
                     <i class="fas fa-plus me-2"></i>{% trans "Create Your First Simulation" %}
                 </a>
             </div>
