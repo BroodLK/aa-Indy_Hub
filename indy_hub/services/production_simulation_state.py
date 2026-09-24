@@ -332,6 +332,10 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
         else []
     )
 
+    tree_open_list = [bool(item) for item in tree_open][:200]
+    while tree_open_list and not tree_open_list[-1]:
+        tree_open_list.pop()
+
     return {
         "v": SHARE_SCHEMA_VERSION,
         "blueprint_type_id": blueprint_type_id,
@@ -353,7 +357,7 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
         "inputs": _share_inputs(value.get("inputs")),
         "shipping": {"route": route} if route else None,
         "display": {
-            "tree_open": [bool(item) for item in tree_open][:200],
+            "tree_open": tree_open_list,
             "configure_open": [
                 item
                 for item in configure_open

@@ -1791,7 +1791,19 @@ function collectCraftShareState() {
         inputs: sanitizeShareableInputs(full.staticInputs),
         shipping: routeId > 0 ? { route: routeId } : null,
         display: {
-            tree_open: Array.isArray(full.treeDetailsOpen) ? full.treeDetailsOpen.slice(0, 200) : [],
+            tree_open: Array.isArray(full.treeDetailsOpen)
+                ? (() => {
+                    const list = full.treeDetailsOpen.slice(0, 200).map(Boolean);
+                    let lastTrue = -1;
+                    for (let i = list.length - 1; i >= 0; i--) {
+                        if (list[i]) {
+                            lastTrue = i;
+                            break;
+                        }
+                    }
+                    return lastTrue >= 0 ? list.slice(0, lastTrue + 1) : [];
+                })()
+                : [],
             configure_open: Array.isArray(full.configureAccordionOpenIds) ? full.configureAccordionOpenIds.slice(0, 100) : [],
         },
     };
@@ -1838,7 +1850,7 @@ function decodeCraftShareState(encoded) {
 
 // Kept well below the ~2000-char floor some proxies impose on paths but above
 // what a normal scenario needs; the decoder tolerates a little more (12000).
-const CRAFT_SHARE_MAX_ENCODED_LENGTH = 9000;
+const CRAFT_SHARE_MAX_ENCODED_LENGTH = 2200;
 
 /**
  * Shed optional parts of the share payload, least valuable first, until it fits.
@@ -1909,10 +1921,8 @@ function updateCraftShareUrl() {
     if (!result) {
         return null;
     }
-    const url = new URL(window.location.href);
+    const url = new URL(window.location.pathname, window.location.origin);
     url.searchParams.set('share', result.encoded);
-    url.searchParams.delete('sim');
-    url.searchParams.delete('draft');
     window.history.replaceState(window.history.state, '', url.toString());
     return { dropped: result.dropped };
 }

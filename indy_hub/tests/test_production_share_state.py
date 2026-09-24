@@ -172,3 +172,30 @@ class ShareSchemaParityTests(SimpleTestCase):
             "\nfunction ", 1
         )[0]
         self.assertNotIn("safeEntry.use", block)
+
+    def test_share_max_encoded_length_is_safe_for_http_request_line(self) -> None:
+        source = CRAFT_JS.read_text(encoding="utf-8")
+        block = source.split("const CRAFT_SHARE_MAX_ENCODED_LENGTH = ", 1)[1].split(
+            ";", 1
+        )[0]
+        client_max = int(block.strip())
+        self.assertLessEqual(client_max, 2500)
+
+    def test_update_share_url_builds_clean_pathname_url(self) -> None:
+        source = CRAFT_JS.read_text(encoding="utf-8")
+        block = source.split("function updateCraftShareUrl()", 1)[1].split(
+            "\nfunction ", 1
+        )[0]
+        self.assertIn("window.location.pathname", block)
+        self.assertNotIn("window.location.href", block)
+
+    def test_tree_open_trims_trailing_falses(self) -> None:
+        state = normalize_share_state(
+            _base_payload(
+                display={
+                    "tree_open": [True, False, False, True, False, False, False],
+                    "configure_open": [],
+                }
+            )
+        )
+        self.assertEqual(state["display"]["tree_open"], [True, False, False, True])
