@@ -2679,3 +2679,375 @@ html[data-theme="darkly"] #blueprintSearchInput {
 .craft-tree-node-owned .tree-qty-current {
     text-decoration: line-through;
 }
+
+/* ========== HOW TO TAB STYLING ========== */
+.craft-howto-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.craft-howto-hero {
+    background: linear-gradient(135deg, rgba(var(--bs-primary-rgb), 0.12) 0%, rgba(var(--bs-info-rgb), 0.06) 100%);
+    border: 1px solid rgba(var(--bs-primary-rgb), 0.25);
+    border-radius: 0.75rem;
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1.25rem;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+.craft-howto-hero-content {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1 1 320px;
+}
+
+.craft-howto-hero-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(var(--bs-primary-rgb), 0.18);
+    color: var(--bs-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    flex-shrink: 0;
+}
+
+.craft-howto-hero-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 0 0 0.25rem 0;
+    color: var(--bs-body-color);
+}
+
+.craft-howto-hero-subtitle {
+    font-size: 0.85rem;
+    color: var(--bs-secondary-color, var(--bs-body-color));
+    margin: 0;
+}
+
+.craft-howto-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    background: var(--bs-secondary-bg);
+    border-radius: 0.5rem;
+    border: 1px solid var(--bs-border-color);
+    align-items: center;
+}
+
+.craft-howto-nav-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--bs-secondary-color, var(--bs-body-color));
+    margin-right: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.craft-howto-nav-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    border-radius: 2rem;
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    color: var(--bs-body-color);
+    text-decoration: none;
+    transition: all 0.15s ease-in-out;
+}
+
+.craft-howto-nav-link:hover {
+    background: var(--bs-primary);
+    color: #ffffff !important;
+    border-color: var(--bs-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.12);
+}
+
+.craft-howto-nav-link i {
+    font-size: 0.8rem;
+}
+
+.craft-howto-card {
+    background: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.craft-howto-card:hover {
+    border-color: rgba(var(--bs-primary-rgb), 0.35);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+}
+
+.craft-howto-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--bs-border-color);
+}
+
+.craft-howto-icon-box {
+    width: 36px;
+    height: 36px;
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.craft-howto-card-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 0;
+    color: var(--bs-body-color);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+/* Stepper / Timeline */
+.craft-howto-stepper {
+    position: relative;
+    padding-left: 2.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    margin-top: 0.5rem;
+}
+
+.craft-howto-stepper::before {
+    content: '';
+    position: absolute;
+    left: 1.05rem;
+    top: 1rem;
+    bottom: 1rem;
+    width: 2px;
+    background: var(--bs-border-color);
+}
+
+.craft-howto-step {
+    position: relative;
+}
+
+.craft-howto-step-marker {
+    position: absolute;
+    left: -2.5rem;
+    top: 0.25rem;
+    width: 2.15rem;
+    height: 2.15rem;
+    border-radius: 50%;
+    background: var(--bs-body-bg);
+    border: 2px solid var(--bs-primary);
+    color: var(--bs-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    z-index: 1;
+    box-shadow: 0 0 0 4px var(--bs-body-bg);
+}
+
+.craft-howto-step-content {
+    background: var(--bs-secondary-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.5rem;
+    padding: 0.9rem 1.15rem;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.craft-howto-step-content:hover {
+    border-color: rgba(var(--bs-primary-rgb), 0.4);
+}
+
+.craft-howto-step-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    color: var(--bs-body-color);
+}
+
+.craft-howto-step-desc {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--bs-body-color);
+    margin: 0;
+}
+
+/* Grid layout for cards */
+.craft-howto-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+}
+
+.craft-howto-grid-item {
+    background: var(--bs-secondary-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.5rem;
+    padding: 1rem 1.15rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.craft-howto-grid-item:hover {
+    border-color: rgba(var(--bs-primary-rgb), 0.35);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.craft-howto-grid-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--bs-body-color);
+}
+
+.craft-howto-grid-item-desc {
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--bs-body-color);
+    margin: 0;
+}
+
+/* Callouts */
+.craft-howto-callout {
+    border-left: 4px solid var(--bs-primary);
+    background: var(--bs-secondary-bg);
+    border-radius: 0 0.5rem 0.5rem 0;
+    padding: 0.9rem 1.15rem;
+    border-top: 1px solid var(--bs-border-color);
+    border-right: 1px solid var(--bs-border-color);
+    border-bottom: 1px solid var(--bs-border-color);
+}
+
+.craft-howto-callout-warning {
+    border-left-color: var(--bs-warning);
+    background: rgba(var(--bs-warning-rgb), 0.08);
+    border-color: rgba(var(--bs-warning-rgb), 0.2);
+}
+
+.craft-howto-callout-info {
+    border-left-color: var(--bs-info);
+    background: rgba(var(--bs-info-rgb), 0.08);
+    border-color: rgba(var(--bs-info-rgb), 0.2);
+}
+
+.craft-howto-callout-success {
+    border-left-color: var(--bs-success);
+    background: rgba(var(--bs-success-rgb), 0.08);
+    border-color: rgba(var(--bs-success-rgb), 0.2);
+}
+
+.craft-howto-callout-secondary {
+    border-left-color: var(--bs-secondary);
+    background: rgba(var(--bs-secondary-rgb), 0.06);
+    border-color: rgba(var(--bs-secondary-rgb), 0.2);
+}
+
+.craft-howto-callout-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.4rem;
+    color: var(--bs-body-color);
+}
+
+.craft-howto-callout-body {
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--bs-body-color);
+    margin: 0;
+}
+
+/* Feature List */
+.craft-howto-list {
+    list-style: none;
+    padding-left: 0;
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.craft-howto-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--bs-body-color);
+}
+
+.craft-howto-list-icon {
+    font-size: 0.8rem;
+    margin-top: 0.25rem;
+    flex-shrink: 0;
+}
+
+/* Dark theme specific enhancements */
+html[data-theme="darkly"] .craft-howto-hero {
+    background: linear-gradient(135deg, rgba(var(--bs-primary-rgb), 0.2) 0%, rgba(var(--bs-info-rgb), 0.1) 100%);
+    border-color: rgba(var(--bs-primary-rgb), 0.4);
+}
+
+html[data-theme="darkly"] .craft-howto-card {
+    background: #1e1e1e;
+    border-color: #333333;
+}
+
+html[data-theme="darkly"] .craft-howto-card:hover {
+    border-color: rgba(var(--bs-primary-rgb), 0.6);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+html[data-theme="darkly"] .craft-howto-step-content,
+html[data-theme="darkly"] .craft-howto-grid-item,
+html[data-theme="darkly"] .craft-howto-nav {
+    background: #141414;
+    border-color: #2c2c2c;
+}
+
+html[data-theme="darkly"] .craft-howto-nav-link {
+    background: #222222;
+    border-color: #3c3c3c;
+}
+
+html[data-theme="darkly"] .craft-howto-step-marker {
+    background: #1e1e1e;
+    box-shadow: 0 0 0 4px #1e1e1e;
+}

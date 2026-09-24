@@ -1745,294 +1745,539 @@
 
                     <!-- ========== HOW TO TAB (V2) ========== -->
                     <div class="tab-pane fade" id="how-to-pane" role="tabpanel" aria-labelledby="how-to-tab-btn">
-                        <p class="craft-tab-subtitle small text-muted mb-3">{% trans "A short guide to each tab and the order to use them in." %}</p>
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title">
-                                <i class="fas fa-compass text-secondary"></i> {% trans "Quick Links" %}
-                            </h3>
-                            <div class="d-flex flex-wrap gap-2">
-                                <a class="btn btn-outline-primary btn-sm" href="#howto-workflow">{% trans "Workflow" %}</a>
-                                <a class="btn btn-outline-success btn-sm" href="#howto-plan">{% trans "Plan" %}</a>
-                                <a class="btn btn-outline-danger btn-sm" href="#howto-configure">{% trans "Configure" %}</a>
-                                <a class="btn btn-outline-warning btn-sm" href="#howto-buy">{% trans "Buy" %}</a>
-                                <a class="btn btn-outline-info btn-sm" href="#howto-build">{% trans "Build" %}</a>
-                                <a class="btn btn-outline-secondary btn-sm" href="#howto-bpcs">{% trans "BPCs" %}</a>
-                                <a class="btn btn-outline-dark btn-sm" href="#howto-optimize">{% trans "Optimize & Save" %}</a>
-                                <a class="btn btn-outline-warning btn-sm" href="#howto-estimates">{% trans "Estimates" %}</a>
-                            </div>
-                        </section>
-
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-workflow">
-                                <i class="fas fa-route text-primary"></i> {% trans "Craft Planner Workflow" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ol class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "Set the target runs in the header. The workspace also keeps a local draft for this blueprint, but named Save/Load Simulation snapshots are still the clean way to keep scenarios." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Plan tab: decide what to Produce or Buy in the production tree. Expand, collapse, bulk set all to Produce or Buy, or use Optimize to flip items by profitability." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Configure tab: set blueprint ME/TE, enable Use this BP where you have owned or shared copies, and review build environment plus fee assumptions." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "While editing Configure, some BPC and material previews update immediately. The full planner configuration is committed when you leave the Configure tab." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Buy BPCs tab: review missing copy coverage for Produce items, refresh cached offers, and select contracts that should be counted in the plan." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Buy tab: load prices, review shipping and industry fees, optionally convert minerals to compressed ore, then compute the shopping list and subtract owned materials." %}
-                                        </li>
-                                        <li>
-                                            {% trans "Build tab: choose how many free manufacturing slots to allocate per character, then calculate the schedule for the items currently set to Produce." %}
-                                        </li>
-                                    </ol>
+                        <div class="craft-howto-container">
+                            <!-- Hero Introduction -->
+                            <div class="craft-howto-hero">
+                                <div class="craft-howto-hero-content">
+                                    <div class="craft-howto-hero-icon">
+                                        <i class="fas fa-graduation-cap" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h2 class="craft-howto-hero-title">{% trans "Craft Planner Field Guide" %}</h2>
+                                        <p class="craft-howto-hero-subtitle">{% trans "A comprehensive guide to planning, configuring, pricing, and scheduling your manufacturing operations." %}</p>
+                                    </div>
                                 </div>
                             </div>
-                        </section>
 
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-estimates">
-                                <i class="fas fa-triangle-exclamation text-warning"></i> {% trans "Which Numbers Are Estimates" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <p class="mb-2">
-                                        {% trans "Almost every figure here is a projection, not a quote. Treat the following as estimates and confirm anything you are about to commit ISK to:" %}
-                                    </p>
-                                    <ul class="mb-2 ps-3">
-                                        <li class="mb-2">
-                                            <strong>{% trans "Estimate column" %}</strong>
-                                            {% trans "market prices pulled from an external source and cached. Real Price is your own entered or observed value, and calculations prefer it whenever you supply one." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            <strong>{% trans "Capital prices" %}</strong>
-                                            {% trans "items with no usable market price fall back to a derived capital estimate, shown with its source and the time it was last calculated." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            <strong>{% trans "Industry fees and taxes" %}</strong>
-                                            {% trans "based on the fee model in Configure and the cost indices at the time you pressed Re-calculate. They are not evergreen; re-run them when assumptions change." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            <strong>{% trans "Shipping quotes" %}</strong>
-                                            {% trans "derived from the selected route's rate card. Override with the real fee you expect to pay." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            <strong>{% trans "Schedule times" %}</strong>
-                                            {% trans "modelled from your skills, ME/TE and slot choices. They assume jobs start immediately and run uninterrupted, so real completion is usually later." %}
-                                        </li>
-                                        <li>
-                                            <strong>{% trans "Compressed ore and reprocessing" %}</strong>
-                                            {% trans "depend on a cached refine yield and ore prices that may be days old." %}
-                                        </li>
-                                    </ul>
-                                    <p class="mb-0 small text-muted">
+                            <!-- Quick Navigation -->
+                            <nav class="craft-howto-nav" aria-label="{% trans 'How To Quick Links' %}">
+                                <span class="craft-howto-nav-label">
+                                    <i class="fas fa-compass text-secondary" aria-hidden="true"></i> {% trans "Jump To:" %}
+                                </span>
+                                <a class="craft-howto-nav-link" href="#howto-workflow">
+                                    <i class="fas fa-route text-primary" aria-hidden="true"></i>{% trans "Workflow" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-estimates">
+                                    <i class="fas fa-chart-pie text-warning" aria-hidden="true"></i>{% trans "Estimates" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-plan">
+                                    <i class="fas fa-sitemap text-success" aria-hidden="true"></i>{% trans "Plan" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-configure">
+                                    <i class="fas fa-sliders-h text-danger" aria-hidden="true"></i>{% trans "Configure" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-buy">
+                                    <i class="fas fa-shopping-cart text-warning" aria-hidden="true"></i>{% trans "Buy" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-build">
+                                    <i class="fas fa-hammer text-info" aria-hidden="true"></i>{% trans "Build" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-bpcs">
+                                    <i class="fas fa-copy text-secondary" aria-hidden="true"></i>{% trans "Buy BPCs" %}
+                                </a>
+                                <a class="craft-howto-nav-link" href="#howto-optimize">
+                                    <i class="fas fa-chart-line text-dark" aria-hidden="true"></i>{% trans "Optimize & Saves" %}
+                                </a>
+                            </nav>
+
+                            <!-- 1. Workflow Section -->
+                            <section class="craft-howto-card" id="howto-workflow">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-primary bg-opacity-10 text-primary">
+                                        <i class="fas fa-route" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Craft Planner Workflow" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Recommended sequence from scope setup to final job scheduling." %}</p>
+                                    </div>
+                                </div>
+
+                                <div class="craft-howto-stepper">
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">1</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Set Target Runs & Scenario Scope" %}</span>
+                                                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">{% trans "Header" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "Set the target runs in the header. The workspace also keeps a local draft for this blueprint, but named Save/Load Simulation snapshots are still the clean way to keep scenarios." %}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">2</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Balance the Production Tree" %}</span>
+                                                <span class="badge bg-success-subtle text-success border border-success-subtle">{% trans "Plan Tab" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "Plan tab: decide what to Produce or Buy in the production tree. Expand, collapse, bulk set all to Produce or Buy, or use Optimize to flip items by profitability." %}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">3</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Configure ME/TE, Copies & Facilities" %}</span>
+                                                <span class="badge bg-danger-subtle text-danger border border-danger-subtle">{% trans "Configure Tab" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "Configure tab: set blueprint ME/TE, enable Use this BP where you have owned or shared copies, and review build environment plus fee assumptions." %}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">4</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Seamless Commit on Tab Switch" %}</span>
+                                                <span class="badge bg-info-subtle text-info border border-info-subtle">{% trans "Auto-Sync" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "While editing Configure, some BPC and material previews update immediately. The full planner configuration is committed when you leave the Configure tab." %}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">5</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Acquire Missing Blueprint Copies" %}</span>
+                                                <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">{% trans "Buy BPCs Tab" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "Buy BPCs tab: review missing copy coverage for Produce items, refresh cached offers, and select contracts that should be counted in the plan." %}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">6</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Price Materials, Review Fees & Sourcing" %}</span>
+                                                <span class="badge bg-warning-subtle text-warning border border-warning-subtle">{% trans "Buy Tab" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "Buy tab: load prices, review shipping and industry fees, optionally convert minerals to compressed ore, then compute the shopping list and subtract owned materials." %}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    <div class="craft-howto-step">
+                                        <div class="craft-howto-step-marker">7</div>
+                                        <div class="craft-howto-step-content">
+                                            <div class="craft-howto-step-title">
+                                                <span>{% trans "Allocate Slots & Generate Schedule" %}</span>
+                                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle">{% trans "Build Tab" %}</span>
+                                            </div>
+                                            <p class="craft-howto-step-desc">
+                                                {% trans "Build tab: choose how many free manufacturing slots to allocate per character, then calculate the schedule for the items currently set to Produce." %}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <!-- 2. Estimates Section -->
+                            <section class="craft-howto-card" id="howto-estimates">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-warning bg-opacity-10 text-warning">
+                                        <i class="fas fa-chart-pie" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Which Numbers Are Estimates" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Understand data sources, calculation models, and what requires user verification." %}</p>
+                                    </div>
+                                </div>
+
+                                <p class="small mb-0">
+                                    {% trans "Almost every figure here is a projection, not a quote. Treat the following as estimates and confirm anything you are about to commit ISK to:" %}
+                                </p>
+
+                                <div class="craft-howto-grid">
+                                    <div class="craft-howto-grid-item">
+                                        <div class="craft-howto-grid-item-header">
+                                            <i class="fas fa-chart-line text-primary" aria-hidden="true"></i>
+                                            <span>{% trans "Estimate Column" %}</span>
+                                        </div>
+                                        <p class="craft-howto-grid-item-desc">
+                                            {% trans "Market prices pulled from an external source and cached. Real Price is your own entered or observed value, and calculations prefer it whenever you supply one." %}
+                                        </p>
+                                    </div>
+
+                                    <div class="craft-howto-grid-item">
+                                        <div class="craft-howto-grid-item-header">
+                                            <i class="fas fa-shield-alt text-info" aria-hidden="true"></i>
+                                            <span>{% trans "Capital prices" %}</span>
+                                        </div>
+                                        <p class="craft-howto-grid-item-desc">
+                                            {% trans "Items with no usable market price fall back to a derived capital estimate, shown with its source and the time it was last calculated." %}
+                                        </p>
+                                    </div>
+
+                                    <div class="craft-howto-grid-item">
+                                        <div class="craft-howto-grid-item-header">
+                                            <i class="fas fa-file-invoice-dollar text-success" aria-hidden="true"></i>
+                                            <span>{% trans "Industry fees and taxes" %}</span>
+                                        </div>
+                                        <p class="craft-howto-grid-item-desc">
+                                            {% trans "Based on the fee model in Configure and the cost indices at the time you pressed Re-calculate. They are not evergreen; re-run them when assumptions change." %}
+                                        </p>
+                                    </div>
+
+                                    <div class="craft-howto-grid-item">
+                                        <div class="craft-howto-grid-item-header">
+                                            <i class="fas fa-truck text-warning" aria-hidden="true"></i>
+                                            <span>{% trans "Shipping quotes" %}</span>
+                                        </div>
+                                        <p class="craft-howto-grid-item-desc">
+                                            {% trans "Derived from the selected route's rate card. Override with the real fee you expect to pay." %}
+                                        </p>
+                                    </div>
+
+                                    <div class="craft-howto-grid-item">
+                                        <div class="craft-howto-grid-item-header">
+                                            <i class="fas fa-clock text-danger" aria-hidden="true"></i>
+                                            <span>{% trans "Schedule times" %}</span>
+                                        </div>
+                                        <p class="craft-howto-grid-item-desc">
+                                            {% trans "Modelled from your skills, ME/TE and slot choices. They assume jobs start immediately and run uninterrupted, so real completion is usually later." %}
+                                        </p>
+                                    </div>
+
+                                    <div class="craft-howto-grid-item">
+                                        <div class="craft-howto-grid-item-header">
+                                            <i class="fas fa-gem text-secondary" aria-hidden="true"></i>
+                                            <span>{% trans "Compressed Ore & Reprocessing" %}</span>
+                                        </div>
+                                        <p class="craft-howto-grid-item-desc">
+                                            {% trans "Depend on a cached refine yield and ore prices that may be days old." %}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="craft-howto-callout craft-howto-callout-info">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-sync-alt" aria-hidden="true"></i>
+                                        <span>{% trans "Data Freshness & Cache Fallback" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body">
                                         {% trans "Anything drawn from cached ESI or market data shows when it was last refreshed. If a refresh fails the previous value is kept rather than blanked, and it is labelled as stale." %}
                                     </p>
                                 </div>
-                            </div>
-                        </section>
+                            </section>
 
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-plan">
-                                <i class="fas fa-sitemap text-success"></i> {% trans "Plan Tab" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ul class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "The Production Tree is the main buy-versus-build control surface. Every downstream tab reads from these Produce/Buy decisions." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Use Apply selection to all instances of that item when the same component appears in more than one branch and you want one consistent decision." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            <strong>{% trans "What Optimize does" %}</strong>
-                                            {% trans "It maximises the margin shown on this plan: profit divided by the final product's sale value." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "How it decides: for every craftable item it compares the cost of buying it outright against the cost of producing it from its own inputs, working bottom-up from raw materials so a component's cost already reflects the cheaper choice made beneath it. It then flips switches while that improves the displayed margin." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Its inputs are the current run count, your ME/TE values, your BPC coverage, and whatever prices are loaded right now. Change any of those and the recommendation can change, so re-run it after loading estimates or editing real prices." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Surplus from over-production is reported separately and is never counted as profit. Review the result before buying or scheduling." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "The Materials panel groups current demand after plan choices are applied, so it is the quickest place to sanity-check whether a plan change actually reduced the raw inputs you expect." %}
-                                        </li>
-                                        <li>
-                                            {% trans "Changing runs in the header preserves your working decisions and updates the plan scope instead of forcing you to rebuild the tree from scratch." %}
-                                        </li>
-                                    </ul>
+                            <!-- 3. Plan Tab Section -->
+                            <section class="craft-howto-card" id="howto-plan">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-success bg-opacity-10 text-success">
+                                        <i class="fas fa-sitemap" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Plan Tab" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Production tree balancing and buy-vs-build optimization." %}</p>
+                                    </div>
                                 </div>
-                            </div>
-                        </section>
 
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-configure">
-                                <i class="fas fa-sliders-h text-danger"></i> {% trans "Configure Behavior" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ul class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "Quick Presets can push Max, Owned BP values, or Reset across the visible blueprint cards. Sync Owned BPCs queues a fresh ESI import for your copy inventory." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Use this BP only matters for items you are planning to Produce. If you turn a component back to Buy in Plan, that blueprint drops out of the active craft configuration." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Owned BPOs, owned BPCs, shared copies, and bought contract copies are all surfaced here. Missing-run warnings show where your selected coverage is still short." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "The Configure Build Environment is the material and fee model. System name resolves system ID and index automatically, structure selection sets structure bonuses, and installed manufacturing rigs apply by domain." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "The Industry Fee Model feeds Buy tab fee calculation. Enable it here, then use Re-calculate taxes in Buy when you want the current manufacturing fee breakdown." %}
-                                        </li>
-                                        <li>
-                                            {% trans "Edits are saved locally as you work. Material and BPC previews can refresh live, but the full recalculated configuration is applied when you leave the Configure tab." %}
-                                        </li>
-                                        <li class="mt-2">
-                                            {% trans "Blueprint Source limits owned BPC/BPO coverage to one location or container from your cached assets. Applying it reloads the page, is remembered as your personal default, and is never part of a share link. Your last build system and structure are remembered the same way; the structure list is cached corporation data, labelled with its refresh time." %}
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </section>
+                                <ul class="craft-howto-list">
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-success craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "The Production Tree is the main buy-versus-build control surface. Every downstream tab reads from these Produce/Buy decisions." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-success craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Use Apply selection to all instances of that item when the same component appears in more than one branch and you want one consistent decision." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-success craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "The Materials panel groups current demand after plan choices are applied, so it is the quickest place to sanity-check whether a plan change actually reduced the raw inputs you expect." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-success craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Changing runs in the header preserves your working decisions and updates the plan scope instead of forcing you to rebuild the tree from scratch." %}</span>
+                                    </li>
+                                </ul>
 
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-buy">
-                                <i class="fas fa-shopping-cart text-warning"></i> {% trans "Buy Tab" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ul class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "Purchase Planner tracks material buy cost, final product sell value, margin, industry fees, shipping, and surplus quantities from over-coverage. Surplus is informational and is not counted as profit." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Load market estimates to fill the fallback column, then use Real Price and final sale price fields as manual overrides. Clearing overrides removes only the manual layer." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Selecting a shipping rate enables automatic freight quotes and a one-way contract breakdown. The Shipping real-price field lets you replace the quote with the actual fee you expect to pay." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Re-calculate taxes uses the Configure fee model and shows a per-produced-item manufacturing fee breakdown. If your assumptions change, run it again because fees are not treated as evergreen." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Use compressed ore equivalent appears only when mineral rows are present. Applying it swaps those minerals for compressed ore lines; Reset to Minerals restores the original rows." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            <strong>{% trans "Before you press Compute" %}</strong>
-                                            {% trans "in this order: load estimates (or enter real prices); choose your material source; re-calculate taxes if your assumptions changed. Compute then builds the Shopping List from that state." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Pick exactly one material source. Manual text input expects Item Name [tab] Quantity. A designated materials bay uses your cached asset data instead, and Compute will refuse until that data has been refreshed and access-checked, so that stale or unreadable assets are never silently treated as zero stock." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Items the hub buyback has in stock get a Buyback button. It shows availability and price, and Create buyback order opens a confirmation where you choose quantity and recipient. The order goes through the normal buyback approval; until it completes, its quantity shows as Reserved (pending), never as owned." %}
-                                        </li>
-                                        <li>
-                                            {% trans "Shopping List excludes BPC contract rows and stays focused on items you still need to source. Purchase Planner Export CSV downloads every planner row; Shopping List Copy gives item and quantity to buy in multibuy format, Export downloads the list as CSV, and Copy Leftovers gives the owned items the plan does not use." %}
-                                        </li>
-                                    </ul>
+                                <div class="craft-howto-callout craft-howto-callout-success">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-bolt" aria-hidden="true"></i>
+                                        <span>{% trans "What Optimize does" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body mb-2">
+                                        <strong>{% trans "Margin Maximization:" %}</strong> {% trans "It maximises the margin shown on this plan: profit divided by the final product's sale value." %}
+                                    </p>
+                                    <p class="craft-howto-callout-body mb-2">
+                                        <strong>{% trans "Decision Logic:" %}</strong> {% trans "How it decides: for every craftable item it compares the cost of buying it outright against the cost of producing it from its own inputs, working bottom-up from raw materials so a component's cost already reflects the cheaper choice made beneath it. It then flips switches while that improves the displayed margin." %}
+                                    </p>
+                                    <p class="craft-howto-callout-body mb-2">
+                                        <strong>{% trans "Inputs & Re-evaluation:" %}</strong> {% trans "Its inputs are the current run count, your ME/TE values, your BPC coverage, and whatever prices are loaded right now. Change any of those and the recommendation can change, so re-run it after loading estimates or editing real prices." %}
+                                    </p>
+                                    <p class="craft-howto-callout-body">
+                                        <strong>{% trans "Surplus Isolation:" %}</strong> {% trans "Surplus from over-production is reported separately and is never counted as profit. Review the result before buying or scheduling." %}
+                                    </p>
                                 </div>
-                            </div>
-                        </section>
+                            </section>
 
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-build">
-                                <i class="fas fa-hammer text-info"></i> {% trans "Build Tab" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ul class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "Character Slots are loaded from your synced industry characters and reflect manufacturing capacity from Mass Production and Advanced Mass Production skills." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Schedule Slot Selection lets you decide how many free slots to allocate per character right now. Changing slot counts updates the preview and requires a fresh schedule calculation to redraw the timeline." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Planned Run Distribution is a quick preview of how much work the current Produce plan will place on the selected slots before you run the full scheduler." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "The Build tab Build Environment is separate from Configure. It controls time estimates only: structure time bonus, rig time bonus, Industry skill, and Advanced Industry skill." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Calculate Schedule generates sequential versus parallel time, the production timeline, grouped runs by job and character, and recommendations using your chosen scheduling objective." %}
-                                        </li>
-                                        <li>
-                                            {% trans "If no items are set to Produce, Build stays informational only. Start by switching the relevant components to Produce in Plan." %}
-                                        </li>
-                                        <li class="mt-2">
-                                            {% trans "Live job check is opt-in. Pick the characters working on the project; each refresh matches their ESI industry jobs to the saved plan by character, product or blueprint, runs and time window, never by name alone. Jobs show as running, delayed (finishing later than planned), completed, cancelled or not matched. If job data is stale or your token lacks the industry jobs scope, the status says so and the plan is left unchanged. While the page is open, it re-checks automatically at a bounded interval; Track current schedule restarts matching from the schedule shown now." %}
-                                        </li>
-                                    </ul>
+                            <!-- 4. Configure Tab Section -->
+                            <section class="craft-howto-card" id="howto-configure">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-danger bg-opacity-10 text-danger">
+                                        <i class="fas fa-sliders-h" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Configure Behavior" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Blueprint efficiency, facility parameters, and fee modelling." %}</p>
+                                    </div>
                                 </div>
-                            </div>
-                        </section>
 
-                        <section class="craft-section mb-3">
-                            <h3 class="craft-section-title" id="howto-bpcs">
-                                <i class="fas fa-copy text-secondary"></i> {% trans "Buy BPCs And Copy Coverage" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ul class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "Buy BPCs only lists blueprint copies for items currently set to Produce. Buy items do not need copy coverage, so they are intentionally omitted." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Offers can be sorted by ISK per run, total price, runs, ME, TE, or freshness. Refresh forces a new cache fetch when you want newer contract data." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Selecting a contract can apply its ME/TE to the matching Configure card and add the contract cost into the planner immediately. Contracts selected from the same pack can cover more than one blueprint row." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Selected contracts also appear in Configure under Bought BPCs, where removing one immediately updates copy coverage and planner totals." %}
-                                        </li>
-                                        <li>
-                                            {% trans "Configure cards also support direct copy requests from shared-copy inventory. Missing-run validation will prefill requested runs when a shortfall is detected." %}
-                                        </li>
-                                        <li class="mt-2">
-                                            {% trans "Each offer shows when it was listed and when it expires. The snapshot badge says whether the data is current, cached (older than the refresh interval) or from a refresh that failed, with the last ESI refresh time and local cache age. Selected contracts that expire or disappear from the snapshot are removed from your plan, with a notice." %}
-                                        </li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </section>
+                                <ul class="craft-howto-list">
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-danger craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Quick Presets can push Max, Owned BP values, or Reset across the visible blueprint cards. Sync Owned BPCs queues a fresh ESI import for your copy inventory." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-danger craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Use this BP only matters for items you are planning to Produce. If you turn a component back to Buy in Plan, that blueprint drops out of the active craft configuration." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-danger craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Owned BPOs, owned BPCs, shared copies, and bought contract copies are all surfaced here. Missing-run warnings show where your selected coverage is still short." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-danger craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "The Configure Build Environment is the material and fee model. System name resolves system ID and index automatically, structure selection sets structure bonuses, and installed manufacturing rigs apply by domain." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-danger craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "The Industry Fee Model feeds Buy tab fee calculation. Enable it here, then use Re-calculate taxes in Buy when you want the current manufacturing fee breakdown." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-danger craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Edits are saved locally as you work. Material and BPC previews can refresh live, but the full recalculated configuration is applied when you leave the Configure tab." %}</span>
+                                    </li>
+                                </ul>
 
-                        <section class="craft-section">
-                            <h3 class="craft-section-title" id="howto-optimize">
-                                <i class="fas fa-chart-line text-dark"></i> {% trans "Optimize And Saves" %}
-                            </h3>
-                            <div class="card border-0 bg-body-tertiary">
-                                <div class="card-body">
-                                    <ul class="mb-0 ps-3">
-                                        <li class="mb-2">
-                                            {% trans "Optimize on the Plan tab is the single optimizer: for the run count you entered it chooses Buy or Produce for each component to maximise margin, using the same real prices and estimates as the Buy tab. Industry fees and surplus value are not part of that comparison." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "Run count is your decision. To compare run counts, change Runs and read the updated margin; the former Run optimized tab was retired because it ignored fees, bought BPC costs and owned stock, so its answer could disagree with the Buy totals." %}
-                                        </li>
-                                        <li class="mb-2">
-                                            {% trans "The workspace autosaves local draft state per blueprint and simulation scope, including tabs, BPC selections, slot allocations, and other active UI choices." %}
-                                        </li>
-                                        <li>
-                                            {% trans "Use Save Simulation and Load Simulation when you want named, reusable server-side scenarios instead of just the current local draft." %}
-                                        </li>
-                                    </ul>
+                                <div class="craft-howto-callout craft-howto-callout-info">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-map-marker-alt" aria-hidden="true"></i>
+                                        <span>{% trans "Blueprint Source & Asset Scoping" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body">
+                                        {% trans "Blueprint Source limits owned BPC/BPO coverage to one location or container from your cached assets. Applying it reloads the page, is remembered as your personal default, and is never part of a share link. Your last build system and structure are remembered the same way; the structure list is cached corporation data, labelled with its refresh time." %}
+                                    </p>
                                 </div>
-                            </div>
-                        </section>
+                            </section>
+
+                            <!-- 5. Buy Tab Section -->
+                            <section class="craft-howto-card" id="howto-buy">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-warning bg-opacity-10 text-warning">
+                                        <i class="fas fa-shopping-cart" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Buy Tab" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Pricing, fee evaluation, stock checks, and shopping list generation." %}</p>
+                                    </div>
+                                </div>
+
+                                <ul class="craft-howto-list">
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Purchase Planner tracks material buy cost, final product sell value, margin, industry fees, shipping, and surplus quantities from over-coverage. Surplus is informational and is not counted as profit." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Load market estimates to fill the fallback column, then use Real Price and final sale price fields as manual overrides. Clearing overrides removes only the manual layer." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Selecting a shipping rate enables automatic freight quotes and a one-way contract breakdown. The Shipping real-price field lets you replace the quote with the actual fee you expect to pay." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Re-calculate taxes uses the Configure fee model and shows a per-produced-item manufacturing fee breakdown. If your assumptions change, run it again because fees are not treated as evergreen." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Use compressed ore equivalent appears only when mineral rows are present. Applying it swaps those minerals for compressed ore lines; Reset to Minerals restores the original rows." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Pick exactly one material source. Manual text input expects Item Name [tab] Quantity. A designated materials bay uses your cached asset data instead, and Compute will refuse until that data has been refreshed and access-checked, so that stale or unreadable assets are never silently treated as zero stock." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-warning craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Shopping List excludes BPC contract rows and stays focused on items you still need to source. Purchase Planner Export CSV downloads every planner row; Shopping List Copy gives item and quantity to buy in multibuy format, Export downloads the list as CSV, and Copy Leftovers gives the owned items the plan does not use." %}</span>
+                                    </li>
+                                </ul>
+
+                                <div class="craft-howto-callout craft-howto-callout-warning">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-list-ol" aria-hidden="true"></i>
+                                        <span>{% trans "Before you press Compute" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body">
+                                        {% trans "In this order: load estimates (or enter real prices); choose your material source; re-calculate taxes if your assumptions changed. Compute then builds the Shopping List from that state." %}
+                                    </p>
+                                </div>
+
+                                <div class="craft-howto-callout craft-howto-callout-info">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-store" aria-hidden="true"></i>
+                                        <span>{% trans "Buyback Integration" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body">
+                                        {% trans "Items the hub buyback has in stock get a Buyback button. It shows availability and price, and Create buyback order opens a confirmation where you choose quantity and recipient. The order goes through the normal buyback approval; until it completes, its quantity shows as Reserved (pending), never as owned." %}
+                                    </p>
+                                </div>
+                            </section>
+
+                            <!-- 6. Build Tab Section -->
+                            <section class="craft-howto-card" id="howto-build">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-info bg-opacity-10 text-info">
+                                        <i class="fas fa-hammer" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Build Tab" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Slot capacity allocation, job scheduling, and live execution tracking." %}</p>
+                                    </div>
+                                </div>
+
+                                <ul class="craft-howto-list">
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-info craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Character Slots are loaded from your synced industry characters and reflect manufacturing capacity from Mass Production and Advanced Mass Production skills." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-info craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Schedule Slot Selection lets you decide how many free slots to allocate per character right now. Changing slot counts updates the preview and requires a fresh schedule calculation to redraw the timeline." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-info craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Planned Run Distribution is a quick preview of how much work the current Produce plan will place on the selected slots before you run the full scheduler." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-info craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "The Build tab Build Environment is separate from Configure. It controls time estimates only: structure time bonus, rig time bonus, Industry skill, and Advanced Industry skill." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-info craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Calculate Schedule generates sequential versus parallel time, the production timeline, grouped runs by job and character, and recommendations using your chosen scheduling objective." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-info craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "If no items are set to Produce, Build stays informational only. Start by switching the relevant components to Produce in Plan." %}</span>
+                                    </li>
+                                </ul>
+
+                                <div class="craft-howto-callout craft-howto-callout-info">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-satellite-dish" aria-hidden="true"></i>
+                                        <span>{% trans "Live Job Check (Opt-in)" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body">
+                                        {% trans "Live job check is opt-in. Pick the characters working on the project; each refresh matches their ESI industry jobs to the saved plan by character, product or blueprint, runs and time window, never by name alone. Jobs show as running, delayed (finishing later than planned), completed, cancelled or not matched. If job data is stale or your token lacks the industry jobs scope, the status says so and the plan is left unchanged. While the page is open, it re-checks automatically at a bounded interval; Track current schedule restarts matching from the schedule shown now." %}
+                                    </p>
+                                </div>
+                            </section>
+
+                            <!-- 7. Buy BPCs Tab Section -->
+                            <section class="craft-howto-card" id="howto-bpcs">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-secondary bg-opacity-10 text-secondary">
+                                        <i class="fas fa-copy" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Buy BPCs And Copy Coverage" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Contract market copy searching, selection, and inventory shortfall coverage." %}</p>
+                                    </div>
+                                </div>
+
+                                <ul class="craft-howto-list">
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-secondary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Buy BPCs only lists blueprint copies for items currently set to Produce. Buy items do not need copy coverage, so they are intentionally omitted." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-secondary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Offers can be sorted by ISK per run, total price, runs, ME, TE, or freshness. Refresh forces a new cache fetch when you want newer contract data." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-secondary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Selecting a contract can apply its ME/TE to the matching Configure card and add the contract cost into the planner immediately. Contracts selected from the same pack can cover more than one blueprint row." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-secondary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Selected contracts also appear in Configure under Bought BPCs, where removing one immediately updates copy coverage and planner totals." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-secondary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Configure cards also support direct copy requests from shared-copy inventory. Missing-run validation will prefill requested runs when a shortfall is detected." %}</span>
+                                    </li>
+                                </ul>
+
+                                <div class="craft-howto-callout craft-howto-callout-secondary">
+                                    <div class="craft-howto-callout-title">
+                                        <i class="fas fa-hourglass-half" aria-hidden="true"></i>
+                                        <span>{% trans "Contract Freshness & Auto-Removal" %}</span>
+                                    </div>
+                                    <p class="craft-howto-callout-body">
+                                        {% trans "Each offer shows when it was listed and when it expires. The snapshot badge says whether the data is current, cached (older than the refresh interval) or from a refresh that failed, with the last ESI refresh time and local cache age. Selected contracts that expire or disappear from the snapshot are removed from your plan, with a notice." %}
+                                    </p>
+                                </div>
+                            </section>
+
+                            <!-- 8. Optimize & Saves Section -->
+                            <section class="craft-howto-card" id="howto-optimize">
+                                <div class="craft-howto-card-header">
+                                    <div class="craft-howto-icon-box bg-dark bg-opacity-10 text-body">
+                                        <i class="fas fa-chart-line" aria-hidden="true"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="craft-howto-card-title">{% trans "Optimize And Saves" %}</h3>
+                                        <p class="small text-muted mb-0">{% trans "Single optimizer behavior, draft autosaves, and server-side simulation saves." %}</p>
+                                    </div>
+                                </div>
+
+                                <ul class="craft-howto-list">
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-primary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Optimize on the Plan tab is the single optimizer: for the run count you entered it chooses Buy or Produce for each component to maximise margin, using the same real prices and estimates as the Buy tab. Industry fees and surplus value are not part of that comparison." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-primary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Run count is your decision. To compare run counts, change Runs and read the updated margin; the former Run optimized tab was retired because it ignored fees, bought BPC costs and owned stock, so its answer could disagree with the Buy totals." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-primary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "The workspace autosaves local draft state per blueprint and simulation scope, including tabs, BPC selections, slot allocations, and other active UI choices." %}</span>
+                                    </li>
+                                    <li class="craft-howto-list-item">
+                                        <i class="fas fa-check-circle text-primary craft-howto-list-icon" aria-hidden="true"></i>
+                                        <span>{% trans "Use Save Simulation and Load Simulation when you want named, reusable server-side scenarios instead of just the current local draft." %}</span>
+                                    </li>
+                                </ul>
+                            </section>
+                        </div>
                     </div>
                 </div>
             </div>
