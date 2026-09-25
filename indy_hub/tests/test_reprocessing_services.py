@@ -572,7 +572,9 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
                 filtered = [row for row in filtered if self._matches_lookup(row, lookup, expected)]
             return self.__class__(filtered)
 
-        def values_list(self, *fields):
+        def values_list(self, *fields, flat=False):
+            if flat and len(fields) == 1:
+                return [self._resolve_attr(row, fields[0]) for row in self.rows]
             return [tuple(self._resolve_attr(row, field) for field in fields) for row in self.rows]
 
         def _resolve_attr(self, obj, lookup):
@@ -586,11 +588,16 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
         def _matches_lookup(self, obj, lookup, expected):
             parts = str(lookup or "").split("__")
             operator = "exact"
-            if parts and parts[-1] in {"icontains"}:
+            if parts and parts[-1] in {"icontains", "in"}:
                 operator = parts.pop()
             value = self._resolve_attr(obj, "__".join(parts))
             if operator == "icontains":
                 return str(expected or "").lower() in str(value or "").lower()
+            if operator == "in":
+                try:
+                    return value in expected
+                except TypeError:
+                    return False
             return value == expected
 
         def _matches_q(self, obj, query):
@@ -716,6 +723,112 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
 
         self.assertFalse(success)
         self.assertIn("esde_load_sde", message)
+
+    def test_get_ore_type_ids_filters_market_groups_and_excludes_modules(self):
+        from indy_hub.services.reprocessing import get_ore_type_ids
+
+        asteroid_group = self._FakeGroup(category_id=25)
+        module_group_type = self._FakeGroup(category_id=6)
+        ship_group_type = self._FakeGroup(category_id=2)
+
+        raw_materials_market = self._FakeMarketGroup(
+            "Standard Ores",
+            parent_group=self._FakeMarketGroup("Raw Materials"),
+        )
+        gas_market = self._FakeMarketGroup(
+            "Booster Gas Clouds",
+            parent_group=self._FakeMarketGroup("Gas Clouds Materials"),
+        )
+        ice_products_market = self._FakeMarketGroup("Ice Products")
+        minerals_market = self._FakeMarketGroup("Minerals")
+        reactions_market = self._FakeMarketGroup(
+            "Polymer Materials",
+            parent_group=self._FakeMarketGroup("Reaction Materials"),
+        )
+        module_market = self._FakeMarketGroup(
+            "Cloaking Devices",
+            parent_group=self._FakeMarketGroup("Hull & Advanced Systems"),
+        )
+        ship_market = self._FakeMarketGroup("Frigates")
+
+        ore_item = self._FakeItemType(
+            4001,
+            "Veldspar",
+            published=True,
+            market_group=raw_materials_market,
+            group=asteroid_group,
+        )
+        gas_item = self._FakeItemType(
+            4002,
+            "Fullerenes Gas",
+            published=True,
+            market_group=gas_market,
+            group=self._FakeGroup(category_id=4),
+        )
+        ice_product_item = self._FakeItemType(
+            4003,
+            "Liquid Ozone",
+            published=True,
+            market_group=ice_products_market,
+            group=self._FakeGroup(category_id=4),
+        )
+        mineral_item = self._FakeItemType(
+            4004,
+            "Tritanium",
+            published=True,
+            market_group=minerals_market,
+            group=self._FakeGroup(category_id=4),
+        )
+        reaction_item = self._FakeItemType(
+            4005,
+            "Crystalline Carbonide",
+            published=True,
+            market_group=reactions_market,
+            group=self._FakeGroup(category_id=4),
+        )
+        cloak_module = self._FakeItemType(
+            4006,
+            "Covert Ops Cloaking Device II",
+            published=True,
+            market_group=module_market,
+            group=module_group_type,
+        )
+        ship_item = self._FakeItemType(
+            4007,
+            "Rifter",
+            published=True,
+            market_group=ship_market,
+            group=ship_group_type,
+        )
+
+        all_types = [
+            ore_item,
+            gas_item,
+            ice_product_item,
+            mineral_item,
+            reaction_item,
+            cloak_module,
+            ship_item,
+        ]
+        fake_item_type_model = SimpleNamespace(
+            objects=self._FakeQuerySet(all_types)
+        )
+
+        with patch("eve_sde.models.ItemType", fake_item_type_model):
+            result = get_ore_type_ids([t.id for t in all_types])
+
+        self.assertEqual(
+            result,
+            {
+                ore_item.id,
+                gas_item.id,
+                ice_product_item.id,
+                mineral_item.id,
+                reaction_item.id,
+            },
+        )
+        self.assertNotIn(cloak_module.id, result)
+        self.assertNotIn(ship_item.id, result)
 
 
 class CompressedOreCalculationSetupTests(SimpleTestCase):

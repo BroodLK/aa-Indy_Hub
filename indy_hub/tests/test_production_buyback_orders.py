@@ -213,14 +213,21 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         self.assertEqual([order["id"] for order in payload["orders"]], [own.id])
         self.assertEqual(payload["orders"][0]["progress"], "pending")
 
+    @patch("indy_hub.services.reprocessing.get_ore_type_ids")
     @patch("indy_hub.services.reprocessing.get_reprocessing_outputs_map")
     @patch("indy_hub.services.reprocessing.get_portion_size_map")
     def test_reports_ore_suggestions_for_minerals(
-        self, mock_portion_map, mock_outputs
+        self, mock_portion_map, mock_outputs, mock_ore_types
     ) -> None:
         compressed_veldspar = 28432
         veldspar = 1230
         partial_scordite = 1228
+        cloaking_device = 11578
+        mock_ore_types.return_value = {
+            compressed_veldspar,
+            veldspar,
+            partial_scordite,
+        }
         mock_portion_map.return_value = {
             compressed_veldspar: 100,
             veldspar: 100,
@@ -277,6 +284,19 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
                         "source_structure_ids": [1001],
                         "buy_location_label": "Structure Alpha",
                     },
+                    {
+                        "row_kind": "item",
+                        "row_index": 3,
+                        "type_id": cloaking_device,
+                        "display_type_name": "Covert Ops Cloaking Device II",
+                        "quantity": 7,
+                        "blueprint_variant": "",
+                        "container_path": "",
+                        "display_sell_price_to_member": "4747150.00",
+                        "has_buy_price_override": False,
+                        "source_structure_ids": [1001],
+                        "buy_location_label": "Structure Alpha",
+                    },
                 ],
                 "stock_meta_by_type": {
                     compressed_veldspar: {
@@ -285,6 +305,7 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
                     },
                     veldspar: {"type_id": veldspar, "quantity": 20000},
                     partial_scordite: {"type_id": partial_scordite, "quantity": 50},
+                    cloaking_device: {"type_id": cloaking_device, "quantity": 7},
                 },
             },
             600,
@@ -298,6 +319,7 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         types_suggested = {s["type_id"] for s in suggestions}
         self.assertEqual(types_suggested, {compressed_veldspar, veldspar})
         self.assertNotIn(partial_scordite, types_suggested)
+        self.assertNotIn(cloaking_device, types_suggested)
         self.assertIn(str(compressed_veldspar), payload["items"])
         self.assertIn(str(veldspar), payload["items"])
 

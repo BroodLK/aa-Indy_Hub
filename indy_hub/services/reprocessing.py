@@ -544,14 +544,34 @@ def get_reprocessing_portion_size(type_id: int) -> int:
 
 ORE_CATEGORY_IDS = {25}
 
+REPROCESSING_MARKET_GROUP_KEYWORDS = (
+    "gas clouds",
+    "gas cloud",
+    "compressed gas",
+    "ice products",
+    "ice product",
+    "minerals",
+    "mineral",
+    "raw materials",
+    "raw material",
+    "reaction materials",
+    "reaction material",
+)
+
 
 def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
-    """Return the subset of ``type_ids`` that are ore or compressed ore.
+    """Return the subset of ``type_ids`` that are ore, compressed ore, or raw materials.
 
     Matches asteroid category (25) OR names containing "Compressed" whose market
-    group ancestry (up to 4 levels) includes "Compressed"/"ore" — mirroring the
-    existing ``_compressed_ore_type_filter`` in this module. Excludes
-    "Batch Compressed" names. Returns empty when SDE isn't available.
+    group ancestry (up to 5 levels) includes valid raw material groups, OR items
+    whose market group ancestry matches any of the industrial raw material groups:
+      - Gas Clouds Materials
+      - Ice Products
+      - Minerals
+      - Raw Materials (Standard Ores, Moon Ores, Ice Ores, Abyssal Materials, etc.)
+      - Reaction Materials
+    Excludes "Batch Compressed" and non-industrial items (modules, ships, rigs, drones, etc.).
+    Returns empty when SDE isn't available.
     """
     cleaned: set[int] = set()
     for raw_id in type_ids or []:
@@ -577,19 +597,22 @@ def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
     try:
         market_group_filter = models.Q()
         relation = "market_group"
-        for _ in range(4):
-            market_group_filter |= models.Q(
-                **{f"{relation}__name__icontains": "compressed"}
-            ) & models.Q(**{f"{relation}__name__icontains": "ore"})
+        for _ in range(5):
+            for kw in REPROCESSING_MARKET_GROUP_KEYWORDS:
+                market_group_filter |= models.Q(**{f"{relation}__name__icontains": kw})
             relation = f"{relation}__parent_group"
-        compressed_ore_filter = (
+
+        compressed_filter = (
             models.Q(name__icontains="Compressed")
             & ~models.Q(name__icontains="Batch Compressed")
             & (models.Q(group__category_id__in=ORE_CATEGORY_IDS) | market_group_filter)
         )
         combined_filter = (
-            models.Q(group__category_id__in=ORE_CATEGORY_IDS) | compressed_ore_filter
-        )
+            models.Q(group__category_id__in=ORE_CATEGORY_IDS)
+            | market_group_filter
+            | compressed_filter
+        ) & ~models.Q(name__icontains="Batch Compressed")
+
         rows = (
             item_type_model.objects.filter(id__in=cleaned)
             .filter(combined_filter)

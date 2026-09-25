@@ -220,14 +220,16 @@ def production_buyback_availability(request):
 
         # AA Example App
         from ..services.reprocessing import (
+            get_ore_type_ids,
             get_portion_size_map,
             get_reprocessing_outputs_map,
         )
 
         all_plain_type_ids = set(plain_rows.keys())
-        if all_plain_type_ids:
-            outputs_map = get_reprocessing_outputs_map(all_plain_type_ids)
-            portion_size_map = get_portion_size_map(all_plain_type_ids)
+        candidate_type_ids = get_ore_type_ids(all_plain_type_ids)
+        if candidate_type_ids:
+            outputs_map = get_reprocessing_outputs_map(candidate_type_ids)
+            portion_size_map = get_portion_size_map(candidate_type_ids)
             requested_set = set(type_ids)
             for stock_type_id, outputs in outputs_map.items():
                 if not outputs:
