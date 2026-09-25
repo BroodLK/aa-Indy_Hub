@@ -412,6 +412,14 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("Available in buyback, but you already own enough", self.script)
         self.assertIn("You already own enough of this item for this build", self.script)
 
+    def test_craft_js_renders_ore_suggestions_on_mineral_rows(self) -> None:
+        self.assertIn("craft-buyback-ore-badge", self.script)
+        self.assertIn("craft-ore-suggestions-popover", self.script)
+        self.assertIn("oreSuggestions", self.script)
+        self.assertIn("Ore in Buyback", self.script)
+        self.assertIn("Buyback has ore in stock that reprocesses into", self.script)
+        self.assertIn("Order Ore", self.script)
+
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(self) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)
         self.assertIn("indyHubMaterialExchangeBuyPrefill", self.buy_template)

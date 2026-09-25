@@ -2334,6 +2334,15 @@ html[data-theme="darkly"] .craft-header-icon {
     cursor: pointer;
 }
 
+.craft-buyback-ore-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.craft-ore-suggestions-popover .list-group-item {
+    background: transparent;
+}
+
 /* ========== CONFIG ACCORDION ENHANCEMENTS - CARD GRID LAYOUT ========== */
 .craft-config-items-grid {
     display: grid;

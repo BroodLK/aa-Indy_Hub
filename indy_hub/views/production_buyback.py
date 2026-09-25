@@ -185,10 +185,11 @@ def production_buyback_availability(request):
 
     type_ids = _parse_int_list(request.GET.get("type_ids", ""), MAX_TYPE_IDS)
     items: dict[str, dict] = {}
+    ore_suggestions: dict[str, list[dict]] = {}
     if type_ids:
         snapshot = _get_buy_stock_snapshot_for_submission(
             config=config,
-            submitted_type_ids=set(type_ids),
+            submitted_type_ids=None,
             user_id=int(request.user.id),
         )
         plain_rows = _pick_plain_rows(snapshot.get("stock_rows"))
@@ -217,6 +218,88 @@ def production_buyback_availability(request):
                 "location_label": str(row.get("buy_location_label") or ""),
             }
 
+        # AA Example App
+        from ..services.reprocessing import (
+            get_reprocessing_outputs_map,
+            get_reprocessing_portion_size,
+        )
+
+        all_plain_type_ids = set(plain_rows.keys())
+        if all_plain_type_ids:
+            outputs_map = get_reprocessing_outputs_map(all_plain_type_ids)
+            requested_set = set(type_ids)
+            for stock_type_id, outputs in outputs_map.items():
+                if not outputs:
+                    continue
+                row = plain_rows.get(stock_type_id)
+                if not row:
+                    continue
+                available_qty = int(row.get("available_quantity") or 0)
+                if available_qty <= 0:
+                    continue
+                try:
+                    unit_price = Decimal(
+                        str(row.get("display_sell_price_to_member") or 0)
+                    )
+                except (InvalidOperation, ValueError):
+                    unit_price = Decimal("0")
+                if unit_price <= 0:
+                    continue
+
+                portion_size = get_reprocessing_portion_size(stock_type_id)
+                portions_in_stock = available_qty // portion_size
+
+                # Make sure the ore item is in items map so simulator modals can order it
+                if str(stock_type_id) not in items:
+                    items[str(stock_type_id)] = {
+                        "type_id": stock_type_id,
+                        "type_name": str(row.get("display_type_name") or ""),
+                        "row_index": int(row.get("row_index")),
+                        "available_quantity": available_qty,
+                        "reserved_quantity": int(row.get("reserved_quantity") or 0),
+                        "unit_price": str(unit_price),
+                        "price_source": (
+                            "buyback_override"
+                            if row.get("has_buy_price_override")
+                            else "buyback_market"
+                        ),
+                        "location_label": str(row.get("buy_location_label") or ""),
+                    }
+
+                for mineral_type_id, yield_per_portion in outputs.items():
+                    if yield_per_portion <= 0 or mineral_type_id not in requested_set:
+                        continue
+                    est_mineral_in_stock = portions_in_stock * yield_per_portion
+                    suggestion = {
+                        "type_id": stock_type_id,
+                        "type_name": str(row.get("display_type_name") or ""),
+                        "row_index": int(row.get("row_index")),
+                        "available_quantity": available_qty,
+                        "portion_size": portion_size,
+                        "unit_price": str(unit_price),
+                        "price_source": (
+                            "buyback_override"
+                            if row.get("has_buy_price_override")
+                            else "buyback_market"
+                        ),
+                        "location_label": str(row.get("buy_location_label") or ""),
+                        "yield_per_portion": int(yield_per_portion),
+                        "portions_in_stock": int(portions_in_stock),
+                        "estimated_mineral_in_stock": int(est_mineral_in_stock),
+                    }
+                    ore_suggestions.setdefault(str(mineral_type_id), []).append(
+                        suggestion
+                    )
+
+            for mineral_id_str in ore_suggestions:
+                ore_suggestions[mineral_id_str].sort(
+                    key=lambda s: (
+                        s["estimated_mineral_in_stock"],
+                        s["available_quantity"],
+                    ),
+                    reverse=True,
+                )
+
     last_sync = getattr(config, "last_stock_sync", None)
     stock_age = (timezone.now() - last_sync).total_seconds() if last_sync else None
     return JsonResponse(
@@ -228,6 +311,7 @@ def production_buyback_availability(request):
             "last_stock_sync": last_sync.isoformat() if last_sync else "",
             "stock_stale": stock_age is None or stock_age > STOCK_STALE_AFTER_SECONDS,
             "buy_page_url": reverse("indy_hub:material_exchange_buy"),
+            "ore_suggestions": ore_suggestions,
         }
     )
 

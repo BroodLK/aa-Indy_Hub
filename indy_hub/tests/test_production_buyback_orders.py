@@ -213,6 +213,73 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         self.assertEqual([order["id"] for order in payload["orders"]], [own.id])
         self.assertEqual(payload["orders"][0]["progress"], "pending")
 
+    @patch("indy_hub.services.reprocessing.get_reprocessing_outputs_map")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size")
+    def test_reports_ore_suggestions_for_minerals(
+        self, mock_portion, mock_outputs
+    ) -> None:
+        compressed_veldspar = 28432
+        veldspar = 1230
+        mock_portion.side_effect = lambda t: 100
+        mock_outputs.return_value = {
+            compressed_veldspar: {TRITANIUM: 415},
+            veldspar: {TRITANIUM: 415},
+        }
+
+        cache.set(
+            _get_buy_browse_snapshot_cache_key(
+                MaterialExchangeConfig.objects.get(pk=self.config.pk)
+            ),
+            {
+                "stock_rows": [
+                    {
+                        "row_kind": "item",
+                        "row_index": 0,
+                        "type_id": compressed_veldspar,
+                        "display_type_name": "Compressed Veldspar",
+                        "quantity": 5000,
+                        "blueprint_variant": "",
+                        "container_path": "",
+                        "display_sell_price_to_member": "25.00",
+                        "has_buy_price_override": False,
+                        "source_structure_ids": [1001],
+                        "buy_location_label": "Structure Alpha",
+                    },
+                    {
+                        "row_kind": "item",
+                        "row_index": 1,
+                        "type_id": veldspar,
+                        "display_type_name": "Veldspar",
+                        "quantity": 20000,
+                        "blueprint_variant": "",
+                        "container_path": "",
+                        "display_sell_price_to_member": "0.25",
+                        "has_buy_price_override": False,
+                        "source_structure_ids": [1001],
+                        "buy_location_label": "Structure Alpha",
+                    },
+                ],
+                "stock_meta_by_type": {
+                    compressed_veldspar: {
+                        "type_id": compressed_veldspar,
+                        "quantity": 5000,
+                    },
+                    veldspar: {"type_id": veldspar, "quantity": 20000},
+                },
+            },
+            600,
+        )
+
+        payload = self._availability(type_ids=str(TRITANIUM))
+        self.assertTrue(payload["enabled"])
+        self.assertIn(str(TRITANIUM), payload["ore_suggestions"])
+        suggestions = payload["ore_suggestions"][str(TRITANIUM)]
+        self.assertEqual(len(suggestions), 2)
+        types_suggested = {s["type_id"] for s in suggestions}
+        self.assertEqual(types_suggested, {compressed_veldspar, veldspar})
+        self.assertIn(str(compressed_veldspar), payload["items"])
+        self.assertIn(str(veldspar), payload["items"])
+
 
 class BuybackSubmitTests(BuybackFixtureMixin, TestCase):
     def test_successful_submission_creates_draft_order(self) -> None:

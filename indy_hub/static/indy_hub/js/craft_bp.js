@@ -10235,6 +10235,7 @@ async function decorateNeededRowsWithBuyback(rows) {
         return;
     }
     const items = payload.items && typeof payload.items === 'object' ? payload.items : {};
+    const oreSuggestionsMap = payload.ore_suggestions && typeof payload.ore_suggestions === 'object' ? payload.ore_suggestions : {};
     const targetBodies = [tbody, financialBody].filter(Boolean);
     targetBodies.forEach((body) => {
         body.querySelectorAll('tr[data-type-id]').forEach((tr) => {
@@ -10246,7 +10247,7 @@ async function decorateNeededRowsWithBuyback(rows) {
 
             // Dispose old popovers if present
             if (window.bootstrap && bootstrap.Popover) {
-                slot.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash').forEach((el) => {
+                slot.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash, .craft-buyback-ore-badge').forEach((el) => {
                     const inst = bootstrap.Popover.getInstance(el);
                     if (inst) {
                         inst.dispose();
@@ -10261,6 +10262,8 @@ async function decorateNeededRowsWithBuyback(rows) {
             }
             const hasEnoughOwned = isCraftRowCoveredByOwned(tr);
             const item = payload.enabled ? items[String(typeId)] : null;
+            const oreSuggestions = payload.enabled ? (oreSuggestionsMap[String(typeId)] || []) : [];
+
             if (item) {
                 if (hasEnoughOwned) {
                     if (slot.closest('.craft-buyback-cell')) {
@@ -10271,6 +10274,13 @@ async function decorateNeededRowsWithBuyback(rows) {
                     parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}${availQtyText}</button>`);
                 }
             }
+
+            if (!hasEnoughOwned && oreSuggestions.length > 0) {
+                const oreCountText = ` <span class="badge bg-info-subtle text-info-emphasis ms-1">${formatInteger(oreSuggestions.length)}</span>`;
+                const oreBtnLabel = item ? __('Ore') : __('Ore in Buyback');
+                parts.push(`<button type="button" class="btn btn-sm btn-outline-info py-0 px-2 craft-buyback-ore-badge" data-mineral-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Ore available in buyback that yields this mineral'))}"><i class="fas fa-cubes me-1" aria-hidden="true"></i>${escapeHtml(oreBtnLabel)}${oreCountText}</button>`);
+            }
+
             if (parts.length > 0) {
                 slot.innerHTML = parts.join(' ');
                 slot.removeAttribute('title');
@@ -10294,6 +10304,56 @@ async function decorateNeededRowsWithBuyback(rows) {
                 // would strip the button) is not needed.
                 bootstrap.Popover.getOrCreateInstance(badge, {
                     title: __('Available in buyback'),
+                    content,
+                    html: true,
+                    sanitize: false,
+                    trigger: 'click',
+                    placement: 'auto',
+                });
+            }
+            const oreBadge = slot.querySelector('.craft-buyback-ore-badge');
+            if (oreBadge && oreSuggestions.length > 0 && window.bootstrap && bootstrap.Popover) {
+                const mineralName = tr.querySelector('.craft-item-name, [data-item-name]')?.textContent?.trim() || __('this mineral');
+                const listHtml = oreSuggestions.map((ore) => {
+                    const yieldText = ore.yield_per_portion > 0 ? `~${formatInteger(ore.yield_per_portion)} / ${ore.portion_size || 100} units` : '';
+                    const estTotal = ore.estimated_mineral_in_stock > 0 ? ` (~${formatInteger(ore.estimated_mineral_in_stock)} ${__('total in stock')})` : '';
+                    return `
+                        <div class="list-group-item p-2">
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <span class="fw-bold">${escapeHtml(ore.type_name)}</span>
+                                <span class="badge bg-secondary-subtle text-secondary-emphasis">${formatInteger(ore.available_quantity)} ${__('in stock')}</span>
+                            </div>
+                            <div class="text-muted small">
+                                ${yieldText ? `<div><i class="fas fa-recycle me-1" aria-hidden="true"></i>${escapeHtml(__('Yield'))}: ${escapeHtml(yieldText)}${escapeHtml(estTotal)}</div>` : ''}
+                                <div><i class="fas fa-tag me-1" aria-hidden="true"></i>${formatPrice(Number(ore.unit_price) || 0)} ${escapeHtml(__('each'))}</div>
+                                ${ore.location_label ? `<div><i class="fas fa-map-marker-alt me-1" aria-hidden="true"></i>${escapeHtml(ore.location_label)}</div>` : ''}
+                            </div>
+                            <div class="mt-2">
+                                <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" data-buyback-open-modal="${ore.type_id}">
+                                    <i class="fas fa-shopping-cart me-1" aria-hidden="true"></i>${escapeHtml(__('Order Ore'))}
+                                </button>
+                            </div>
+                        </div>`;
+                }).join('');
+
+                const content = `
+                    <div class="small craft-ore-suggestions-popover" style="max-width: 320px;">
+                        <div class="text-muted mb-2">
+                            <i class="fas fa-info-circle text-info me-1" aria-hidden="true"></i>
+                            ${escapeHtml(__('Buyback has ore in stock that reprocesses into'))} <strong>${escapeHtml(mineralName)}</strong>:
+                        </div>
+                        <div class="list-group list-group-flush border rounded mb-2" style="max-height: 240px; overflow-y: auto;">
+                            ${listHtml}
+                        </div>
+                        <div class="d-flex justify-content-end">
+                            <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none" onclick="typeof openMineralConversionModal === 'function' && openMineralConversionModal()">
+                                <i class="fas fa-calculator me-1" aria-hidden="true"></i>${escapeHtml(__('Open Ore Converter'))}
+                            </button>
+                        </div>
+                    </div>`;
+
+                bootstrap.Popover.getOrCreateInstance(oreBadge, {
+                    title: __('Ore in Buyback'),
                     content,
                     html: true,
                     sanitize: false,
@@ -10353,7 +10413,21 @@ function openBuybackOrderModal(typeId) {
         return;
     }
     const neededRow = (CRAFT_COMPUTED_NEEDED_ROWS || []).find((row) => row.typeId === Number(typeId));
-    const suggested = Math.max(1, Math.min(item.available_quantity, Math.ceil(Number(neededRow?.quantity) || 1)));
+    let suggested = Math.max(1, Math.min(item.available_quantity, Math.ceil(Number(neededRow?.quantity) || 1)));
+    if (!neededRow && payload.ore_suggestions) {
+        for (const [mineralId, suggestions] of Object.entries(payload.ore_suggestions || {})) {
+            const match = (suggestions || []).find((s) => s.type_id === Number(typeId));
+            if (match && match.yield_per_portion > 0) {
+                const mineralNeeded = (CRAFT_COMPUTED_NEEDED_ROWS || []).find((r) => r.typeId === Number(mineralId));
+                if (mineralNeeded && mineralNeeded.quantity > 0) {
+                    const portionsNeeded = Math.ceil(mineralNeeded.quantity / match.yield_per_portion);
+                    const unitsNeeded = portionsNeeded * (match.portion_size || 100);
+                    suggested = Math.max(1, Math.min(item.available_quantity, unitsNeeded));
+                    break;
+                }
+            }
+        }
+    }
     modalEl.dataset.typeId = String(typeId);
     modalEl.dataset.clientRequestId = newBuybackClientRequestId();
     modalEl.querySelector('[data-buyback-field="item"]').textContent = item.type_name || String(typeId);
@@ -10493,7 +10567,7 @@ function initializeBuybackOrders() {
         if (event.key !== 'Escape' || !window.bootstrap || !bootstrap.Popover) {
             return;
         }
-        document.querySelectorAll('.craft-buyback-badge[aria-describedby], .craft-buyback-owned-dash[aria-describedby]').forEach((badge) => {
+        document.querySelectorAll('.craft-buyback-badge[aria-describedby], .craft-buyback-owned-dash[aria-describedby], .craft-buyback-ore-badge[aria-describedby]').forEach((badge) => {
             const popover = bootstrap.Popover.getInstance(badge);
             if (popover) {
                 popover.hide();
@@ -10507,7 +10581,7 @@ function initializeBuybackOrders() {
             return;
         }
         const typeId = Number(opener.getAttribute('data-buyback-open-modal')) || 0;
-        document.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash').forEach((badge) => {
+        document.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash, .craft-buyback-ore-badge').forEach((badge) => {
             const popover = window.bootstrap && bootstrap.Popover ? bootstrap.Popover.getInstance(badge) : null;
             if (popover) {
                 popover.hide();
