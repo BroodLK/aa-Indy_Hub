@@ -2328,6 +2328,12 @@ html[data-theme="darkly"] .craft-header-icon {
     font-weight: 600;
 }
 
+.craft-financial-table .craft-buyback-owned-dash {
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+
 /* ========== CONFIG ACCORDION ENHANCEMENTS - CARD GRID LAYOUT ========== */
 .craft-config-items-grid {
     display: grid;

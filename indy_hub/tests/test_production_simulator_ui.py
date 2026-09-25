@@ -406,6 +406,12 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("decorateNeededRowsWithBuyback", self.script)
         self.assertIn("describeBuybackItem", self.script)
 
+    def test_craft_js_hides_buyback_button_and_shows_em_dash_when_owned_enough(self) -> None:
+        self.assertIn("isCraftRowCoveredByOwned", self.script)
+        self.assertIn("craft-buyback-owned-dash", self.script)
+        self.assertIn("Available in buyback, but you already own enough", self.script)
+        self.assertIn("You already own enough of this item for this build", self.script)
+
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(self) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)
         self.assertIn("indyHubMaterialExchangeBuyPrefill", self.buy_template)

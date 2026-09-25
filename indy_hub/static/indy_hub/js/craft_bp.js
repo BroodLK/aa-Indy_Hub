@@ -9899,7 +9899,7 @@ function computeNeededPurchases() {
     // Rows are rebuilt below; dispose their popovers first so none is left
     // floating detached from its (removed) badge.
     if (window.bootstrap && bootstrap.Popover) {
-        tbody.querySelectorAll('.craft-buyback-badge').forEach((badge) => {
+        tbody.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash').forEach((badge) => {
             const popover = bootstrap.Popover.getInstance(badge);
             if (popover) {
                 popover.dispose();
@@ -10180,6 +10180,41 @@ function describeBuybackItem(item) {
     return `${formatInteger(item.available_quantity)} ${__('available')} - ${formatPrice(Number(item.unit_price) || 0)} ${__('each')} (${priceSource})`;
 }
 
+function isCraftRowCoveredByOwned(tr) {
+    if (!tr) {
+        return false;
+    }
+    const qtyCell = tr.querySelector('.craft-financial-qty-cell') || tr.querySelector('td[data-qty]');
+    const buyCell = tr.querySelector('[data-qty-buy]') || qtyCell;
+    const neededCell = tr.querySelector('[data-qty-needed]');
+    const ownedCell = tr.querySelector('[data-qty-owned]');
+
+    const reqQty = Number(
+        qtyCell?.dataset?.qtyRequired
+        ?? neededCell?.dataset?.qtyNeeded
+        ?? 0
+    );
+    const ownedQty = Number(
+        qtyCell?.dataset?.qtyOwned
+        ?? ownedCell?.dataset?.qtyOwned
+        ?? 0
+    );
+    const payQty = Number(
+        buyCell?.dataset?.qtyPay
+        ?? buyCell?.dataset?.qtyBuy
+        ?? buyCell?.dataset?.qty
+        ?? (reqQty > 0 ? Math.max(0, reqQty - ownedQty) : 0)
+    );
+
+    if (reqQty > 0 && ownedQty >= reqQty) {
+        return true;
+    }
+    if (ownedQty > 0 && payQty <= 0) {
+        return true;
+    }
+    return false;
+}
+
 async function decorateNeededRowsWithBuyback(rows) {
     const tbody = document.querySelector('#needed-table tbody');
     const financialBody = document.getElementById('financialItemsBody');
@@ -10208,15 +10243,33 @@ async function decorateNeededRowsWithBuyback(rows) {
             if (!slot) {
                 return;
             }
+
+            // Dispose old popovers if present
+            if (window.bootstrap && bootstrap.Popover) {
+                slot.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash').forEach((el) => {
+                    const inst = bootstrap.Popover.getInstance(el);
+                    if (inst) {
+                        inst.dispose();
+                    }
+                });
+            }
+
             const parts = [];
             const pending = getPendingBuybackQuantity(typeId);
             if (pending > 0) {
                 parts.push(`<span class="badge text-bg-secondary craft-buyback-pending" title="${escapeHtml(__('Ordered from buyback; not counted as owned until you receive it'))}"><i class="fas fa-hourglass-half me-1" aria-hidden="true"></i>${escapeHtml(__('Reserved (pending)'))}: ${formatInteger(pending)}</span>`);
             }
+            const hasEnoughOwned = isCraftRowCoveredByOwned(tr);
             const item = payload.enabled ? items[String(typeId)] : null;
             if (item) {
-                const availQtyText = item.available_quantity != null ? ` <span class="badge bg-success-subtle text-success-emphasis ms-1">${formatInteger(item.available_quantity)}</span>` : '';
-                parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}${availQtyText}</button>`);
+                if (hasEnoughOwned) {
+                    if (slot.closest('.craft-buyback-cell')) {
+                        parts.push(`<span class="craft-buyback-owned-dash text-muted cursor-pointer" role="button" tabindex="0" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback, but you already own enough'))}" title="${escapeHtml(__('Available in buyback, but you already own enough'))}">—</span>`);
+                    }
+                } else {
+                    const availQtyText = item.available_quantity != null ? ` <span class="badge bg-success-subtle text-success-emphasis ms-1">${formatInteger(item.available_quantity)}</span>` : '';
+                    parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}${availQtyText}</button>`);
+                }
             }
             if (parts.length > 0) {
                 slot.innerHTML = parts.join(' ');
@@ -10245,6 +10298,24 @@ async function decorateNeededRowsWithBuyback(rows) {
                     html: true,
                     sanitize: false,
                     trigger: 'click',
+                    placement: 'auto',
+                });
+            }
+            const ownedDash = slot.querySelector('.craft-buyback-owned-dash');
+            if (ownedDash && item && window.bootstrap && bootstrap.Popover) {
+                const content = `
+                    <div class="small">
+                        <div class="text-success fw-semibold mb-1"><i class="fas fa-check-circle me-1" aria-hidden="true"></i>${escapeHtml(__('You already own enough of this item for this build.'))}</div>
+                        <div class="text-muted">${escapeHtml(describeBuybackItem(item))}</div>
+                        ${item.location_label ? `<div class="text-muted">${escapeHtml(__('Pick-up'))}: ${escapeHtml(item.location_label)}</div>` : ''}
+                        ${payload.stock_stale ? `<div class="text-warning">${escapeHtml(__('Stock data may be out of date'))}</div>` : ''}
+                    </div>`;
+                bootstrap.Popover.getOrCreateInstance(ownedDash, {
+                    title: __('Available in buyback'),
+                    content,
+                    html: true,
+                    sanitize: false,
+                    trigger: 'hover focus click',
                     placement: 'auto',
                 });
             }
@@ -10422,7 +10493,7 @@ function initializeBuybackOrders() {
         if (event.key !== 'Escape' || !window.bootstrap || !bootstrap.Popover) {
             return;
         }
-        document.querySelectorAll('.craft-buyback-badge[aria-describedby]').forEach((badge) => {
+        document.querySelectorAll('.craft-buyback-badge[aria-describedby], .craft-buyback-owned-dash[aria-describedby]').forEach((badge) => {
             const popover = bootstrap.Popover.getInstance(badge);
             if (popover) {
                 popover.hide();
@@ -10436,7 +10507,7 @@ function initializeBuybackOrders() {
             return;
         }
         const typeId = Number(opener.getAttribute('data-buyback-open-modal')) || 0;
-        document.querySelectorAll('.craft-buyback-badge').forEach((badge) => {
+        document.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash').forEach((badge) => {
             const popover = window.bootstrap && bootstrap.Popover ? bootstrap.Popover.getInstance(badge) : null;
             if (popover) {
                 popover.hide();
