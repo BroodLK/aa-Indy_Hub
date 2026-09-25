@@ -114,14 +114,11 @@ class PlannerTableStructureTests(SimpleTestCase):
         end = self.script.index("function updateFinancialRow(")
         return self.script[start:end]
 
-    def test_js_built_rows_have_a_margin_cell(self) -> None:
-        # buildFinancialRow emitted 5 <td> into a 6-column table, so every
-        # JS-built row (BPC contract, compressed ore, manual) rendered short
-        # and shifted left under the Margin header.
+    def test_js_built_rows_have_a_buyback_cell(self) -> None:
         body = self._build_row_template()
         template_literal = body[body.index("row.innerHTML = `") : body.index("`;")]
         self.assertEqual(template_literal.count("<td"), 6)
-        self.assertIn("item-margin", template_literal)
+        self.assertIn("craft-buyback-cell", template_literal)
 
     def test_js_built_rows_match_the_server_row_cell_count(self) -> None:
         # Server material row: count the <td> between the row open and close.
@@ -129,13 +126,10 @@ class PlannerTableStructureTests(SimpleTestCase):
         end = self.template.index("</tr>", start)
         self.assertEqual(self.template[start:end].count("<td"), 6)
 
-    def test_margin_is_an_em_dash_with_an_explanation(self) -> None:
-        body = self._build_row_template()
-        self.assertIn("marginTooltip", body)
-        self.assertIn("—", body)
-        # BPC and non-BPC get different wording; neither invents a number.
-        self.assertIn("no resale margin", body)
-        self.assertIn("no separate market price", body)
+    def test_planner_table_has_buyback_header_and_cells(self) -> None:
+        self.assertIn("col-buyback", self.template)
+        self.assertIn("craft-buyback-cell", self.template)
+        self.assertIn("craft-buyback-slot", self.template)
 
     def test_unreachable_margin_colour_rules_are_gone(self) -> None:
         css = (STATIC / "css" / "craft_bp.css").read_text(encoding="utf-8")

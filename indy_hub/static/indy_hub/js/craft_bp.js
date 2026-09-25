@@ -6247,13 +6247,6 @@ function buildFinancialRow(item, pricesMap) {
     const row = document.createElement('tr');
     row.setAttribute('data-type-id', String(item.typeId));
     row.setAttribute('data-row-kind', rowKind);
-    // The Margin column is only meaningful for a row with a market alternative
-    // to compare against. BPC contracts carry a fixed contract price,
-    // missing-BPC rows are priced at 0, and compressed-ore rows set
-    // real == estimate, so an em dash is the honest value for all of them.
-    const marginTooltip = isBpc
-        ? __('A purchased blueprint copy has no resale margin; it is a cost input to production.')
-        : __('No margin for this row: there is no separate market price to compare this cost against.');
     row.setAttribute('data-row-key', rowKey);
     row.setAttribute('data-manual-financial', isManualFinancial ? 'true' : 'false');
     row.classList.toggle('table-warning', isBpc);
@@ -6264,7 +6257,6 @@ function buildFinancialRow(item, pricesMap) {
                 <img src="https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32" alt="${escapeHtml(itemTypeName)}" class="eve-type-icon eve-type-icon--28" onerror="this.style.display='none';">
                 <span class="craft-planner-item-name-wrap">
                     <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 craft-planner-item-name">${escapeHtml(itemTypeName)}</span>${rowTagHtml}
-                    <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1" data-export-ignore></span>
                 </span>
             </div>
         </td>
@@ -6281,7 +6273,9 @@ function buildFinancialRow(item, pricesMap) {
             <input type="text" inputmode="decimal" class="form-control form-control-sm real-price text-end" data-type-id="${item.typeId}" value="0.00">
         </td>
         <td class="text-end text-xs total-cost fw-semibold">0</td>
-        <td class="text-end text-xs item-margin text-muted" title="${escapeHtml(marginTooltip)}" aria-label="${escapeHtml(marginTooltip)}">—</td>
+        <td class="text-center text-xs craft-buyback-cell">
+            <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center" data-export-ignore>—</span>
+        </td>
     `;
 
     const fuzzInput = row.querySelector('.fuzzwork-price');
@@ -6378,13 +6372,17 @@ function updateFinancialRow(row, item) {
 
     let buybackSlot = row.querySelector('.craft-buyback-slot');
     if (!buybackSlot) {
-        const wrap = row.querySelector('.craft-planner-item-name-wrap');
-        if (wrap) {
-            buybackSlot = document.createElement('span');
-            buybackSlot.className = 'craft-buyback-slot d-inline-flex flex-wrap gap-1';
-            buybackSlot.setAttribute('data-export-ignore', '');
-            wrap.appendChild(buybackSlot);
+        let buybackCell = row.querySelector('.craft-buyback-cell');
+        if (!buybackCell) {
+            buybackCell = document.createElement('td');
+            buybackCell.className = 'text-center text-xs craft-buyback-cell';
+            row.appendChild(buybackCell);
         }
+        buybackSlot = document.createElement('span');
+        buybackSlot.className = 'craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center';
+        buybackSlot.setAttribute('data-export-ignore', '');
+        buybackSlot.textContent = '—';
+        buybackCell.appendChild(buybackSlot);
     }
 
     const rowKindMarker = row.querySelector('.craft-row-kind-marker');
@@ -10219,7 +10217,13 @@ async function decorateNeededRowsWithBuyback(rows) {
                 const availQtyText = item.available_quantity != null ? ` <span class="badge bg-success-subtle text-success-emphasis ms-1">${formatInteger(item.available_quantity)}</span>` : '';
                 parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}${availQtyText}</button>`);
             }
-            slot.innerHTML = parts.join(' ');
+            if (parts.length > 0) {
+                slot.innerHTML = parts.join(' ');
+            } else if (slot.closest('.craft-buyback-cell')) {
+                slot.innerHTML = '<span class="text-muted">—</span>';
+            } else {
+                slot.innerHTML = '';
+            }
             const badge = slot.querySelector('.craft-buyback-badge');
             if (badge && item && window.bootstrap && bootstrap.Popover) {
                 const content = `

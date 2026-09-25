@@ -1487,8 +1487,9 @@ div[id="bpTabs"] {
     width: clamp(125px, 11vw, 170px);
 }
 
-.craft-financial-table .col-margin {
-    width: clamp(90px, 8vw, 130px);
+.craft-financial-table .col-margin,
+.craft-financial-table .col-buyback {
+    width: clamp(100px, 9vw, 140px);
 }
 
 .craft-financial-table th,
@@ -2322,7 +2323,8 @@ html[data-theme="darkly"] .craft-header-icon {
  * styling for a state that cannot occur. Restore them alongside any future
  * change that actually computes a per-row margin.
  */
-.craft-financial-table .item-margin {
+.craft-financial-table .item-margin,
+.craft-financial-table .craft-buyback-cell {
     font-weight: 600;
 }
 

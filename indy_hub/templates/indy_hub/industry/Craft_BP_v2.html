@@ -439,7 +439,7 @@
                                             title="{% trans 'Re-calculate industry job taxes and fees from the current planner state' %}">
                                         <i class="fas fa-receipt me-1"></i>{% trans "Re-calculate taxes" %}
                                     </button>
-                                    <button id="exportPurchaseCSV" type="button" class="btn btn-outline-success btn-sm" title="{% trans 'Download every Purchase Planner row (item, quantity, estimate, real price, total cost, margin) as CSV' %}">
+                                    <button id="exportPurchaseCSV" type="button" class="btn btn-outline-success btn-sm" title="{% trans 'Download every Purchase Planner row (item, quantity, estimate, real price, total cost, buyback) as CSV' %}">
                                         <i class="fas fa-file-csv me-1"></i>{% trans "Export CSV" %}
                                     </button>
                                     <button id="resetManualPricesBtn" type="button" class="btn btn-outline-secondary btn-sm" title="{% trans 'Remove every Real Price you entered so rows fall back to the Estimate' %}">
@@ -460,7 +460,7 @@
                                             <th class="text-end col-fuzzwork">{% trans "Estimate" %}</th>
                                             <th class="text-end col-real">{% trans "Real Price" %}</th>
                                             <th class="text-end col-total">{% trans "Total Cost" %}</th>
-                                            <th class="text-end col-margin">{% trans "Margin" %}</th>
+                                            <th class="text-center col-buyback">{% trans "Buyback" %}</th>
                                         </tr>
                                     </thead>
                                     <tbody id="financialItemsBody">
@@ -474,7 +474,6 @@
                                                              onerror="this.style.display='none';">
                                                         <span class="craft-planner-item-name-wrap">
                                                             <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 text-xs craft-planner-item-name">{{ mat.type_name }}</span>
-                                                            <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1" data-export-ignore></span>
                                                         </span>
                                                     </div>
                                                 </td>
@@ -497,8 +496,9 @@
                                                            value="0.00">
                                                 </td>
                                                 <td class="text-end text-xs total-cost fw-semibold">0</td>
-                                                <td class="text-end text-xs item-margin text-muted"
-                                                title="{% trans 'No margin for this row: there is no separate market price to compare this cost against.' %}">—</td>
+                                                <td class="text-center text-xs craft-buyback-cell">
+                                                    <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center" data-export-ignore>—</span>
+                                                </td>
                                             </tr>
                                         {% endfor %}
                                         <tr id="shippingCostRow">
@@ -572,7 +572,7 @@
                                                        value="0.00">
                                             </td>
                                             <td class="text-end text-xs total-revenue fw-semibold">0</td>
-                                            <td class="text-end text-xs text-muted"
+                                            <td class="text-center text-xs text-muted"
                                                 title="{% trans 'Overall margin is shown in the summary above and in the Net Profit row below.' %}">—</td>
                                         </tr>
                                     </tbody>
