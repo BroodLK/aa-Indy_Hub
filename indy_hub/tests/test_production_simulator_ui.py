@@ -384,3 +384,33 @@ class CraftAssetRefreshReactiveUITests(SimpleTestCase):
         self.assertIn("update complete", self.template)
         self.assertIn("pollAssetRefreshStatus", self.template)
         self.assertIn("renderLocationOptions", self.template)
+
+
+class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
+    """Verify buyback indicators and prefilled Material Exchange buy navigation."""
+
+    def setUp(self) -> None:
+        self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+        self.script = CRAFT_JS.read_text(encoding="utf-8")
+        self.buy_template = (TEMPLATES / "material_exchange" / "buy.html").read_text(
+            encoding="utf-8"
+        )
+
+    def test_shopping_list_has_material_exchange_buy_button(self) -> None:
+        self.assertIn('id="buyMaterialExchangeBtn"', self.template)
+        self.assertIn("Buy on Material Exchange", self.template)
+        self.assertIn("buyShoppingListInMaterialExchange", self.template)
+
+    def test_planner_and_needed_rows_contain_buyback_slots(self) -> None:
+        self.assertIn("craft-buyback-slot", self.template)
+        self.assertIn("craft-buyback-slot", self.script)
+
+    def test_craft_js_decorates_buyback_badge_with_quantity(self) -> None:
+        self.assertIn("craft-buyback-badge", self.script)
+        self.assertIn("decorateNeededRowsWithBuyback", self.script)
+        self.assertIn("describeBuybackItem", self.script)
+
+    def test_material_exchange_buy_page_supports_prefill_items(self) -> None:
+        self.assertIn("applyPrefillItems", self.buy_template)
+        self.assertIn("indyHubMaterialExchangeBuyPrefill", self.buy_template)
+        self.assertIn("pre-selected", self.buy_template)

@@ -1899,11 +1899,113 @@ document.addEventListener('DOMContentLoaded', function() {
         return `INDY-${randomNum}`;
     }
 
+    function applyPrefillItems(importItems) {
+        if (!Array.isArray(importItems) || importItems.length === 0) {
+            return;
+        }
+        const selectedRows = getSelectedItemRows();
+        const lockedLocationIds = resolveLockedLocationIds(selectedRows);
+        const targetLocationId = resolveImportCandidateLocationId(
+            importItems,
+            lockedLocationIds
+        );
+
+        let addedLineCount = 0;
+        let addedQuantity = 0;
+        const partialItems = [];
+        const unavailableItems = [];
+
+        importItems.forEach(item => {
+            const typeId = parseInt(item.type_id || item.typeId, 10) || 0;
+            const requestedQty = parseInt(item.quantity || item.qty, 10) || 0;
+            const typeName = String(item.type_name || item.name || `Type ${typeId}`);
+            if (typeId <= 0 || requestedQty <= 0) {
+                return;
+            }
+
+            let remainingQty = requestedQty;
+            const candidateRows = getImportRowsForType(typeId, targetLocationId);
+            candidateRows.forEach(row => {
+                if (remainingQty <= 0) {
+                    return;
+                }
+                const input = getImportRowInput(row);
+                if (!input) {
+                    return;
+                }
+                const currentQty = parseInt(input.value, 10) || 0;
+                const capacity = getImportRowCapacity(row);
+                if (capacity <= 0) {
+                    return;
+                }
+                const addQty = Math.min(capacity, remainingQty);
+                if (addQty <= 0) {
+                    return;
+                }
+                input.value = String(currentQty + addQty);
+                remainingQty -= addQty;
+                addedQuantity += addQty;
+            });
+
+            const importedQty = requestedQty - remainingQty;
+            if (importedQty > 0) {
+                addedLineCount += 1;
+            }
+            if (importedQty <= 0) {
+                unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                return;
+            }
+            if (remainingQty > 0) {
+                partialItems.push(
+                    `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
+                );
+            }
+        });
+
+        updateInvoice();
+
+        const alertLines = [];
+        const successLines = [
+            `${addedLineCount.toLocaleString()} {% trans "item(s) pre-selected totaling" %} ${addedQuantity.toLocaleString()} {% trans "unit(s) from Production Simulator." %}`
+        ];
+        if (partialItems.length > 0) {
+            alertLines.push(
+                '{% trans "Partially filled due to available stock:" %} '
+                + partialItems.slice(0, 4).join(', ')
+            );
+        }
+        if (unavailableItems.length > 0) {
+            alertLines.push(
+                '{% trans "Not available in stock:" %} '
+                + unavailableItems.slice(0, 4).join(', ')
+            );
+        }
+
+        if (alertLines.length > 0) {
+            showBuyMultibuyTopAlert('warning', [...successLines, ...alertLines]);
+        } else if (addedLineCount > 0) {
+            showBuyMultibuyTopAlert('success', successLines);
+        }
+    }
+
     // Initial update
     setPurchaseSubmitting(false);
     updateInvoice();
     populateMarketGroupFilterOptions();
     applySortMode();
+
+    try {
+        const rawPrefill = sessionStorage.getItem('indyHubMaterialExchangeBuyPrefill');
+        if (rawPrefill) {
+            sessionStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
+            const parsed = JSON.parse(rawPrefill);
+            if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
+                applyPrefillItems(parsed.items);
+            }
+        }
+    } catch (e) {
+        console.error('Failed to parse prefill items from sessionStorage', e);
+    }
 
     // Live stock refresh progress
     {% if stock_refreshing %}

@@ -3969,6 +3969,7 @@ def craft_bp(request, type_id):
                     "indy_hub:production_buyback_availability"
                 ),
                 "buyback_order": reverse("indy_hub:submit_production_buyback_order"),
+                "material_exchange_buy": reverse("indy_hub:material_exchange_buy"),
             },
         }
 

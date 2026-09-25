@@ -474,6 +474,7 @@
                                                              onerror="this.style.display='none';">
                                                         <span class="craft-planner-item-name-wrap">
                                                             <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 text-xs craft-planner-item-name">{{ mat.type_name }}</span>
+                                                            <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1" data-export-ignore></span>
                                                         </span>
                                                     </div>
                                                 </td>
@@ -701,6 +702,11 @@
                                     </span>
                                 </h3>
                                 <div>
+                                    <button id="buyMaterialExchangeBtn"
+                                            class="btn btn-outline-success btn-sm me-2"
+                                            title="{% trans 'Open Material Exchange with needed items pre-selected' %}">
+                                        <i class="fas fa-shopping-basket me-1"></i>{% trans "Buy on Material Exchange" %}
+                                    </button>
                                     <button id="copyShoppingClipboard"
                                             class="btn btn-outline-primary btn-sm me-2"
                                             title="{% trans 'Copy each item name and quantity to buy, tab-separated (EVE multibuy format)' %}">
@@ -3518,6 +3524,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // CSV Export functionality
+    const buyMaterialExchangeBtn = document.getElementById('buyMaterialExchangeBtn');
     const exportPurchaseBtn = document.getElementById('exportPurchaseCSV');
     const exportShoppingBtn = document.getElementById('exportShoppingCSV');
     const exportOwnedRemainderBtn = document.getElementById('exportOwnedRemainder');
@@ -3743,6 +3750,53 @@ document.addEventListener('DOMContentLoaded', function() {
             copyOwnedMaterialsRemainderToClipboard();
         });
     }
+
+    function buyShoppingListInMaterialExchange() {
+        let neededItems = [];
+        if (typeof buildNeededPurchasesState === 'function') {
+            const state = buildNeededPurchasesState();
+            neededItems = (state.rowsToDisplay || []).filter(item => (Number(item.qty) || 0) > 0);
+        }
+        if (neededItems.length === 0) {
+            const rows = Array.from(document.querySelectorAll('#needed-table tbody tr'));
+            rows.forEach(tr => {
+                const typeId = Number(tr.dataset.typeId) || 0;
+                const name = exportCellText(tr.querySelector('td:first-child') || tr.cells[0]);
+                const buyCell = tr.cells && tr.cells.length >= 4 ? tr.cells[3].textContent.trim() : '0';
+                const qty = parseInt(buyCell.replace(/[^0-9]/g, ''), 10) || 0;
+                if (typeId > 0 && qty > 0) {
+                    neededItems.push({ typeId, type_id: typeId, name, qty });
+                }
+            });
+        }
+        if (neededItems.length === 0) {
+            showToast('{% trans "No items needed to buy in Material Exchange." %}', false);
+            return;
+        }
+
+        const itemsToPrefill = neededItems.map(item => ({
+            type_id: Number(item.typeId || item.type_id),
+            type_name: String(item.name || item.typeName || ''),
+            quantity: Math.max(1, Math.ceil(Number(item.qty) || 1))
+        }));
+
+        try {
+            sessionStorage.setItem('indyHubMaterialExchangeBuyPrefill', JSON.stringify({ items: itemsToPrefill }));
+        } catch (e) {
+            console.error('Failed to store buy prefill in sessionStorage', e);
+        }
+
+        const buyUrl = (window.BLUEPRINT_DATA && window.BLUEPRINT_DATA.urls && window.BLUEPRINT_DATA.urls.material_exchange_buy)
+            || '{% url "indy_hub:material_exchange_buy" %}';
+        window.location.href = buyUrl;
+    }
+
+    if (buyMaterialExchangeBtn) {
+        buyMaterialExchangeBtn.addEventListener('click', function() {
+            buyShoppingListInMaterialExchange();
+        });
+    }
+    window.buyShoppingListInMaterialExchange = buyShoppingListInMaterialExchange;
 
     // Load Fuzzwork from alert
     const loadFuzzworkFromAlert = document.getElementById('loadFuzzworkFromAlert');

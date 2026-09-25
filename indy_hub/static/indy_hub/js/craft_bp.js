@@ -6264,6 +6264,7 @@ function buildFinancialRow(item, pricesMap) {
                 <img src="https://images.evetech.net/types/${item.typeId}/${imagePath}?size=32" alt="${escapeHtml(itemTypeName)}" class="eve-type-icon eve-type-icon--28" onerror="this.style.display='none';">
                 <span class="craft-planner-item-name-wrap">
                     <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 craft-planner-item-name">${escapeHtml(itemTypeName)}</span>${rowTagHtml}
+                    <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1" data-export-ignore></span>
                 </span>
             </div>
         </td>
@@ -6373,6 +6374,17 @@ function updateFinancialRow(row, item) {
     const nameBadge = row.querySelector('.craft-planner-item-name');
     if (nameBadge) {
         nameBadge.textContent = itemTypeName;
+    }
+
+    let buybackSlot = row.querySelector('.craft-buyback-slot');
+    if (!buybackSlot) {
+        const wrap = row.querySelector('.craft-planner-item-name-wrap');
+        if (wrap) {
+            buybackSlot = document.createElement('span');
+            buybackSlot.className = 'craft-buyback-slot d-inline-flex flex-wrap gap-1';
+            buybackSlot.setAttribute('data-export-ignore', '');
+            wrap.appendChild(buybackSlot);
+        }
     }
 
     const rowKindMarker = row.querySelector('.craft-row-kind-marker');
@@ -8908,6 +8920,9 @@ function updateFinancialTabFromState() {
         if (typeof scheduleImportFeesRecalculation === 'function') {
             scheduleImportFeesRecalculation({ syncActual: false });
         }
+        if (typeof decorateNeededRowsWithBuyback === 'function') {
+            decorateNeededRowsWithBuyback(CRAFT_COMPUTED_NEEDED_ROWS || []);
+        }
     };
 
     syncManualFinancialStateFromDom();
@@ -10168,11 +10183,16 @@ function describeBuybackItem(item) {
 
 async function decorateNeededRowsWithBuyback(rows) {
     const tbody = document.querySelector('#needed-table tbody');
+    const financialBody = document.getElementById('financialItemsBody');
     const statusEl = document.getElementById('neededBuybackStatus');
-    if (!tbody) {
+    if (!tbody && !financialBody) {
         return;
     }
-    const typeIds = rows.map((row) => Number(row.typeId) || 0).filter((id) => id > 0);
+    const neededTypeIds = (rows || []).map((row) => Number(row.typeId) || 0).filter((id) => id > 0);
+    const financialTypeIds = Array.from(document.querySelectorAll('#financialItemsBody tr[data-type-id]'))
+        .map((tr) => Number(tr.dataset.typeId) || 0)
+        .filter((id) => id > 0);
+    const typeIds = Array.from(new Set([...neededTypeIds, ...financialTypeIds]));
     if (typeIds.length === 0 && CRAFT_BUYBACK_STATE.orders.length === 0) {
         return;
     }
@@ -10181,42 +10201,46 @@ async function decorateNeededRowsWithBuyback(rows) {
         return;
     }
     const items = payload.items && typeof payload.items === 'object' ? payload.items : {};
-    tbody.querySelectorAll('tr[data-type-id]').forEach((tr) => {
-        const typeId = Number(tr.dataset.typeId) || 0;
-        const slot = tr.querySelector('.craft-buyback-slot');
-        if (!slot) {
-            return;
-        }
-        const parts = [];
-        const pending = getPendingBuybackQuantity(typeId);
-        if (pending > 0) {
-            parts.push(`<span class="badge text-bg-secondary craft-buyback-pending" title="${escapeHtml(__('Ordered from buyback; not counted as owned until you receive it'))}"><i class="fas fa-hourglass-half me-1" aria-hidden="true"></i>${escapeHtml(__('Reserved (pending)'))}: ${formatInteger(pending)}</span>`);
-        }
-        const item = payload.enabled ? items[String(typeId)] : null;
-        if (item) {
-            parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}</button>`);
-        }
-        slot.innerHTML = parts.join(' ');
-        const badge = slot.querySelector('.craft-buyback-badge');
-        if (badge && item && window.bootstrap && bootstrap.Popover) {
-            const content = `
-                <div class="small">
-                    <div>${escapeHtml(describeBuybackItem(item))}</div>
-                    ${item.location_label ? `<div class="text-muted">${escapeHtml(__('Pick-up'))}: ${escapeHtml(item.location_label)}</div>` : ''}
-                    ${payload.stock_stale ? `<div class="text-warning">${escapeHtml(__('Stock data may be out of date'))}</div>` : ''}
-                    <button type="button" class="btn btn-sm btn-success mt-2" data-buyback-open-modal="${typeId}">${escapeHtml(__('Create buyback order'))}</button>
-                </div>`;
-            // Content is built from escaped values only, so sanitizing (which
-            // would strip the button) is not needed.
-            bootstrap.Popover.getOrCreateInstance(badge, {
-                title: __('Available in buyback'),
-                content,
-                html: true,
-                sanitize: false,
-                trigger: 'click',
-                placement: 'auto',
-            });
-        }
+    const targetBodies = [tbody, financialBody].filter(Boolean);
+    targetBodies.forEach((body) => {
+        body.querySelectorAll('tr[data-type-id]').forEach((tr) => {
+            const typeId = Number(tr.dataset.typeId) || 0;
+            const slot = tr.querySelector('.craft-buyback-slot');
+            if (!slot) {
+                return;
+            }
+            const parts = [];
+            const pending = getPendingBuybackQuantity(typeId);
+            if (pending > 0) {
+                parts.push(`<span class="badge text-bg-secondary craft-buyback-pending" title="${escapeHtml(__('Ordered from buyback; not counted as owned until you receive it'))}"><i class="fas fa-hourglass-half me-1" aria-hidden="true"></i>${escapeHtml(__('Reserved (pending)'))}: ${formatInteger(pending)}</span>`);
+            }
+            const item = payload.enabled ? items[String(typeId)] : null;
+            if (item) {
+                const availQtyText = item.available_quantity != null ? ` <span class="badge bg-success-subtle text-success-emphasis ms-1">${formatInteger(item.available_quantity)}</span>` : '';
+                parts.push(`<button type="button" class="btn btn-sm btn-outline-success py-0 px-2 craft-buyback-badge" data-buyback-type-id="${typeId}" aria-haspopup="dialog" aria-label="${escapeHtml(__('Available in buyback'))}: ${escapeHtml(describeBuybackItem(item))}"><i class="fas fa-store me-1" aria-hidden="true"></i>${escapeHtml(__('Buyback'))}${availQtyText}</button>`);
+            }
+            slot.innerHTML = parts.join(' ');
+            const badge = slot.querySelector('.craft-buyback-badge');
+            if (badge && item && window.bootstrap && bootstrap.Popover) {
+                const content = `
+                    <div class="small">
+                        <div>${escapeHtml(describeBuybackItem(item))}</div>
+                        ${item.location_label ? `<div class="text-muted">${escapeHtml(__('Pick-up'))}: ${escapeHtml(item.location_label)}</div>` : ''}
+                        ${payload.stock_stale ? `<div class="text-warning">${escapeHtml(__('Stock data may be out of date'))}</div>` : ''}
+                        <button type="button" class="btn btn-sm btn-success mt-2" data-buyback-open-modal="${typeId}">${escapeHtml(__('Create buyback order'))}</button>
+                    </div>`;
+                // Content is built from escaped values only, so sanitizing (which
+                // would strip the button) is not needed.
+                bootstrap.Popover.getOrCreateInstance(badge, {
+                    title: __('Available in buyback'),
+                    content,
+                    html: true,
+                    sanitize: false,
+                    trigger: 'click',
+                    placement: 'auto',
+                });
+            }
+        });
     });
     if (statusEl) {
         const lines = [];
