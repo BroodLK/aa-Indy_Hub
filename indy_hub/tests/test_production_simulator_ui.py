@@ -316,11 +316,16 @@ class PageLoadingOverlayTests(SimpleTestCase):
         self.assertIn("data-me-loading-detail", html)
         self.assertIn("material_exchange_loading.js", html)
 
-    def test_base_template_includes_loading_overlay(self) -> None:
+    def test_base_template_includes_loading_overlay_and_css(self) -> None:
         base_template = (TEMPLATES / "base.html").read_text(encoding="utf-8")
         self.assertIn(
-            'include "indy_hub/includes/page_loading_overlay.html"', base_template
+            '{% include "indy_hub/includes/page_loading_overlay.html" %}', base_template
         )
+        self.assertIn("material_exchange_loading.css", base_template)
+        # Dropdown navigation links must have data-indy-loading
+        self.assertIn('data-indy-loading="{% trans \'Loading Blueprints\' %}"', base_template)
+        self.assertIn('data-indy-loading="{% trans \'Loading Industry Jobs\' %}"', base_template)
+        self.assertIn('data-indy-loading="{% trans \'Loading Production Simulations\' %}"', base_template)
 
     def test_loading_script_handles_indy_loading_triggers(self) -> None:
         script = (STATIC / "js" / "material_exchange_loading.js").read_text(

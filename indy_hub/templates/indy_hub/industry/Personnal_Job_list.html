@@ -9,6 +9,7 @@
 {% endblock page_title %}
 
 {% block extra_css %}
+    {{ block.super }}
     <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
     <link rel="stylesheet" href="{% static 'indy_hub/css/jobs.css' %}">
 {% endblock extra_css %}
@@ -513,6 +514,7 @@
 {% endblock content %}
 
 {% block extra_javascript %}
+    {{ block.super }}
     <script src="{% static 'indy_hub/js/jobs.js' %}"></script>
     <script src="{% static 'indy_hub/js/personal_job_list.js' %}"></script>
 {% endblock extra_javascript %}

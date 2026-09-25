@@ -11,6 +11,7 @@
 {% endblock page_title %}
 
 {% block extra_css %}
+    {{ block.super }}
     <link rel="stylesheet" href="{% static 'indy_hub/css/page_headers.css' %}">
     <link rel="stylesheet" href="{% static 'indy_hub/css/blueprints.css' %}">
 {% endblock extra_css %}
@@ -49,7 +50,9 @@
 
         <!-- Filter Section -->
         <div class="filter-section mb-4">
-            <form method="get">
+            <form method="get"
+                  data-indy-loading="{% trans 'Filtering Blueprints' %}"
+                  data-indy-loading-detail="{% trans 'Searching blueprints...' %}">
                 <input type="hidden" name="scope" value="{{ scope }}">
                 <div class="row g-3 align-items-end">
                     <div class="col-lg-2">
@@ -105,8 +108,10 @@
                             <option value="">
                                 {% if is_corporation_scope %}
                                     {% trans 'All Corporations' %}
+                                </option>
                                 {% else %}
                                     {% trans 'All Characters' %}
+                                </option>
                                 {% endif %}
                             </option>
                             {% for owner_id, owner_name in owner_options %}
@@ -122,7 +127,9 @@
                             <i class="fas fa-filter me-1"></i>{% trans 'Apply Filters' %}
                         </button>
                         <a href="{% if scope == 'corporation' %}{{ scope_urls.corporation }}{% else %}{{ scope_urls.character }}{% endif %}"
-                           class="btn btn-outline-secondary ms-2">
+                           class="btn btn-outline-secondary ms-2"
+                           data-indy-loading="{% trans 'Loading Blueprints' %}"
+                           data-indy-loading-detail="{% trans 'Resetting filters...' %}">
                             <i class="fas fa-undo-alt me-1"></i>{% trans 'Reset Filters' %}
                         </a>
                     </div>
@@ -261,7 +268,8 @@
 
             <!-- Pagination Controls + Page Size Filter -->
             <div class="d-flex flex-wrap justify-content-between align-items-center mt-4 mb-2 gap-2">
-                <form method="get" class="d-flex align-items-center gap-2 mb-0">
+                <form method="get" class="d-flex align-items-center gap-2 mb-0"
+                      data-indy-loading="{% trans 'Loading Blueprints' %}">
                     <label for="perPage" class="form-label mb-0 text-muted small">{% trans "Per page" %}</label>
                     <select name="per_page" id="perPage" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
                         {% for n in per_page_options %}
@@ -285,6 +293,7 @@
                                 <li class="page-item">
                                     <a class="page-link"
                                        href="?page={{ blueprints.previous_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ current_filters.search }}&efficiency={{ current_filters.efficiency }}&type={{ current_filters.type }}&owner={{ current_filters.owner }}&activity_id={{ current_filters.activity_id }}&scope={{ scope }}&applied=1"
+                                       data-indy-loading="{% trans 'Loading Blueprints' %}"
                                        aria-label="{% trans 'Previous' %}">
                                         <span aria-hidden="true">&laquo;</span>
                                     </a>
@@ -298,12 +307,14 @@
                                 {% elif num >= blueprints.number|add:'-2' and num <= blueprints.number|add:'2' %}
                                     <li class="page-item">
                                         <a class="page-link"
-                                           href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ current_filters.search }}&efficiency={{ current_filters.efficiency }}&type={{ current_filters.type }}&owner={{ current_filters.owner }}&activity_id={{ current_filters.activity_id }}&scope={{ scope }}&applied=1">{{ num }}</a>
+                                           href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ current_filters.search }}&efficiency={{ current_filters.efficiency }}&type={{ current_filters.type }}&owner={{ current_filters.owner }}&activity_id={{ current_filters.activity_id }}&scope={{ scope }}&applied=1"
+                                           data-indy-loading="{% trans 'Loading Blueprints' %}">{{ num }}</a>
                                     </li>
                                 {% elif num == 1 or num == blueprints.paginator.num_pages %}
                                     <li class="page-item">
                                         <a class="page-link"
-                                           href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ current_filters.search }}&efficiency={{ current_filters.efficiency }}&type={{ current_filters.type }}&owner={{ current_filters.owner }}&activity_id={{ current_filters.activity_id }}&scope={{ scope }}&applied=1">{{ num }}</a>
+                                           href="?page={{ num }}&per_page={{ blueprints.paginator.per_page }}&search={{ current_filters.search }}&efficiency={{ current_filters.efficiency }}&type={{ current_filters.type }}&owner={{ current_filters.owner }}&activity_id={{ current_filters.activity_id }}&scope={{ scope }}&applied=1"
+                                           data-indy-loading="{% trans 'Loading Blueprints' %}">{{ num }}</a>
                                     </li>
                                     {% if num < blueprints.number|add:'-2' or num > blueprints.number|add:'2' %}
                                         <li class="page-item disabled">
@@ -316,6 +327,7 @@
                                 <li class="page-item">
                                     <a class="page-link"
                                        href="?page={{ blueprints.next_page_number }}&per_page={{ blueprints.paginator.per_page }}&search={{ current_filters.search }}&efficiency={{ current_filters.efficiency }}&type={{ current_filters.type }}&owner={{ current_filters.owner }}&activity_id={{ current_filters.activity_id }}&scope={{ scope }}&applied=1"
+                                       data-indy-loading="{% trans 'Loading Blueprints' %}"
                                        aria-label="{% trans 'Next' %}">
                                         <span aria-hidden="true">&raquo;</span>
                                     </a>
@@ -375,6 +387,7 @@
 {% endblock content %}
 
 {% block extra_javascript %}
+    {{ block.super }}
     <script src="{% static 'indy_hub/js/blueprints.js' %}"></script>
     <script src="{% static 'indy_hub/js/personal_bp_list.js' %}"></script>
 {% endblock extra_javascript %}
