@@ -821,6 +821,133 @@ class CompressedOreCalculationPerformanceTests(SimpleTestCase):
         self.assertIn("sell prices above 1 ISK", str(result["error"]))
 
 
+class CompressedOreOptimizationAndLogisticsTests(SimpleTestCase):
+    @patch("indy_hub.services.reprocessing.get_type_volume", return_value=0.15)
+    @patch("indy_hub.services.reprocessing.get_type_name", side_effect=lambda tid: f"Ore {tid}")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100)
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_lp_solver_finds_cheapest_combination_across_multi_minerals(
+        self,
+        mock_cache_model,
+        _mock_portion_size,
+        _mock_type_name,
+        _mock_type_volume,
+    ):
+        mock_cache_model.needs_initial_setup.return_value = False
+        mock_cache_model.needs_price_update.return_value = False
+        mock_cache_model.objects.all.return_value.values.return_value = [
+            {
+                "ore_type_id": 1,
+                "ore_name": "Compressed Ore Single",
+                "reprocessing_outputs": {"34": 400},
+                "sell_price": Decimal("15.00"),
+            },
+            {
+                "ore_type_id": 2,
+                "ore_name": "Compressed Ore Dual",
+                "reprocessing_outputs": {"34": 300, "35": 200},
+                "sell_price": Decimal("20.00"),
+            },
+            {
+                "ore_type_id": 3,
+                "ore_name": "Compressed Ore Triple",
+                "reprocessing_outputs": {"34": 350, "35": 100, "36": 50},
+                "sell_price": Decimal("35.00"),
+            },
+        ]
+
+        # Requirement: 1000 Tritanium (34), 500 Pyerite (35), 200 Mexallon (36)
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 1000, 35: 500, 36: 200},
+            refine_rate_percent=Decimal("100.0"),
+            optimization_strategy="cost",
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertTrue(len(result["compressed_ores"]) > 0)
+        # Verify logistics metrics are populated
+        logistics = result["logistics"]
+        self.assertGreater(logistics["raw_minerals_volume_m3"], 0)
+        self.assertGreater(logistics["compressed_ore_volume_m3"], 0)
+        self.assertGreater(logistics["volume_reduction_percent"], 0)
+
+    @patch("indy_hub.services.reprocessing.get_type_volume", return_value=0.15)
+    @patch("indy_hub.services.reprocessing.get_type_name", side_effect=lambda tid: f"Ore {tid}")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100)
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_facility_tax_and_byproduct_valuation_calculations(
+        self,
+        mock_cache_model,
+        _mock_portion_size,
+        _mock_type_name,
+        _mock_type_volume,
+    ):
+        mock_cache_model.needs_initial_setup.return_value = False
+        mock_cache_model.needs_price_update.return_value = False
+        mock_cache_model.objects.all.return_value.values.return_value = [
+            {
+                "ore_type_id": 1,
+                "ore_name": "Compressed Veldspar",
+                "reprocessing_outputs": {"34": 400},
+                "sell_price": Decimal("10.00"),
+            },
+        ]
+
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 350},
+            refine_rate_percent=Decimal("100.0"),
+            facility_tax_percent=Decimal("5.00"),
+            reclaim_byproducts=True,
+            mineral_prices={34: Decimal("4.00")},
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["ores_cost"], Decimal("1000.00"))  # 100 units * 10 ISK
+        self.assertEqual(result["facility_tax"], Decimal("50.00"))  # 5% tax
+        self.assertEqual(result["gross_cost"], Decimal("1050.00"))
+        # 400 produced - 350 required = 50 excess * 4 ISK = 200 ISK byproduct credit
+        self.assertEqual(result["excess_minerals_value"], Decimal("200.00"))
+        self.assertEqual(result["net_effective_cost"], Decimal("850.00"))  # 1050 - 200
+
+    @patch("indy_hub.services.reprocessing.get_type_volume", side_effect=lambda tid: 0.10 if tid == 1 else 0.50)
+    @patch("indy_hub.services.reprocessing.get_type_name", side_effect=lambda tid: f"Ore {tid}")
+    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100)
+    @patch("indy_hub.models.CompressedOreCache")
+    def test_volume_optimization_strategy_favors_lower_freight(
+        self,
+        mock_cache_model,
+        _mock_portion_size,
+        _mock_type_name,
+        _mock_type_volume,
+    ):
+        mock_cache_model.needs_initial_setup.return_value = False
+        mock_cache_model.needs_price_update.return_value = False
+        mock_cache_model.objects.all.return_value.values.return_value = [
+            {
+                "ore_type_id": 1,
+                "ore_name": "Compact Ore",
+                "reprocessing_outputs": {"34": 100},
+                "sell_price": Decimal("50.00"),  # More expensive, but 0.10 m3
+            },
+            {
+                "ore_type_id": 2,
+                "ore_name": "Bulky Ore",
+                "reprocessing_outputs": {"34": 100},
+                "sell_price": Decimal("10.00"),  # Cheaper, but 0.50 m3
+            },
+        ]
+
+        result = calculate_compressed_ore_for_minerals(
+            mineral_requirements={34: 100},
+            refine_rate_percent=Decimal("100.0"),
+            optimization_strategy="volume",
+        )
+
+        self.assertIsNone(result["error"])
+        self.assertEqual(len(result["compressed_ores"]), 1)
+        self.assertEqual(result["compressed_ores"][0]["type_id"], 1)
+
+
 class CompressedOrePriceUpdateTests(SimpleTestCase):
     @patch("indy_hub.services.reprocessing.fetch_fuzzwork_prices")
     @patch("indy_hub.models.CompressedOreCache")

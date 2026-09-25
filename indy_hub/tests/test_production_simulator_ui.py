@@ -435,3 +435,33 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
     def test_preset_owned_efficiency_checks_owned_bpcs(self) -> None:
         self.assertIn("bp.is_owned && bp.is_copy", self.template)
         self.assertIn("presetOwnedBtn", self.template)
+
+
+class CompressedOreConversionModalUITests(SimpleTestCase):
+    """Verify that the mineral-to-ore modal and script contain optimization strategy, logistics, and tax controls."""
+
+    def setUp(self) -> None:
+        self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+        self.script = CRAFT_JS.read_text(encoding="utf-8")
+
+    def test_modal_contains_strategy_tax_and_byproduct_controls(self) -> None:
+        self.assertIn('id="oreOptimizationStrategy"', self.template)
+        self.assertIn('id="oreFacilityTax"', self.template)
+        self.assertIn('id="oreReclaimByproducts"', self.template)
+        self.assertIn('id="rawMineralsVolume"', self.template)
+        self.assertIn('id="compressedOreVolume"', self.template)
+        self.assertIn('id="volumeSaved"', self.template)
+        self.assertIn('id="logisticsSavingsBadge"', self.template)
+        self.assertIn('id="oresGrossCost"', self.template)
+        self.assertIn('id="facilityTaxAmount"', self.template)
+        self.assertIn('id="netEffectiveCost"', self.template)
+
+    def test_script_submits_and_renders_logistics_and_taxes(self) -> None:
+        self.assertIn("oreOptimizationStrategy", self.script)
+        self.assertIn("oreFacilityTax", self.script)
+        self.assertIn("oreReclaimByproducts", self.script)
+        self.assertIn("rawMineralsVolume", self.script)
+        self.assertIn("compressedOreVolume", self.script)
+        self.assertIn("volumeSaved", self.script)
+        self.assertIn("oresGrossCost", self.script)
+        self.assertIn("netEffectiveCost", self.script)

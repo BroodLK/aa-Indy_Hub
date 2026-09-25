@@ -10700,11 +10700,27 @@ function calculateCompressedOres() {
         return;
     }
 
+    const optimizationStrategy = document.getElementById('oreOptimizationStrategy')?.value || 'cost';
+    const facilityTax = parseFloat(document.getElementById('oreFacilityTax')?.value || '0') || 0;
+    const reclaimByproducts = Boolean(document.getElementById('oreReclaimByproducts')?.checked);
+
     const minerals = getMineralsFromFinancialTable();
     if (minerals.length === 0) {
         showConversionError('No minerals found to convert.');
         return;
     }
+
+    const mineralPrices = {};
+    minerals.forEach(m => {
+        const typeId = m.type_id;
+        const row = document.querySelector(`#financialItemsBody tr[data-type-id="${typeId}"]`);
+        const realInput = row ? row.querySelector('.real-price') : null;
+        const fuzzInput = row ? row.querySelector('.fuzzwork-price') : null;
+        const price = getCraftPriceInputValue(realInput) || getCraftPriceInputValue(fuzzInput) || 0;
+        if (price > 0) {
+            mineralPrices[typeId] = price;
+        }
+    });
 
     // Show loading
     document.getElementById('conversionResults').style.display = 'none';
@@ -10721,6 +10737,10 @@ function calculateCompressedOres() {
         body: JSON.stringify({
             minerals: minerals,
             refine_rate: refineRate,
+            optimization_strategy: optimizationStrategy,
+            facility_tax_percent: facilityTax,
+            reclaim_byproducts: reclaimByproducts,
+            mineral_prices: mineralPrices,
         }),
     })
     .then(response => {
@@ -10754,57 +10774,117 @@ function calculateCompressedOres() {
 
 function displayConversionResults(data) {
     const oresListContent = document.getElementById('oresListContent');
-    const totalCostElement = document.getElementById('totalCost');
     const mineralsCostElement = document.getElementById('mineralsCost');
     const priceDifferenceElement = document.getElementById('priceDifference');
     const excessMineralsDiv = document.getElementById('excessMineralsDiv');
     const excessMineralsList = document.getElementById('excessMineralsList');
 
-    // Display ores
-    if (data.compressed_ores && data.compressed_ores.length > 0) {
-        oresListContent.innerHTML = data.compressed_ores.map(ore =>
-            `<div class="mb-2 text-nowrap">
-                <strong>${ore.type_name}</strong>: ${ore.quantity.toLocaleString()}
-                @ ${ore.unit_price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK
-                = ${ore.total_cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK
-            </div>`
-        ).join('');
-    } else {
-        oresListContent.innerHTML = '<div class="text-muted">No compressed ores calculated.</div>';
+    // Logistics elements
+    const rawMineralsVolumeEl = document.getElementById('rawMineralsVolume');
+    const compressedOreVolumeEl = document.getElementById('compressedOreVolume');
+    const volumeSavedEl = document.getElementById('volumeSaved');
+    const logisticsSavingsBadgeEl = document.getElementById('logisticsSavingsBadge');
+
+    // Financial breakdown elements
+    const oresGrossCostEl = document.getElementById('oresGrossCost');
+    const facilityTaxAmountEl = document.getElementById('facilityTaxAmount');
+    const byproductValueRow = document.getElementById('byproductValueRow');
+    const byproductValueAmountEl = document.getElementById('byproductValueAmount');
+    const netEffectiveCostEl = document.getElementById('netEffectiveCost');
+
+    const logistics = data.logistics || {};
+    const rawVol = Number(logistics.raw_minerals_volume_m3) || 0;
+    const compVol = Number(logistics.compressed_ore_volume_m3) || 0;
+    const savedVol = Number(logistics.volume_saved_m3) || 0;
+    const redPct = Number(logistics.volume_reduction_percent) || 0;
+
+    if (rawMineralsVolumeEl) rawMineralsVolumeEl.textContent = `${rawVol.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} m³`;
+    if (compressedOreVolumeEl) compressedOreVolumeEl.textContent = `${compVol.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} m³`;
+    if (volumeSavedEl) volumeSavedEl.textContent = `${savedVol.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} m³ (${redPct.toFixed(1)}%)`;
+    if (logisticsSavingsBadgeEl) {
+        logisticsSavingsBadgeEl.textContent = redPct > 0 ? `-${redPct.toFixed(1)}% freight volume` : '';
+        logisticsSavingsBadgeEl.style.display = redPct > 0 ? '' : 'none';
     }
 
-    // Display total cost
-    const compressedOreCost = Number(data.total_cost) || 0;
+    const oresCost = Number(data.ores_cost ?? data.total_cost) || 0;
+    const facilityTax = Number(data.facility_tax) || 0;
+    const byproductVal = Number(data.excess_minerals_value) || 0;
+    const netCost = Number(data.net_effective_cost ?? (oresCost + facilityTax)) || 0;
     const mineralsCost = getMineralsBuyCostFromFinancialTable();
-    const priceDifference = compressedOreCost - mineralsCost;
+    const priceDifference = netCost - mineralsCost;
 
-    totalCostElement.textContent = formatPrice(compressedOreCost);
-    if (mineralsCostElement) {
-        mineralsCostElement.textContent = formatPrice(mineralsCost);
+    if (oresGrossCostEl) oresGrossCostEl.textContent = formatPrice(oresCost);
+    if (facilityTaxAmountEl) facilityTaxAmountEl.textContent = formatPrice(facilityTax);
+    if (byproductValueRow && byproductValueAmountEl) {
+        if (byproductVal > 0) {
+            byproductValueRow.style.display = 'flex';
+            byproductValueAmountEl.textContent = `-${formatPrice(byproductVal)}`;
+        } else {
+            byproductValueRow.style.display = 'none';
+        }
     }
+    if (netEffectiveCostEl) netEffectiveCostEl.textContent = formatPrice(netCost);
+    if (mineralsCostElement) mineralsCostElement.textContent = formatPrice(mineralsCost);
     if (priceDifferenceElement) {
         priceDifferenceElement.textContent = `${priceDifference >= 0 ? '+' : '-'}${formatPrice(Math.abs(priceDifference))}`;
         priceDifferenceElement.classList.remove('text-danger', 'text-success');
         priceDifferenceElement.classList.add(priceDifference > 0 ? 'text-danger' : 'text-success');
     }
 
-    // Show warning if prices are estimated
-    if (data.prices_estimated === true) {
-        totalCostElement.innerHTML += ' <span class="badge bg-warning text-dark ms-2" title="Some prices unavailable, using fallback calculation">Estimated</span>';
+    // Display ores table
+    if (data.compressed_ores && data.compressed_ores.length > 0) {
+        oresListContent.innerHTML = `
+            <table class="table table-sm table-striped table-hover align-middle mb-0 small">
+                <thead class="table-light">
+                    <tr>
+                        <th>${escapeHtml(__('Compressed Ore'))}</th>
+                        <th class="text-end">${escapeHtml(__('Quantity'))}</th>
+                        <th class="text-end">${escapeHtml(__('Portions'))}</th>
+                        <th class="text-end">${escapeHtml(__('Unit Price'))}</th>
+                        <th class="text-end">${escapeHtml(__('Total Cost'))}</th>
+                        <th class="text-end">${escapeHtml(__('Volume (m³)'))}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.compressed_ores.map(ore => `
+                        <tr>
+                            <td class="fw-semibold">${escapeHtml(ore.type_name)}</td>
+                            <td class="text-end font-monospace">${Number(ore.quantity).toLocaleString()}</td>
+                            <td class="text-end text-muted font-monospace">${Number(ore.portions || Math.floor(ore.quantity / (ore.portion_size || 100))).toLocaleString()} × ${ore.portion_size || 100}</td>
+                            <td class="text-end font-monospace">${Number(ore.unit_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK</td>
+                            <td class="text-end fw-semibold font-monospace">${Number(ore.total_cost).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK</td>
+                            <td class="text-end text-muted font-monospace">${Number(ore.total_volume_m3 || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} m³</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } else {
+        oresListContent.innerHTML = '<div class="text-muted">No compressed ores calculated.</div>';
     }
 
     // Display excess minerals if any
-    if (data.excess_minerals && Object.keys(data.excess_minerals).length > 0) {
-        excessMineralsList.innerHTML = Object.entries(data.excess_minerals).map(([typeId, qty]) => {
-            const mineral = getMineralNameById(parseInt(typeId));
-            return `<div>${mineral}: +${qty.toLocaleString()}</div>`;
+    const excessDetails = Array.isArray(data.excess_minerals_details) && data.excess_minerals_details.length > 0
+        ? data.excess_minerals_details
+        : Object.entries(data.excess_minerals || {}).map(([typeId, qty]) => ({
+            type_id: parseInt(typeId),
+            type_name: getMineralNameById(parseInt(typeId)),
+            quantity: qty,
+            unit_price: 0,
+            total_value: 0
+        }));
+
+    if (excessDetails.length > 0) {
+        excessMineralsList.innerHTML = excessDetails.map(item => {
+            const valText = item.total_value > 0 ? ` (${formatPrice(item.total_value)})` : '';
+            return `<div class="badge bg-light text-dark border p-2"><strong>${escapeHtml(item.type_name)}</strong>: +${Number(item.quantity).toLocaleString()}${valText}</div>`;
         }).join('');
         excessMineralsDiv.style.display = 'block';
     } else {
         excessMineralsDiv.style.display = 'none';
     }
 
-    // Show results and apply button
+    // Show results and action buttons
     document.getElementById('conversionResults').style.display = 'block';
     document.getElementById('calculateOresBtn').style.display = 'none';
     document.getElementById('copyOresBtn').style.display = '';

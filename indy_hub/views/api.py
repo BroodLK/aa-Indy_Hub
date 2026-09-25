@@ -2001,6 +2001,10 @@ def convert_minerals_to_compressed_ore(request):
 
         minerals_list = data.get("minerals", [])
         refine_rate = data.get("refine_rate", 84.2)
+        optimization_strategy = data.get("optimization_strategy", "cost")
+        facility_tax_percent = data.get("facility_tax_percent", 0.0)
+        reclaim_byproducts = bool(data.get("reclaim_byproducts", False))
+        raw_mineral_prices = data.get("mineral_prices", {})
 
         if not minerals_list:
             return JsonResponse({"error": "No minerals provided"}, status=400)
@@ -2019,10 +2023,24 @@ def convert_minerals_to_compressed_ore(request):
         if not mineral_requirements:
             return JsonResponse({"error": "No valid minerals provided"}, status=400)
 
+        mineral_prices_map: dict[int, Decimal] = {}
+        if isinstance(raw_mineral_prices, dict):
+            for k, v in raw_mineral_prices.items():
+                try:
+                    mid = int(k)
+                    val = Decimal(str(v or 0))
+                    mineral_prices_map[mid] = val
+                except (TypeError, ValueError):
+                    continue
+
         # Perform calculation
         result = calculate_compressed_ore_for_minerals(
             mineral_requirements=mineral_requirements,
             refine_rate_percent=Decimal(str(refine_rate)),
+            optimization_strategy=str(optimization_strategy),
+            facility_tax_percent=Decimal(str(facility_tax_percent or 0)),
+            reclaim_byproducts=reclaim_byproducts,
+            mineral_prices=mineral_prices_map if mineral_prices_map else None,
         )
 
         # Convert Decimal values to float for JSON serialization
@@ -2032,15 +2050,45 @@ def convert_minerals_to_compressed_ore(request):
                     "type_id": ore["type_id"],
                     "type_name": ore["type_name"],
                     "quantity": ore["quantity"],
+                    "portion_size": ore.get("portion_size", 100),
+                    "portions": ore.get("portions", 1),
                     "unit_price": float(ore["unit_price"]),
                     "total_cost": float(ore["total_cost"]),
+                    "unit_volume_m3": float(ore.get("unit_volume_m3", 0.15)),
+                    "total_volume_m3": float(ore.get("total_volume_m3", 0.0)),
                 }
                 for ore in result["compressed_ores"]
             ],
             "total_cost": float(result["total_cost"]),
+            "ores_cost": float(result.get("ores_cost", result["total_cost"])),
+            "facility_tax": float(result.get("facility_tax", 0.0)),
+            "facility_tax_percent": float(result.get("facility_tax_percent", 0.0)),
+            "gross_cost": float(result.get("gross_cost", result["total_cost"])),
             "excess_minerals": {
                 str(k): v for k, v in result["excess_minerals"].items()
             },
+            "excess_minerals_details": [
+                {
+                    "type_id": item["type_id"],
+                    "type_name": item["type_name"],
+                    "quantity": item["quantity"],
+                    "unit_price": float(item["unit_price"]),
+                    "total_value": float(item["total_value"]),
+                }
+                for item in result.get("excess_minerals_details", [])
+            ],
+            "excess_minerals_value": float(result.get("excess_minerals_value", 0.0)),
+            "net_effective_cost": float(result.get("net_effective_cost", result["total_cost"])),
+            "logistics": result.get(
+                "logistics",
+                {
+                    "raw_minerals_volume_m3": 0.0,
+                    "compressed_ore_volume_m3": 0.0,
+                    "volume_saved_m3": 0.0,
+                    "volume_reduction_percent": 0.0,
+                },
+            ),
+            "optimization_strategy": result.get("optimization_strategy", optimization_strategy),
             "prices_estimated": result.get("prices_estimated", False),
             # Real provenance: which prices were used, how old they are, and
             # whether a refresh was queued instead of fetched inline.

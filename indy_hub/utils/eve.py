@@ -46,6 +46,7 @@ else:  # pragma: no cover - Eve SDE app not installed
 logger = get_extension_logger(__name__)
 
 _TYPE_NAME_CACHE: dict[int, str] = {}
+_TYPE_VOLUME_CACHE: dict[int, float] = {}
 _CHAR_NAME_CACHE: dict[int, str] = {}
 _CORP_NAME_CACHE: dict[int, str] = {}
 _CORP_TICKER_CACHE: dict[int, str] = {}
@@ -247,6 +248,43 @@ def get_type_name(type_id: int | None) -> str:
     res = str(type_id)
     _TYPE_NAME_CACHE[type_id] = res
     return res
+
+
+def get_type_volume(type_id: int | None) -> float:
+    """Return the packaged or standard volume (in m3) for a type ID with safe fallbacks."""
+    if not type_id:
+        return 0.0
+
+    try:
+        tid = int(type_id)
+    except (TypeError, ValueError):
+        return 0.0
+
+    if tid in _TYPE_VOLUME_CACHE:
+        return _TYPE_VOLUME_CACHE[tid]
+
+    # Standard mineral types have canonical 0.01 m3 volume
+    if tid in {34, 35, 36, 37, 38, 39, 40, 11399}:
+        _TYPE_VOLUME_CACHE[tid] = 0.01
+        return 0.01
+
+    if ItemType is not None:
+        try:
+            item = ItemType.objects.filter(id=tid).values("packaged_volume", "volume").first()
+            if item:
+                pkg_vol = item.get("packaged_volume")
+                reg_vol = item.get("volume")
+                resolved = pkg_vol if pkg_vol is not None else reg_vol
+                if resolved is not None and float(resolved) > 0:
+                    val = float(resolved)
+                    _TYPE_VOLUME_CACHE[tid] = val
+                    return val
+        except Exception:
+            pass
+
+    # Standard fallback: 0.15 m3 for standard compressed ores
+    _TYPE_VOLUME_CACHE[tid] = 0.15
+    return 0.15
 
 
 def get_corporation_name(corporation_id: int | None) -> str:

@@ -2357,33 +2357,98 @@
                 </div>
                 <div class="modal-body">
                     <form id="convertMineralsForm">
-                        <div class="mb-3">
-                            <label for="refineRate" class="form-label">{% trans "Refine Rate (%)" %}</label>
-                            <input type="number" class="form-control" id="refineRate" min="0" max="100" step="0.01" value="84.20" required>
-                            <div class="form-text">{% trans "Enter your refining efficiency percentage (0-100)" %}</div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <label for="refineRate" class="form-label fw-semibold">{% trans "Refine Rate (%)" %}</label>
+                                <input type="number" class="form-control" id="refineRate" min="0" max="100" step="0.01" value="84.20" required>
+                                <div class="form-text">{% trans "Refining yield percentage (0-100)" %}</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="oreOptimizationStrategy" class="form-label fw-semibold">{% trans "Optimization Priority" %}</label>
+                                <select class="form-select" id="oreOptimizationStrategy">
+                                    <option value="cost" selected>{% trans "Lowest Total ISK Cost (Default)" %}</option>
+                                    <option value="volume">{% trans "Lowest Freight Volume (m³)" %}</option>
+                                </select>
+                                <div class="form-text">{% trans "Target absolute lowest price or lowest hauling volume" %}</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="oreFacilityTax" class="form-label fw-semibold">{% trans "Facility Refining Tax (%)" %}</label>
+                                <input type="number" class="form-control" id="oreFacilityTax" min="0" max="100" step="0.01" value="0.00">
+                                <div class="form-text">{% trans "Structure tax & SCC job installation surcharge" %}</div>
+                            </div>
                         </div>
-                        <div id="mineralsList" class="alert alert-info">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="oreReclaimByproducts">
+                            <label class="form-check-label" for="oreReclaimByproducts">
+                                {% trans "Deduct market value of excess/byproduct minerals from net cost" %}
+                            </label>
+                        </div>
+                        <div id="mineralsList" class="alert alert-info py-2">
                             <strong>{% trans "Minerals to convert:" %}</strong>
-                            <div id="mineralsListContent"></div>
+                            <div id="mineralsListContent" class="small mt-1 d-flex flex-wrap gap-2"></div>
                         </div>
                     </form>
                     <div id="conversionResults" style="display: none;">
-                        <h6 class="fw-semibold mb-2">{% trans "Recommended Compressed Ores:" %}</h6>
-                        <div id="oresListContent" class="mb-3 overflow-auto"></div>
-                        <div class="alert alert-success">
-                            <div>
-                                <strong>{% trans "Compressed Ore Cost:" %}</strong> <span id="totalCost">0 ISK</span>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <div class="card h-100 shadow-sm border-primary">
+                                    <div class="card-header bg-primary text-white py-1 px-3 d-flex justify-content-between align-items-center">
+                                        <span class="fw-semibold">{% trans "Logistics & Freight Comparison" %}</span>
+                                        <span id="logisticsSavingsBadge" class="badge bg-light text-primary fw-bold"></span>
+                                    </div>
+                                    <div class="card-body py-2 px-3 small">
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <span class="text-muted">{% trans "Raw Minerals Volume:" %}</span>
+                                            <strong id="rawMineralsVolume">0.00 m³</strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <span class="text-muted">{% trans "Compressed Ore Volume:" %}</span>
+                                            <strong id="compressedOreVolume">0.00 m³</strong>
+                                        </div>
+                                        <div class="d-flex justify-content-between border-top pt-1 text-success fw-bold">
+                                            <span>{% trans "Freight Volume Saved:" %}</span>
+                                            <span id="volumeSaved">0.00 m³</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                                <strong>{% trans "Price of Minerals:" %}</strong> <span id="mineralsCost">0 ISK</span>
-                            </div>
-                            <div>
-                                <strong>{% trans "Difference:" %}</strong> <span id="priceDifference">0 ISK</span>
+                            <div class="col-md-6">
+                                <div class="card h-100 shadow-sm border-success">
+                                    <div class="card-header bg-success text-white py-1 px-3">
+                                        <span class="fw-semibold">{% trans "Financial Summary & Landed Cost" %}</span>
+                                    </div>
+                                    <div class="card-body py-2 px-3 small">
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <span class="text-muted">{% trans "Gross Ore Purchase:" %}</span>
+                                            <span id="oresGrossCost" class="fw-semibold">0 ISK</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-1" id="facilityTaxRow">
+                                            <span class="text-muted">{% trans "Refining Facility Tax:" %}</span>
+                                            <span id="facilityTaxAmount">0 ISK</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-1 text-success" id="byproductValueRow" style="display: none;">
+                                            <span>{% trans "Byproduct Mineral Credit:" %}</span>
+                                            <span id="byproductValueAmount">-0 ISK</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between border-top pt-1 fw-bold">
+                                            <span>{% trans "Net Landed Cost:" %}</span>
+                                            <span id="netEffectiveCost" class="text-primary">0 ISK</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between pt-1 text-muted" style="font-size: 0.85em;">
+                                            <span>{% trans "Raw Minerals Cost:" %} <span id="mineralsCost">0 ISK</span></span>
+                                            <span>{% trans "Diff vs Minerals:" %} <span id="priceDifference" class="fw-semibold">0 ISK</span></span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        <div id="excessMineralsDiv" style="display: none;" class="alert alert-warning">
-                            <strong>{% trans "Excess Minerals:" %}</strong>
-                            <div id="excessMineralsList"></div>
+
+                        <h6 class="fw-semibold mb-2">{% trans "Recommended Compressed Ores:" %}</h6>
+                        <div id="oresListContent" class="mb-3 overflow-auto"></div>
+
+                        <div id="excessMineralsDiv" style="display: none;" class="alert alert-warning py-2">
+                            <strong class="d-block mb-1">{% trans "Excess Minerals (Byproduct Yield):" %}</strong>
+                            <div id="excessMineralsList" class="small d-flex flex-wrap gap-3"></div>
                         </div>
                     </div>
                     <div id="conversionError" class="alert alert-danger" style="display: none;"></div>
@@ -2392,7 +2457,7 @@
                             <span class="visually-hidden">{% trans "Loading..." %}</span>
                         </div>
                         <div class="mt-2 text-muted">
-                            <small>{% trans "Calculating optimal compressed ore purchases..." %}</small>
+                            <small>{% trans "Calculating mathematically optimal compressed ore allocation..." %}</small>
                         </div>
                     </div>
                 </div>
