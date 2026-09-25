@@ -418,3 +418,20 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn('id="purchasePlannerTable"', self.template)
         self.assertIn("exportTableToCSV('#purchasePlannerTable'", self.template)
         self.assertIn("cell.querySelector('input, select, textarea')", self.template)
+
+
+class OwnedBpcPreselectionTests(SimpleTestCase):
+    """Verify that owned BPCs are pre-selected on simulation load and preset activation."""
+
+    def setUp(self) -> None:
+        self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+
+    def test_owned_bpcs_are_checked_by_default_in_config_tab(self) -> None:
+        self.assertIn(
+            "{% if bc.user_owns and bc.is_copy %}checked{% endif %}",
+            self.template,
+        )
+
+    def test_preset_owned_efficiency_checks_owned_bpcs(self) -> None:
+        self.assertIn("bp.is_owned && bp.is_copy", self.template)
+        self.assertIn("presetOwnedBtn", self.template)

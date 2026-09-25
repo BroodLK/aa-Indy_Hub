@@ -1604,7 +1604,8 @@
                                                                                        name="usebp_{{ bc.type_id }}"
                                                                                        data-blueprint-type-id="{{ bc.type_id }}"
                                                                                        data-product-type-id="{{ bc.product_type_id|default:bc.type_id }}"
-                                                                                       {% if not bc.user_owns and not bc.shared_copies_available %}disabled{% endif %}>
+                                                                                       {% if not bc.user_owns and not bc.shared_copies_available %}disabled{% endif %}
+                                                                                       {% if bc.user_owns and bc.is_copy %}checked{% endif %}>
                                                                                 <label class="form-check-label small fw-semibold" for="bpUse{{ bc.type_id }}">{% trans "Use this BP" %}</label>
                                                                             </div>
                                                                             <div class="small text-muted mb-2">
@@ -3386,6 +3387,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     input.value = 0;
                 }
                 input.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            document.querySelectorAll('.bp-use-input').forEach(input => {
+                const card = input.closest('.craft-bp-card');
+                const typeId = card ? card.getAttribute('data-blueprint-type-id') : input.getAttribute('data-blueprint-type-id');
+                const bp = blueprintConfigsByTypeId.get(Number(typeId));
+                if (bp && bp.is_owned && bp.is_copy && !input.disabled) {
+                    input.checked = true;
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
             });
             showToast(`{% trans "Applied owned BP parameters to" %} ${count} {% trans "blueprints" %}`);
         });
