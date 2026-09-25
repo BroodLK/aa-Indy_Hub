@@ -6274,7 +6274,7 @@ function buildFinancialRow(item, pricesMap) {
         </td>
         <td class="text-end text-xs total-cost fw-semibold">0</td>
         <td class="text-center text-xs craft-buyback-cell">
-            <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center" data-export-ignore>—</span>
+            <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center" data-export-ignore title="${escapeHtml(__('Not currently stocked in Material Exchange'))}">—</span>
         </td>
     `;
 
@@ -6381,6 +6381,7 @@ function updateFinancialRow(row, item) {
         buybackSlot = document.createElement('span');
         buybackSlot.className = 'craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center';
         buybackSlot.setAttribute('data-export-ignore', '');
+        buybackSlot.setAttribute('title', __('Not currently stocked in Material Exchange'));
         buybackSlot.textContent = '—';
         buybackCell.appendChild(buybackSlot);
     }
@@ -10219,10 +10220,13 @@ async function decorateNeededRowsWithBuyback(rows) {
             }
             if (parts.length > 0) {
                 slot.innerHTML = parts.join(' ');
+                slot.removeAttribute('title');
             } else if (slot.closest('.craft-buyback-cell')) {
-                slot.innerHTML = '<span class="text-muted">—</span>';
+                slot.innerHTML = `<span class="text-muted" title="${escapeHtml(__('Not currently stocked in Material Exchange'))}">—</span>`;
+                slot.removeAttribute('title');
             } else {
                 slot.innerHTML = '';
+                slot.removeAttribute('title');
             }
             const badge = slot.querySelector('.craft-buyback-badge');
             if (badge && item && window.bootstrap && bootstrap.Popover) {

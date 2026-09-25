@@ -272,6 +272,7 @@
                                                     data-unit-price="{{ item.display_sell_price_to_member|floatformat:2 }}"
                                                     data-max-qty="{{ item.available_quantity }}"
                                                     data-source-structure-ids="{{ item.source_structure_ids|join:',' }}"
+                                                    data-location-label="{{ item.buy_location_label }}"
                                                     data-refined-breakdown="{{ item.refined_breakdown_json|default:'' }}">
                                                     <td>
                                                         <img src="{{ item.icon_url }}"
@@ -1193,6 +1194,28 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
+    function getAvailableLocationsForType(typeId, excludeLocationId) {
+        const locations = new Set();
+        itemRows.forEach(row => {
+            const rowTypeId = parseInt(row.dataset.typeId || '0', 10) || 0;
+            if (rowTypeId !== typeId) {
+                return;
+            }
+            if (getImportRowCapacity(row) <= 0) {
+                return;
+            }
+            const rowLocationIds = getRowLocationIds(row);
+            if (excludeLocationId && rowLocationIds.has(excludeLocationId)) {
+                return;
+            }
+            const locLabel = (row.dataset.locationLabel || row.getAttribute('data-location-label') || '').trim();
+            if (locLabel) {
+                locations.add(locLabel);
+            }
+        });
+        return Array.from(locations);
+    }
+
     function getCsrfToken() {
         const tokenField = purchaseForm
             ? purchaseForm.querySelector('input[name="csrfmiddlewaretoken"]')
@@ -1323,13 +1346,27 @@ document.addEventListener('DOMContentLoaded', function() {
                     addedLineCount += 1;
                 }
                 if (importedQty <= 0) {
-                    unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                    const altLocations = getAvailableLocationsForType(typeId, targetLocationId);
+                    if (altLocations.length > 0) {
+                        unavailableItems.push(
+                            `${typeName} (${requestedQty.toLocaleString()}) [{% trans "available at" %} ${altLocations.join(', ')}]`
+                        );
+                    } else {
+                        unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                    }
                     return;
                 }
                 if (remainingQty > 0) {
-                    partialItems.push(
-                        `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
-                    );
+                    const altLocations = getAvailableLocationsForType(typeId, targetLocationId);
+                    if (altLocations.length > 0) {
+                        partialItems.push(
+                            `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()} [{% trans "remaining available at" %} ${altLocations.join(', ')}]`
+                        );
+                    } else {
+                        partialItems.push(
+                            `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
+                        );
+                    }
                 }
             });
 
@@ -1952,13 +1989,27 @@ document.addEventListener('DOMContentLoaded', function() {
                 addedLineCount += 1;
             }
             if (importedQty <= 0) {
-                unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                const altLocations = getAvailableLocationsForType(typeId, targetLocationId);
+                if (altLocations.length > 0) {
+                    unavailableItems.push(
+                        `${typeName} (${requestedQty.toLocaleString()}) [{% trans "available at" %} ${altLocations.join(', ')}]`
+                    );
+                } else {
+                    unavailableItems.push(`${typeName} (${requestedQty.toLocaleString()})`);
+                }
                 return;
             }
             if (remainingQty > 0) {
-                partialItems.push(
-                    `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
-                );
+                const altLocations = getAvailableLocationsForType(typeId, targetLocationId);
+                if (altLocations.length > 0) {
+                    partialItems.push(
+                        `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()} [{% trans "remaining available at" %} ${altLocations.join(', ')}]`
+                    );
+                } else {
+                    partialItems.push(
+                        `${typeName}: ${importedQty.toLocaleString()} / ${requestedQty.toLocaleString()}`
+                    );
+                }
             }
         });
 

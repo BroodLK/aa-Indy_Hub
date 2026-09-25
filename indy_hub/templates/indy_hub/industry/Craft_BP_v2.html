@@ -452,7 +452,7 @@
                             </div>
 
                             <div class="table-responsive craft-financial-table craft-table-text-120 mt-2">
-                                <table class="table table-sm align-middle mb-0">
+                                <table class="table table-sm align-middle mb-0" id="purchasePlannerTable">
                                     <thead class="table-light">
                                         <tr>
                                             <th class="col-item">{% trans "Item" %}</th>
@@ -497,7 +497,7 @@
                                                 </td>
                                                 <td class="text-end text-xs total-cost fw-semibold">0</td>
                                                 <td class="text-center text-xs craft-buyback-cell">
-                                                    <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center" data-export-ignore>—</span>
+                                                    <span class="craft-buyback-slot d-inline-flex flex-wrap gap-1 justify-content-center" data-export-ignore title="{% trans 'Not currently stocked in Material Exchange' %}">—</span>
                                                 </td>
                                             </tr>
                                         {% endfor %}
@@ -3532,7 +3532,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Cell text without decorations marked data-export-ignore (for example the
     // buyback and pending-order badges), so exports carry only the data.
+    // Also extracts the dynamic value from input, select, and textarea elements.
     function exportCellText(cell) {
+        if (!cell) return '';
+        const input = cell.querySelector('input, select, textarea');
+        if (input) {
+            return (input.value || '').trim();
+        }
         const clone = cell.cloneNode(true);
         clone.querySelectorAll('[data-export-ignore]').forEach((el) => el.remove());
         return clone.textContent.trim();
@@ -3729,7 +3735,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (exportPurchaseBtn) {
         exportPurchaseBtn.addEventListener('click', function() {
-            exportTableToCSV('#financialItemsBody', 'purchase_planner.csv');
+            exportTableToCSV('#purchasePlannerTable', 'purchase_planner.csv');
         });
     }
 

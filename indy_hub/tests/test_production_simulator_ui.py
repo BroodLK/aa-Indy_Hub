@@ -398,13 +398,23 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
     def test_planner_and_needed_rows_contain_buyback_slots(self) -> None:
         self.assertIn("craft-buyback-slot", self.template)
         self.assertIn("craft-buyback-slot", self.script)
+        self.assertIn("Not currently stocked in Material Exchange", self.template)
+        self.assertIn("Not currently stocked in Material Exchange", self.script)
 
     def test_craft_js_decorates_buyback_badge_with_quantity(self) -> None:
         self.assertIn("craft-buyback-badge", self.script)
         self.assertIn("decorateNeededRowsWithBuyback", self.script)
         self.assertIn("describeBuybackItem", self.script)
 
-    def test_material_exchange_buy_page_supports_prefill_items(self) -> None:
+    def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(self) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)
         self.assertIn("indyHubMaterialExchangeBuyPrefill", self.buy_template)
         self.assertIn("pre-selected", self.buy_template)
+        self.assertIn("getAvailableLocationsForType", self.buy_template)
+        self.assertIn("data-location-label", self.buy_template)
+        self.assertIn("available at", self.buy_template)
+
+    def test_purchase_planner_csv_export_includes_inputs_and_headers(self) -> None:
+        self.assertIn('id="purchasePlannerTable"', self.template)
+        self.assertIn("exportTableToCSV('#purchasePlannerTable'", self.template)
+        self.assertIn("cell.querySelector('input, select, textarea')", self.template)
