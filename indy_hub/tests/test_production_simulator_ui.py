@@ -419,6 +419,7 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("Ore in Buyback", self.script)
         self.assertIn("Buyback has ore in stock that reprocesses into", self.script)
         self.assertIn("Order Ore", self.script)
+        self.assertIn("data-target-mineral-type-id", self.script)
 
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(self) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)

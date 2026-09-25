@@ -214,16 +214,22 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         self.assertEqual(payload["orders"][0]["progress"], "pending")
 
     @patch("indy_hub.services.reprocessing.get_reprocessing_outputs_map")
-    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size")
+    @patch("indy_hub.services.reprocessing.get_portion_size_map")
     def test_reports_ore_suggestions_for_minerals(
-        self, mock_portion, mock_outputs
+        self, mock_portion_map, mock_outputs
     ) -> None:
         compressed_veldspar = 28432
         veldspar = 1230
-        mock_portion.side_effect = lambda t: 100
+        partial_scordite = 1228
+        mock_portion_map.return_value = {
+            compressed_veldspar: 100,
+            veldspar: 100,
+            partial_scordite: 100,
+        }
         mock_outputs.return_value = {
             compressed_veldspar: {TRITANIUM: 415},
             veldspar: {TRITANIUM: 415},
+            partial_scordite: {TRITANIUM: 300},
         }
 
         cache.set(
@@ -258,6 +264,19 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
                         "source_structure_ids": [1001],
                         "buy_location_label": "Structure Alpha",
                     },
+                    {
+                        "row_kind": "item",
+                        "row_index": 2,
+                        "type_id": partial_scordite,
+                        "display_type_name": "Scordite (Partial)",
+                        "quantity": 50,  # Less than portion size of 100
+                        "blueprint_variant": "",
+                        "container_path": "",
+                        "display_sell_price_to_member": "0.30",
+                        "has_buy_price_override": False,
+                        "source_structure_ids": [1001],
+                        "buy_location_label": "Structure Alpha",
+                    },
                 ],
                 "stock_meta_by_type": {
                     compressed_veldspar: {
@@ -265,6 +284,7 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
                         "quantity": 5000,
                     },
                     veldspar: {"type_id": veldspar, "quantity": 20000},
+                    partial_scordite: {"type_id": partial_scordite, "quantity": 50},
                 },
             },
             600,
@@ -277,6 +297,7 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         self.assertEqual(len(suggestions), 2)
         types_suggested = {s["type_id"] for s in suggestions}
         self.assertEqual(types_suggested, {compressed_veldspar, veldspar})
+        self.assertNotIn(partial_scordite, types_suggested)
         self.assertIn(str(compressed_veldspar), payload["items"])
         self.assertIn(str(veldspar), payload["items"])
 

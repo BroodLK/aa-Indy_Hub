@@ -220,13 +220,14 @@ def production_buyback_availability(request):
 
         # AA Example App
         from ..services.reprocessing import (
+            get_portion_size_map,
             get_reprocessing_outputs_map,
-            get_reprocessing_portion_size,
         )
 
         all_plain_type_ids = set(plain_rows.keys())
         if all_plain_type_ids:
             outputs_map = get_reprocessing_outputs_map(all_plain_type_ids)
+            portion_size_map = get_portion_size_map(all_plain_type_ids)
             requested_set = set(type_ids)
             for stock_type_id, outputs in outputs_map.items():
                 if not outputs:
@@ -237,6 +238,10 @@ def production_buyback_availability(request):
                 available_qty = int(row.get("available_quantity") or 0)
                 if available_qty <= 0:
                     continue
+                portion_size = portion_size_map.get(stock_type_id) or 100
+                portions_in_stock = available_qty // portion_size
+                if portions_in_stock <= 0:
+                    continue
                 try:
                     unit_price = Decimal(
                         str(row.get("display_sell_price_to_member") or 0)
@@ -245,9 +250,6 @@ def production_buyback_availability(request):
                     unit_price = Decimal("0")
                 if unit_price <= 0:
                     continue
-
-                portion_size = get_reprocessing_portion_size(stock_type_id)
-                portions_in_stock = available_qty // portion_size
 
                 # Make sure the ore item is in items map so simulator modals can order it
                 if str(stock_type_id) not in items:

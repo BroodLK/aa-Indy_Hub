@@ -10329,7 +10329,7 @@ async function decorateNeededRowsWithBuyback(rows) {
                                 ${ore.location_label ? `<div><i class="fas fa-map-marker-alt me-1" aria-hidden="true"></i>${escapeHtml(ore.location_label)}</div>` : ''}
                             </div>
                             <div class="mt-2">
-                                <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" data-buyback-open-modal="${ore.type_id}">
+                                <button type="button" class="btn btn-sm btn-outline-success py-0 px-2" data-buyback-open-modal="${ore.type_id}" data-target-mineral-type-id="${typeId}">
                                     <i class="fas fa-shopping-cart me-1" aria-hidden="true"></i>${escapeHtml(__('Order Ore'))}
                                 </button>
                             </div>
@@ -10405,7 +10405,7 @@ function newBuybackClientRequestId() {
     return `${Date.now()}${Math.random().toString(36).slice(2, 12)}`;
 }
 
-function openBuybackOrderModal(typeId) {
+function openBuybackOrderModal(typeId, targetMineralTypeId = 0) {
     const payload = CRAFT_BUYBACK_STATE.availability;
     const item = payload && payload.items ? payload.items[String(typeId)] : null;
     const modalEl = document.getElementById('buybackOrderModal');
@@ -10415,8 +10415,15 @@ function openBuybackOrderModal(typeId) {
     const neededRow = (CRAFT_COMPUTED_NEEDED_ROWS || []).find((row) => row.typeId === Number(typeId));
     let suggested = Math.max(1, Math.min(item.available_quantity, Math.ceil(Number(neededRow?.quantity) || 1)));
     if (!neededRow && payload.ore_suggestions) {
-        for (const [mineralId, suggestions] of Object.entries(payload.ore_suggestions || {})) {
-            const match = (suggestions || []).find((s) => s.type_id === Number(typeId));
+        let mineralIdsToSearch = [];
+        if (targetMineralTypeId && payload.ore_suggestions[String(targetMineralTypeId)]) {
+            mineralIdsToSearch.push(String(targetMineralTypeId));
+        } else {
+            mineralIdsToSearch = Object.keys(payload.ore_suggestions || {});
+        }
+        for (const mineralId of mineralIdsToSearch) {
+            const suggestions = payload.ore_suggestions[mineralId] || [];
+            const match = suggestions.find((s) => s.type_id === Number(typeId));
             if (match && match.yield_per_portion > 0) {
                 const mineralNeeded = (CRAFT_COMPUTED_NEEDED_ROWS || []).find((r) => r.typeId === Number(mineralId));
                 if (mineralNeeded && mineralNeeded.quantity > 0) {
@@ -10581,13 +10588,14 @@ function initializeBuybackOrders() {
             return;
         }
         const typeId = Number(opener.getAttribute('data-buyback-open-modal')) || 0;
+        const targetMineralTypeId = Number(opener.getAttribute('data-target-mineral-type-id')) || 0;
         document.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash, .craft-buyback-ore-badge').forEach((badge) => {
             const popover = window.bootstrap && bootstrap.Popover ? bootstrap.Popover.getInstance(badge) : null;
             if (popover) {
                 popover.hide();
             }
         });
-        openBuybackOrderModal(typeId);
+        openBuybackOrderModal(typeId, targetMineralTypeId);
     });
     const modalEl = document.getElementById('buybackOrderModal');
     if (modalEl) {
@@ -10807,6 +10815,14 @@ function getMineralsBuyCostFromFinancialTable(minerals = null) {
 }
 
 function openMineralConversionModal() {
+    if (window.bootstrap && bootstrap.Popover) {
+        document.querySelectorAll('.craft-buyback-badge, .craft-buyback-owned-dash, .craft-buyback-ore-badge').forEach((badge) => {
+            const popover = bootstrap.Popover.getInstance(badge);
+            if (popover) {
+                popover.hide();
+            }
+        });
+    }
     const minerals = getMineralsFromFinancialTable();
     if (minerals.length === 0) {
         alert('No minerals found in the purchase planner.');
