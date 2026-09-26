@@ -4800,11 +4800,8 @@ def _is_container_type(type_id: int) -> bool:
         CONTAINER_GROUP_IDS = {
             12,  # Cargo Container
             340,  # Freight Container
-            448,  # Audit Log Secure Container
+            448,  # Audit Log Secure Container (includes Station Container, Station Vault Container, Station Warehouse Container)
             649,  # Secure Cargo Container
-            1226,  # Station Container
-            1246,  # Station Vault Container
-            1248,  # Station Warehouse Container
         }
 
         try:

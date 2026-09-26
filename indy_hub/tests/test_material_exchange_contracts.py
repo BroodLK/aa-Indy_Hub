@@ -24,8 +24,11 @@ from indy_hub.models import (
 )
 from indy_hub.tasks.material_exchange_contracts import (
     _build_contract_state_webhook_line,
+    _contract_items_match_order_db,
     _extract_contract_id,
     _get_effective_contract_location_id,
+    _get_items_mismatch_breakdown,
+    _is_container_type,
     _log_buy_order_transactions,
     _log_sell_order_transactions,
     _validate_buy_order_from_db,
@@ -184,6 +187,99 @@ class ContractValidationTestCase(TestCase):
 
         existing.refresh_from_db()
         self.assertEqual(existing.quantity, 1025)
+
+    def test_is_container_type_does_not_flag_bounty_scc_encrypted_bonds(self):
+        """Bounty Encrypted Bonds (group 1248) should never be treated as containers."""
+        # AA Example App
+        from eve_sde.models import ItemCategory, ItemGroup, ItemType
+
+        category, _ = ItemCategory.objects.get_or_create(
+            id=17,
+            defaults={"name": "Commodity"},
+        )
+        bond_group, _ = ItemGroup.objects.get_or_create(
+            id=1248,
+            defaults={"name": "Bounty Encrypted Bonds", "category": category},
+        )
+        bond_types = [
+            (55930, "100K Bounty SCC Encrypted Bond"),
+            (55931, "10K Bounty SCC Encrypted Bond"),
+            (55932, "10M Bounty SCC Encrypted Bond"),
+            (55933, "1M Bounty SCC Encrypted Bond"),
+        ]
+        for tid, tname in bond_types:
+            ItemType.objects.update_or_create(
+                id=tid,
+                defaults={"name": tname, "group": bond_group},
+            )
+            self.assertFalse(
+                _is_container_type(tid),
+                f"Type {tid} ({tname}) in group 1248 must not be identified as a container",
+            )
+
+    def test_contract_items_match_order_includes_bounty_scc_encrypted_bonds(self):
+        """Contracts with Bounty SCC Encrypted Bonds match orders without missing-item anomalies."""
+        # AA Example App
+        from eve_sde.models import ItemCategory, ItemGroup, ItemType
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        category, _ = ItemCategory.objects.get_or_create(
+            id=17,
+            defaults={"name": "Commodity"},
+        )
+        bond_group, _ = ItemGroup.objects.get_or_create(
+            id=1248,
+            defaults={"name": "Bounty Encrypted Bonds", "category": category},
+        )
+        bond_type_id = 55932
+        ItemType.objects.update_or_create(
+            id=bond_type_id,
+            defaults={"name": "10M Bounty SCC Encrypted Bond", "group": bond_group},
+        )
+
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+            order_reference="INDY-8503123791",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=bond_type_id,
+            type_name="10M Bounty SCC Encrypted Bond",
+            quantity=9,
+            unit_price=10000000,
+            total_price=90000000,
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=236427765,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=self.seller.id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            status="outstanding",
+            title="INDY-8503123791",
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+            price=90000000,
+            reward=0,
+            collateral=0,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1,
+            type_id=bond_type_id,
+            quantity=9,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        self.assertTrue(_contract_items_match_order_db(contract, order))
+        missing, surplus, _names = _get_items_mismatch_breakdown(contract, order)
+        self.assertEqual(missing, {})
+        self.assertEqual(surplus, {})
 
 
 class ContractValidationTaskTest(TestCase):
