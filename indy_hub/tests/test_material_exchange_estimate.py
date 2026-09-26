@@ -67,6 +67,7 @@ class MaterialExchangeSellEstimateTests(TestCase):
     def test_index_renders_get_estimate_button_and_modal(self):
         response = self.client.get(reverse("indy_hub:material_exchange_index"))
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Supply hub for buying and selling items, materials, and assets")
         self.assertContains(response, "Get an Estimate")
         self.assertContains(response, 'id="sellEstimateModal"')
         self.assertContains(response, reverse("indy_hub:material_exchange_sell_estimate"))
