@@ -3566,6 +3566,9 @@ function initializeFinancialCalculations() {
             if (typeof ensureIndustryFeeEstimateUpToDate === 'function') {
                 ensureIndustryFeeEstimateUpToDate();
             }
+            if (typeof window.revalidateMaterialsSourceBay === 'function') {
+                window.revalidateMaterialsSourceBay();
+            }
         });
     }
 
@@ -3604,9 +3607,14 @@ function initializeFinancialCalculations() {
     // Initialize purchase list computation
     const computeButton = document.getElementById('compute-needed');
     if (computeButton) {
-        computeButton.addEventListener('click', () => {
+        computeButton.addEventListener('click', async () => {
             const sourceMode = document.getElementById('materialsSourceMode')?.value || 'manual';
             const ownedInput = document.getElementById('ownedMaterialsInput');
+            if (sourceMode === 'designated_bay' && ownedInput?.dataset.sourceLoaded !== 'validated') {
+                if (typeof window.revalidateMaterialsSourceBay === 'function') {
+                    await window.revalidateMaterialsSourceBay();
+                }
+            }
             if (sourceMode === 'designated_bay' && ownedInput?.dataset.sourceLoaded !== 'validated') {
                 const message = __('A designated materials bay is selected, but refreshed and access-validated asset data is not available yet. Choose Manual text input or refresh the bay before computing.');
                 window.CraftBP?.pushStatus?.(message, 'warning');

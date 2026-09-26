@@ -366,6 +366,7 @@ class CraftAssetRefreshReactiveUITests(SimpleTestCase):
 
     def setUp(self) -> None:
         self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+        self.script = CRAFT_JS.read_text(encoding="utf-8")
 
     def test_materials_source_has_task_status_badge(self) -> None:
         self.assertIn('id="materialsSourceTaskStatus"', self.template)
@@ -378,6 +379,13 @@ class CraftAssetRefreshReactiveUITests(SimpleTestCase):
         self.assertIn("update complete", self.template)
         self.assertIn("pollAssetRefreshStatus", self.template)
         self.assertIn("renderLocationOptions", self.template)
+
+    def test_designated_bay_revalidation_exposed_and_wired(self) -> None:
+        self.assertIn("window.revalidateMaterialsSourceBay", self.template)
+        self.assertIn("revalidateDesignatedBay", self.template)
+        self.assertIn("window.revalidateMaterialsSourceBay", self.script)
+        self.assertIn("buyTabButton.addEventListener('shown.bs.tab'", self.script)
+        self.assertIn("computeButton.addEventListener('click', async () =>", self.script)
 
 
 class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):

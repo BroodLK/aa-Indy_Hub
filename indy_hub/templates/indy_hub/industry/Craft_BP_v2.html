@@ -2659,6 +2659,9 @@
                     applyPreferredLocationSelection();
                     syncSelectedSource();
                     applyLastBuildLocation(state);
+                    if (materialsSourceEl?.value === 'designated_bay') {
+                        await revalidateDesignatedBay();
+                    }
                     if (privateOnly) return;
                     const tracking = document.getElementById('scheduleTrackingOptIn');
                     if (tracking && typeof state.scheduleTrackingOptIn === 'boolean') tracking.checked = state.scheduleTrackingOptIn;
@@ -2780,6 +2783,7 @@
                 }
                 if (targetOption) {
                     targetOption.selected = true;
+                    locationSelect.value = targetOption.value;
                 }
             };
             const renderContainerOptions = (source) => {
@@ -3058,13 +3062,24 @@
                 const locationId = locationSelect?.value;
                 const ownedInput = ownedMaterialsInput();
                 if (!locationId || !ownedInput) return false;
-                const typeIds = Array.from(document.querySelectorAll('[data-type-id]'))
-                    .map((element) => Number(element.dataset.typeId) || 0)
-                    .filter((value, index, values) => value > 0 && values.indexOf(value) === index)
-                    .slice(0, 500);
+                const seen = new Set();
+                document.querySelectorAll('[data-type-id]').forEach((element) => {
+                    const val = Number(element.dataset.typeId || element.getAttribute('data-type-id')) || 0;
+                    if (val > 0) seen.add(val);
+                });
+                const walkTree = (nodes) => {
+                    if (!Array.isArray(nodes)) return;
+                    nodes.forEach((node) => {
+                        const tid = Number(node.type_id || node.typeId || 0);
+                        if (tid > 0) seen.add(tid);
+                        if (Array.isArray(node.materials)) walkTree(node.materials);
+                    });
+                };
+                walkTree(window.BLUEPRINT_DATA?.materials_tree);
+                const typeIds = Array.from(seen).slice(0, 500);
                 const params = new URLSearchParams({ location_id: String(locationId), type_ids: typeIds.join(',') });
                 const selectedOption = locationSelect?.selectedOptions?.[0];
-                const charId = selectedOption?.dataset?.characterId;
+                const charId = selectedOption?.dataset?.characterId || locationSelect?.dataset?.preferredCharacter;
                 if (charId) params.set('character_id', charId);
                 if (containerSelect?.value) params.set('container_item_id', containerSelect.value);
                 try {
@@ -3118,6 +3133,7 @@
                 if (!ownedInput || ownedInput.dataset.sourceLoaded === 'validated') return;
                 await loadCachedQuantities({ silent: true });
             };
+            window.revalidateMaterialsSourceBay = revalidateDesignatedBay;
 
             queueMaterialsSourceRefreshBtn?.addEventListener('click', async () => {
                 queueMaterialsSourceRefreshBtn.disabled = true;
