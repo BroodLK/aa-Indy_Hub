@@ -451,16 +451,31 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
 
     def setUp(self) -> None:
         self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+        self.script = CRAFT_JS.read_text(encoding="utf-8")
+        self.inline_script = (
+            STATIC / "js" / "craft_bp_inline.js"
+        ).read_text(encoding="utf-8")
 
     def test_owned_bpcs_are_checked_by_default_in_config_tab(self) -> None:
         self.assertIn(
             "{% if bc.user_owns and bc.is_copy %}checked{% endif %}",
             self.template,
         )
+        self.assertIn(
+            "{% if bc.user_owns and bc.is_copy %}data-owned-bpc=\"true\"{% endif %}",
+            self.template,
+        )
 
     def test_preset_owned_efficiency_checks_owned_bpcs(self) -> None:
         self.assertIn("bp.is_owned && bp.is_copy", self.template)
         self.assertIn("presetOwnedBtn", self.template)
+
+    def test_sync_configure_visibility_preselects_planned_component_owned_bpcs(self) -> None:
+        self.assertIn("syncConfigureVisibilityWithPlan", self.script)
+        self.assertIn("isOwnedCopy", self.script)
+        self.assertIn("isPlannedForProduction", self.script)
+        self.assertIn("useInput.checked = true", self.script)
+        self.assertIn("syncConfigureVisibilityWithPlan", self.inline_script)
 
 
 class CompressedOreConversionModalUITests(SimpleTestCase):

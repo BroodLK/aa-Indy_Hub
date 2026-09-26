@@ -590,6 +590,10 @@
             window.refreshTreeSwitchHierarchy();
         }
 
+        if (typeof window.syncConfigureVisibilityWithPlan === 'function') {
+            window.syncConfigureVisibilityWithPlan();
+        }
+
         if (Array.isArray(config.blueprint_efficiencies)) {
             applyBlueprintEfficiencies(config.blueprint_efficiencies);
             if (!window.craftBPFlags) {

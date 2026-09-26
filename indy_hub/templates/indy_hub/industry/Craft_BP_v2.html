@@ -1534,6 +1534,7 @@
                                                                     <div class="craft-bp-card card h-100"
                                                                          data-blueprint-type-id="{{ bc.type_id }}"
                                                                          data-product-type-id="{{ bc.product_type_id|default:bc.type_id }}"
+                                                                         {% if bc.user_owns and bc.is_copy %}data-owned-bpc="true"{% endif %}
                                                                          {% if not bc.user_owns %}data-blueprint-not-owned="true"{% endif %}>
                                                                         <div class="card-header text-center py-1 {% if bc.user_owns %}bg-success bg-opacity-10{% elif bc.shared_copies_available %}bg-warning bg-opacity-10{% else %}bg-danger bg-opacity-10{% endif %}">
                                                                             <img src="https://images.evetech.net/types/{{ bc.type_id }}/bp?size=128"
@@ -1604,6 +1605,7 @@
                                                                                        name="usebp_{{ bc.type_id }}"
                                                                                        data-blueprint-type-id="{{ bc.type_id }}"
                                                                                        data-product-type-id="{{ bc.product_type_id|default:bc.type_id }}"
+                                                                                       {% if bc.user_owns and bc.is_copy %}data-owned-bpc="true"{% endif %}
                                                                                        {% if not bc.user_owns and not bc.shared_copies_available %}disabled{% endif %}
                                                                                        {% if bc.user_owns and bc.is_copy %}checked{% endif %}>
                                                                                 <label class="form-check-label small fw-semibold" for="bpUse{{ bc.type_id }}">{% trans "Use this BP" %}</label>

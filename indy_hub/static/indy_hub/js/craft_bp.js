@@ -3779,6 +3779,13 @@ function initializeMETEHandlers() {
     configureInputs.forEach(input => {
         input.addEventListener('input', markMETEChanges);
         input.addEventListener('change', markMETEChanges);
+        if (input.matches('input.bp-use-input[data-blueprint-type-id]')) {
+            input.addEventListener('change', function(event) {
+                if (event && event.isTrusted) {
+                    input.dataset.userExplicitlyUnchecked = input.checked ? 'false' : 'true';
+                }
+            });
+        }
         craftBPDebugLog(`Added listeners to ${input.name} input`);
     });
 
@@ -4721,7 +4728,14 @@ function restoreMETEFromLocalStorage(storageKey) {
                     if (!typeId || input.disabled) {
                         return;
                     }
-                    input.checked = urlUseIds.has(typeId);
+                    const isOwnedCopy = input.getAttribute('data-owned-bpc') === 'true';
+                    const productTypeId = Number(input.getAttribute('data-product-type-id')) || typeId;
+                    const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
+                    if (urlUseIds.has(typeId)) {
+                        input.checked = true;
+                    } else if (!isOwnedCopy || !isPlannedForProduction) {
+                        input.checked = false;
+                    }
                 });
             }
             if (urlBuildEnvironment.hasAny) {
@@ -4731,6 +4745,9 @@ function restoreMETEFromLocalStorage(storageKey) {
                 applyIndustryFeeConfigToDom(urlIndustryFee);
             }
             updateBuildEnvironmentSummary();
+            if (typeof syncConfigureVisibilityWithPlan === 'function') {
+                syncConfigureVisibilityWithPlan();
+            }
             return;
         }
 
@@ -4755,6 +4772,9 @@ function restoreMETEFromLocalStorage(storageKey) {
                 const useInput = document.querySelector(`#configure-pane input.bp-use-input[data-blueprint-type-id="${typeId}"]`);
                 if (useInput && !useInput.disabled) {
                     useInput.checked = Boolean(bpConfig.use);
+                    if (!useInput.checked) {
+                        useInput.dataset.userExplicitlyUnchecked = 'true';
+                    }
                 }
             }
         }
@@ -4773,7 +4793,14 @@ function restoreMETEFromLocalStorage(storageKey) {
                 if (!typeId || input.disabled) {
                     return;
                 }
-                input.checked = urlUseIds.has(typeId);
+                const isOwnedCopy = input.getAttribute('data-owned-bpc') === 'true';
+                const productTypeId = Number(input.getAttribute('data-product-type-id')) || typeId;
+                const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
+                if (urlUseIds.has(typeId)) {
+                    input.checked = true;
+                } else if (!isOwnedCopy || !isPlannedForProduction) {
+                    input.checked = false;
+                }
             });
         }
         if (urlBuildEnvironment.hasAny) {
@@ -4784,6 +4811,9 @@ function restoreMETEFromLocalStorage(storageKey) {
         }
 
         updateBuildEnvironmentSummary();
+        if (typeof syncConfigureVisibilityWithPlan === 'function') {
+            syncConfigureVisibilityWithPlan();
+        }
         craftBPDebugLog('Configure settings restored from localStorage');
     } catch (error) {
         console.error('Error restoring from localStorage:', error);
@@ -7894,6 +7924,8 @@ function syncConfigureVisibilityWithPlan() {
         return;
     }
 
+    const configs = getBlueprintConfigsForFinancialPlanner();
+
     configurePane.querySelectorAll('.craft-bp-card[data-blueprint-type-id]').forEach((card) => {
         const blueprintTypeId = Number(card.getAttribute('data-blueprint-type-id')) || 0;
         const productTypeId = Number(card.getAttribute('data-product-type-id')) || 0;
@@ -7902,18 +7934,28 @@ function syncConfigureVisibilityWithPlan() {
         }
         const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
         const notOwned = String(card.getAttribute('data-blueprint-not-owned') || '').trim().toLowerCase() === 'true';
+        const isOwnedCopy = String(card.getAttribute('data-owned-bpc') || '').trim().toLowerCase() === 'true'
+            || (function() {
+                const bp = configs.find((c) => Number(c.type_id || c.typeId) === blueprintTypeId);
+                return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned) && (bp.is_copy || bp.isCopy));
+            })();
         const hasSelectedContracts = getSelectedContractOffersForBlueprint(blueprintTypeId).length > 0;
         const keepVisible = isPlannedForProduction && !notOwned;
         card.classList.toggle('d-none', !keepVisible);
         const useInput = card.querySelector('input.bp-use-input[data-blueprint-type-id]');
-        if (useInput && useInput.checked && !isPlannedForProduction) {
-            useInput.checked = false;
-            useInput.dataset.contractDriven = 'false';
-            useInput.dispatchEvent(new Event('change', { bubbles: true }));
-        } else if (useInput && useInput.checked && notOwned && !hasSelectedContracts) {
-            useInput.checked = false;
-            useInput.dataset.contractDriven = 'false';
-            useInput.dispatchEvent(new Event('change', { bubbles: true }));
+        if (useInput) {
+            if (useInput.checked && !isPlannedForProduction) {
+                useInput.checked = false;
+                useInput.dataset.contractDriven = 'false';
+                useInput.dispatchEvent(new Event('change', { bubbles: true }));
+            } else if (useInput.checked && notOwned && !hasSelectedContracts) {
+                useInput.checked = false;
+                useInput.dataset.contractDriven = 'false';
+                useInput.dispatchEvent(new Event('change', { bubbles: true }));
+            } else if (!useInput.checked && isPlannedForProduction && isOwnedCopy && !useInput.disabled && useInput.dataset.userExplicitlyUnchecked !== 'true') {
+                useInput.checked = true;
+                useInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
         }
     });
 
@@ -7925,6 +7967,7 @@ function syncConfigureVisibilityWithPlan() {
         }
     });
 }
+window.syncConfigureVisibilityWithPlan = syncConfigureVisibilityWithPlan;
 
 function renderConfigureBoughtBpcsSection() {
     const sectionEl = document.getElementById('configureBoughtBpcsSection');
