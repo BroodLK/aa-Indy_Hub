@@ -313,6 +313,7 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
 
         payload = self._availability(type_ids=str(TRITANIUM))
         self.assertTrue(payload["enabled"])
+        self.assertEqual(payload["refine_rate_percent"], 84.2)
         self.assertIn(str(TRITANIUM), payload["ore_suggestions"])
         suggestions = payload["ore_suggestions"][str(TRITANIUM)]
         self.assertEqual(len(suggestions), 2)
@@ -322,6 +323,17 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         self.assertNotIn(cloaking_device, types_suggested)
         self.assertIn(str(compressed_veldspar), payload["items"])
         self.assertIn(str(veldspar), payload["items"])
+
+        # Base yield 415 * 84.2% = 349 per 100 units
+        for s in suggestions:
+            self.assertEqual(s["refine_rate_percent"], 84.2)
+            self.assertEqual(s["yield_per_portion"], 349)
+            if s["type_id"] == compressed_veldspar:
+                # 5000 units = 50 portions => 50 * 349 = 17450
+                self.assertEqual(s["estimated_mineral_in_stock"], 17450)
+            elif s["type_id"] == veldspar:
+                # 20000 units = 200 portions => 200 * 349 = 69800
+                self.assertEqual(s["estimated_mineral_in_stock"], 69800)
 
 
 class BuybackSubmitTests(BuybackFixtureMixin, TestCase):

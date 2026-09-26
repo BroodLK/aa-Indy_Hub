@@ -10314,17 +10314,25 @@ async function decorateNeededRowsWithBuyback(rows) {
             const oreBadge = slot.querySelector('.craft-buyback-ore-badge');
             if (oreBadge && oreSuggestions.length > 0 && window.bootstrap && bootstrap.Popover) {
                 const mineralName = tr.querySelector('.craft-item-name, [data-item-name]')?.textContent?.trim() || __('this mineral');
+                const refineRateVal = oreSuggestions[0]?.refine_rate_percent || payload.refine_rate_percent || 84.2;
+                const refineRateText = Number(refineRateVal).toFixed(1).replace(/\.0$/, '');
                 const listHtml = oreSuggestions.map((ore) => {
-                    const yieldText = ore.yield_per_portion > 0 ? `~${formatInteger(ore.yield_per_portion)} / ${ore.portion_size || 100} units` : '';
-                    const estTotal = ore.estimated_mineral_in_stock > 0 ? ` (~${formatInteger(ore.estimated_mineral_in_stock)} ${__('total in stock')})` : '';
+                    const portionSize = ore.portion_size || 100;
                     return `
                         <div class="list-group-item p-2">
                             <div class="d-flex justify-content-between align-items-center mb-1">
                                 <span class="fw-bold">${escapeHtml(ore.type_name)}</span>
-                                <span class="badge bg-secondary-subtle text-secondary-emphasis">${formatInteger(ore.available_quantity)} ${__('in stock')}</span>
+                                <span class="badge bg-secondary-subtle text-secondary-emphasis">${formatInteger(ore.available_quantity)} ${escapeHtml(__('in stock'))}</span>
+                            </div>
+                            <div class="small my-1">
+                                <div class="fw-semibold text-info-emphasis">
+                                    <i class="fas fa-recycle me-1" aria-hidden="true"></i>${escapeHtml(__('Refines into'))}: ~${formatInteger(ore.estimated_mineral_in_stock)} ${escapeHtml(mineralName)}
+                                </div>
+                                <div class="text-muted small">
+                                    (~${formatInteger(ore.yield_per_portion)} ${escapeHtml(__('per'))} ${formatInteger(portionSize)} ${escapeHtml(__('units'))})
+                                </div>
                             </div>
                             <div class="text-muted small">
-                                ${yieldText ? `<div><i class="fas fa-recycle me-1" aria-hidden="true"></i>${escapeHtml(__('Yield'))}: ${escapeHtml(yieldText)}${escapeHtml(estTotal)}</div>` : ''}
                                 <div><i class="fas fa-tag me-1" aria-hidden="true"></i>${formatPrice(Number(ore.unit_price) || 0)} ${escapeHtml(__('each'))}</div>
                                 ${ore.location_label ? `<div><i class="fas fa-map-marker-alt me-1" aria-hidden="true"></i>${escapeHtml(ore.location_label)}</div>` : ''}
                             </div>
@@ -10339,16 +10347,11 @@ async function decorateNeededRowsWithBuyback(rows) {
                 const content = `
                     <div class="small craft-ore-suggestions-popover" style="max-width: 320px;">
                         <div class="text-muted mb-2">
-                            <i class="fas fa-info-circle text-info me-1" aria-hidden="true"></i>
-                            ${escapeHtml(__('Buyback has ore in stock that reprocesses into'))} <strong>${escapeHtml(mineralName)}</strong>:
+                            <i class="fas fa-cubes text-info me-1" aria-hidden="true"></i>
+                            ${escapeHtml(__('Buyback ores that refine into'))} <strong>${escapeHtml(mineralName)}</strong> <span class="badge bg-secondary-subtle text-secondary-emphasis ms-1">${escapeHtml(refineRateText)}% ${escapeHtml(__('refine rate'))}</span>:
                         </div>
-                        <div class="list-group list-group-flush border rounded mb-2" style="max-height: 240px; overflow-y: auto;">
+                        <div class="list-group list-group-flush border rounded" style="max-height: 240px; overflow-y: auto;">
                             ${listHtml}
-                        </div>
-                        <div class="d-flex justify-content-end">
-                            <button type="button" class="btn btn-sm btn-link p-0 text-decoration-none" onclick="typeof openMineralConversionModal === 'function' && openMineralConversionModal()">
-                                <i class="fas fa-calculator me-1" aria-hidden="true"></i>${escapeHtml(__('Open Ore Converter'))}
-                            </button>
                         </div>
                     </div>`;
 

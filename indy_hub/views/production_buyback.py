@@ -10,6 +10,7 @@ from __future__ import annotations
 
 # Standard Library
 import json
+import math
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -227,6 +228,16 @@ def production_buyback_availability(request):
 
         all_plain_type_ids = set(plain_rows.keys())
         candidate_type_ids = get_ore_type_ids(all_plain_type_ids)
+        refine_rate_val = getattr(config, "ore_refine_rate_percent", None)
+        try:
+            refine_rate_percent = Decimal(str(refine_rate_val or "0"))
+        except (InvalidOperation, ValueError):
+            refine_rate_percent = Decimal("0")
+        if refine_rate_percent <= Decimal("0"):
+            refine_rate_percent = Decimal("84.2")
+
+        refine_ratio = refine_rate_percent / Decimal("100")
+
         if candidate_type_ids:
             outputs_map = get_reprocessing_outputs_map(candidate_type_ids)
             portion_size_map = get_portion_size_map(candidate_type_ids)
@@ -270,10 +281,17 @@ def production_buyback_availability(request):
                         "location_label": str(row.get("buy_location_label") or ""),
                     }
 
-                for mineral_type_id, yield_per_portion in outputs.items():
-                    if yield_per_portion <= 0 or mineral_type_id not in requested_set:
+                for mineral_type_id, base_yield_per_portion in outputs.items():
+                    if base_yield_per_portion <= 0 or mineral_type_id not in requested_set:
                         continue
-                    est_mineral_in_stock = portions_in_stock * yield_per_portion
+                    refined_yield_per_portion = int(
+                        math.floor(Decimal(str(base_yield_per_portion)) * refine_ratio)
+                    )
+                    if refined_yield_per_portion <= 0:
+                        continue
+                    est_mineral_in_stock = portions_in_stock * refined_yield_per_portion
+                    if est_mineral_in_stock <= 0:
+                        continue
                     suggestion = {
                         "type_id": stock_type_id,
                         "type_name": str(row.get("display_type_name") or ""),
@@ -287,7 +305,9 @@ def production_buyback_availability(request):
                             else "buyback_market"
                         ),
                         "location_label": str(row.get("buy_location_label") or ""),
-                        "yield_per_portion": int(yield_per_portion),
+                        "refine_rate_percent": float(refine_rate_percent),
+                        "base_yield_per_portion": int(base_yield_per_portion),
+                        "yield_per_portion": int(refined_yield_per_portion),
                         "portions_in_stock": int(portions_in_stock),
                         "estimated_mineral_in_stock": int(est_mineral_in_stock),
                     }
@@ -316,6 +336,7 @@ def production_buyback_availability(request):
             "stock_stale": stock_age is None or stock_age > STOCK_STALE_AFTER_SECONDS,
             "buy_page_url": reverse("indy_hub:material_exchange_buy"),
             "ore_suggestions": ore_suggestions,
+            "refine_rate_percent": float(refine_rate_percent if "refine_rate_percent" in locals() else Decimal("84.2")),
         }
     )
 

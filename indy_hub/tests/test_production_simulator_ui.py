@@ -417,9 +417,12 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("craft-ore-suggestions-popover", self.script)
         self.assertIn("oreSuggestions", self.script)
         self.assertIn("Ore in Buyback", self.script)
-        self.assertIn("Buyback has ore in stock that reprocesses into", self.script)
+        self.assertIn("Buyback ores that refine into", self.script)
+        self.assertIn("refine rate", self.script)
+        self.assertIn("Refines into", self.script)
         self.assertIn("Order Ore", self.script)
         self.assertIn("data-target-mineral-type-id", self.script)
+        self.assertNotIn("Open Ore Converter", self.script.split("craft-ore-suggestions-popover")[1].split("bootstrap.Popover.getOrCreateInstance")[0])
 
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(self) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)
