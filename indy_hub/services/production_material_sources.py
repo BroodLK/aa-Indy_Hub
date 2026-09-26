@@ -238,6 +238,124 @@ def _npc_station_names(location_ids: Iterable[int]) -> dict[int, str]:
         return {}
 
 
+def _get_region_name(region_id: int) -> str:
+    try:
+        from eve_sde.models import Region
+
+        row = Region.objects.filter(id=region_id).values_list("name", flat=True).first()
+        return str(row or "").strip()
+    except Exception:
+        return ""
+
+
+def _get_system_name(system_id: int) -> str:
+    try:
+        from eve_sde.models import SolarSystem
+
+        row = SolarSystem.objects.filter(id=system_id).values_list("name", flat=True).first()
+        return str(row or "").strip()
+    except Exception:
+        return ""
+
+
+def resolve_location_system_and_region(
+    location_ids: Iterable[int],
+) -> dict[int, dict[str, Any]]:
+    """Map location IDs (NPC stations and structures) to system and region metadata.
+
+    Returns dict mapping location_id -> {
+        "station_name": str,
+        "system_id": int | None,
+        "system_name": str,
+        "region_id": int | None,
+        "region_name": str,
+    }
+    """
+    ids = sorted({int(value) for value in location_ids if int(value) > 0})
+    if not ids:
+        return {}
+
+    results: dict[int, dict[str, Any]] = {}
+    try:
+        from eve_sde.models import NPCStation
+
+        stations = NPCStation.objects.filter(id__in=ids).select_related(
+            "solar_system__constellation__region"
+        )
+        for station in stations:
+            system = getattr(station, "solar_system", None)
+            constellation = (
+                getattr(system, "constellation", None) if system else None
+            )
+            region = (
+                getattr(constellation, "region", None)
+                if constellation
+                else None
+            )
+            results[int(station.id)] = {
+                "station_name": str(getattr(station, "name", "") or "").strip(),
+                "system_id": int(system.id) if system else None,
+                "system_name": str(getattr(system, "name", "") or "").strip(),
+                "region_id": int(region.id) if region else None,
+                "region_name": str(getattr(region, "name", "") or "").strip(),
+            }
+    except Exception:
+        logger.debug("Failed resolving NPC stations for location IDs", exc_info=True)
+
+    unresolved_ids = [loc_id for loc_id in ids if loc_id not in results]
+    if unresolved_ids:
+        try:
+            from eve_sde.models import SolarSystem
+
+            structures = CachedStructureName.objects.filter(
+                structure_id__in=unresolved_ids
+            ).values_list("structure_id", "name")
+            for struct_id, struct_name in structures:
+                s_id = int(struct_id)
+                s_name = str(struct_name or "").strip()
+                system_obj = None
+                if " - " in s_name:
+                    candidate_sys = s_name.split(" - ")[0].strip()
+                    try:
+                        system_obj = (
+                            SolarSystem.objects.filter(name__iexact=candidate_sys)
+                            .select_related("constellation__region")
+                            .first()
+                        )
+                    except Exception:
+                        system_obj = None
+                system = system_obj
+                constellation = (
+                    getattr(system, "constellation", None) if system else None
+                )
+                region = (
+                    getattr(constellation, "region", None)
+                    if constellation
+                    else None
+                )
+                results[s_id] = {
+                    "station_name": s_name,
+                    "system_id": int(system.id) if system else None,
+                    "system_name": str(getattr(system, "name", "") or "").strip(),
+                    "region_id": int(region.id) if region else None,
+                    "region_name": str(getattr(region, "name", "") or "").strip(),
+                }
+        except Exception:
+            logger.debug("Failed resolving structure systems", exc_info=True)
+
+    for loc_id in ids:
+        if loc_id not in results:
+            results[loc_id] = {
+                "station_name": f"{PLACEHOLDER_PREFIX}{loc_id}",
+                "system_id": None,
+                "system_name": "",
+                "region_id": None,
+                "region_name": "",
+            }
+
+    return results
+
+
 def resolve_cached_location_names(
     location_ids: Iterable[int],
 ) -> dict[int, dict[str, Any]]:
@@ -379,6 +497,7 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
     now = timezone.now()
     unique_location_ids = list({loc_id for _, loc_id in assets_by_char_and_loc.keys()})
     resolved_names = resolve_cached_location_names(unique_location_ids)
+    loc_meta_map = resolve_location_system_and_region(unique_location_ids)
 
     sources = []
     for char_id, location_id in sorted(
@@ -446,11 +565,16 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
             f"Character {char_id}" if char_id else "Personal Assets"
         )
 
+        meta = loc_meta_map.get(location_id, {})
         sources.append(
             {
                 "character_id": char_id,
                 "character_name": char_name,
                 "location_id": location_id,
+                "system_id": meta.get("system_id"),
+                "system_name": meta.get("system_name", ""),
+                "region_id": meta.get("region_id"),
+                "region_name": meta.get("region_name", ""),
                 **_describe_location(location_id, resolved_names),
                 "last_synced": last_synced.isoformat() if last_synced else None,
                 "is_stale": bool(last_synced and (now - last_synced) > max_age),
@@ -462,8 +586,40 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
             }
         )
 
+    regions_map: dict[int, dict[str, Any]] = {}
+    systems_map: dict[int, dict[str, Any]] = {}
+    for s in sources:
+        rid = s.get("region_id")
+        rname = s.get("region_name")
+        if rid and rname:
+            if rid not in regions_map:
+                regions_map[rid] = {
+                    "region_id": rid,
+                    "region_name": rname,
+                    "source_count": 0,
+                }
+            regions_map[rid]["source_count"] += 1
+        sid = s.get("system_id")
+        sname = s.get("system_name")
+        if sid and sname:
+            if sid not in systems_map:
+                systems_map[sid] = {
+                    "system_id": sid,
+                    "system_name": sname,
+                    "region_id": rid,
+                    "region_name": rname,
+                    "source_count": 0,
+                }
+            systems_map[sid]["source_count"] += 1
+
     return {
         "sources": sources,
+        "regions": sorted(
+            regions_map.values(), key=lambda r: str(r["region_name"]).lower()
+        ),
+        "systems": sorted(
+            systems_map.values(), key=lambda s: str(s["system_name"]).lower()
+        ),
         "max_age_seconds": int(max_age.total_seconds()),
         # Personal assets have no corporation hangar divisions; the UI should
         # say so rather than render an empty division selector.
@@ -687,43 +843,184 @@ def get_source_assets(
     }
 
 
-def parse_bpc_source(value: Any) -> tuple[int, int]:
-    """Parse a ``"<location_id>"`` or ``"<location_id>:<container_id>"`` token.
+def parse_bpc_source_scope(value: Any) -> tuple[str, int, int]:
+    """Parse a token into (scope, target_id, container_item_id).
 
-    Returns (0, 0) for "all eligible locations" or anything malformed.
+    Scopes: 'all', 'region', 'system', 'station', 'container'.
     """
     text = str(value or "").strip()
     if not text or text == "all":
-        return 0, 0
+        return "all", 0, 0
+
+    if text.startswith("region:"):
+        try:
+            rid = int(text.split(":", 1)[1])
+            return ("region", rid, 0) if rid > 0 else ("all", 0, 0)
+        except (ValueError, IndexError):
+            return "all", 0, 0
+
+    if text.startswith("system:"):
+        try:
+            sid = int(text.split(":", 1)[1])
+            return ("system", sid, 0) if sid > 0 else ("all", 0, 0)
+        except (ValueError, IndexError):
+            return "all", 0, 0
+
+    if text.startswith("station:"):
+        try:
+            lid = int(text.split(":", 1)[1])
+            return ("station", lid, 0) if lid > 0 else ("all", 0, 0)
+        except (ValueError, IndexError):
+            return "all", 0, 0
+
+    if text.startswith("container:"):
+        parts = text.split(":")
+        try:
+            lid = int(parts[1])
+            cid = int(parts[2]) if len(parts) > 2 else 0
+            return ("container", lid, cid) if lid > 0 and cid > 0 else ("all", 0, 0)
+        except (ValueError, IndexError):
+            return "all", 0, 0
+
+    # Legacy "<location_id>" or "<location_id>:<container_id>"
     location_part, _sep, container_part = text.partition(":")
     try:
         location_id = int(location_part)
         container_item_id = int(container_part) if container_part else 0
     except ValueError:
-        return 0, 0
+        return "all", 0, 0
     if location_id <= 0 or container_item_id < 0:
-        return 0, 0
-    return location_id, container_item_id
+        return "all", 0, 0
+    if container_item_id > 0:
+        return "container", location_id, container_item_id
+    return "station", location_id, 0
+
+
+def parse_bpc_source(value: Any) -> tuple[int, int]:
+    """Parse a ``"<location_id>"`` or ``"<location_id>:<container_id>"`` token.
+
+    Returns (0, 0) for "all eligible locations", regional/system scopes, or anything malformed.
+    """
+    scope, target_id, container_id = parse_bpc_source_scope(value)
+    if scope in ("station", "container"):
+        return target_id, container_id
+    return 0, 0
+
+
+def _extract_blueprint_ids_for_locations(
+    user, location_ids: Iterable[int], *, character_id: int = 0
+) -> set[int]:
+    loc_list = sorted({int(lid) for lid in location_ids if int(lid) > 0})
+    if not loc_list:
+        return set()
+    filter_kwargs: dict[str, Any] = {
+        "user": user,
+        "location_id__in": loc_list,
+    }
+    if int(character_id or 0) > 0:
+        filter_kwargs["character_id"] = int(character_id)
+
+    location_assets = list(
+        CachedCharacterAsset.objects.filter(**filter_kwargs).values(
+            "item_id",
+            "character_id",
+            "raw_location_id",
+            "location_id",
+            "location_flag",
+            "type_id",
+            "is_blueprint",
+            "synced_at",
+            "set_name",
+        )
+    )
+    if not location_assets:
+        return set()
+
+    all_type_ids = {
+        int(row["type_id"]) for row in location_assets if row.get("type_id")
+    }
+    ship_type_ids = _get_ship_type_ids(all_type_ids)
+    esi_rows = _rows_as_esi_shape(location_assets)
+    index = build_asset_index_by_item_id(esi_rows)
+
+    matched_ids = set()
+    for asset in esi_rows:
+        raw_row = asset["_row"]
+        if not bool(raw_row.get("is_blueprint", False)):
+            continue
+        if not _is_personal_hangar_asset(
+            asset,
+            index,
+            ship_type_ids=ship_type_ids,
+            location_id=raw_row.get("location_id"),
+        ):
+            continue
+        item_id = raw_row.get("item_id")
+        if item_id:
+            matched_ids.add(int(item_id))
+
+    return matched_ids
 
 
 def blueprint_item_ids_at_source(
     user,
     *,
-    location_id: int,
+    location_id: int = 0,
     character_id: int = 0,
     container_item_id: int = 0,
+    system_id: int = 0,
+    region_id: int = 0,
 ) -> set[int] | None:
     """Item IDs of the user's cached blueprints at one source (personal item hangar).
 
-    Returns None when the user has no cached blueprints there, so a location
-    ID from a browser or preference is never proof of access: the caller only
-    ever narrows the user's own blueprints to these IDs. A container narrows
-    further to blueprints anywhere inside it (nested containers included).
+    Supports filtering by specific region, solar system, station, or container.
+    Returns None when the user has no cached blueprints there.
     Excludes ships and blueprints inside ships.
     """
+    if int(region_id or 0) > 0:
+        loc_ids = list(
+            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+            .values_list("location_id", flat=True)
+            .distinct()
+        )
+        meta_map = resolve_location_system_and_region(loc_ids)
+        target_loc_ids = [
+            loc_id
+            for loc_id in loc_ids
+            if meta_map.get(loc_id, {}).get("region_id") == int(region_id)
+        ]
+        if not target_loc_ids:
+            return None
+        matched_ids = _extract_blueprint_ids_for_locations(
+            user, target_loc_ids, character_id=character_id
+        )
+        return matched_ids if matched_ids else None
+
+    if int(system_id or 0) > 0:
+        loc_ids = list(
+            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+            .values_list("location_id", flat=True)
+            .distinct()
+        )
+        meta_map = resolve_location_system_and_region(loc_ids)
+        target_loc_ids = [
+            loc_id
+            for loc_id in loc_ids
+            if meta_map.get(loc_id, {}).get("system_id") == int(system_id)
+        ]
+        if not target_loc_ids:
+            return None
+        matched_ids = _extract_blueprint_ids_for_locations(
+            user, target_loc_ids, character_id=character_id
+        )
+        return matched_ids if matched_ids else None
+
+    if int(location_id or 0) <= 0:
+        return None
+
     filter_kwargs: dict[str, Any] = {
         "user": user,
-        "location_id": location_id,
+        "location_id": int(location_id),
     }
     if int(character_id or 0) > 0:
         filter_kwargs["character_id"] = int(character_id)
@@ -797,19 +1094,119 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
     otherwise; an invalid or foreign source is reported as rejected and falls
     back to no narrowing rather than to an empty set.
     """
-    location_id, container_item_id = parse_bpc_source(token)
-    if not location_id:
+    raw_token_str = str(token or "").strip()
+    scope, target_id, container_item_id = parse_bpc_source_scope(raw_token_str)
+    if scope == "all" or not raw_token_str or raw_token_str == "all":
         return {
             "token": "all",
+            "scope": "all",
             "item_ids": None,
-            "rejected": bool(str(token or "").strip() not in ("", "all")),
+            "rejected": bool(raw_token_str not in ("", "all")),
+            "location_name": "All eligible locations",
         }
+
+    if scope == "region":
+        item_ids = blueprint_item_ids_at_source(user, region_id=target_id)
+        if item_ids is None:
+            return {
+                "token": "all",
+                "scope": "all",
+                "item_ids": None,
+                "rejected": True,
+                "location_name": "All eligible locations",
+            }
+        region_name = _get_region_name(target_id)
+        loc_ids = list(
+            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+            .values_list("location_id", flat=True)
+            .distinct()
+        )
+        meta_map = resolve_location_system_and_region(loc_ids)
+        target_loc_ids = [
+            loc_id
+            for loc_id in loc_ids
+            if meta_map.get(loc_id, {}).get("region_id") == int(target_id)
+        ]
+        last_synced = (
+            CachedCharacterAsset.objects.filter(
+                user=user, location_id__in=target_loc_ids, is_blueprint=True
+            )
+            .aggregate(last=Max("synced_at"))
+            .get("last")
+        )
+        return {
+            "token": f"region:{target_id}",
+            "scope": "region",
+            "region_id": target_id,
+            "region_name": region_name,
+            "location_name": (
+                f"Region: {region_name}" if region_name else f"Region {target_id}"
+            ),
+            "item_ids": item_ids,
+            "rejected": False,
+            "last_synced": last_synced.isoformat() if last_synced else None,
+        }
+
+    if scope == "system":
+        item_ids = blueprint_item_ids_at_source(user, system_id=target_id)
+        if item_ids is None:
+            return {
+                "token": "all",
+                "scope": "all",
+                "item_ids": None,
+                "rejected": True,
+                "location_name": "All eligible locations",
+            }
+        system_name = _get_system_name(target_id)
+        loc_ids = list(
+            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+            .values_list("location_id", flat=True)
+            .distinct()
+        )
+        meta_map = resolve_location_system_and_region(loc_ids)
+        target_loc_ids = [
+            loc_id
+            for loc_id in loc_ids
+            if meta_map.get(loc_id, {}).get("system_id") == int(target_id)
+        ]
+        last_synced = (
+            CachedCharacterAsset.objects.filter(
+                user=user, location_id__in=target_loc_ids, is_blueprint=True
+            )
+            .aggregate(last=Max("synced_at"))
+            .get("last")
+        )
+        return {
+            "token": f"system:{target_id}",
+            "scope": "system",
+            "system_id": target_id,
+            "system_name": system_name,
+            "location_name": (
+                f"Solar System: {system_name}"
+                if system_name
+                else f"System {target_id}"
+            ),
+            "item_ids": item_ids,
+            "rejected": False,
+            "last_synced": last_synced.isoformat() if last_synced else None,
+        }
+
+    location_id = target_id
     item_ids = blueprint_item_ids_at_source(
         user, location_id=location_id, container_item_id=container_item_id
     )
     if item_ids is None:
-        return {"token": "all", "item_ids": None, "rejected": True}
+        return {
+            "token": "all",
+            "scope": "all",
+            "item_ids": None,
+            "rejected": True,
+            "location_name": "All eligible locations",
+        }
     names = resolve_cached_location_names([location_id])
+    loc_meta = resolve_location_system_and_region([location_id]).get(
+        location_id, {}
+    )
     last_synced = (
         CachedCharacterAsset.objects.filter(
             user=user, location_id=location_id, is_blueprint=True
@@ -817,16 +1214,26 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
         .aggregate(last=Max("synced_at"))
         .get("last")
     )
+    if raw_token_str.startswith("container:"):
+        token_out = f"container:{location_id}:{container_item_id}"
+    elif raw_token_str.startswith("station:"):
+        token_out = f"station:{location_id}"
+    elif container_item_id:
+        token_out = f"{location_id}:{container_item_id}"
+    else:
+        token_out = str(location_id)
+
     return {
-        "token": (
-            f"{location_id}:{container_item_id}"
-            if container_item_id
-            else str(location_id)
-        ),
+        "token": token_out,
+        "scope": "container" if container_item_id else "station",
         "item_ids": item_ids,
         "rejected": False,
         "location_id": location_id,
         "container_item_id": container_item_id or None,
+        "system_id": loc_meta.get("system_id"),
+        "system_name": loc_meta.get("system_name"),
+        "region_id": loc_meta.get("region_id"),
+        "region_name": loc_meta.get("region_name"),
         **_describe_location(location_id, names),
         "last_synced": last_synced.isoformat() if last_synced else None,
     }

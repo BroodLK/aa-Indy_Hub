@@ -10,7 +10,9 @@ from indy_hub.models import CachedCharacterAsset
 from indy_hub.services.production_material_sources import (
     blueprint_item_ids_at_source,
     describe_bpc_source,
+    list_asset_sources,
     parse_bpc_source,
+    parse_bpc_source_scope,
 )
 from indy_hub.services.production_simulation_state import (
     normalize_preference_state,
@@ -29,6 +31,10 @@ STATION = 60003760
 OTHER_STATION = 60008494
 CAN = 1_000_000_001
 NESTED_CAN = 1_000_000_002
+REGION_THE_FORGE = 10000002
+REGION_DOMAIN = 10000043
+SYSTEM_JITA = 30000142
+SYSTEM_AMARR = 30002187
 
 
 def _asset(
@@ -53,12 +59,83 @@ class ParseBpcSourceTests(SimpleTestCase):
         self.assertEqual(parse_bpc_source("all"), (0, 0))
         self.assertEqual(parse_bpc_source(str(STATION)), (STATION, 0))
         self.assertEqual(parse_bpc_source(f"{STATION}:{CAN}"), (STATION, CAN))
+        self.assertEqual(parse_bpc_source(f"station:{STATION}"), (STATION, 0))
+        self.assertEqual(parse_bpc_source(f"container:{STATION}:{CAN}"), (STATION, CAN))
+        self.assertEqual(parse_bpc_source(f"region:{REGION_THE_FORGE}"), (0, 0))
+        self.assertEqual(parse_bpc_source(f"system:{SYSTEM_JITA}"), (0, 0))
         for bad in ("abc", "-5", f"{STATION}:x", "0", f"{STATION}:-1"):
             self.assertEqual(parse_bpc_source(bad), (0, 0), bad)
+
+    def test_parse_bpc_source_scope(self) -> None:
+        self.assertEqual(parse_bpc_source_scope(""), ("all", 0, 0))
+        self.assertEqual(parse_bpc_source_scope("all"), ("all", 0, 0))
+        self.assertEqual(
+            parse_bpc_source_scope(f"region:{REGION_THE_FORGE}"),
+            ("region", REGION_THE_FORGE, 0),
+        )
+        self.assertEqual(
+            parse_bpc_source_scope(f"system:{SYSTEM_JITA}"),
+            ("system", SYSTEM_JITA, 0),
+        )
+        self.assertEqual(
+            parse_bpc_source_scope(f"station:{STATION}"),
+            ("station", STATION, 0),
+        )
+        self.assertEqual(
+            parse_bpc_source_scope(f"container:{STATION}:{CAN}"),
+            ("container", STATION, CAN),
+        )
+        self.assertEqual(
+            parse_bpc_source_scope(str(STATION)),
+            ("station", STATION, 0),
+        )
+        self.assertEqual(
+            parse_bpc_source_scope(f"{STATION}:{CAN}"),
+            ("container", STATION, CAN),
+        )
 
 
 class BlueprintSourceTests(TestCase):
     def setUp(self) -> None:
+        from eve_sde.models import Constellation, NPCStation, Region, SolarSystem
+
+        self.region_forge, _ = Region.objects.get_or_create(
+            id=REGION_THE_FORGE, defaults={"name": "The Forge"}
+        )
+        self.region_domain, _ = Region.objects.get_or_create(
+            id=REGION_DOMAIN, defaults={"name": "Domain"}
+        )
+        self.constellation_kimotoro, _ = Constellation.objects.get_or_create(
+            id=20000020,
+            defaults={"name": "Kimotoro", "region": self.region_forge},
+        )
+        self.constellation_throne, _ = Constellation.objects.get_or_create(
+            id=20000322,
+            defaults={"name": "Throne Worlds", "region": self.region_domain},
+        )
+        self.system_jita, _ = SolarSystem.objects.get_or_create(
+            id=SYSTEM_JITA,
+            defaults={"name": "Jita", "constellation": self.constellation_kimotoro},
+        )
+        self.system_amarr, _ = SolarSystem.objects.get_or_create(
+            id=SYSTEM_AMARR,
+            defaults={"name": "Amarr", "constellation": self.constellation_throne},
+        )
+        NPCStation.objects.get_or_create(
+            id=STATION,
+            defaults={
+                "name": "Jita IV - Moon 4 - Caldari Navy Assembly Plant",
+                "solar_system": self.system_jita,
+            },
+        )
+        NPCStation.objects.get_or_create(
+            id=OTHER_STATION,
+            defaults={
+                "name": "Amarr VIII (Oris) - Emperor Family Academy",
+                "solar_system": self.system_amarr,
+            },
+        )
+
         self.user = User.objects.create_user("bpc-source", password="x")
         self.other = User.objects.create_user("bpc-source-other", password="x")
         # Loose blueprint in the station hangar.
@@ -83,6 +160,26 @@ class BlueprintSourceTests(TestCase):
             blueprint_item_ids_at_source(self.user, location_id=STATION), {501, 502}
         )
 
+    def test_region_narrows_to_locations_in_region(self) -> None:
+        self.assertEqual(
+            blueprint_item_ids_at_source(self.user, region_id=REGION_THE_FORGE),
+            {501, 502},
+        )
+        self.assertEqual(
+            blueprint_item_ids_at_source(self.user, region_id=REGION_DOMAIN),
+            {503},
+        )
+
+    def test_system_narrows_to_locations_in_system(self) -> None:
+        self.assertEqual(
+            blueprint_item_ids_at_source(self.user, system_id=SYSTEM_JITA),
+            {501, 502},
+        )
+        self.assertEqual(
+            blueprint_item_ids_at_source(self.user, system_id=SYSTEM_AMARR),
+            {503},
+        )
+
     def test_container_includes_nested_containers(self) -> None:
         self.assertEqual(
             blueprint_item_ids_at_source(
@@ -100,11 +197,12 @@ class BlueprintSourceTests(TestCase):
         result = describe_bpc_source(self.user, "all")
         self.assertIsNone(result["item_ids"])
         self.assertFalse(result["rejected"])
+        self.assertEqual(result["scope"], "all")
 
     def test_describe_foreign_or_bogus_source_is_rejected_not_empty(self) -> None:
         # A forged location must fall back to "all" (no narrowing), never to
         # an empty set that would silently zero the user's coverage.
-        for token in ("123456", "nonsense"):
+        for token in ("123456", "nonsense", "region:999999", "system:999999"):
             result = describe_bpc_source(self.other, token)
             self.assertIsNone(result["item_ids"], token)
             self.assertTrue(result["rejected"], token)
@@ -114,7 +212,28 @@ class BlueprintSourceTests(TestCase):
         self.assertEqual(result["item_ids"], {502})
         self.assertEqual(result["token"], f"{STATION}:{CAN}")
         self.assertEqual(result["container_item_id"], CAN)
+        self.assertEqual(result["scope"], "container")
         self.assertTrue(result["location_name"])
+
+    def test_describe_valid_region_and_system_sources(self) -> None:
+        region_result = describe_bpc_source(self.user, f"region:{REGION_THE_FORGE}")
+        self.assertEqual(region_result["item_ids"], {501, 502})
+        self.assertEqual(region_result["scope"], "region")
+        self.assertEqual(region_result["region_id"], REGION_THE_FORGE)
+        self.assertEqual(region_result["region_name"], "The Forge")
+        self.assertFalse(region_result["rejected"])
+
+        system_result = describe_bpc_source(self.user, f"system:{SYSTEM_JITA}")
+        self.assertEqual(system_result["item_ids"], {501, 502})
+        self.assertEqual(system_result["scope"], "system")
+        self.assertEqual(system_result["system_id"], SYSTEM_JITA)
+        self.assertEqual(system_result["system_name"], "Jita")
+        self.assertFalse(system_result["rejected"])
+
+    def test_list_asset_sources_returns_regions_and_systems(self) -> None:
+        data = list_asset_sources(self.user, blueprints=True)
+        self.assertTrue(any(r["region_id"] == REGION_THE_FORGE for r in data["regions"]))
+        self.assertTrue(any(s["system_id"] == SYSTEM_JITA for s in data["systems"]))
 
 
 class BlueprintSourceWiringTests(SimpleTestCase):
@@ -128,6 +247,12 @@ class BlueprintSourceWiringTests(SimpleTestCase):
     def test_configure_offers_the_selector(self) -> None:
         template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
         for marker in (
+            'id="bpcSourceScopeSelect"',
+            'id="bpcSourceRegionSelect"',
+            'id="bpcSourceSystemInput"',
+            'id="bpcSourceStationSelect"',
+            'id="bpcSourceContainerSelect"',
+            'id="bpcSourceSystemDatalist"',
             'id="bpcSourceSelect"',
             'id="applyBpcSourceBtn"',
             'id="bpcSourceStatus"',

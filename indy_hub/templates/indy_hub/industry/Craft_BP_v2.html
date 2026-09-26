@@ -1472,21 +1472,71 @@
                                 <i class="fas fa-warehouse text-secondary"></i> {% trans "Blueprint Source" %}
                             </h3>
                             <div class="row g-2 align-items-end">
-                                <div class="col-md-7">
-                                    <label for="bpcSourceSelect" class="form-label small mb-1">{% trans "Count owned BPCs/BPOs from" %}</label>
-                                    <select id="bpcSourceSelect" class="form-select form-select-sm">
+                                <div class="col-md-3">
+                                    <label for="bpcSourceScopeSelect" class="form-label small mb-1 fw-semibold">{% trans "Scope Mode" %}</label>
+                                    <select id="bpcSourceScopeSelect" class="form-select form-select-sm">
                                         <option value="all">{% trans "All eligible locations" %}</option>
+                                        <option value="region">{% trans "Specific Region" %}</option>
+                                        <option value="system">{% trans "Specific System" %}</option>
+                                        <option value="station">{% trans "Specific Station / Structure" %}</option>
+                                        <option value="container">{% trans "Specific Container" %}</option>
                                     </select>
                                 </div>
-                                <div class="col-md-5">
+
+                                <!-- Scope: Specific Region -->
+                                <div class="col-md-4 d-none" id="bpcSourceRegionContainer">
+                                    <label for="bpcSourceRegionSelect" class="form-label small mb-1 fw-semibold">{% trans "Region" %}</label>
+                                    <select id="bpcSourceRegionSelect" class="form-select form-select-sm">
+                                        <option value="">{% trans "Select a region..." %}</option>
+                                    </select>
+                                </div>
+
+                                <!-- Scope: Specific System -->
+                                <div class="col-md-4 d-none" id="bpcSourceSystemContainer">
+                                    <label for="bpcSourceSystemInput" class="form-label small mb-1 fw-semibold">{% trans "System (type for autofill)" %}</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="text"
+                                               id="bpcSourceSystemInput"
+                                               class="form-control form-control-sm"
+                                               placeholder="{% trans 'e.g. Jita, 1DQ1-A...' %}"
+                                               list="bpcSourceSystemDatalist"
+                                               autocomplete="off">
+                                        <datalist id="bpcSourceSystemDatalist"></datalist>
+                                    </div>
+                                    <input type="hidden" id="bpcSourceSystemIdHidden" value="">
+                                </div>
+
+                                <!-- Scope: Specific Station or Container -->
+                                <div class="col-md-4 d-none" id="bpcSourceStationContainer">
+                                    <label for="bpcSourceStationSelect" class="form-label small mb-1 fw-semibold">{% trans "Station / Structure" %}</label>
+                                    <select id="bpcSourceStationSelect" class="form-select form-select-sm">
+                                        <option value="">{% trans "Select a station/structure..." %}</option>
+                                    </select>
+                                </div>
+
+                                <!-- Scope: Specific Container -->
+                                <div class="col-md-3 d-none" id="bpcSourceCanContainer">
+                                    <label for="bpcSourceContainerSelect" class="form-label small mb-1 fw-semibold">{% trans "Container" %}</label>
+                                    <select id="bpcSourceContainerSelect" class="form-select form-select-sm">
+                                        <option value="">{% trans "Select a container..." %}</option>
+                                    </select>
+                                </div>
+
+                                <div class="col-md-auto">
                                     <button id="applyBpcSourceBtn" class="btn btn-outline-primary btn-sm" type="button" disabled>
                                         <i class="fas fa-sync-alt me-1" aria-hidden="true"></i>{% trans "Apply and reload" %}
                                     </button>
                                 </div>
                             </div>
+
+                            <!-- Legacy compatibility select for programmatic / test access -->
+                            <select id="bpcSourceSelect" class="d-none">
+                                <option value="all">{% trans "All eligible locations" %}</option>
+                            </select>
+
                             <div id="bpcSourceStatus" class="small mt-2" aria-live="polite"></div>
                             <p class="small text-muted mb-0 mt-1">
-                                {% trans "Only blueprints in the chosen location or container count as owned coverage. Locations come from your cached asset data, not a live ESI read. Applying reloads the page because coverage is calculated on the server; your choice is saved as a personal default and is never included in share links." %}
+                                {% trans "Only blueprints in the chosen scope (region, system, station, or container) count as owned coverage. Locations come from your cached asset data, not a live ESI read. Applying reloads the page because coverage is calculated on the server; your choice is saved as a personal default and is never included in share links." %}
                             </p>
                         </section>
 
@@ -2948,12 +2998,26 @@
                 }
             });
             // BPC/BPO coverage source. The server already applied the saved (or
-            // URL) choice when rendering; this only offers the options, explains
-            // what is active, and saves + reloads on Apply.
+            // URL) choice when rendering; this offers progressive multi-level scope options,
+            // explains what is active, and saves + reloads on Apply.
+            const bpcSourceScopeSelect = document.getElementById('bpcSourceScopeSelect');
+            const bpcSourceRegionContainer = document.getElementById('bpcSourceRegionContainer');
+            const bpcSourceRegionSelect = document.getElementById('bpcSourceRegionSelect');
+            const bpcSourceSystemContainer = document.getElementById('bpcSourceSystemContainer');
+            const bpcSourceSystemInput = document.getElementById('bpcSourceSystemInput');
+            const bpcSourceSystemDatalist = document.getElementById('bpcSourceSystemDatalist');
+            const bpcSourceSystemIdHidden = document.getElementById('bpcSourceSystemIdHidden');
+            const bpcSourceStationContainer = document.getElementById('bpcSourceStationContainer');
+            const bpcSourceStationSelect = document.getElementById('bpcSourceStationSelect');
+            const bpcSourceCanContainer = document.getElementById('bpcSourceCanContainer');
+            const bpcSourceContainerSelect = document.getElementById('bpcSourceContainerSelect');
             const bpcSourceSelect = document.getElementById('bpcSourceSelect');
             const bpcSourceStatus = document.getElementById('bpcSourceStatus');
             const applyBpcSourceBtn = document.getElementById('applyBpcSourceBtn');
-            const activeBpcSource = (window.BLUEPRINT_DATA && window.BLUEPRINT_DATA.bpc_source) || { token: 'all' };
+            const activeBpcSource = (window.BLUEPRINT_DATA && window.BLUEPRINT_DATA.bpc_source) || { token: 'all', scope: 'all' };
+
+            let bpcSourcesData = { sources: [], regions: [], systems: [] };
+
             const renderBpcSourceStatus = () => {
                 if (!bpcSourceStatus) return;
                 if (activeBpcSource.rejected) {
@@ -2961,68 +3025,261 @@
                     bpcSourceStatus.textContent = '{% trans "Your saved blueprint source has no cached blueprints any more, so all eligible locations are counted." %}';
                     return;
                 }
-                if (!activeBpcSource.token || activeBpcSource.token === 'all') {
-                    bpcSourceStatus.className = 'small mt-2 text-muted';
-                    bpcSourceStatus.textContent = '{% trans "Counting owned blueprints in every eligible location." %}';
-                    return;
-                }
                 const when = activeBpcSource.last_synced ? new Date(activeBpcSource.last_synced).toLocaleString() : '{% trans "unknown" %}';
                 bpcSourceStatus.className = 'small mt-2 text-muted';
-                bpcSourceStatus.textContent = `{% trans "Counting only blueprints in" %} ${activeBpcSource.location_name || activeBpcSource.location_id}${activeBpcSource.container_item_id ? ' {% trans "(one container)" %}' : ''}. {% trans "Cached asset data, last refreshed" %} ${when}.`;
+                if (!activeBpcSource.token || activeBpcSource.token === 'all') {
+                    bpcSourceStatus.textContent = '{% trans "Counting owned blueprints in every eligible location across all regions." %}';
+                } else if (activeBpcSource.scope === 'region') {
+                    bpcSourceStatus.textContent = `{% trans "Counting only blueprints in Region:" %} ${activeBpcSource.region_name || activeBpcSource.region_id}. {% trans "Cached asset data, last refreshed" %} ${when}.`;
+                } else if (activeBpcSource.scope === 'system') {
+                    bpcSourceStatus.textContent = `{% trans "Counting only blueprints in Solar System:" %} ${activeBpcSource.system_name || activeBpcSource.system_id}. {% trans "Cached asset data, last refreshed" %} ${when}.`;
+                } else if (activeBpcSource.scope === 'container') {
+                    bpcSourceStatus.textContent = `{% trans "Counting only blueprints in container in" %} ${activeBpcSource.location_name || activeBpcSource.location_id}. {% trans "Cached asset data, last refreshed" %} ${when}.`;
+                } else {
+                    bpcSourceStatus.textContent = `{% trans "Counting only blueprints in" %} ${activeBpcSource.location_name || activeBpcSource.location_id}. {% trans "Cached asset data, last refreshed" %} ${when}.`;
+                }
             };
+
+            const getSelectedBpcSourceToken = () => {
+                const scope = bpcSourceScopeSelect ? bpcSourceScopeSelect.value : 'all';
+                if (scope === 'all') return 'all';
+                if (scope === 'region') {
+                    const rid = bpcSourceRegionSelect ? bpcSourceRegionSelect.value : '';
+                    return rid ? (rid.startsWith('region:') ? rid : `region:${rid}`) : 'all';
+                }
+                if (scope === 'system') {
+                    const sid = bpcSourceSystemIdHidden ? bpcSourceSystemIdHidden.value : '';
+                    return sid ? (sid.startsWith('system:') ? sid : `system:${sid}`) : 'all';
+                }
+                if (scope === 'station') {
+                    const locVal = bpcSourceStationSelect ? bpcSourceStationSelect.value : '';
+                    if (!locVal) return 'all';
+                    const rawLoc = locVal.replace('station:', '');
+                    return `station:${rawLoc}`;
+                }
+                if (scope === 'container') {
+                    const locVal = bpcSourceStationSelect ? bpcSourceStationSelect.value : '';
+                    const canVal = bpcSourceContainerSelect ? bpcSourceContainerSelect.value : '';
+                    if (!locVal) return 'all';
+                    const rawLoc = locVal.replace('station:', '');
+                    return canVal ? `container:${rawLoc}:${canVal}` : `station:${rawLoc}`;
+                }
+                return 'all';
+            };
+
+            const updateApplyButtonState = () => {
+                if (!applyBpcSourceBtn) return;
+                const candidateToken = getSelectedBpcSourceToken();
+                let activeToken = String(activeBpcSource.token || 'all');
+                // Normalize station token comparison
+                if (activeToken && !activeToken.includes(':') && !activeToken.startsWith('all') && !activeToken.startsWith('region:') && !activeToken.startsWith('system:')) {
+                    activeToken = `station:${activeToken}`;
+                }
+                let normCandidate = candidateToken;
+                if (normCandidate && !normCandidate.includes(':') && !normCandidate.startsWith('all') && !normCandidate.startsWith('region:') && !normCandidate.startsWith('system:')) {
+                    normCandidate = `station:${normCandidate}`;
+                }
+                applyBpcSourceBtn.disabled = (normCandidate === activeToken);
+                if (bpcSourceSelect) {
+                    bpcSourceSelect.value = candidateToken;
+                }
+            };
+
+            const updateScopeVisibility = () => {
+                const scope = bpcSourceScopeSelect ? bpcSourceScopeSelect.value : 'all';
+                if (bpcSourceRegionContainer) bpcSourceRegionContainer.classList.toggle('d-none', scope !== 'region');
+                if (bpcSourceSystemContainer) bpcSourceSystemContainer.classList.toggle('d-none', scope !== 'system');
+                if (bpcSourceStationContainer) bpcSourceStationContainer.classList.toggle('d-none', scope !== 'station' && scope !== 'container');
+                if (bpcSourceCanContainer) bpcSourceCanContainer.classList.toggle('d-none', scope !== 'container');
+                updateApplyButtonState();
+            };
+
+            const populateContainersForSelectedStation = () => {
+                if (!bpcSourceContainerSelect) return;
+                const rawLocVal = bpcSourceStationSelect ? bpcSourceStationSelect.value.replace('station:', '') : '';
+                const locId = Number(rawLocVal) || 0;
+                const source = (bpcSourcesData.sources || []).find((s) => Number(s.location_id) === locId);
+                const containers = Array.isArray(source?.containers) ? source.containers : [];
+                const options = ['<option value="">{% trans "Select a container..." %}</option>'];
+                containers.forEach((can) => {
+                    options.push(`<option value="${esc(can.item_id)}">${esc(can.name)}</option>`);
+                });
+                bpcSourceContainerSelect.innerHTML = options.join('');
+                if (bpcSourceContainerSelect.dataset.preferredContainer) {
+                    bpcSourceContainerSelect.value = bpcSourceContainerSelect.dataset.preferredContainer;
+                }
+            };
+
+            let bpcSystemLookupTimer = null;
+            const syncBpcSystemInput = (queryText) => {
+                const text = String(queryText || '').trim().toLowerCase();
+                if (!text) {
+                    if (bpcSourceSystemIdHidden) bpcSourceSystemIdHidden.value = '';
+                    updateApplyButtonState();
+                    return;
+                }
+                const cachedMatch = (bpcSourcesData.systems || []).find((s) => String(s.system_name || '').toLowerCase() === text);
+                if (cachedMatch) {
+                    if (bpcSourceSystemIdHidden) bpcSourceSystemIdHidden.value = String(cachedMatch.system_id);
+                    updateApplyButtonState();
+                    return;
+                }
+                window.clearTimeout(bpcSystemLookupTimer);
+                bpcSystemLookupTimer = window.setTimeout(async () => {
+                    try {
+                        const envUrl = window.BLUEPRINT_DATA?.urls?.craft_build_environment || '{% url "indy_hub:craft_build_environment" %}';
+                        const res = await fetch(`${envUrl}?system=${encodeURIComponent(text)}`, {
+                            credentials: 'same-origin',
+                            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.resolved && data.system?.system_id) {
+                                if (bpcSourceSystemIdHidden) bpcSourceSystemIdHidden.value = String(data.system.system_id);
+                                updateApplyButtonState();
+                            }
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+                }, 350);
+            };
+
             const loadBpcSources = async () => {
-                if (!bpcSourceSelect) return;
+                if (!bpcSourceScopeSelect) return;
                 try {
                     const response = await fetch(bpcSourcesUrl, { credentials: 'same-origin', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
                     const payload = response.ok ? await response.json() : {};
-                    const sources = Array.isArray(payload?.sources) ? payload.sources : [];
-                    const options = [`<option value="all">{% trans "All eligible locations" %}</option>`];
-                    const grouped = new Map();
-                    sources.forEach((source) => {
-                        const charName = source.character_name || (source.character_id ? `Character ${source.character_id}` : '{% trans "Personal Assets" %}');
-                        if (!grouped.has(charName)) grouped.set(charName, []);
-                        grouped.get(charName).push(source);
-                    });
-                    if (grouped.size <= 1) {
-                        sources.forEach((source) => {
+                    bpcSourcesData = {
+                        sources: Array.isArray(payload?.sources) ? payload.sources : [],
+                        regions: Array.isArray(payload?.regions) ? payload.regions : [],
+                        systems: Array.isArray(payload?.systems) ? payload.systems : [],
+                    };
+
+                    // Populate Regions
+                    if (bpcSourceRegionSelect) {
+                        const regionOpts = ['<option value="">{% trans "Select a region..." %}</option>'];
+                        bpcSourcesData.regions.forEach((r) => {
+                            regionOpts.push(`<option value="region:${esc(r.region_id)}">${esc(r.region_name)} (${r.source_count} {% trans "locations" %})</option>`);
+                        });
+                        bpcSourceRegionSelect.innerHTML = regionOpts.join('');
+                    }
+
+                    // Populate Systems Datalist
+                    if (bpcSourceSystemDatalist) {
+                        const sysOpts = [];
+                        bpcSourcesData.systems.forEach((s) => {
+                            sysOpts.push(`<option data-system-id="${esc(s.system_id)}" value="${esc(s.system_name)}">${s.region_name ? esc(s.region_name) + ' / ' : ''}${esc(s.system_name)}</option>`);
+                        });
+                        bpcSourceSystemDatalist.innerHTML = sysOpts.join('');
+                    }
+
+                    // Populate Stations
+                    if (bpcSourceStationSelect) {
+                        const stationOpts = ['<option value="">{% trans "Select a station/structure..." %}</option>'];
+                        const grouped = new Map();
+                        bpcSourcesData.sources.forEach((source) => {
+                            const groupKey = source.system_name || (source.region_name || '{% trans "Stations" %}');
+                            if (!grouped.has(groupKey)) grouped.set(groupKey, []);
+                            grouped.get(groupKey).push(source);
+                        });
+                        for (const [groupKey, sourcesList] of grouped.entries()) {
+                            stationOpts.push(`<optgroup label="${esc(groupKey)}">`);
+                            sourcesList.forEach((source) => {
+                                const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
+                                stationOpts.push(`<option value="station:${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
+                            });
+                            stationOpts.push(`</optgroup>`);
+                        }
+                        bpcSourceStationSelect.innerHTML = stationOpts.join('');
+                    }
+
+                    // Populate legacy fallback select
+                    if (bpcSourceSelect) {
+                        const legacyOpts = [`<option value="all">{% trans "All eligible locations" %}</option>`];
+                        bpcSourcesData.sources.forEach((source) => {
                             const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
-                            options.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
+                            legacyOpts.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
                             (Array.isArray(source.containers) ? source.containers : []).forEach((container) => {
-                                options.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
+                                legacyOpts.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
                             });
                         });
-                    } else {
-                        for (const [charName, charSources] of grouped.entries()) {
-                            options.push(`<optgroup label="${esc(charName)}">`);
-                            charSources.forEach((source) => {
-                                const cachedNote = source.is_stale ? ' {% trans "(cached, stale)" %}' : ' {% trans "(cached)" %}';
-                                options.push(`<option value="${esc(source.location_id)}">${esc(source.location_name || source.location_id)}${cachedNote}</option>`);
-                                (Array.isArray(source.containers) ? source.containers : []).forEach((container) => {
-                                    options.push(`<option value="${esc(source.location_id)}:${esc(container.item_id)}">&nbsp;&nbsp;&rarr; ${esc(container.name)}</option>`);
-                                });
-                            });
-                            options.push(`</optgroup>`);
-                        }
+                        bpcSourceSelect.innerHTML = legacyOpts.join('');
                     }
-                    bpcSourceSelect.innerHTML = options.join('');
                 } catch (error) {
-                    // Keep "All eligible locations" only.
+                    // Keep defaults
                 }
-                const token = String(activeBpcSource.token || 'all');
-                if (Array.from(bpcSourceSelect.options).some((option) => option.value === token)) bpcSourceSelect.value = token;
-                if (applyBpcSourceBtn) applyBpcSourceBtn.disabled = true;
+
+                // Apply active server selection to controls
+                const activeToken = String(activeBpcSource.token || 'all');
+                const activeScope = activeBpcSource.scope || 'all';
+
+                if (activeScope === 'region' || activeToken.startsWith('region:')) {
+                    if (bpcSourceScopeSelect) bpcSourceScopeSelect.value = 'region';
+                    if (bpcSourceRegionSelect) bpcSourceRegionSelect.value = activeToken.startsWith('region:') ? activeToken : `region:${activeToken}`;
+                } else if (activeScope === 'system' || activeToken.startsWith('system:')) {
+                    if (bpcSourceScopeSelect) bpcSourceScopeSelect.value = 'system';
+                    const rawSysId = activeBpcSource.system_id || activeToken.replace('system:', '');
+                    if (bpcSourceSystemIdHidden) bpcSourceSystemIdHidden.value = String(rawSysId);
+                    if (bpcSourceSystemInput) {
+                        const sysObj = bpcSourcesData.systems.find((s) => String(s.system_id) === String(rawSysId));
+                        bpcSourceSystemInput.value = activeBpcSource.system_name || sysObj?.system_name || `System ${rawSysId}`;
+                    }
+                } else if (activeScope === 'container' || activeBpcSource.container_item_id || activeToken.startsWith('container:') || activeToken.includes(':')) {
+                    if (bpcSourceScopeSelect) bpcSourceScopeSelect.value = 'container';
+                    const rawLocId = activeBpcSource.location_id || activeToken.split(':')[1] || activeToken.split(':')[0];
+                    const rawCanId = activeBpcSource.container_item_id || activeToken.split(':')[2] || activeToken.split(':')[1];
+                    if (bpcSourceStationSelect) bpcSourceStationSelect.value = `station:${rawLocId}`;
+                    if (bpcSourceContainerSelect) bpcSourceContainerSelect.dataset.preferredContainer = String(rawCanId || '');
+                    populateContainersForSelectedStation();
+                    if (bpcSourceContainerSelect && rawCanId) bpcSourceContainerSelect.value = String(rawCanId);
+                } else if (activeScope === 'station' || activeBpcSource.location_id || activeToken.startsWith('station:') || (activeToken !== 'all' && !Number.isNaN(Number(activeToken)))) {
+                    if (bpcSourceScopeSelect) bpcSourceScopeSelect.value = 'station';
+                    const rawLocId = activeBpcSource.location_id || activeToken.replace('station:', '');
+                    if (bpcSourceStationSelect) bpcSourceStationSelect.value = `station:${rawLocId}`;
+                } else {
+                    if (bpcSourceScopeSelect) bpcSourceScopeSelect.value = 'all';
+                }
+
+                updateScopeVisibility();
+                updateApplyButtonState();
             };
+
+            bpcSourceScopeSelect?.addEventListener('change', () => {
+                updateScopeVisibility();
+            });
+
+            bpcSourceRegionSelect?.addEventListener('change', () => {
+                updateApplyButtonState();
+            });
+
+            bpcSourceSystemInput?.addEventListener('input', (e) => {
+                syncBpcSystemInput(e.target.value);
+            });
+
+            bpcSourceStationSelect?.addEventListener('change', () => {
+                populateContainersForSelectedStation();
+                updateApplyButtonState();
+            });
+
+            bpcSourceContainerSelect?.addEventListener('change', () => {
+                updateApplyButtonState();
+            });
+
             bpcSourceSelect?.addEventListener('change', () => {
                 if (applyBpcSourceBtn) applyBpcSourceBtn.disabled = bpcSourceSelect.value === String(activeBpcSource.token || 'all');
             });
+
             applyBpcSourceBtn?.addEventListener('click', async () => {
                 applyBpcSourceBtn.disabled = true;
-                await savePreference({ bpcSource: bpcSourceSelect.value });
+                const token = getSelectedBpcSourceToken();
+                await savePreference({ bpcSource: token });
                 const url = new URL(window.location.href);
                 // The saved preference now drives coverage; drop any URL override.
                 url.searchParams.delete('bpc_source');
                 window.location.assign(url.toString());
             });
+
             renderBpcSourceStatus();
             loadBpcSources();
 
