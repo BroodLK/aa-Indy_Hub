@@ -49,7 +49,7 @@ INDY_HUB_BEAT_SCHEDULE = {
     },
     "indy-hub-sync-public-jita-contracts": {
         "task": "indy_hub.tasks.public_contracts.sync_public_jita_contracts",
-        "schedule": crontab(minute=12, hour="*"),  # Hourly
+        "schedule": crontab(hour=3, minute=0),  # Daily at 03:00
         "options": {"priority": 6},
         "apply_offset": True,
     },
