@@ -102,10 +102,140 @@
                                         <a class="btn btn-sm btn-outline-warning" href="{% url 'indy_hub:bp_copy_request_page' %}">{% trans "Open" %}</a>
                                     </div>
                                 </div>
+
+                                {% if capital_orders_dashboard %}
+                                    <div class="share-metric">
+                                        <div>
+                                            <span class="share-metric-label"><i class="fas fa-ship me-2"></i>{% trans "Capital orders" %}</span>
+                                            <p class="text-muted small mb-0">{% trans "Active hull builds and offer reviews." %}</p>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                                            {% if capital_orders_dashboard.pending_offer_count %}
+                                                <span class="badge rounded-pill bg-warning text-dark animate-pulse">{% trans "Action Required" %}: {{ capital_orders_dashboard.pending_offer_count }}</span>
+                                            {% endif %}
+                                            <span class="badge rounded-pill bg-primary-subtle text-primary">{% trans "Active" %}: {{ capital_orders_dashboard.active_count|default:0 }}</span>
+                                            <a class="btn btn-sm btn-outline-primary" href="{% url 'indy_hub:capital_ship_orders' %}">{% trans "Open" %}</a>
+                                        </div>
+                                    </div>
+                                {% endif %}
                             </div>
                         </div>
                     </div>
                 </section>
+
+                {% if capital_orders_dashboard and capital_orders_dashboard.active_orders %}
+                    <section class="dashboard-section mb-4">
+                        <header class="section-heading d-flex align-items-center justify-content-between mb-3">
+                            <div>
+                                <h3 class="h5 mb-0"><i class="fas fa-ship me-2 text-primary"></i>{% trans "Capital Orders in Progress" %}</h3>
+                                <p class="text-muted small mb-0">{% trans "Track the production and status of your capital ships." %}</p>
+                            </div>
+                            <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-sm btn-outline-primary">
+                                {% trans "All Capital Orders" %} <i class="fas fa-arrow-right ms-1"></i>
+                            </a>
+                        </header>
+
+                        <div class="row g-3">
+                            {% for order in capital_orders_dashboard.active_orders %}
+                                <div class="col-md-6 col-12">
+                                    <a href="{{ order.url }}" class="card text-decoration-none h-100 border transition-all hover-shadow-sm capital-order-dashboard-card">
+                                        <div class="card-body p-3 d-flex flex-column justify-content-between">
+                                            <div>
+                                                <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <img src="https://images.evetech.net/types/{{ order.ship_type_id }}/render?size=64"
+                                                             alt="{{ order.ship_type_name }}"
+                                                             class="rounded border bg-dark-subtle p-1"
+                                                             style="width: 44px; height: 44px; object-fit: contain;">
+                                                        <div>
+                                                            <div class="fw-bold text-body">{{ order.ship_type_name }}</div>
+                                                            <div class="text-muted small">{{ order.order_reference }} · <span class="badge bg-secondary-subtle text-secondary py-0 px-1">{{ order.ship_class_label }}</span></div>
+                                                        </div>
+                                                    </div>
+                                                    <span class="badge {{ order.status_badge_class }} py-1 px-2">{{ order.status_display }}</span>
+                                                </div>
+
+                                                {% if order.has_pending_offer %}
+                                                    <div class="alert alert-warning py-1 px-2 small mb-2 d-flex align-items-center justify-content-between">
+                                                        <span><i class="fas fa-bell me-1"></i>{% trans "Builder Offer Ready!" %}</span>
+                                                        <span class="badge bg-warning text-dark">{% trans "Review" %} &rarr;</span>
+                                                    </div>
+                                                {% endif %}
+
+                                                <div class="d-flex justify-content-between text-muted small my-2">
+                                                    <span>{% if order.price_display %}{{ order.price_display }}{% else %}-{% endif %}</span>
+                                                    <span>{% if order.eta_display %}{{ order.eta_display }}{% else %}-{% endif %}</span>
+                                                </div>
+                                            </div>
+
+                                            <div class="mt-2 pt-2 border-top">
+                                                <div class="d-flex justify-content-between align-items-center small mb-1">
+                                                    <span class="text-muted">{% trans "Stage" %} {{ order.step }}/{{ order.total_steps }}</span>
+                                                    {% if order.has_unread_chat %}
+                                                        <span class="badge bg-info text-dark"><i class="fas fa-comment me-1"></i>{% trans "New message" %}</span>
+                                                    {% endif %}
+                                                </div>
+                                                <div class="progress" style="height: 6px;">
+                                                    <div class="progress-bar {% if order.has_pending_offer %}bg-warning{% elif order.step >= 4 %}bg-success{% else %}bg-primary{% endif %}"
+                                                         role="progressbar"
+                                                         style="width: {% widthratio order.step order.total_steps 100 %}%;"
+                                                         aria-valuenow="{{ order.step }}"
+                                                         aria-valuemin="1"
+                                                         aria-valuemax="{{ order.total_steps }}">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </a>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    </section>
+                {% endif %}
+
+                {% if capital_orders_dashboard.is_builder_or_manager and capital_orders_dashboard.builder_queue_summary %}
+                    <section class="dashboard-section mb-4">
+                        <header class="section-heading d-flex align-items-center justify-content-between mb-3">
+                            <div>
+                                <h3 class="h5 mb-0"><i class="fas fa-hammer me-2 text-warning"></i>{% trans "Capital Fulfillment Queue" %}</h3>
+                                <p class="text-muted small mb-0">{% trans "Orders in the queue awaiting builder management." %}</p>
+                            </div>
+                            <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-sm btn-warning">
+                                <i class="fas fa-list-check me-1"></i>{% trans "Open Queue" %}
+                            </a>
+                        </header>
+                        <div class="card focus-card">
+                            <div class="card-body p-3">
+                                <div class="row g-3 text-center">
+                                    <div class="col-sm-3 col-6">
+                                        <div class="p-2 rounded bg-body-tertiary">
+                                            <div class="fs-4 fw-bold text-warning">{{ capital_orders_dashboard.builder_queue_summary.unclaimed_count }}</div>
+                                            <div class="text-muted small">{% trans "Unclaimed" %}</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-3 col-6">
+                                        <div class="p-2 rounded bg-body-tertiary">
+                                            <div class="fs-4 fw-bold text-info">{{ capital_orders_dashboard.builder_queue_summary.gathering_count }}</div>
+                                            <div class="text-muted small">{% trans "Gathering Materials" %}</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-3 col-6">
+                                        <div class="p-2 rounded bg-body-tertiary">
+                                            <div class="fs-4 fw-bold text-primary">{{ capital_orders_dashboard.builder_queue_summary.in_production_count }}</div>
+                                            <div class="text-muted small">{% trans "In Production" %}</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-sm-3 col-6">
+                                        <div class="p-2 rounded bg-body-tertiary">
+                                            <div class="fs-4 fw-bold text-body">{{ capital_orders_dashboard.builder_queue_summary.total_active }}</div>
+                                            <div class="text-muted small">{% trans "Total Active" %}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                {% endif %}
 
                 {% if can_manage_corp_bp_requests %}
                     <section class="dashboard-section">
@@ -176,6 +306,15 @@
                                     </div>
                                     <span id="copy-chat-unread-value" class="share-metric-value">{{ copy_chat_unread_count|default:0 }}</span>
                                 </div>
+                                {% if capital_orders_dashboard %}
+                                    <div class="share-metric">
+                                        <div>
+                                            <span class="share-metric-label">{% trans "Capital notifications" %}</span>
+                                            <p class="text-muted small mb-0">{% trans "Offers and order chats." %}</p>
+                                        </div>
+                                        <span class="share-metric-value">{{ capital_orders_dashboard.alerts|length|default:0 }}</span>
+                                    </div>
+                                {% endif %}
                                 <div class="share-metric">
                                     <div>
                                         <span class="share-metric-label">{% trans "Pending job digests" %}</span>
@@ -193,6 +332,25 @@
                                     </div>
                                 {% endif %}
                             </div>
+
+                            {% if capital_orders_dashboard.alerts %}
+                                <h6 class="mb-3 text-warning"><i class="fas fa-ship me-1"></i>{% trans "Capital Order Actions" %}</h6>
+                                <div class="share-metrics mb-4">
+                                    {% for alert in capital_orders_dashboard.alerts %}
+                                        <a class="share-metric share-metric--alert text-decoration-none border-warning-subtle"
+                                           href="{{ alert.url }}"
+                                           aria-label="{% trans 'Open capital order' %}: {{ alert.ship_name }}">
+                                            <div>
+                                                <span class="share-metric-label">{{ alert.ship_name }} <small class="text-muted">({{ alert.reference }})</small></span>
+                                                <p class="text-muted small mb-0">{{ alert.message }}</p>
+                                            </div>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span class="badge rounded-pill {{ alert.badge_class }}">{{ alert.badge }}</span>
+                                            </div>
+                                        </a>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
 
                             {% if copy_chat_alerts %}
                                 <h6 id="copy-chat-alerts-header" class="mb-3">{% trans "Latest unread copy chats" %}</h6>
@@ -220,7 +378,7 @@
                                         {% trans "More unread chats are available in Blueprint Sharing." %}
                                     </p>
                                 {% endif %}
-                            {% else %}
+                            {% elif not capital_orders_dashboard.alerts %}
                                 <p id="copy-chat-alerts-empty" class="text-muted small mb-0 mt-auto">{% trans "No unread items right now." %}</p>
                             {% endif %}
                         </div>

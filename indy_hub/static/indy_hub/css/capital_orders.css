@@ -1,8 +1,10 @@
+/* Modern Capital Ship Orders CSS */
+
 .cap-note-card {
     border: 1px solid rgba(15, 23, 42, 0.12);
     border-radius: 14px;
     background: linear-gradient(140deg, rgba(245, 158, 11, 0.08), rgba(13, 110, 253, 0.06));
-    padding: 0.9rem 1rem;
+    padding: 0.9rem 1.1rem;
 }
 
 .cap-note-list {
@@ -14,77 +16,230 @@
 
 .cap-form-card {
     border: 1px solid rgba(15, 23, 42, 0.08);
-    border-radius: 14px;
+    border-radius: 16px;
     background: var(--bs-body-bg);
-    padding: 1rem;
+    padding: 1.25rem;
     height: 100%;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
 
 .cap-form-title {
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
     color: var(--bs-secondary-color);
-    margin-bottom: 0.8rem;
+    margin-bottom: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.cap-option-grid {
+/* Filter Navigation & Search Bar */
+.cap-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+}
+
+.cap-filter-btn {
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.35rem 0.75rem;
+    border-radius: 20px;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    background: transparent;
+    color: var(--bs-body-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cap-filter-btn:hover {
+    background: rgba(13, 110, 253, 0.08);
+    border-color: rgba(13, 110, 253, 0.3);
+}
+
+.cap-filter-btn.active {
+    background: var(--bs-primary);
+    color: #fff;
+    border-color: var(--bs-primary);
+    box-shadow: 0 2px 6px rgba(13, 110, 253, 0.3);
+}
+
+.cap-search-input {
+    border-radius: 10px;
+    font-size: 0.88rem;
+    padding: 0.5rem 0.85rem;
+}
+
+/* Ship Cards Grid */
+.cap-ship-grid {
     display: grid;
-    gap: 0.55rem;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.75rem;
+    max-height: 520px;
+    overflow-y: auto;
+    padding-right: 0.35rem;
 }
 
-.cap-option-group-title {
-    margin: 0.2rem 0 0.25rem;
-    font-size: 0.82rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--bs-secondary-color);
-}
-
-.cap-radio-card {
+.cap-ship-card {
     position: relative;
 }
 
-.cap-radio-card input[type="radio"] {
+.cap-ship-card input[type="radio"] {
     position: absolute;
     opacity: 0;
     pointer-events: none;
 }
 
-.cap-radio-card label {
+.cap-ship-card label {
     width: 100%;
     margin: 0;
     display: flex;
-    gap: 0.6rem;
-    align-items: flex-start;
-    border: 1px solid rgba(15, 23, 42, 0.12);
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1.5px solid rgba(15, 23, 42, 0.12);
     border-radius: 12px;
-    padding: 0.7rem 0.75rem;
+    padding: 0.85rem;
     background: rgba(15, 23, 42, 0.02);
     cursor: pointer;
-    transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    min-height: 120px;
 }
 
-.cap-radio-card label::before {
-    content: "";
-    width: 14px;
-    height: 14px;
-    margin-top: 0.18rem;
-    border-radius: 50%;
-    border: 2px solid rgba(13, 110, 253, 0.45);
-    background: transparent;
+.cap-ship-card label:hover {
+    border-color: rgba(13, 110, 253, 0.45);
+    background: rgba(13, 110, 253, 0.04);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.cap-ship-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 0.5rem;
+}
+
+.cap-ship-render {
+    width: 44px;
+    height: 44px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     flex-shrink: 0;
 }
 
-.cap-radio-card input[type="radio"]:checked + label {
-    border-color: rgba(13, 110, 253, 0.65);
-    background: rgba(13, 110, 253, 0.09);
-    box-shadow: 0 0 0 1px rgba(13, 110, 253, 0.35);
+.cap-ship-name {
+    font-weight: 700;
+    font-size: 0.92rem;
+    line-height: 1.2;
+    color: var(--bs-body-color);
 }
 
-.cap-radio-card input[type="radio"]:checked + label::before {
+.cap-ship-class-badge {
+    font-size: 0.72rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+.cap-ship-price {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--bs-primary);
+    margin-top: auto;
+    padding-top: 0.4rem;
+    border-top: 1px dashed rgba(15, 23, 42, 0.1);
+}
+
+.cap-ship-card input[type="radio"]:checked + label {
+    border-color: var(--bs-primary);
+    background: rgba(13, 110, 253, 0.1);
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.35), 0 4px 12px rgba(13, 110, 253, 0.15);
+    transform: translateY(-2px);
+}
+
+.cap-ship-card input[type="radio"]:checked + label .cap-ship-name {
+    color: var(--bs-primary);
+}
+
+/* Reason Cards */
+.cap-reason-grid {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.cap-reason-card {
+    position: relative;
+}
+
+.cap-reason-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.cap-reason-card label {
+    width: 100%;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    border: 1.5px solid rgba(15, 23, 42, 0.12);
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    background: rgba(15, 23, 42, 0.02);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cap-reason-card label:hover {
+    border-color: rgba(13, 110, 253, 0.45);
+    background: rgba(13, 110, 253, 0.04);
+}
+
+.cap-reason-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: rgba(13, 110, 253, 0.1);
+    color: var(--bs-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.cap-reason-card input[type="radio"]:checked + label {
+    border-color: var(--bs-primary);
+    background: rgba(13, 110, 253, 0.09);
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.3);
+}
+
+.cap-reason-card input[type="radio"]:checked + label .cap-reason-icon {
     background: var(--bs-primary);
+    color: #fff;
+}
+
+/* Summary Box */
+.cap-summary-card {
+    border: 1.5px solid rgba(245, 158, 11, 0.4);
+    border-radius: 14px;
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.06), rgba(13, 110, 253, 0.05));
+    padding: 1rem 1.25rem;
+    margin-top: 1rem;
+}
+
+.cap-summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0;
+    font-size: 0.9rem;
 }
 
 .cap-submit-wrap {
@@ -93,26 +248,31 @@
     justify-content: flex-end;
 }
 
+/* Queue Table & Admin styling */
 .cap-admin-rule {
     border-left: 4px solid rgba(245, 158, 11, 0.75);
     background: linear-gradient(125deg, rgba(245, 158, 11, 0.16), rgba(13, 110, 253, 0.1));
 }
 
 .cap-queue-table thead th {
-    font-size: 0.76rem;
+    font-size: 0.78rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--bs-secondary-color);
     white-space: nowrap;
+    padding: 0.75rem 0.65rem;
 }
 
 .cap-queue-table tbody td {
     vertical-align: middle;
+    padding: 0.75rem 0.65rem;
 }
 
 .cap-ref {
     font-weight: 700;
     letter-spacing: 0.02em;
+    font-family: monospace;
+    font-size: 0.92rem;
 }
 
 .cap-muted-mini {
@@ -121,19 +281,295 @@
 }
 
 .cap-status-cell .status-badge {
-    min-width: 150px;
+    min-width: 135px;
     justify-content: center;
     white-space: nowrap;
 }
 
-.cap-update-summary {
+.cap-stage-dots {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.cap-stage-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(148, 163, 184, 0.4);
+}
+
+.cap-stage-dot.completed {
+    background: var(--bs-success);
+}
+
+.cap-stage-dot.current {
+    background: var(--bs-warning);
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+}
+
+/* Quick Copy Button */
+.btn-copy-ref {
+    padding: 0.15rem 0.35rem;
+    font-size: 0.75rem;
+    line-height: 1;
+    border-radius: 4px;
+}
+
+/* Darkly theme overrides */
+html[data-theme="darkly"] .cap-note-card {
+    border-color: rgba(148, 163, 184, 0.25);
+    background: linear-gradient(140deg, rgba(245, 158, 11, 0.15), rgba(37, 99, 235, 0.12));
+}
+
+html[data-theme="darkly"] .cap-form-card {
+    border-color: rgba(148, 163, 184, 0.2);
+    background: rgba(15, 23, 42, 0.45);
+}
+
+html[data-theme="darkly"] .cap-filter-btn {
+    border-color: rgba(148, 163, 184, 0.25);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+html[data-theme="darkly"] .cap-filter-btn:hover {
+    background: rgba(59, 130, 246, 0.2);
+}
+
+html[data-theme="darkly"] .cap-filter-btn.active {
+    background: #2563eb;
+    border-color: #3b82f6;
+    color: #fff;
+}
+
+html[data-theme="darkly"] .cap-ship-card label {
+    border-color: rgba(148, 163, 184, 0.22);
+    background: rgba(148, 163, 184, 0.05);
+}
+
+html[data-theme="darkly"] .cap-ship-card label:hover {
+    border-color: rgba(96, 165, 250, 0.5);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+html[data-theme="darkly"] .cap-ship-card input[type="radio"]:checked + label {
+    border-color: #60a5fa;
+    background: rgba(37, 99, 235, 0.25);
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.45);
+}
+
+html[data-theme="darkly"] .cap-reason-card label {
+    border-color: rgba(148, 163, 184, 0.22);
+    background: rgba(148, 163, 184, 0.05);
+}
+
+html[data-theme="darkly"] .cap-reason-card label:hover {
+    border-color: rgba(96, 165, 250, 0.5);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+html[data-theme="darkly"] .cap-reason-card input[type="radio"]:checked + label {
+    border-color: #60a5fa;
+    background: rgba(37, 99, 235, 0.25);
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.45);
+}
+
+html[data-theme="darkly"] .cap-summary-card {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(37, 99, 235, 0.1));
+}
+
+/* Capital Order Settings & Configuration Styles */
+.cap-settings-card {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 14px;
+    background: var(--bs-body-bg);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: all 0.2s ease;
+}
+
+.cap-settings-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.cap-settings-header {
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    padding-bottom: 0.75rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.cap-group-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.5rem 0.9rem;
-    font-size: 0.9rem;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.85rem;
+}
+
+.cap-group-item {
+    border: 1.5px solid rgba(15, 23, 42, 0.1);
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    background: rgba(15, 23, 42, 0.02);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+}
+
+.cap-group-item:hover {
+    background: rgba(13, 110, 253, 0.04);
+    border-color: rgba(13, 110, 253, 0.3);
+}
+
+.cap-group-item.is-disabled {
+    opacity: 0.65;
+    background: rgba(239, 68, 68, 0.03);
+    border-color: rgba(239, 68, 68, 0.25);
+}
+
+.cap-status-pill-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.cap-status-pill-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.85rem;
+    border: 1.5px solid rgba(15, 23, 42, 0.12);
+    border-radius: 20px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: rgba(15, 23, 42, 0.02);
+    user-select: none;
+}
+
+.cap-status-pill-input {
+    display: none;
+}
+
+.cap-status-pill-input:checked + .cap-status-pill-label {
+    background: rgba(13, 110, 253, 0.12);
+    border-color: #0d6efd;
+    color: #0d6efd;
+    box-shadow: 0 2px 6px rgba(13, 110, 253, 0.15);
+}
+
+.cap-ship-render-thumb {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: #0b1118;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 2px;
+    flex-shrink: 0;
+}
+
+.cap-matrix-table th {
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--bs-secondary-color);
+    background: rgba(15, 23, 42, 0.03);
+    padding: 0.75rem 0.6rem;
+}
+
+.cap-matrix-table td {
+    padding: 0.65rem 0.6rem;
+    vertical-align: middle;
+}
+
+.cap-matrix-table tr:hover td {
+    background: rgba(13, 110, 253, 0.03);
+}
+
+.cap-matrix-table tr.is-hull-disabled td {
+    opacity: 0.55;
+    background: rgba(239, 68, 68, 0.02);
+}
+
+.cap-sticky-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 1020;
+    background: var(--bs-body-bg);
+    border-top: 1px solid rgba(15, 23, 42, 0.12);
+    padding: 1rem 1.5rem;
+    margin: 1.5rem -1.5rem -1.5rem -1.5rem;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    border-radius: 0 0 14px 14px;
+}
+
+/* Darkly overrides for settings */
+html[data-theme="darkly"] .cap-settings-card {
+    border-color: rgba(148, 163, 184, 0.18);
+    background: rgba(15, 23, 42, 0.45);
+}
+
+html[data-theme="darkly"] .cap-settings-header {
+    border-color: rgba(148, 163, 184, 0.15);
+}
+
+html[data-theme="darkly"] .cap-group-item {
+    border-color: rgba(148, 163, 184, 0.2);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+html[data-theme="darkly"] .cap-group-item:hover {
+    background: rgba(59, 130, 246, 0.1);
+    border-color: rgba(96, 165, 250, 0.4);
+}
+
+html[data-theme="darkly"] .cap-status-pill-label {
+    border-color: rgba(148, 163, 184, 0.2);
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+html[data-theme="darkly"] .cap-status-pill-input:checked + .cap-status-pill-label {
+    background: rgba(37, 99, 235, 0.25);
+    border-color: #60a5fa;
+    color: #93c5fd;
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.35);
+}
+
+html[data-theme="darkly"] .cap-matrix-table th {
+    background: rgba(0, 0, 0, 0.25);
+    border-color: rgba(148, 163, 184, 0.15);
+}
+
+html[data-theme="darkly"] .cap-matrix-table td {
+    border-color: rgba(148, 163, 184, 0.1);
+}
+
+html[data-theme="darkly"] .cap-sticky-footer {
+    background: #0f172a;
+    border-color: rgba(148, 163, 184, 0.2);
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
 }
 
 @media (max-width: 992px) {
+    .cap-ship-grid {
+        grid-template-columns: 1fr;
+        max-height: 400px;
+    }
+
     .cap-submit-wrap {
         justify-content: stretch;
     }
@@ -141,33 +577,4 @@
     .cap-submit-wrap .btn {
         width: 100%;
     }
-
-    .cap-update-summary {
-        grid-template-columns: 1fr;
-    }
-}
-
-html[data-theme="darkly"] .cap-note-card {
-    border-color: rgba(148, 163, 184, 0.3);
-    background: linear-gradient(140deg, rgba(245, 158, 11, 0.2), rgba(37, 99, 235, 0.16));
-}
-
-html[data-theme="darkly"] .cap-form-card {
-    border-color: rgba(148, 163, 184, 0.26);
-    background: rgba(15, 23, 42, 0.42);
-}
-
-html[data-theme="darkly"] .cap-radio-card label {
-    border-color: rgba(148, 163, 184, 0.28);
-    background: rgba(148, 163, 184, 0.08);
-}
-
-html[data-theme="darkly"] .cap-radio-card label::before {
-    border-color: rgba(147, 197, 253, 0.68);
-}
-
-html[data-theme="darkly"] .cap-radio-card input[type="radio"]:checked + label {
-    border-color: rgba(96, 165, 250, 0.75);
-    background: rgba(37, 99, 235, 0.3);
-    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.45);
 }

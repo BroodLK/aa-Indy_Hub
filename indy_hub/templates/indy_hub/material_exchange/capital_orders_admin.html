@@ -51,10 +51,31 @@
             <i class="fas fa-user-shield header-bg"></i>
         </div>
 
-        <div class="card">
+        <div class="card mb-4">
             <div class="card-header cap-admin-rule">
-                <strong>{% trans "Contract Rule:" %}</strong>
-                {% trans "Use the order code in the title (INDY-CAP-###), assign to the listed user's main character, and include the exact selected hull." %}
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <div>
+                        <strong>{% trans "Contract Rule:" %}</strong>
+                        {% trans "Use the order code in the title (INDY-CAP-###), assign to the listed user's main character, and include the exact selected hull." %}
+                    </div>
+                </div>
+            </div>
+            <div class="card-body border-bottom p-3">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                    <div class="cap-filter-bar mb-0" id="admin-queue-filters">
+                        <button type="button" class="cap-filter-btn active" data-queue-filter="all">{% trans "All in View" %}</button>
+                        <button type="button" class="cap-filter-btn" data-queue-filter="needs_action">{% trans "Needs Offer / Claim" %}</button>
+                        <button type="button" class="cap-filter-btn" data-queue-filter="awaiting_user">{% trans "Awaiting User" %}</button>
+                        <button type="button" class="cap-filter-btn" data-queue-filter="in_progress">{% trans "Building / Gathering" %}</button>
+                        <button type="button" class="cap-filter-btn" data-queue-filter="contract_created">{% trans "Contract Ready" %}</button>
+                    </div>
+                    <input type="text"
+                           id="admin-queue-search"
+                           class="form-control form-control-sm cap-search-input"
+                           placeholder="{% trans 'Filter by reference, user, hull...' %}"
+                           style="max-width: 260px;"
+                           autocomplete="off">
+                </div>
             </div>
             <div class="card-body p-0">
                 {% if orders %}
@@ -78,7 +99,9 @@
                             </thead>
                             <tbody>
                                 {% for order in orders %}
-                                    <tr>
+                                    <tr class="cap-queue-row"
+                                        data-queue-status="{% if order.status == 'waiting' %}{% if order.revision_required or not order.offer_price_isk %}needs_action{% else %}awaiting_user{% endif %}{% elif order.status == 'gathering_materials' or order.status == 'in_production' %}in_progress{% elif order.status == 'contract_created' %}contract_created{% else %}closed{% endif %}"
+                                        data-search-text="{{ order.order_reference|lower }} {{ order.requester.username|lower }} {{ order.requester_main_character|default:''|lower }} {{ order.ship_type_name|lower }} {{ order.claimed_by_name|default:''|lower }}">
                                         <td>
                                             <div class="d-inline-flex align-items-center gap-1">
                                                 <span class="cap-ref">{{ order.order_reference }}</span>
@@ -104,7 +127,16 @@
                                             </div>
                                         </td>
                                         <td>
-                                            {{ order.ship_type_name }} <small class="text-muted">({{ order.get_ship_class_display }})</small>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <img src="https://images.evetech.net/types/{{ order.ship_type_id }}/render?size=32"
+                                                     alt="{{ order.ship_type_name }}"
+                                                     style="width: 28px; height: 28px; object-fit: contain;"
+                                                     class="rounded bg-dark p-0.5">
+                                                <div>
+                                                    <div class="fw-semibold">{{ order.ship_type_name }}</div>
+                                                    <span class="badge bg-secondary-subtle text-secondary py-0 px-1 small">{{ order.get_ship_class_display }}</span>
+                                                </div>
+                                            </div>
                                         </td>
                                         <td>{{ order.get_reason_display }}</td>
                                         <td class="cap-status-cell">
@@ -231,6 +263,9 @@
                                                         data-offer-eta-min="{{ order.offer_eta_min_days|default_if_none:'' }}"
                                                         data-offer-eta-max="{{ order.offer_eta_max_days|default_if_none:'' }}"
                                                         data-lead-time="{{ order.lead_time_days|default_if_none:'0' }}"
+                                                        data-guideline-price="{{ order.guideline_price_isk|default_if_none:'' }}"
+                                                        data-guideline-eta-min="{{ order.guideline_eta_min_days|default_if_none:'' }}"
+                                                        data-guideline-eta-max="{{ order.guideline_eta_max_days|default_if_none:'' }}"
                                                         data-definitive-eta-min="{{ order.definitive_eta_min_days|default_if_none:'' }}"
                                                         data-definitive-eta-max="{{ order.definitive_eta_max_days|default_if_none:'' }}"
                                                         data-last-declined-details="{% if order.revision_required %}{{ order.last_declined_offer_details|default_if_none:''|escapejs }}{% endif %}"
@@ -388,7 +423,12 @@
                         <div class="col-12" data-cap-offer-section>
                             <div class="card">
                                 <div class="card-body p-3">
-                                    <h6 class="fw-semibold mb-2">{% trans "Offer" %}</h6>
+                                    <div class="d-flex align-items-center justify-content-between mb-2">
+                                        <h6 class="fw-semibold mb-0">{% trans "Offer Proposal" %}</h6>
+                                        <button type="button" class="btn btn-sm btn-outline-info" id="btn-fill-guideline" style="display:none;">
+                                            <i class="fas fa-wand-magic-sparkles me-1"></i>{% trans "Auto-fill Guideline" %}
+                                        </button>
+                                    </div>
                                     <form method="post" data-cap-action-form="offer" class="row g-2 align-items-end">
                                         {% csrf_token %}
                                         <div class="col-md-3">
@@ -688,14 +728,31 @@
                     }
                     setVisible(declinedNotesRow, Boolean(declinedDetailsText && declinedNotesText));
 
+                    const btnFillGuideline = document.getElementById('btn-fill-guideline');
+                    if (btnFillGuideline) {
+                        const gPrice = triggerEl.dataset.guidelinePrice || '';
+                        const gEtaMin = triggerEl.dataset.guidelineEtaMin || '';
+                        const gEtaMax = triggerEl.dataset.guidelineEtaMax || '';
+                        if (gPrice) {
+                            btnFillGuideline.style.display = 'inline-block';
+                            btnFillGuideline.onclick = function() {
+                                if (offerPriceInput) offerPriceInput.value = formatIskInputValue(gPrice);
+                                if (offerEtaMinInput && gEtaMin) offerEtaMinInput.value = gEtaMin;
+                                if (offerEtaMaxInput && gEtaMax) offerEtaMaxInput.value = gEtaMax;
+                            };
+                        } else {
+                            btnFillGuideline.style.display = 'none';
+                        }
+                    }
+
                     if (offerPriceInput) {
-                        offerPriceInput.value = formatIskInputValue(triggerEl.dataset.offerPrice || '');
+                        offerPriceInput.value = formatIskInputValue(triggerEl.dataset.offerPrice || triggerEl.dataset.guidelinePrice || '');
                     }
                     if (offerEtaMinInput) {
-                        offerEtaMinInput.value = triggerEl.dataset.offerEtaMin || '';
+                        offerEtaMinInput.value = triggerEl.dataset.offerEtaMin || triggerEl.dataset.guidelineEtaMin || '';
                     }
                     if (offerEtaMaxInput) {
-                        offerEtaMaxInput.value = triggerEl.dataset.offerEtaMax || '';
+                        offerEtaMaxInput.value = triggerEl.dataset.offerEtaMax || triggerEl.dataset.guidelineEtaMax || '';
                     }
                     if (offerLeadInput) {
                         offerLeadInput.value = triggerEl.dataset.leadTime || '0';
@@ -804,6 +861,42 @@
             }
 
             document.querySelectorAll('.cap-update-order-trigger').forEach(bindTrigger);
+
+            // Queue Filtering & Live Search
+            const filterBtns = document.querySelectorAll('#admin-queue-filters .cap-filter-btn');
+            const queueRows = document.querySelectorAll('.cap-queue-row');
+            const searchInput = document.getElementById('admin-queue-search');
+            let currentFilter = 'all';
+
+            function applyQueueFilters() {
+                const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
+                queueRows.forEach(row => {
+                    const status = row.getAttribute('data-queue-status') || '';
+                    const searchText = row.getAttribute('data-search-text') || '';
+                    const filterMatch = currentFilter === 'all' || status === currentFilter;
+                    const searchMatch = !query || searchText.includes(query);
+
+                    if (filterMatch && searchMatch) {
+                        row.classList.remove('d-none');
+                    } else {
+                        row.classList.add('d-none');
+                    }
+                });
+            }
+
+            filterBtns.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    filterBtns.forEach(b => b.classList.remove('active'));
+                    this.classList.add('active');
+                    currentFilter = this.getAttribute('data-queue-filter') || 'all';
+                    applyQueueFilters();
+                });
+            });
+
+            if (searchInput) {
+                searchInput.addEventListener('input', applyQueueFilters);
+            }
         })();
 
         window.indyChatDefaults = Object.assign({}, window.indyChatDefaults || {}, {

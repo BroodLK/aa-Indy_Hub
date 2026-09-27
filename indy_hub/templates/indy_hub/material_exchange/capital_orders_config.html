@@ -15,70 +15,108 @@
 
 {% block content %}
     <div class="container-fluid py-4">
+        <!-- Page Header -->
         <div class="page-header mb-4">
             <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
                 <div>
                     <h2 class="h3 mb-1">
-                        <i class="fas fa-sliders-h me-2"></i>
+                        <i class="fas fa-sliders-h me-2 text-primary"></i>
                         {% trans "Capital Order Settings" %}
                     </h2>
                     <p class="description mb-0">
-                        {% trans "Configure ship visibility, per-hull estimate overrides, and auto-cancel behavior." %}
+                        {% trans "Configure lead times, state-based auto-cancel policies, ship group availability, and per-hull guideline pricing." %}
                     </p>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex flex-wrap gap-2">
                     <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-outline-light">
-                        <i class="fas fa-arrow-left me-1"></i>{% trans "Back to Capital Queue" %}
+                        <i class="fas fa-list-check me-1"></i>{% trans "Capital Queue" %}
+                    </a>
+                    <a href="{% url 'indy_hub:capital_ship_orders' %}" class="btn btn-outline-info">
+                        <i class="fas fa-ship me-1"></i>{% trans "Order Form" %}
                     </a>
                     <a href="{% url 'indy_hub:material_exchange_index' %}" class="btn btn-outline-secondary">
-                        <i class="fas fa-home me-1"></i>{% trans "Buyback" %}
+                        <i class="fas fa-home me-1"></i>{% trans "Buyback Hub" %}
                     </a>
                 </div>
             </div>
             <i class="fas fa-sliders-h header-bg"></i>
         </div>
 
-        <form method="post">
+        <form method="post" id="capitalSettingsForm">
             {% csrf_token %}
-            <div class="row g-3">
+            <div class="row g-4">
+                
+                <!-- 1. General & Production Timing Settings -->
                 <div class="col-12">
-                    <div class="card">
-                        <div class="card-body">
-                            <h5 class="mb-3">{% trans "Estimate Timing" %}</h5>
-                            <div class="row g-3">
-                                <div class="col-lg-3">
-                                    <label class="form-label fw-semibold">{% trans "Default Lead Time (Days)" %}</label>
-                                    <input type="number"
-                                           min="0"
-                                           name="capital_default_lead_time_days"
-                                           class="form-control"
-                                           value="{{ capital_default_lead_time_days }}">
+                    <div class="card cap-settings-card">
+                        <div class="card-body p-4">
+                            <div class="cap-settings-header">
+                                <h5 class="mb-0 text-light">
+                                    <i class="fas fa-clock text-info me-2"></i>{% trans "Production & Timing Defaults" %}
+                                </h5>
+                                <span class="badge bg-info-subtle text-info border border-info-subtle">
+                                    <i class="fas fa-info-circle me-1"></i>{% trans "Order Guideline Baseline" %}
+                                </span>
+                            </div>
+                            <div class="row g-3 align-items-center">
+                                <div class="col-lg-4 col-md-6">
+                                    <label class="form-label fw-semibold" for="id_capital_default_lead_time_days">
+                                        {% trans "Default Lead Time" %}
+                                    </label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="fas fa-calendar-alt"></i></span>
+                                        <input type="number"
+                                               min="0"
+                                               id="id_capital_default_lead_time_days"
+                                               name="capital_default_lead_time_days"
+                                               class="form-control"
+                                               placeholder="e.g. 5"
+                                               value="{{ capital_default_lead_time_days }}">
+                                        <span class="input-group-text">{% trans "Days" %}</span>
+                                    </div>
+                                    <div class="form-text">
+                                        {% trans "Default estimated turnaround days shown to pilots when no custom builder proposal has been submitted." %}
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
+                <!-- 2. Auto-Cancel & State Guardrails Policy -->
                 <div class="col-12">
-                    <div class="card">
-                        <div class="card-body">
-                            <h5 class="mb-3">{% trans "Auto-Cancel Policy" %}</h5>
-                            <div class="form-check form-switch mb-3">
-                                <input type="checkbox"
-                                       class="form-check-input"
-                                       id="capitalAutoCancelToggle"
-                                       name="capital_auto_cancel_on_state_change"
-                                       {% if capital_auto_cancel_on_state_change %}checked{% endif %}>
-                                <label class="form-check-label fw-semibold" for="capitalAutoCancelToggle">
-                                    {% trans "Enable automatic cancel when requester leaves preapproved state" %}
-                                </label>
+                    <div class="card cap-settings-card">
+                        <div class="card-body p-4">
+                            <div class="cap-settings-header">
+                                <div>
+                                    <h5 class="mb-0 text-light">
+                                        <i class="fas fa-shield-alt text-warning me-2"></i>{% trans "State Guardrails & Auto-Cancel Policy" %}
+                                    </h5>
+                                    <p class="text-muted small mb-0 mt-1">
+                                        {% trans "Automatically cancel pending or in-progress capital orders if the requester leaves approved AllianceAuth states." %}
+                                    </p>
+                                </div>
+                                <div class="form-check form-switch fs-5 mb-0">
+                                    <input type="checkbox"
+                                           class="form-check-input"
+                                           id="capitalAutoCancelToggle"
+                                           name="capital_auto_cancel_on_state_change"
+                                           {% if capital_auto_cancel_on_state_change %}checked{% endif %}>
+                                    <label class="form-check-label fs-6 fw-semibold text-light" for="capitalAutoCancelToggle">
+                                        {% trans "Enable Policy" %}
+                                    </label>
+                                </div>
                             </div>
-                            <div class="row g-3">
-                                <div class="col-lg-5">
-                                    <label class="form-label fw-semibold">{% trans "Preapproved State Names" %}</label>
+
+                            <div class="row g-4 mt-1">
+                                <!-- Preapproved States Picker -->
+                                <div class="col-lg-6 col-12">
+                                    <label class="form-label fw-semibold" for="capitalAutoCancelPreapprovedStates">
+                                        <i class="fas fa-users-cog me-1 text-primary"></i>{% trans "Preapproved AllianceAuth States" %}
+                                    </label>
                                     <select name="capital_auto_cancel_preapproved_state_names"
                                             id="capitalAutoCancelPreapprovedStates"
-                                            class="form-select"
+                                            class="form-select bg-dark text-light border-secondary"
                                             multiple
                                             size="6">
                                         {% for state_name in capital_auto_cancel_state_name_choices %}
@@ -87,73 +125,163 @@
                                             </option>
                                         {% endfor %}
                                     </select>
-                                    <div class="mt-2 small">
-                                        <span class="text-muted fw-semibold">{% trans "Saved selections:" %}</span>
+                                    <div class="mt-2 d-flex flex-wrap gap-1 align-items-center">
+                                        <span class="text-muted small fw-semibold me-1">{% trans "Active States:" %}</span>
                                         {% if capital_auto_cancel_preapproved_state_names %}
                                             {% for state_name in capital_auto_cancel_preapproved_state_names %}
-                                                <span class="badge text-bg-secondary me-1 mb-1">{{ state_name }}</span>
+                                                <span class="badge bg-secondary-subtle text-light border border-secondary">{{ state_name }}</span>
                                             {% endfor %}
                                         {% else %}
-                                            <span class="text-muted">{% trans "None" %}</span>
+                                            <span class="text-muted small italic">{% trans "No states selected (Auto-cancel inactive)" %}</span>
                                         {% endif %}
                                     </div>
-                                    <div class="form-text">{% trans "Select one or more AllianceAuth states that are treated as preapproved." %}</div>
+                                    <div class="form-text">{% trans "Hold Ctrl (Windows) / Cmd (Mac) to select or deselect multiple states." %}</div>
                                 </div>
-                                <div class="col-lg-4">
-                                    <label class="form-label fw-semibold">{% trans "Delay Before Cancel" %}</label>
-                                    <div class="input-group">
-                                        <input type="number"
-                                               min="0"
-                                               name="capital_auto_cancel_delay_value"
-                                               class="form-control"
-                                               value="{{ capital_auto_cancel_delay_value }}">
-                                        <select name="capital_auto_cancel_delay_unit" class="form-select">
-                                            {% for value, label in capital_auto_cancel_delay_unit_choices %}
-                                                <option value="{{ value }}" {% if capital_auto_cancel_delay_unit == value %}selected{% endif %}>{{ label }}</option>
-                                            {% endfor %}
-                                        </select>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="mt-3">
-                                <label class="form-label fw-semibold">{% trans "Eligible Order Statuses" %}</label>
-                                <div class="row g-2">
-                                    {% for status_value, status_label in capital_auto_cancel_status_choices %}
-                                        <div class="col-md-3 col-sm-6">
-                                            <div class="form-check">
-                                                <input class="form-check-input"
-                                                       type="checkbox"
-                                                       name="capital_auto_cancel_eligible_statuses"
-                                                       id="autoCancelStatus{{ forloop.counter }}"
-                                                       value="{{ status_value }}"
-                                                       {% if status_value in capital_auto_cancel_eligible_statuses %}checked{% endif %}>
-                                                <label class="form-check-label" for="autoCancelStatus{{ forloop.counter }}">{{ status_label }}</label>
-                                            </div>
+
+                                <!-- Delay & Eligible Statuses -->
+                                <div class="col-lg-6 col-12">
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold">
+                                            <i class="fas fa-hourglass-half me-1 text-warning"></i>{% trans "Grace Delay Before Cancellation" %}
+                                        </label>
+                                        <div class="input-group">
+                                            <input type="number"
+                                                   min="0"
+                                                   name="capital_auto_cancel_delay_value"
+                                                   class="form-control"
+                                                   value="{{ capital_auto_cancel_delay_value }}">
+                                            <select name="capital_auto_cancel_delay_unit" class="form-select" style="max-width: 140px;">
+                                                {% for value, label in capital_auto_cancel_delay_unit_choices %}
+                                                    <option value="{{ value }}" {% if capital_auto_cancel_delay_unit == value %}selected{% endif %}>{{ label }}</option>
+                                                {% endfor %}
+                                            </select>
                                         </div>
-                                    {% endfor %}
+                                        <div class="form-text">{% trans "Grace period allowed after a pilot leaves state before the cancellation task triggers." %}</div>
+                                    </div>
+
+                                    <div>
+                                        <label class="form-label fw-semibold mb-2">
+                                            <i class="fas fa-tasks me-1 text-info"></i>{% trans "Eligible Order Statuses for Auto-Cancel" %}
+                                        </label>
+                                        <div class="cap-status-pill-grid">
+                                            {% for status_value, status_label in capital_auto_cancel_status_choices %}
+                                                <div>
+                                                    <input class="cap-status-pill-input"
+                                                           type="checkbox"
+                                                           name="capital_auto_cancel_eligible_statuses"
+                                                           id="autoCancelStatus{{ forloop.counter }}"
+                                                           value="{{ status_value }}"
+                                                           {% if status_value in capital_auto_cancel_eligible_statuses %}checked{% endif %}>
+                                                    <label class="cap-status-pill-label" for="autoCancelStatus{{ forloop.counter }}">
+                                                        <i class="fas fa-check-circle"></i> {{ status_label }}
+                                                    </label>
+                                                </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
 
+                <!-- 3. Upfront Payment & Refund Policy -->
                 <div class="col-12">
-                    <div class="card">
-                        <div class="card-body">
-                            <h5 class="mb-3">{% trans "Ship Groups" %}</h5>
-                            <p class="text-muted small mb-2">{% trans "Disable a ship group to hide all ships in that category." %}</p>
-                            <div class="row g-2">
+                    <div class="card cap-settings-card">
+                        <div class="card-body p-4">
+                            <div class="cap-settings-header">
+                                <div>
+                                    <h5 class="mb-0 text-light">
+                                        <i class="fas fa-hand-holding-usd text-warning me-2"></i>{% trans "Upfront Payment & Refund Policy" %}
+                                    </h5>
+                                    <p class="text-muted small mb-0 mt-1">
+                                        {% trans "Require upfront payment before hull production begins and configure structure destruction refund terms." %}
+                                    </p>
+                                </div>
+                                <div class="form-check form-switch fs-5 mb-0">
+                                    <input type="checkbox"
+                                           class="form-check-input"
+                                           id="capitalUpfrontPaymentToggle"
+                                           name="capital_upfront_payment_required"
+                                           {% if capital_upfront_payment_required %}checked{% endif %}>
+                                    <label class="form-check-label fs-6 fw-semibold text-light" for="capitalUpfrontPaymentToggle">
+                                        {% trans "Require Upfront Payment" %}
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div id="upfrontPaymentSubOptions" class="mt-3 {% if not capital_upfront_payment_required %}d-none{% endif %}">
+                                <div class="row g-3">
+                                    <div class="col-12">
+                                        <label class="form-label fw-semibold" for="capitalUpfrontPaymentReason">
+                                            <i class="fas fa-comment-alt me-1 text-primary"></i>{% trans "Custom Reason / Policy Explanation" %}
+                                        </label>
+                                        <textarea name="capital_upfront_payment_reason"
+                                                  id="capitalUpfrontPaymentReason"
+                                                  class="form-control"
+                                                  rows="3"
+                                                  placeholder="{% trans 'e.g. Due to market volatility and capital component investments, payment is received before the build starts...' %}">{{ capital_upfront_payment_reason }}</textarea>
+                                        <div class="form-text">
+                                            {% trans "This message is displayed prominently in the order page alert and the required agreement pop-up modal." %}
+                                        </div>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <div class="form-check p-3 rounded border border-secondary bg-body-tertiary">
+                                            <input class="form-check-input ms-0 me-2"
+                                                   type="checkbox"
+                                                   name="capital_upfront_payment_refunds_allowed"
+                                                   id="capitalRefundsAllowedToggle"
+                                                   {% if capital_upfront_payment_refunds_allowed %}checked{% endif %}>
+                                            <label class="form-check-label fw-semibold text-light" for="capitalRefundsAllowedToggle">
+                                                <i class="fas fa-undo-alt me-1 text-info"></i>{% trans "Allow refunds in the case of structure destruction during build" %}
+                                            </label>
+                                            <div class="text-muted small ms-4 mt-1">
+                                                {% trans "When checked, pilots are informed that refunds are allowed if the manufacturing structure is lost during build. If unchecked, pilots are warned that no refunds are issued." %}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Ship Group Master Visibility -->
+                <div class="col-12">
+                    <div class="card cap-settings-card">
+                        <div class="card-body p-4">
+                            <div class="cap-settings-header">
+                                <div>
+                                    <h5 class="mb-0 text-light">
+                                        <i class="fas fa-layer-group text-primary me-2"></i>{% trans "Ship Class Master Visibility" %}
+                                    </h5>
+                                    <p class="text-muted small mb-0 mt-1">
+                                        {% trans "Toggle entire capital categories on or off from the pilot order submission form." %}
+                                    </p>
+                                </div>
+                                <span class="badge bg-secondary-subtle text-light border border-secondary">
+                                    {{ group_choices|length }} {% trans "Ship Classes" %}
+                                </span>
+                            </div>
+
+                            <div class="cap-group-grid mt-3">
                                 {% for group in group_choices %}
-                                    <div class="col-md-3 col-sm-6">
-                                        <div class="form-check">
-                                            <input class="form-check-input"
+                                    <div class="cap-group-item {% if group.key in disabled_group_keys %}is-disabled{% endif %}" id="groupItem_{{ group.key }}">
+                                        <div>
+                                            <div class="fw-bold text-light">{{ group.label }}</div>
+                                            <div class="text-muted small"><code>{{ group.key }}</code></div>
+                                        </div>
+                                        <div class="form-check form-switch mb-0">
+                                            <input class="form-check-input js-group-toggle"
                                                    type="checkbox"
                                                    name="capital_disabled_ship_groups"
                                                    id="disabledGroup{{ forloop.counter }}"
                                                    value="{{ group.key }}"
+                                                   data-group-key="{{ group.key }}"
                                                    {% if group.key in disabled_group_keys %}checked{% endif %}>
-                                            <label class="form-check-label" for="disabledGroup{{ forloop.counter }}">
-                                                {% trans "Hide" %} {{ group.label }} ({{ group.key }})
+                                            <label class="form-check-label small {% if group.key in disabled_group_keys %}text-danger fw-semibold{% else %}text-muted{% endif %}" for="disabledGroup{{ forloop.counter }}">
+                                                {% if group.key in disabled_group_keys %}{% trans "Hidden" %}{% else %}{% trans "Visible" %}{% endif %}
                                             </label>
                                         </div>
                                     </div>
@@ -163,68 +291,214 @@
                     </div>
                 </div>
 
+                <!-- 4. Per-Hull Pricing & Availability Matrix -->
                 <div class="col-12">
-                    <div class="card">
-                        <div class="card-body">
-                            <h5 class="mb-3">{% trans "Ships and Estimated Price Prefills" %}</h5>
-                            <p class="text-muted small mb-2">
-                                {% trans "Set per-ship manual overrides and disable individual hulls from the order form. Leave Manual Override blank to use the automated Forge contract estimate when available." %}
-                            </p>
-                            <div class="table-responsive">
-                                <table class="table table-sm align-middle">
+                    <div class="card cap-settings-card">
+                        <div class="card-body p-4">
+                            <div class="cap-settings-header">
+                                <div>
+                                    <h5 class="mb-0 text-light">
+                                        <i class="fas fa-coins text-warning me-2"></i>{% trans "Capital Hull Pricing & Visibility Matrix" %}
+                                    </h5>
+                                    <p class="text-muted small mb-0 mt-1">
+                                        {% trans "Set per-hull manual price overrides (in ISK) or leave blank to automatically utilize live Forge contract market estimates." %}
+                                    </p>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="badge bg-primary text-light" id="visibleHullsCountBadge">{{ ship_rows|length }} {% trans "Hulls" %}</span>
+                                </div>
+                            </div>
+
+                            <!-- Toolbar: Search, Filters, and Bulk Actions -->
+                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3 p-3 rounded bg-dark border border-secondary-subtle">
+                                <!-- Filter Pills -->
+                                <div class="d-flex flex-wrap gap-1 align-items-center" id="hullGroupFilters">
+                                    <button type="button" class="btn btn-sm btn-primary cap-filter-btn active" data-filter-group="all">
+                                        {% trans "All Classes" %}
+                                    </button>
+                                    {% for group in group_choices %}
+                                        <button type="button" class="btn btn-sm btn-outline-secondary cap-filter-btn" data-filter-group="{{ group.key }}">
+                                            {{ group.label }}
+                                        </button>
+                                    {% endfor %}
+                                </div>
+
+                                <!-- Search & Quick Actions -->
+                                <div class="d-flex flex-wrap align-items-center gap-2 ms-auto">
+                                    <div class="input-group input-group-sm" style="min-width: 240px;">
+                                        <span class="input-group-text"><i class="fas fa-search"></i></span>
+                                        <input type="text"
+                                               id="hullSearchInput"
+                                               class="form-control"
+                                               placeholder="{% trans "Filter hull name or ID..." %}">
+                                        <button class="btn btn-outline-secondary" type="button" id="clearHullSearchBtn" title="Clear Search">
+                                            <i class="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                            <i class="fas fa-magic me-1"></i>{% trans "Bulk Actions" %}
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end shadow">
+                                            <li>
+                                                <button class="dropdown-item" type="button" id="btnFillAutoOverrides">
+                                                    <i class="fas fa-copy me-2 text-info"></i>{% trans "Copy Auto Estimates to Blank Overrides" %}
+                                                </button>
+                                            </li>
+                                            <li>
+                                                <button class="dropdown-item" type="button" id="btnClearAllOverrides">
+                                                    <i class="fas fa-eraser me-2 text-warning"></i>{% trans "Clear All Manual Overrides" %}
+                                                </button>
+                                            </li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li>
+                                                <button class="dropdown-item text-danger" type="button" id="btnDisableAllFiltered">
+                                                    <i class="fas fa-eye-slash me-2"></i>{% trans "Disable All Visible Hulls" %}
+                                                </button>
+                                            </li>
+                                            <li>
+                                                <button class="dropdown-item text-success" type="button" id="btnEnableAllFiltered">
+                                                    <i class="fas fa-eye me-2"></i>{% trans "Enable All Visible Hulls" %}
+                                                </button>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Ship Matrix Table -->
+                            <div class="table-responsive rounded border border-secondary-subtle">
+                                <table class="table table-hover table-sm cap-matrix-table align-middle mb-0" id="capitalMatrixTable">
                                     <thead>
                                         <tr>
-                                            <th>{% trans "Disable" %}</th>
-                                            <th>{% trans "Ship" %}</th>
-                                            <th>{% trans "Group" %}</th>
-                                            <th>{% trans "Auto Estimate (ISK)" %}</th>
-                                            <th>{% trans "Manual Override (ISK)" %}</th>
-                                            <th>{% trans "Notes" %}</th>
+                                            <th style="width: 50px;" class="text-center" title="{% trans "Hide this individual hull from the order form" %}">
+                                                {% trans "Hide" %}
+                                            </th>
+                                            <th style="min-width: 220px;">{% trans "Capital Hull" %}</th>
+                                            <th style="min-width: 140px;">{% trans "Class" %}</th>
+                                            <th style="min-width: 200px;">
+                                                <i class="fas fa-robot text-info me-1"></i>{% trans "Auto Estimate (ISK)" %}
+                                            </th>
+                                            <th style="min-width: 260px;">
+                                                <i class="fas fa-edit text-warning me-1"></i>{% trans "Manual Price Override (ISK)" %}
+                                            </th>
+                                            <th style="min-width: 160px;">{% trans "Status / Source" %}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {% for row in ship_rows %}
-                                            <tr>
-                                                <td>
+                                            <tr class="js-hull-row {% if row.is_disabled_type %}is-hull-disabled{% endif %}"
+                                                data-hull-name="{{ row.type_name|lower }}"
+                                                data-type-id="{{ row.type_id }}"
+                                                data-group-key="{{ row.ship_class }}"
+                                                data-auto-price="{{ row.auto_estimated_price|default:'' }}">
+                                                <!-- Disable Checkbox -->
+                                                <td class="text-center">
                                                     <input type="checkbox"
-                                                           class="form-check-input"
+                                                           class="form-check-input js-hull-disable-toggle"
                                                            name="capital_disabled_ship_type_ids"
                                                            value="{{ row.type_id }}"
+                                                           id="disableHull_{{ row.type_id }}"
+                                                           title="{% trans "Check to hide hull from order form" %}"
                                                            {% if row.is_disabled_type %}checked{% endif %}>
                                                 </td>
+
+                                                <!-- Hull Render & Info -->
                                                 <td>
-                                                    {{ row.type_name }} <span class="text-muted">({{ row.type_id }})</span>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <img src="https://images.evetech.net/types/{{ row.type_id }}/render?size=64"
+                                                             alt="{{ row.type_name }}"
+                                                             class="cap-ship-render-thumb"
+                                                             loading="lazy"
+                                                             onerror="this.src='https://images.evetech.net/types/{{ row.type_id }}/icon?size=64'">
+                                                        <div>
+                                                            <div class="fw-bold text-light">{{ row.type_name }}</div>
+                                                            <div class="text-muted small">
+                                                                <code>ID: {{ row.type_id }}</code>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 </td>
+
+                                                <!-- Group / Class Badge -->
                                                 <td>
-                                                    {{ row.ship_class_label }} <span class="text-muted">({{ row.ship_class }})</span>
+                                                    <span class="badge bg-secondary-subtle text-light border border-secondary">
+                                                        {{ row.ship_class_label }}
+                                                    </span>
                                                 </td>
+
+                                                <!-- Auto Estimate Column -->
                                                 <td>
                                                     {% if row.auto_estimated_price %}
-                                                        <div>{{ row.auto_estimated_price|floatformat:2|intcomma }}</div>
+                                                        <div class="fw-semibold text-info">
+                                                            {{ row.auto_estimated_price|floatformat:2|intcomma }} <span class="small text-muted">ISK</span>
+                                                        </div>
                                                         {% if row.auto_estimated_contract_count %}
                                                             <div class="small text-muted">
-                                                                {% blocktranslate count count=row.auto_estimated_contract_count %}{{ count }} matching contract{% plural %}{{ count }} matching contracts{% endblocktranslate %}
+                                                                <i class="fas fa-file-contract me-1"></i>
+                                                                {% blocktranslate count count=row.auto_estimated_contract_count %}
+                                                                    {{ count }} contract sample
+                                                                {% plural %}
+                                                                    {{ count }} contract samples
+                                                                {% endblocktranslate %}
                                                             </div>
                                                         {% endif %}
                                                     {% else %}
-                                                        <span class="text-muted">-</span>
+                                                        <span class="badge bg-dark text-muted border border-secondary-subtle">
+                                                            <i class="fas fa-minus me-1"></i>{% trans "No live data" %}
+                                                        </span>
                                                     {% endif %}
                                                 </td>
+
+                                                <!-- Manual Override Input Column -->
                                                 <td>
-                                                    <input type="text"
-                                                           inputmode="decimal"
-                                                           class="form-control form-control-sm js-isk-format"
-                                                           name="estimated_price_{{ row.type_id }}"
-                                                           value="{{ row.manual_estimated_price_display }}">
+                                                    <div class="input-group input-group-sm">
+                                                        <input type="text"
+                                                               inputmode="decimal"
+                                                               class="form-control js-isk-format js-override-input"
+                                                               name="estimated_price_{{ row.type_id }}"
+                                                               id="overrideInput_{{ row.type_id }}"
+                                                               placeholder="{% if row.auto_estimated_price %}Auto ({{ row.auto_estimated_price|floatformat:0|intcomma }}){% else %}No estimate{% endif %}"
+                                                               value="{{ row.manual_estimated_price_display }}"
+                                                               data-auto-value="{{ row.auto_estimated_price|default:'' }}">
+                                                        {% if row.auto_estimated_price %}
+                                                            <button class="btn btn-outline-info js-btn-use-auto"
+                                                                    type="button"
+                                                                    title="{% trans "Copy auto estimate to manual override" %}"
+                                                                    data-type-id="{{ row.type_id }}"
+                                                                    data-auto-price="{{ row.auto_estimated_price }}">
+                                                                <i class="fas fa-magic"></i>
+                                                            </button>
+                                                        {% endif %}
+                                                        <button class="btn btn-outline-secondary js-btn-clear-override"
+                                                                type="button"
+                                                                title="{% trans "Clear override (use auto estimate)" %}"
+                                                                data-type-id="{{ row.type_id }}">
+                                                            <i class="fas fa-times"></i>
+                                                        </button>
+                                                    </div>
                                                 </td>
-                                                <td class="small text-muted">
-                                                    {% if row.auto_estimated_price %}
-                                                        {% trans "Blank manual override uses the automated estimate." %}
+
+                                                <!-- Status & Diagnosis Notes -->
+                                                <td class="small">
+                                                    {% if row.manual_estimated_price_display %}
+                                                        <span class="badge bg-warning-subtle text-warning border border-warning-subtle mb-1 d-inline-block">
+                                                            <i class="fas fa-edit me-1"></i>{% trans "Manual Override" %}
+                                                        </span>
+                                                    {% elif row.auto_estimated_price %}
+                                                        <span class="badge bg-success-subtle text-success border border-success-subtle mb-1 d-inline-block">
+                                                            <i class="fas fa-check-circle me-1"></i>{% trans "Auto Active" %}
+                                                        </span>
                                                     {% else %}
-                                                        {% trans "Blank manual override leaves the estimate empty until live data exists." %}
+                                                        <span class="badge bg-secondary-subtle text-muted border border-secondary-subtle mb-1 d-inline-block">
+                                                            <i class="fas fa-question-circle me-1"></i>{% trans "No Price" %}
+                                                        </span>
                                                     {% endif %}
+
                                                     {% if row.is_disabled_group %}
-                                                        {% trans "Group currently hidden" %}.
+                                                        <div class="text-danger small">
+                                                            <i class="fas fa-eye-slash me-1"></i>{% trans "Class is hidden" %}
+                                                        </div>
                                                     {% endif %}
                                                 </td>
                                             </tr>
@@ -236,12 +510,24 @@
                     </div>
                 </div>
 
-                <div class="col-12 d-flex justify-content-end gap-2">
-                    <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-outline-secondary">{% trans "Cancel" %}</a>
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-save me-1"></i>{% trans "Save Capital Settings" %}
-                    </button>
+                <!-- 5. Bottom Sticky Action Footer -->
+                <div class="col-12">
+                    <div class="cap-sticky-footer">
+                        <div class="d-flex align-items-center gap-2 text-muted small">
+                            <i class="fas fa-info-circle text-info"></i>
+                            <span id="unsavedChangesNotice">{% trans "Changes take effect immediately across all capital order forms upon saving." %}</span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <a href="{% url 'indy_hub:capital_ship_orders_admin' %}" class="btn btn-outline-secondary">
+                                <i class="fas fa-times me-1"></i>{% trans "Cancel" %}
+                            </a>
+                            <button type="submit" class="btn btn-primary px-4 fw-semibold shadow-sm" id="btnSaveCapitalSettings">
+                                <i class="fas fa-save me-1"></i>{% trans "Save Capital Settings" %}
+                            </button>
+                        </div>
+                    </div>
                 </div>
+
             </div>
         </form>
     </div>
@@ -251,7 +537,7 @@
     {{ block.super }}
     <script>
     (function () {
-        const formEl = document.querySelector("form");
+        const formEl = document.querySelector("#capitalSettingsForm") || document.querySelector("form");
         if (!formEl) {
             return;
         }
@@ -279,6 +565,7 @@
             }
             return `${negative ? "-" : ""}${withCommas}`;
         };
+
         const bindIskInputs = (root) => {
             if (!root) {
                 return;
@@ -301,6 +588,7 @@
                     } catch (error) {
                         // Ignore selection errors on unsupported input states.
                     }
+                    notifyUnsavedChanges();
                 });
                 input.addEventListener("blur", function () {
                     input.value = formatIskValue(input.value);
@@ -309,11 +597,224 @@
             });
         };
 
+        // Notice of unsaved changes
+        let isDirty = false;
+        const noticeEl = document.getElementById("unsavedChangesNotice");
+        const notifyUnsavedChanges = () => {
+            if (!isDirty && noticeEl) {
+                isDirty = true;
+                noticeEl.innerHTML = '<span class="text-warning fw-semibold"><i class="fas fa-exclamation-triangle me-1"></i>You have unsaved changes. Remember to click "Save Capital Settings".</span>';
+            }
+        };
+
+        formEl.querySelectorAll("input, select").forEach(el => {
+            el.addEventListener("change", notifyUnsavedChanges);
+        });
+
+        // Group Toggle Switch styling
+        document.querySelectorAll(".js-group-toggle").forEach(toggle => {
+            toggle.addEventListener("change", function () {
+                const groupKey = this.dataset.groupKey;
+                const parentItem = document.getElementById(`groupItem_${groupKey}`);
+                const label = this.nextElementSibling;
+                if (parentItem) {
+                    if (this.checked) {
+                        parentItem.classList.add("is-disabled");
+                        if (label) {
+                            label.textContent = "Hidden";
+                            label.className = "form-check-label small text-danger fw-semibold";
+                        }
+                    } else {
+                        parentItem.classList.remove("is-disabled");
+                        if (label) {
+                            label.textContent = "Visible";
+                            label.className = "form-check-label small text-muted";
+                        }
+                    }
+                }
+            });
+        });
+
+        // Individual Hull Disable Checkbox styling
+        document.querySelectorAll(".js-hull-disable-toggle").forEach(chk => {
+            chk.addEventListener("change", function () {
+                const row = this.closest("tr");
+                if (row) {
+                    if (this.checked) {
+                        row.classList.add("is-hull-disabled");
+                    } else {
+                        row.classList.remove("is-hull-disabled");
+                    }
+                }
+            });
+        });
+
+        // "Use Auto" button per row
+        document.querySelectorAll(".js-btn-use-auto").forEach(btn => {
+            btn.addEventListener("click", function () {
+                const typeId = this.dataset.typeId;
+                const autoPrice = this.dataset.autoPrice;
+                const input = document.getElementById(`overrideInput_${typeId}`);
+                if (input && autoPrice) {
+                    input.value = formatIskValue(autoPrice);
+                    notifyUnsavedChanges();
+                }
+            });
+        });
+
+        // "Clear Override" button per row
+        document.querySelectorAll(".js-btn-clear-override").forEach(btn => {
+            btn.addEventListener("click", function () {
+                const typeId = this.dataset.typeId;
+                const input = document.getElementById(`overrideInput_${typeId}`);
+                if (input) {
+                    input.value = "";
+                    notifyUnsavedChanges();
+                }
+            });
+        });
+
+        // Bulk Actions: Copy Auto Estimates to Blank Overrides
+        const btnFillAutoOverrides = document.getElementById("btnFillAutoOverrides");
+        if (btnFillAutoOverrides) {
+            btnFillAutoOverrides.addEventListener("click", function () {
+                let count = 0;
+                document.querySelectorAll(".js-hull-row").forEach(row => {
+                    if (row.style.display !== "none") {
+                        const input = row.querySelector(".js-override-input");
+                        const autoPrice = row.dataset.autoPrice;
+                        if (input && !input.value.trim() && autoPrice) {
+                            input.value = formatIskValue(autoPrice);
+                            count++;
+                        }
+                    }
+                });
+                if (count > 0) {
+                    notifyUnsavedChanges();
+                }
+            });
+        }
+
+        // Bulk Actions: Clear All Manual Overrides
+        const btnClearAllOverrides = document.getElementById("btnClearAllOverrides");
+        if (btnClearAllOverrides) {
+            btnClearAllOverrides.addEventListener("click", function () {
+                document.querySelectorAll(".js-override-input").forEach(input => {
+                    input.value = "";
+                });
+                notifyUnsavedChanges();
+            });
+        }
+
+        // Bulk Actions: Disable/Enable Visible Hulls
+        const btnDisableAllFiltered = document.getElementById("btnDisableAllFiltered");
+        if (btnDisableAllFiltered) {
+            btnDisableAllFiltered.addEventListener("click", function () {
+                document.querySelectorAll(".js-hull-row").forEach(row => {
+                    if (row.style.display !== "none") {
+                        const chk = row.querySelector(".js-hull-disable-toggle");
+                        if (chk && !chk.checked) {
+                            chk.checked = true;
+                            row.classList.add("is-hull-disabled");
+                        }
+                    }
+                });
+                notifyUnsavedChanges();
+            });
+        }
+
+        const btnEnableAllFiltered = document.getElementById("btnEnableAllFiltered");
+        if (btnEnableAllFiltered) {
+            btnEnableAllFiltered.addEventListener("click", function () {
+                document.querySelectorAll(".js-hull-row").forEach(row => {
+                    if (row.style.display !== "none") {
+                        const chk = row.querySelector(".js-hull-disable-toggle");
+                        if (chk && chk.checked) {
+                            chk.checked = false;
+                            row.classList.remove("is-hull-disabled");
+                        }
+                    }
+                });
+                notifyUnsavedChanges();
+            });
+        }
+
+        // Upfront Payment Toggle Sub-options
+        const upfrontToggle = document.getElementById("capitalUpfrontPaymentToggle");
+        const upfrontSubOptions = document.getElementById("upfrontPaymentSubOptions");
+        if (upfrontToggle && upfrontSubOptions) {
+            upfrontToggle.addEventListener("change", function () {
+                if (this.checked) {
+                    upfrontSubOptions.classList.remove("d-none");
+                } else {
+                    upfrontSubOptions.classList.add("d-none");
+                }
+            });
+        }
+
+        // Real-time Search and Class Filter
+        const searchInput = document.getElementById("hullSearchInput");
+        const clearSearchBtn = document.getElementById("clearHullSearchBtn");
+        const filterBtns = document.querySelectorAll(".cap-filter-btn");
+        const countBadge = document.getElementById("visibleHullsCountBadge");
+        let activeGroupFilter = "all";
+
+        const applyTableFilters = () => {
+            const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+            let visibleCount = 0;
+            document.querySelectorAll(".js-hull-row").forEach(row => {
+                const name = row.dataset.hullName || "";
+                const typeId = row.dataset.typeId || "";
+                const group = row.dataset.groupKey || "";
+
+                const matchesGroup = (activeGroupFilter === "all" || group === activeGroupFilter);
+                const matchesSearch = (!query || name.includes(query) || typeId.includes(query));
+
+                if (matchesGroup && matchesSearch) {
+                    row.style.display = "";
+                    visibleCount++;
+                } else {
+                    row.style.display = "none";
+                }
+            });
+            if (countBadge) {
+                countBadge.textContent = `${visibleCount} Hulls`;
+            }
+        };
+
+        if (searchInput) {
+            searchInput.addEventListener("input", applyTableFilters);
+        }
+        if (clearSearchBtn) {
+            clearSearchBtn.addEventListener("click", function () {
+                if (searchInput) {
+                    searchInput.value = "";
+                    applyTableFilters();
+                    searchInput.focus();
+                }
+            });
+        }
+
+        filterBtns.forEach(btn => {
+            btn.addEventListener("click", function () {
+                filterBtns.forEach(b => {
+                    b.classList.remove("active", "btn-primary");
+                    b.classList.add("btn-outline-secondary");
+                });
+                this.classList.remove("btn-outline-secondary");
+                this.classList.add("active", "btn-primary");
+                activeGroupFilter = this.dataset.filterGroup || "all";
+                applyTableFilters();
+            });
+        });
+
+        // Form Submission preparation
         formEl.addEventListener("submit", function () {
             formEl.querySelectorAll(".js-isk-format").forEach((input) => {
                 input.value = stripCommas(input.value);
             });
         });
+
         bindIskInputs(formEl);
     })();
     </script>

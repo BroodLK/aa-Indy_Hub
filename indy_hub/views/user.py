@@ -64,6 +64,7 @@ from ..models import (
     UserOnboardingProgress,
 )
 from ..notifications import build_site_url, notify_user
+from ..services.dashboard_hooks import get_capital_orders_dashboard_data
 from ..services.esi_client import ESIClientError, ESITokenError
 from ..services.providers import esi_provider
 from ..services.simulations import summarize_simulations
@@ -1775,6 +1776,8 @@ def _build_dashboard_context(request):
             corp_active_jobs_count += jobs.get("active", 0) or 0
             corp_jobs_completed += jobs.get("completed", 0) or 0
 
+    capital_orders_data = get_capital_orders_dashboard_data(request.user)
+
     context = {
         "has_blueprint_tokens": bool(blueprint_char_ids),
         "has_jobs_tokens": bool(jobs_char_ids),
@@ -1805,6 +1808,7 @@ def _build_dashboard_context(request):
         "aa_unread_notifications_count": aa_unread_notifications_count,
         "copy_chat_alerts": copy_chat_alerts,
         "copy_chat_alerts_has_more": copy_chat_unread_count > len(copy_chat_alerts),
+        "capital_orders_dashboard": capital_orders_data,
         "onboarding": {
             "tasks": onboarding_tasks,
             "completed": completed_count,

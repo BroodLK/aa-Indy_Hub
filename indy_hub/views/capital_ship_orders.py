@@ -1225,6 +1225,17 @@ def capital_ship_orders(request):
             messages.error(request, "Select one required reason for this order.")
             return redirect("indy_hub:capital_ship_orders")
 
+        if getattr(config, "capital_upfront_payment_required", False):
+            agree_upfront_payment = request.POST.get("agree_upfront_payment")
+            if not agree_upfront_payment or str(agree_upfront_payment).strip() in {"0", "false", "off"}:
+                messages.error(
+                    request,
+                    _(
+                        "You must acknowledge and agree to the upfront payment requirements and refund policy before placing your order."
+                    ),
+                )
+                return redirect("indy_hub:capital_ship_orders")
+
         order = CapitalShipOrder.objects.create(
             config=config,
             requester=request.user,
@@ -1233,6 +1244,10 @@ def capital_ship_orders(request):
             ship_class=str(selected_ship["ship_class"]),
             reason=reason,
             lead_time_days=int(getattr(config, "capital_default_lead_time_days", 0) or 0),
+            upfront_payment_required=bool(getattr(config, "capital_upfront_payment_required", False)),
+            upfront_payment_reason=str(getattr(config, "capital_upfront_payment_reason", "") or ""),
+            upfront_payment_refunds_allowed=bool(getattr(config, "capital_upfront_payment_refunds_allowed", False)),
+            upfront_payment_agreed_at=timezone.now() if getattr(config, "capital_upfront_payment_required", False) else None,
         )
         _refresh_guideline(order)
         order.ensure_chat()
@@ -1318,6 +1333,9 @@ def capital_ship_orders(request):
     context = {
         "ship_option_sections": ship_option_sections,
         "reason_choices": CapitalShipOrder.Reason.choices,
+        "capital_upfront_payment_required": bool(getattr(config, "capital_upfront_payment_required", False)),
+        "capital_upfront_payment_reason": str(getattr(config, "capital_upfront_payment_reason", "") or ""),
+        "capital_upfront_payment_refunds_allowed": bool(getattr(config, "capital_upfront_payment_refunds_allowed", False)),
         "my_orders": my_orders,
         "can_work_capital_orders": _can_work_capital_orders(request.user),
         "can_manage_capital_orders": request.user.has_perm("indy_hub.can_manage_capital_orders"),
@@ -1561,6 +1579,18 @@ def capital_ship_orders_config(request):
                 request.POST.getlist("capital_disabled_ship_type_ids")
             )
 
+            capital_upfront_payment_required = (
+                request.POST.get("capital_upfront_payment_required") == "on"
+                or request.POST.get("capital_upfront_payment_required") == "true"
+                or bool(request.POST.get("capital_upfront_payment_required"))
+            )
+            capital_upfront_payment_reason = str(request.POST.get("capital_upfront_payment_reason") or "").strip()
+            capital_upfront_payment_refunds_allowed = (
+                request.POST.get("capital_upfront_payment_refunds_allowed") == "on"
+                or request.POST.get("capital_upfront_payment_refunds_allowed") == "true"
+                or bool(request.POST.get("capital_upfront_payment_refunds_allowed"))
+            )
+
             estimated_price_overrides_by_type: dict[int, str] = {}
             for form_key, form_value in request.POST.items():
                 if not str(form_key).startswith("estimated_price_"):
@@ -1600,6 +1630,9 @@ def capital_ship_orders_config(request):
         config.capital_disabled_ship_type_ids = capital_disabled_ship_type_ids
         config.capital_custom_ship_options = []
         config.capital_ship_estimated_price_overrides = capital_ship_estimated_price_overrides
+        config.capital_upfront_payment_required = capital_upfront_payment_required
+        config.capital_upfront_payment_reason = capital_upfront_payment_reason
+        config.capital_upfront_payment_refunds_allowed = capital_upfront_payment_refunds_allowed
         config.save(
             update_fields=[
                 "capital_default_lead_time_days",
@@ -1612,6 +1645,9 @@ def capital_ship_orders_config(request):
                 "capital_disabled_ship_type_ids",
                 "capital_custom_ship_options",
                 "capital_ship_estimated_price_overrides",
+                "capital_upfront_payment_required",
+                "capital_upfront_payment_reason",
+                "capital_upfront_payment_refunds_allowed",
             ]
         )
         messages.success(request, "Capital order settings updated.")
@@ -1698,6 +1734,9 @@ def capital_ship_orders_config(request):
         ),
         "capital_auto_cancel_delay_unit_choices": MaterialExchangeConfig.CAPITAL_AUTO_CANCEL_DELAY_UNIT_CHOICES,
         "capital_auto_cancel_status_choices": valid_statuses,
+        "capital_upfront_payment_required": bool(getattr(config, "capital_upfront_payment_required", False)),
+        "capital_upfront_payment_reason": str(getattr(config, "capital_upfront_payment_reason", "") or ""),
+        "capital_upfront_payment_refunds_allowed": bool(getattr(config, "capital_upfront_payment_refunds_allowed", False)),
     }
     context.update(build_nav_context(request.user, active_tab="capital_orders"))
     return render(

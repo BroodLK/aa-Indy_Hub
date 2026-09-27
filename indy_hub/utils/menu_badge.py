@@ -56,4 +56,39 @@ def compute_menu_badge_count(user_id: int) -> int:
     )
 
     pending_request_ids.update(unread_chat_qs.values_list("request_id", flat=True))
-    return len(pending_request_ids)
+
+    total_count = len(pending_request_ids)
+
+    # Capital ship orders pending actions (unread chats & pending offer confirmations)
+    try:
+        from ..models import CapitalShipOrder, CapitalShipOrderChat
+
+        cap_unread_qs = CapitalShipOrderChat.objects.filter(
+            is_open=True,
+            requester_id=user_id,
+            last_message_at__isnull=False,
+        ).exclude(last_message_role="requester").filter(
+            Q(requester_last_seen_at__isnull=True)
+            | Q(requester_last_seen_at__lt=F("last_message_at"))
+        )
+
+        cap_pending_offers_qs = CapitalShipOrder.objects.filter(
+            requester_id=user_id,
+            offer_price_isk__isnull=False,
+            offer_eta_min_days__isnull=False,
+            offer_eta_max_days__isnull=False,
+            user_offer_confirmed_at__isnull=True,
+        ).exclude(
+            status__in=[
+                CapitalShipOrder.Status.COMPLETED,
+                CapitalShipOrder.Status.REJECTED,
+                CapitalShipOrder.Status.CANCELLED,
+            ]
+        )
+
+        total_count += cap_unread_qs.values_list("id", flat=True).distinct().count()
+        total_count += cap_pending_offers_qs.values_list("id", flat=True).distinct().count()
+    except Exception:
+        pass
+
+    return total_count

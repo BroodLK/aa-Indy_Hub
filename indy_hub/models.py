@@ -2428,6 +2428,25 @@ class MaterialExchangeConfig(models.Model):
             "Each row should define type_id, price_isk, and optional metadata."
         ),
     )
+    capital_upfront_payment_required = models.BooleanField(
+        default=False,
+        help_text=_(
+            "When enabled, capital orders require upfront payment before production begins."
+        ),
+    )
+    capital_upfront_payment_reason = models.TextField(
+        blank=True,
+        default="",
+        help_text=_(
+            "Custom reason / policy details displayed to pilots explaining why upfront payment is required."
+        ),
+    )
+    capital_upfront_payment_refunds_allowed = models.BooleanField(
+        default=False,
+        help_text=_(
+            "Indicates whether refunds are allowed if the production structure is destroyed during build."
+        ),
+    )
 
     # Market group filters
     allowed_market_groups_buy = models.JSONField(
@@ -3907,6 +3926,24 @@ class CapitalShipOrder(models.Model):
     )
     # Tracks how long requester has been outside preapproved state.
     requester_preapproved_mismatch_since = models.DateTimeField(null=True, blank=True)
+    upfront_payment_required = models.BooleanField(
+        default=False,
+        help_text=_("Whether upfront payment was required at time of order creation."),
+    )
+    upfront_payment_reason = models.TextField(
+        blank=True,
+        default="",
+        help_text=_("The upfront payment reason at time of order creation."),
+    )
+    upfront_payment_refunds_allowed = models.BooleanField(
+        default=False,
+        help_text=_("Whether refunds are allowed if structure destroyed during build."),
+    )
+    upfront_payment_agreed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=_("When the user acknowledged and agreed to the upfront payment terms."),
+    )
     anomaly_reason = models.TextField(blank=True)
     notes = models.TextField(blank=True)
 
