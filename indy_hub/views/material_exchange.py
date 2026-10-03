@@ -8,6 +8,7 @@ import secrets
 import unicodedata
 from collections.abc import Iterable
 from datetime import datetime, time, timedelta
+from datetime import timezone as dt_timezone
 from decimal import ROUND_CEILING, Decimal
 from time import perf_counter
 
@@ -1252,7 +1253,7 @@ def material_exchange_sell_assets_refresh_status(request):
 
     if last_update:
         try:
-            last_update_utc = timezone.localtime(last_update, timezone.utc)
+            last_update_utc = timezone.localtime(last_update, dt_timezone.utc)
         except Exception:
             last_update_utc = last_update
         response["last_update"] = last_update_utc.isoformat()
@@ -1729,10 +1730,8 @@ def _build_refined_ore_pricing_context(
 
     Two per-mineral effective-price maps are produced so ore prices reflect
     override-adjusted mineral prices at the hub:
-    - ``mineral_effective_sell_prices`` — what the hub pays members per mineral
-      unit (used on the SELL page).
-    - ``mineral_effective_buy_prices`` — what the hub charges members per
-      mineral unit (used on the BUY page).
+    - ``mineral_effective_sell_prices`` — what the hub pays members per mineral unit (used on the SELL page).
+    - ``mineral_effective_buy_prices`` — what the hub charges members per mineral unit (used on the BUY page).
 
     If a mineral has an item-level sell/buy override, that override's effective
     price is used; otherwise the hub's config markup is applied to Jita prices.
@@ -4083,7 +4082,7 @@ def _build_buy_stock_location_label(
         visible_source_ids.append(structure_id)
 
     visible_source_name_map = {
-        int(sid): str((buy_name_map.get(int(sid)) or f"Structure {int(sid)}")).strip()
+        int(sid): str(buy_name_map.get(int(sid)) or f"Structure {int(sid)}").strip()
         for sid in visible_source_ids
     }
 

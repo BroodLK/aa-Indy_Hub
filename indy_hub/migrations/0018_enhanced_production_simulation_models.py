@@ -255,7 +255,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="customprice",
             name="user",
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL),
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL
+            ),
         ),
         migrations.AddField(
             model_name="blueprintefficiency",
@@ -269,7 +271,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="blueprintefficiency",
             name="user",
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL),
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL
+            ),
         ),
         migrations.SeparateDatabaseAndState(
             state_operations=[

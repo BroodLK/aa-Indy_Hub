@@ -68,7 +68,9 @@ def token_required(scopes=None, new=False):
         def _wrapped(request, *args, **kwargs):
             # Check for 'new' in request to allow manual character change
             force_new = new or request.GET.get("new") == "True"
-            esi_decorator = esi_token_required(scopes=_normalize_scopes(scopes), new=force_new)
+            esi_decorator = esi_token_required(
+                scopes=_normalize_scopes(scopes), new=force_new
+            )
 
             view_called = [False]
 
@@ -78,7 +80,9 @@ def token_required(scopes=None, new=False):
 
             response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
 
-            ajax_response = _handle_ajax_token_redirect(request, response, view_called[0])
+            ajax_response = _handle_ajax_token_redirect(
+                request, response, view_called[0]
+            )
             if ajax_response:
                 return ajax_response
 
@@ -97,7 +101,9 @@ def tokens_required(scopes=None, new=False):
         def _wrapped(request, *args, **kwargs):
             # Check for 'new' in request to allow manual character change
             force_new = new or request.GET.get("new") == "True"
-            esi_decorator = esi_tokens_required(scopes=_normalize_scopes(scopes), new=force_new)
+            esi_decorator = esi_tokens_required(
+                scopes=_normalize_scopes(scopes), new=force_new
+            )
 
             view_called = [False]
 
@@ -107,7 +113,9 @@ def tokens_required(scopes=None, new=False):
 
             response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
 
-            ajax_response = _handle_ajax_token_redirect(request, response, view_called[0])
+            ajax_response = _handle_ajax_token_redirect(
+                request, response, view_called[0]
+            )
             if ajax_response:
                 return ajax_response
 
@@ -138,7 +146,9 @@ def single_use_token(scopes=None, new=False):
 
             response = esi_decorator(_view_wrapper)(request, *args, **kwargs)
 
-            ajax_response = _handle_ajax_token_redirect(request, response, view_called[0])
+            ajax_response = _handle_ajax_token_redirect(
+                request, response, view_called[0]
+            )
             if ajax_response:
                 return ajax_response
 
@@ -177,7 +187,9 @@ def indy_hub_access_required(view_func):
     def _wrapped_view(request, *args, **kwargs):
         if not request.user.is_authenticated:
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
-                return JsonResponse({"error": "Session expired. Please login again."}, status=401)
+                return JsonResponse(
+                    {"error": "Session expired. Please login again."}, status=401
+                )
             return redirect("auth_login_user")
         if not request.user.has_perm("indy_hub.can_access_indy_hub"):
             if request.headers.get("x-requested-with") == "XMLHttpRequest":
@@ -196,14 +208,19 @@ def indy_hub_permission_required(permission_codename):
         @wraps(view_func)
         def _wrapped_view(request, *args, **kwargs):
             if not request.user.is_authenticated:
-                if request.headers.get('x-requested-with') == 'XMLHttpRequest':
-                    return JsonResponse({"error": "Session expired. Please refresh the page."}, status=401)
+                if request.headers.get("x-requested-with") == "XMLHttpRequest":
+                    return JsonResponse(
+                        {"error": "Session expired. Please refresh the page."},
+                        status=401,
+                    )
                 return redirect("auth_login_user")
             full_codename = f"indy_hub.{permission_codename}"
             if not request.user.has_perm(full_codename):
-                if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+                if request.headers.get("x-requested-with") == "XMLHttpRequest":
                     return JsonResponse({"error": "Permission denied."}, status=403)
-                messages.error(request, "You do not have the required Indy Hub permission.")
+                messages.error(
+                    request, "You do not have the required Indy Hub permission."
+                )
                 return redirect("indy_hub:index")
             return view_func(request, *args, **kwargs)
 

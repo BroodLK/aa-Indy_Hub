@@ -168,10 +168,18 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         sell_completed_at = now - timedelta(days=2)
         buy_created_at = now - timedelta(days=5)
         buy_completed_at = now - timedelta(days=3)
-        MaterialExchangeSellOrder.objects.filter(pk=sell_order.pk).update(created_at=sell_created_at)
-        MaterialExchangeBuyOrder.objects.filter(pk=buy_order.pk).update(created_at=buy_created_at)
-        MaterialExchangeTransaction.objects.filter(sell_order=sell_order).update(completed_at=sell_completed_at)
-        MaterialExchangeTransaction.objects.filter(buy_order=buy_order).update(completed_at=buy_completed_at)
+        MaterialExchangeSellOrder.objects.filter(pk=sell_order.pk).update(
+            created_at=sell_created_at
+        )
+        MaterialExchangeBuyOrder.objects.filter(pk=buy_order.pk).update(
+            created_at=buy_created_at
+        )
+        MaterialExchangeTransaction.objects.filter(sell_order=sell_order).update(
+            completed_at=sell_completed_at
+        )
+        MaterialExchangeTransaction.objects.filter(buy_order=buy_order).update(
+            completed_at=buy_completed_at
+        )
 
         ESIContract.objects.create(
             contract_id=2000101,
@@ -250,15 +258,17 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(ctx["potential_profit_jita_buy"], Decimal("100.00"))
         self.assertEqual(ctx["potential_profit_jita_sell"], Decimal("350.00"))
         self.assertEqual(ctx["potential_profit_jita_split"], Decimal("225.00"))
-        self.assertEqual(ctx["expected_profit_jita_split_with_wallet"], Decimal("225.00"))
-        self.assertEqual(ctx["contract_profit_margin_pct"], -21.79)
-        self.assertEqual(ctx["net_profit_margin_pct"], -21.79)
-        self.assertEqual(ctx["expected_margin_jita_split_pct"], 31.03)
+        self.assertEqual(
+            ctx["expected_profit_jita_split_with_wallet"], Decimal("225.00")
+        )
+        self.assertEqual(ctx["contract_profit_margin_pct"], Decimal("-21.79"))
+        self.assertEqual(ctx["net_profit_margin_pct"], Decimal("-21.79"))
+        self.assertEqual(ctx["expected_margin_jita_split_pct"], Decimal("31.03"))
         self.assertEqual(ctx["projected_profit"], Decimal("-170.00"))
-        self.assertEqual(ctx["projected_margin_pct"], -21.79)
-        self.assertEqual(ctx["forecast_30d_profit"], Decimal("-5100.00"))
-        self.assertEqual(ctx["forecast_90d_profit"], Decimal("-15300.00"))
-        self.assertEqual(ctx["snapshot_coverage_pct"], 100.0)
+        self.assertEqual(ctx["projected_margin_pct"], Decimal("-21.79"))
+        self.assertEqual(ctx["forecast_30d_profit"], Decimal("-1275.00"))
+        self.assertEqual(ctx["forecast_90d_profit"], Decimal("-3825.00"))
+        self.assertEqual(ctx["snapshot_coverage_pct"], Decimal("100.0"))
         self.assertEqual(ctx["potential_priced_type_count"], 1)
         self.assertEqual(ctx["average_order_completion_seconds"], 129600)
         self.assertEqual(ctx["average_order_completion_duration_display"], "1d 12h 0m")
@@ -277,15 +287,21 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(ctx["contract_progress_stats"]["current_validated"], 0)
 
         self.assertEqual(
-            ctx["buy_order_status_counts"].get(MaterialExchangeBuyOrder.Status.COMPLETED),
+            ctx["buy_order_status_counts"].get(
+                MaterialExchangeBuyOrder.Status.COMPLETED
+            ),
             1,
         )
         self.assertEqual(
-            ctx["buy_order_status_counts"].get(MaterialExchangeBuyOrder.Status.REJECTED),
+            ctx["buy_order_status_counts"].get(
+                MaterialExchangeBuyOrder.Status.REJECTED
+            ),
             1,
         )
         self.assertEqual(
-            ctx["sell_order_status_counts"].get(MaterialExchangeSellOrder.Status.COMPLETED),
+            ctx["sell_order_status_counts"].get(
+                MaterialExchangeSellOrder.Status.COMPLETED
+            ),
             1,
         )
 
@@ -322,8 +338,12 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
             stock_available_at_creation=999,
         )
 
-        MaterialExchangeBuyOrder.objects.filter(pk=older_order.pk).update(created_at=now - timedelta(days=10))
-        MaterialExchangeBuyOrder.objects.filter(pk=recent_order.pk).update(created_at=now - timedelta(days=1))
+        MaterialExchangeBuyOrder.objects.filter(pk=older_order.pk).update(
+            created_at=now - timedelta(days=10)
+        )
+        MaterialExchangeBuyOrder.objects.filter(pk=recent_order.pk).update(
+            created_at=now - timedelta(days=1)
+        )
         older_tx = MaterialExchangeTransaction.objects.create(
             config=self.config,
             transaction_type=MaterialExchangeTransaction.TransactionType.BUY,
@@ -346,8 +366,12 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
             unit_price=Decimal("200.00"),
             total_price=Decimal("200.00"),
         )
-        MaterialExchangeTransaction.objects.filter(pk=older_tx.pk).update(completed_at=now - timedelta(days=10))
-        MaterialExchangeTransaction.objects.filter(pk=recent_tx.pk).update(completed_at=now - timedelta(days=1))
+        MaterialExchangeTransaction.objects.filter(pk=older_tx.pk).update(
+            completed_at=now - timedelta(days=10)
+        )
+        MaterialExchangeTransaction.objects.filter(pk=recent_tx.pk).update(
+            completed_at=now - timedelta(days=1)
+        )
 
         start_date = (now - timedelta(days=2)).date().isoformat()
         end_date = now.date().isoformat()
@@ -393,12 +417,16 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(follow.context["chosen_wallet_division"], 4)
 
     @patch("indy_hub.views.material_exchange.capture_material_exchange_daily_holdings")
-    def test_stats_history_can_run_manual_snapshot(self, mock_capture_material_exchange_daily_holdings) -> None:
+    def test_stats_history_can_run_manual_snapshot(
+        self, mock_capture_material_exchange_daily_holdings
+    ) -> None:
         mock_capture_material_exchange_daily_holdings.return_value = {
             "snapshot_date": "2026-04-19",
             "saved_rows": 7,
             "corporation_count": 1,
-            "warnings": ["Corporation 123456: corp asset scope is missing or stale; snapshot used cached assets."],
+            "warnings": [
+                "Corporation 123456: corp asset scope is missing or stale; snapshot used cached assets."
+            ],
             "errors": [
                 "Corporation 123456: no wallet division balances were available, so total asset values were saved without wallet balances."
             ],
@@ -421,13 +449,29 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         )
 
         settings_obj = MaterialExchangeSettings.get_solo()
-        self.assertEqual(settings_obj.stats_selected_corporation_id, self.config.corporation_id)
+        self.assertEqual(
+            settings_obj.stats_selected_corporation_id, self.config.corporation_id
+        )
         self.assertEqual(settings_obj.stats_selected_wallet_division, 1)
 
-        messages_list = [message.message for message in get_messages(response.wsgi_request)]
-        self.assertTrue(any("Manual snapshot saved 7 wallet snapshot row(s)" in msg for msg in messages_list))
-        self.assertTrue(any("corp asset scope is missing or stale" in msg for msg in messages_list))
-        self.assertTrue(any("no wallet division balances were available" in msg for msg in messages_list))
+        messages_list = [
+            message.message for message in get_messages(response.wsgi_request)
+        ]
+        self.assertTrue(
+            any(
+                "Manual snapshot saved 7 wallet snapshot row(s)" in msg
+                for msg in messages_list
+            )
+        )
+        self.assertTrue(
+            any("corp asset scope is missing or stale" in msg for msg in messages_list)
+        )
+        self.assertTrue(
+            any(
+                "no wallet division balances were available" in msg
+                for msg in messages_list
+            )
+        )
 
     def test_stats_history_scopes_metrics_to_saved_corporation(self) -> None:
         other_config = MaterialExchangeConfig.objects.create(
@@ -509,7 +553,9 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(response.context["total_buy_volume"], Decimal("500"))
         self.assertEqual(response.context["stats_scope_mode"], "corp")
 
-    def test_stats_history_uses_corp_scope_when_wallet_division_has_no_config(self) -> None:
+    def test_stats_history_uses_corp_scope_when_wallet_division_has_no_config(
+        self,
+    ) -> None:
         scoped_config = MaterialExchangeConfig.objects.create(
             corporation_id=789456,
             structure_id=60008494,
@@ -565,11 +611,19 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
         self.assertEqual(response.context["total_buy_volume"], Decimal("500"))
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_stats_history_exposes_current_value_of_configured_buy_hangars(self, mock_get_corp_assets_cached) -> None:
+    def test_stats_history_exposes_current_value_of_configured_buy_hangars(
+        self, mock_get_corp_assets_cached
+    ) -> None:
         self.config.buy_structure_ids = [60003760, 60003761]
         self.config.buy_structure_names = ["Jita Alpha", "Jita Beta"]
         self.config.hangar_division = 1
-        self.config.save(update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"])
+        self.config.save(
+            update_fields=[
+                "buy_structure_ids",
+                "buy_structure_names",
+                "hangar_division",
+            ]
+        )
 
         MaterialExchangeStock.objects.create(
             config=self.config,
@@ -631,14 +685,20 @@ class MaterialExchangeStatsHistoryViewTests(TestCase):
             response.context["current_buy_hangar_inventory_value"],
             Decimal("202.00"),
         )
-        self.assertEqual(response.context["current_buy_hangar_inventory_item_count"], 22)
+        self.assertEqual(
+            response.context["current_buy_hangar_inventory_item_count"], 22
+        )
         self.assertEqual(response.context["current_buy_hangar_inventory_type_count"], 2)
-        self.assertEqual(response.context["current_buy_hangar_inventory_priced_type_count"], 2)
+        self.assertEqual(
+            response.context["current_buy_hangar_inventory_priced_type_count"], 2
+        )
         self.assertEqual(response.context["current_buy_hangar_location_count"], 2)
         self.assertEqual(response.context["current_buy_hangar_count"], 2)
         self.assertFalse(response.context["current_buy_hangar_assets_scope_missing"])
 
-    def test_stats_history_uses_saved_daily_snapshots_for_total_value_history(self) -> None:
+    def test_stats_history_uses_saved_daily_snapshots_for_total_value_history(
+        self,
+    ) -> None:
         MaterialExchangeDailySnapshot.objects.create(
             corporation_id=self.config.corporation_id,
             wallet_division=1,

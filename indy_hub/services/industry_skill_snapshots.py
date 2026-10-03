@@ -104,7 +104,9 @@ def fetch_character_skill_levels(
                     character_id,
                     cache_exc,
                 )
-                raise ESIUnmodifiedError("ESI skills not modified and no cache available") from cache_exc
+                raise ESIUnmodifiedError(
+                    "ESI skills not modified and no cache available"
+                ) from cache_exc
         else:
             exc_text = str(exc)
             if "GetCharactersCharacterIdSkills" in exc_text and "not found" in exc_text:
@@ -163,11 +165,17 @@ def update_skill_snapshot(
         return active_level, trained_level
 
     mass_active, mass_trained = _extract_levels(SKILL_TYPE_IDS["mass_production"])
-    adv_mass_active, adv_mass_trained = _extract_levels(SKILL_TYPE_IDS["advanced_mass_production"])
+    adv_mass_active, adv_mass_trained = _extract_levels(
+        SKILL_TYPE_IDS["advanced_mass_production"]
+    )
     lab_active, lab_trained = _extract_levels(SKILL_TYPE_IDS["laboratory_operation"])
-    adv_lab_active, adv_lab_trained = _extract_levels(SKILL_TYPE_IDS["advanced_laboratory_operation"])
+    adv_lab_active, adv_lab_trained = _extract_levels(
+        SKILL_TYPE_IDS["advanced_laboratory_operation"]
+    )
     react_active, react_trained = _extract_levels(SKILL_TYPE_IDS["mass_reactions"])
-    adv_react_active, adv_react_trained = _extract_levels(SKILL_TYPE_IDS["advanced_mass_reactions"])
+    adv_react_active, adv_react_trained = _extract_levels(
+        SKILL_TYPE_IDS["advanced_mass_reactions"]
+    )
 
     return IndustrySkillSnapshot.objects.update_or_create(
         owner_user=user,
@@ -196,10 +204,18 @@ def _skill_snapshot_stale(snapshot: IndustrySkillSnapshot | None) -> bool:
     return timezone.now() - snapshot.last_updated > SKILL_CACHE_TTL
 
 
-def build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list[dict[str, object]]:
+def build_slot_overview_rows(
+    user: User, *, refresh_skills: bool = True
+) -> list[dict[str, object]]:
     """Return slot overview rows for the user's owned characters."""
-    ownerships = CharacterOwnership.objects.filter(user=user).select_related("character")
-    character_ids = [ownership.character.character_id for ownership in ownerships if ownership.character]
+    ownerships = CharacterOwnership.objects.filter(user=user).select_related(
+        "character"
+    )
+    character_ids = [
+        ownership.character.character_id
+        for ownership in ownerships
+        if ownership.character
+    ]
     now = timezone.now()
 
     snapshots = {
@@ -228,7 +244,8 @@ def build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list
         .annotate(total=Count("id"))
     )
     used_counts: dict[int, dict[str, int]] = {
-        char_id: {"manufacturing": 0, "research": 0, "reactions": 0} for char_id in character_ids
+        char_id: {"manufacturing": 0, "research": 0, "reactions": 0}
+        for char_id in character_ids
     }
     for row in active_job_rows:
         char_id = int(row.get("character_id") or 0)
@@ -243,12 +260,16 @@ def build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list
         elif activity_id in REACTION_ACTIVITY_IDS:
             used_counts[char_id]["reactions"] += total
 
-    def _slots_payload(total_value: int | None, used_value: int) -> dict[str, int | None]:
+    def _slots_payload(
+        total_value: int | None, used_value: int
+    ) -> dict[str, int | None]:
         if total_value is None:
             return {"total": None, "available": None, "used": None, "percent_used": 0}
         used_clamped = min(max(used_value, 0), total_value)
         available = max(total_value - used_clamped, 0)
-        percent_used = int(round((used_clamped / total_value) * 100)) if total_value else 0
+        percent_used = (
+            int(round((used_clamped / total_value) * 100)) if total_value else 0
+        )
         return {
             "total": total_value,
             "available": available,
@@ -281,7 +302,9 @@ def build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list
                 except ESITokenError:
                     skills_missing = True
                 except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.warning("Failed to refresh skills for %s: %s", character_id, exc)
+                    logger.warning(
+                        "Failed to refresh skills for %s: %s", character_id, exc
+                    )
                     skills_missing = True
             elif _skill_snapshot_stale(snapshot):
                 try:
@@ -290,9 +313,13 @@ def build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list
                 except ESIUnmodifiedError:
                     pass
                 except ESITokenError as exc:
-                    logger.warning("Failed to refresh skills for %s: %s", character_id, exc)
+                    logger.warning(
+                        "Failed to refresh skills for %s: %s", character_id, exc
+                    )
                 except Exception as exc:  # pragma: no cover - defensive logging
-                    logger.warning("Failed to refresh skills for %s: %s", character_id, exc)
+                    logger.warning(
+                        "Failed to refresh skills for %s: %s", character_id, exc
+                    )
         elif snapshot is None:
             skills_missing = True
 
@@ -314,7 +341,9 @@ def build_slot_overview_rows(user: User, *, refresh_skills: bool = True) -> list
                 "character_id": character_id,
                 "name": get_character_name(character_id),
                 "skills_missing": skills_missing,
-                "manufacturing": _slots_payload(totals["manufacturing"], used["manufacturing"]),
+                "manufacturing": _slots_payload(
+                    totals["manufacturing"], used["manufacturing"]
+                ),
                 "research": _slots_payload(totals["research"], used["research"]),
                 "reactions": _slots_payload(totals["reactions"], used["reactions"]),
             }

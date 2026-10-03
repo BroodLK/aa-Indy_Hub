@@ -1,5 +1,6 @@
 """Tests for Capital Orders Dashboard Hook and Notification Integration."""
 
+# Standard Library
 from decimal import Decimal
 
 # Django
@@ -12,10 +13,10 @@ from django.utils import timezone
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
+# AA Example App
 # Local
 from indy_hub.models import (
     CapitalShipOrder,
-    CapitalShipOrderChat,
     MaterialExchangeConfig,
     MaterialExchangeSettings,
     UserOnboardingProgress,
@@ -48,8 +49,12 @@ def _assign_main_character(user: User, *, character_id: int) -> EveCharacter:
 class CapitalOrdersDashboardHookTests(TestCase):
     def setUp(self):
         super().setUp()
-        self.user = User.objects.create_user(username="cap_requester", password="password")
-        self.builder = User.objects.create_user(username="cap_builder", password="password")
+        self.user = User.objects.create_user(
+            username="cap_requester", password="password"
+        )
+        self.builder = User.objects.create_user(
+            username="cap_builder", password="password"
+        )
         _assign_main_character(self.user, character_id=987001)
         _assign_main_character(self.builder, character_id=987002)
 

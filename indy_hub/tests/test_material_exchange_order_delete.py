@@ -6,6 +6,10 @@ from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
 from django.urls import reverse
 
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership, UserProfile
+from allianceauth.eveonline.models import EveCharacter
+
 # AA Example App
 # Local
 from indy_hub.models import (
@@ -17,6 +21,38 @@ from indy_hub.models import (
 )
 
 
+def _assign_main_character(user: User, *, character_id: int) -> EveCharacter:
+    character, _ = EveCharacter.objects.get_or_create(
+        character_id=character_id,
+        defaults={
+            "character_name": f"Pilot {character_id}",
+            "corporation_id": 2_000_000,
+            "corporation_name": "Test Corp",
+            "corporation_ticker": "TEST",
+        },
+    )
+    CharacterOwnership.objects.update_or_create(
+        user=user,
+        character=character,
+        defaults={"owner_hash": f"hash-{character_id}-{user.id}"},
+    )
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    profile.main_character = character
+    profile.save(update_fields=["main_character"])
+    return character
+
+
+def _grant_indy_permissions(user: User, *codenames: str) -> None:
+    required = {"can_access_indy_hub"}
+    required.update(codenames)
+    permissions = Permission.objects.filter(codename__in=required)
+    found = {perm.codename: perm for perm in permissions}
+    missing = required - found.keys()
+    if missing:
+        raise AssertionError(f"Missing permissions: {sorted(missing)}")
+    user.user_permissions.add(*found.values())
+
+
 class MaterialExchangeOrderDeletePermissionTests(TestCase):
     def setUp(self) -> None:
         self.config = MaterialExchangeConfig.objects.create(
@@ -26,23 +62,16 @@ class MaterialExchangeOrderDeletePermissionTests(TestCase):
             is_active=True,
         )
         self.owner = User.objects.create_user(username="order_owner")
+        _assign_main_character(self.owner, character_id=72000001)
+        _grant_indy_permissions(self.owner)
+
         self.manager = User.objects.create_user(username="hub_manager")
+        _assign_main_character(self.manager, character_id=72000002)
+        _grant_indy_permissions(self.manager, "can_manage_material_hub")
+
         self.other = User.objects.create_user(username="other_member")
-
-        perms = Permission.objects.filter(
-            content_type__app_label="indy_hub",
-            codename__in=["can_access_indy_hub", "can_manage_material_hub"],
-        )
-        perm_map = {permission.codename: permission for permission in perms}
-        missing = {"can_access_indy_hub", "can_manage_material_hub"} - set(perm_map)
-        self.assertFalse(missing, f"Missing required test permissions: {missing}")
-
-        self.owner.user_permissions.add(perm_map["can_access_indy_hub"])
-        self.other.user_permissions.add(perm_map["can_access_indy_hub"])
-        self.manager.user_permissions.add(
-            perm_map["can_access_indy_hub"],
-            perm_map["can_manage_material_hub"],
-        )
+        _assign_main_character(self.other, character_id=72000003)
+        _grant_indy_permissions(self.other)
 
     def test_manager_can_delete_foreign_buy_order(self) -> None:
         order = MaterialExchangeBuyOrder.objects.create(
@@ -78,6 +107,7 @@ class MaterialExchangeOrderDeletePermissionTests(TestCase):
         )
 
         legacy_manager = User.objects.create_user(username="legacy_manager")
+        _assign_main_character(legacy_manager, character_id=72000004)
         access_perm = Permission.objects.get(
             content_type__app_label="indy_hub",
             codename="can_access_indy_hub",

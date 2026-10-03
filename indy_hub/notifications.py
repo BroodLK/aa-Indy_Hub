@@ -62,13 +62,22 @@ def build_site_url(path: str | None) -> str | None:
     if not base_url:
         origins = list(getattr(settings, "CSRF_TRUSTED_ORIGINS", []) or [])
         base_url = next(
-            (origin for origin in origins if isinstance(origin, str) and origin.startswith(("http://", "https://"))),
+            (
+                origin
+                for origin in origins
+                if isinstance(origin, str)
+                and origin.startswith(("http://", "https://"))
+            ),
             "",
         )
     if not base_url:
         allowed_hosts = list(getattr(settings, "ALLOWED_HOSTS", []) or [])
         host = next(
-            (value for value in allowed_hosts if isinstance(value, str) and value and value != "*"),
+            (
+                value
+                for value in allowed_hosts
+                if isinstance(value, str) and value and value != "*"
+            ),
             "",
         )
         if host:
@@ -146,10 +155,14 @@ def build_blueprint_summary_lines(
     summary: list[str] = [_("• Blueprint: {name}").format(name=blueprint_name)]
 
     if material_efficiency is not None:
-        summary.append(_("• Material Efficiency: {value}%").format(value=int(material_efficiency)))
+        summary.append(
+            _("• Material Efficiency: {value}%").format(value=int(material_efficiency))
+        )
 
     if time_efficiency is not None:
-        summary.append(_("• Time Efficiency: {value}%").format(value=int(time_efficiency)))
+        summary.append(
+            _("• Time Efficiency: {value}%").format(value=int(time_efficiency))
+        )
 
     if runs is not None:
         summary.append(_("• Runs requested: {value}").format(value=int(runs)))
@@ -177,7 +190,9 @@ def _build_discord_embed(
     embed = Embed(
         title=title.strip(),
         description=body.strip(),
-        color=DISCORD_EMBED_COLORS.get(LEVELS.get(level, level), DISCORD_EMBED_COLORS["info"]),
+        color=DISCORD_EMBED_COLORS.get(
+            LEVELS.get(level, level), DISCORD_EMBED_COLORS["info"]
+        ),
     )
     embed.timestamp = timezone.now()
     if url:
@@ -244,7 +259,9 @@ def _build_discord_webhook_payload(
         "color": (
             embed_color
             if embed_color is not None
-            else DISCORD_EMBED_COLORS.get(LEVELS.get(level, level), DISCORD_EMBED_COLORS["info"])
+            else DISCORD_EMBED_COLORS.get(
+                LEVELS.get(level, level), DISCORD_EMBED_COLORS["info"]
+            )
         ),
         "timestamp": timezone.now().isoformat(),
     }
@@ -338,7 +355,9 @@ def send_discord_webhook(
                 continue
             return True
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Discord webhook failed (attempt %s): %s", attempt, exc, exc_info=True)
+            logger.warning(
+                "Discord webhook failed (attempt %s): %s", attempt, exc, exc_info=True
+            )
             continue
 
     return False
@@ -408,12 +427,16 @@ def send_discord_webhook_with_message_id(
             try:
                 data = response.json()
             except ValueError:
-                logger.warning("Discord webhook response JSON parse failed; assuming delivery without message ID.")
+                logger.warning(
+                    "Discord webhook response JSON parse failed; assuming delivery without message ID."
+                )
                 return True, None
             message_id = data.get("id") if isinstance(data, dict) else None
             return True, str(message_id) if message_id else None
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Discord webhook failed (attempt %s): %s", attempt, exc, exc_info=True)
+            logger.warning(
+                "Discord webhook failed (attempt %s): %s", attempt, exc, exc_info=True
+            )
             continue
 
     return False, None
@@ -540,13 +563,17 @@ def _send_via_aadiscordbot(
     return True
 
 
-def _send_via_discordnotify(notification: Notification, level: str, *, message_override: str | None = None) -> bool:
+def _send_via_discordnotify(
+    notification: Notification, level: str, *, message_override: str | None = None
+) -> bool:
     if not apps.is_installed("discordnotify"):
         return False
 
     discord_profile = getattr(notification.user, "discord", None)
     if not discord_profile or not getattr(discord_profile, "uid", None):
-        logger.debug("User %s has no linked Discord profile for discordnotify", notification.user)
+        logger.debug(
+            "User %s has no linked Discord profile for discordnotify", notification.user
+        )
         return False
 
     try:
@@ -596,7 +623,9 @@ def _dispatch_discord_dm(
                 thumbnail_url=thumbnail_url,
             )
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to send Discord DM via aadiscordbot: %s", exc, exc_info=True)
+            logger.warning(
+                "Failed to send Discord DM via aadiscordbot: %s", exc, exc_info=True
+            )
 
     if sent or not notification:
         return
@@ -605,7 +634,9 @@ def _dispatch_discord_dm(
         if _send_via_discordnotify(notification, level, message_override=body):
             sent = True
     except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("Failed to forward notification via discordnotify: %s", exc, exc_info=True)
+        logger.warning(
+            "Failed to forward notification via discordnotify: %s", exc, exc_info=True
+        )
 
     if not sent:
         logger.debug("No Discord DM provider succeeded for user %s", user)
@@ -651,7 +682,9 @@ def notify_user(
         )
 
     if cta_line:
-        stored_message = f"{stored_message}\n\n{cta_line}" if stored_message else cta_line
+        stored_message = (
+            f"{stored_message}\n\n{cta_line}" if stored_message else cta_line
+        )
     if dm_cta_line:
         dm_body = f"{dm_body}\n\n{dm_cta_line}" if dm_body else dm_cta_line
 
@@ -670,7 +703,9 @@ def notify_user(
                 logger.info("Discord bot notification sent to %s: %s", user, title)
                 return
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Discord bot notification failed for %s: %s", user, exc, exc_info=True)
+            logger.warning(
+                "Discord bot notification failed for %s: %s", user, exc, exc_info=True
+            )
 
     try:
         notification = Notification.objects.notify_user(
@@ -681,7 +716,9 @@ def notify_user(
         )
         logger.info("Notification sent to %s: %s", user, title)
     except Exception as exc:
-        logger.error("Failed to persist notification for %s: %s", user, exc, exc_info=True)
+        logger.error(
+            "Failed to persist notification for %s: %s", user, exc, exc_info=True
+        )
 
     if DM_ENABLED:
         _dispatch_discord_dm(

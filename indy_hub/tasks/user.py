@@ -63,7 +63,9 @@ def update_character_roles_for_character(
     """Refresh stored corporation roles for a single character."""
     table_empty = not CharacterRoles.objects.exists()
     ownership = (
-        CharacterOwnership.objects.filter(user_id=user_id, character__character_id=character_id)
+        CharacterOwnership.objects.filter(
+            user_id=user_id, character__character_id=character_id
+        )
         .select_related("character", "user")
         .first()
     )
@@ -82,7 +84,10 @@ def update_character_roles_for_character(
 
     snapshot = CharacterRoles.objects.filter(character_id=character_id).first()
     now = timezone.now()
-    snapshot_stale = bool(snapshot and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS))
+    snapshot_stale = bool(
+        snapshot
+        and (now - snapshot.last_updated) >= timedelta(hours=ROLE_SNAPSHOT_STALE_HOURS)
+    )
     if snapshot and not snapshot_stale:
         return {"status": "skipped", "reason": "fresh"}
     try:
@@ -173,14 +178,18 @@ def update_user_roles_snapshots(
         .distinct()
     )
     if last_character_id:
-        ownerships = ownerships.filter(character__character_id__gt=int(last_character_id))
+        ownerships = ownerships.filter(
+            character__character_id__gt=int(last_character_id)
+        )
 
     character_ids = [int(character_id) for character_id in ownerships[:batch_size]]
     if not character_ids:
         return {"queued": 0, "updated": 0, "skipped": 0, "failures": 0, "done": True}
 
     for character_id in character_ids:
-        update_character_roles_for_character.apply_async(args=[int(user_id), int(character_id)])
+        update_character_roles_for_character.apply_async(
+            args=[int(user_id), int(character_id)]
+        )
 
     if len(character_ids) == batch_size:
         update_user_roles_snapshots.apply_async(

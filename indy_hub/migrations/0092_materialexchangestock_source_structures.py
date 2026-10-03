@@ -7,7 +7,10 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("indy_hub", "0091_materialexchangeconfig_allowed_market_groups_sell_by_structure"),
+        (
+            "indy_hub",
+            "0091_materialexchangeconfig_allowed_market_groups_sell_by_structure",
+        ),
     ]
 
     operations = [
@@ -26,7 +29,9 @@ class Migration(migrations.Migration):
             field=models.JSONField(
                 blank=True,
                 default=list,
-                help_text=("Cached buy structure names aligned with source_structure_ids (same order)."),
+                help_text=(
+                    "Cached buy structure names aligned with source_structure_ids (same order)."
+                ),
             ),
         ),
     ]

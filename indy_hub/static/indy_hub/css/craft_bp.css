@@ -2971,27 +2971,27 @@ html[data-theme="darkly"] #blueprintSearchInput {
 }
 
 .craft-howto-callout-warning {
+    border-color: rgba(var(--bs-warning-rgb), 0.2);
     border-left-color: var(--bs-warning);
     background: rgba(var(--bs-warning-rgb), 0.08);
-    border-color: rgba(var(--bs-warning-rgb), 0.2);
 }
 
 .craft-howto-callout-info {
+    border-color: rgba(var(--bs-info-rgb), 0.2);
     border-left-color: var(--bs-info);
     background: rgba(var(--bs-info-rgb), 0.08);
-    border-color: rgba(var(--bs-info-rgb), 0.2);
 }
 
 .craft-howto-callout-success {
+    border-color: rgba(var(--bs-success-rgb), 0.2);
     border-left-color: var(--bs-success);
     background: rgba(var(--bs-success-rgb), 0.08);
-    border-color: rgba(var(--bs-success-rgb), 0.2);
 }
 
 .craft-howto-callout-secondary {
+    border-color: rgba(var(--bs-secondary-rgb), 0.2);
     border-left-color: var(--bs-secondary);
     background: rgba(var(--bs-secondary-rgb), 0.06);
-    border-color: rgba(var(--bs-secondary-rgb), 0.2);
 }
 
 .craft-howto-callout-title {

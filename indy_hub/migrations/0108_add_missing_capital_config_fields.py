@@ -6,7 +6,9 @@ from django.db import migrations, models
 
 def _column_exists(schema_editor, table_name, column_name):
     with schema_editor.connection.cursor() as cursor:
-        columns = schema_editor.connection.introspection.get_table_description(cursor, table_name)
+        columns = schema_editor.connection.introspection.get_table_description(
+            cursor, table_name
+        )
     for column in columns:
         name = getattr(column, "name", None)
         if name is None and column:
@@ -26,7 +28,10 @@ def add_missing_capital_config_fields(apps, schema_editor):
             models.JSONField(
                 blank=True,
                 default=list,
-                help_text=("Ship-group keys hidden from the capital order menu (for example " "dread, carrier, fax)."),
+                help_text=(
+                    "Ship-group keys hidden from the capital order menu (for example "
+                    "dread, carrier, fax)."
+                ),
             ),
         ),
         (
@@ -34,7 +39,10 @@ def add_missing_capital_config_fields(apps, schema_editor):
             models.JSONField(
                 blank=True,
                 default=list,
-                help_text=("Per-ship estimated price overrides. Each row should define " "type_id and price_isk."),
+                help_text=(
+                    "Per-ship estimated price overrides. Each row should define "
+                    "type_id and price_isk."
+                ),
             ),
         ),
     ]
@@ -54,7 +62,11 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.SeparateDatabaseAndState(
-            database_operations=[migrations.RunPython(add_missing_capital_config_fields, migrations.RunPython.noop)],
+            database_operations=[
+                migrations.RunPython(
+                    add_missing_capital_config_fields, migrations.RunPython.noop
+                )
+            ],
             state_operations=[
                 migrations.AddField(
                     model_name="materialexchangeconfig",
@@ -63,7 +75,8 @@ class Migration(migrations.Migration):
                         blank=True,
                         default=list,
                         help_text=(
-                            "Ship-group keys hidden from the capital order menu (for " "example dread, carrier, fax)."
+                            "Ship-group keys hidden from the capital order menu (for "
+                            "example dread, carrier, fax)."
                         ),
                     ),
                 ),
@@ -74,7 +87,8 @@ class Migration(migrations.Migration):
                         blank=True,
                         default=list,
                         help_text=(
-                            "Per-ship estimated price overrides. Each row should define " "type_id and price_isk."
+                            "Per-ship estimated price overrides. Each row should define "
+                            "type_id and price_isk."
                         ),
                     ),
                 ),

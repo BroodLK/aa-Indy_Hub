@@ -52,7 +52,9 @@ def get_explicit_corp_bp_manager_ids() -> set[int]:
     )
 
 
-def eligible_owner_details_for_request(req: BlueprintCopyRequest) -> EligibleOwnerDetails:
+def eligible_owner_details_for_request(
+    req: BlueprintCopyRequest,
+) -> EligibleOwnerDetails:
     """Return detailed information about users who can fulfill a request."""
     matching_blueprints = Blueprint.objects.filter(
         bp_type__in=[Blueprint.BPType.ORIGINAL, Blueprint.BPType.REACTION],
@@ -62,7 +64,9 @@ def eligible_owner_details_for_request(req: BlueprintCopyRequest) -> EligibleOwn
     )
 
     character_owned_blueprints = list(
-        matching_blueprints.filter(owner_kind=Blueprint.OwnerKind.CHARACTER).values("owner_user_id", "character_id")
+        matching_blueprints.filter(owner_kind=Blueprint.OwnerKind.CHARACTER).values(
+            "owner_user_id", "character_id"
+        )
     )
 
     character_owner_ids: set[int] = set()
@@ -134,13 +138,17 @@ def eligible_owner_details_for_request(req: BlueprintCopyRequest) -> EligibleOwn
         for setting_obj in corporate_settings:
             settings_by_corp[setting_obj.corporation_id].append(setting_obj)
 
-        corp_memberships = CharacterOwnership.objects.filter(character__corporation_id__in=corporation_ids).values(
+        corp_memberships = CharacterOwnership.objects.filter(
+            character__corporation_id__in=corporation_ids
+        ).values(
             "user_id",
             "character__corporation_id",
             "character__character_id",
         )
 
-        corp_user_chars: dict[int, dict[int, set[int]]] = defaultdict(lambda: defaultdict(set))
+        corp_user_chars: dict[int, dict[int, set[int]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
         corp_member_user_ids: set[int] = set()
         for membership in corp_memberships:
             corp_id = membership.get("character__corporation_id")
@@ -151,7 +159,9 @@ def eligible_owner_details_for_request(req: BlueprintCopyRequest) -> EligibleOwn
                 corp_member_user_ids.add(user_id)
 
         if corp_member_user_ids:
-            corp_manager_ids = explicit_corp_manager_ids.intersection(corp_member_user_ids)
+            corp_manager_ids = explicit_corp_manager_ids.intersection(
+                corp_member_user_ids
+            )
 
             for corp_id, users in corp_user_chars.items():
                 corp_settings = settings_by_corp.get(corp_id)
@@ -166,14 +176,19 @@ def eligible_owner_details_for_request(req: BlueprintCopyRequest) -> EligibleOwn
                         continue
                     if any(
                         not setting_obj.restricts_characters
-                        or any(setting_obj.is_character_authorized(char_id) for char_id in char_ids)
+                        or any(
+                            setting_obj.is_character_authorized(char_id)
+                            for char_id in char_ids
+                        )
                         for setting_obj in corp_settings
                     ):
                         additional_corp_manager_ids.add(user_id)
                         corporate_members_by_corp[corp_id].add(user_id)
                         user_to_corp[user_id] = corp_id
 
-    owner_ids: set[int] = set(character_owner_ids) | corporate_owner_ids | additional_corp_manager_ids
+    owner_ids: set[int] = (
+        set(character_owner_ids) | corporate_owner_ids | additional_corp_manager_ids
+    )
     owner_ids.discard(req.requested_by_id)
     character_owner_ids.discard(req.requested_by_id)
     for members in corporate_members_by_corp.values():
@@ -194,7 +209,9 @@ def eligible_owner_details_for_request(req: BlueprintCopyRequest) -> EligibleOwn
     )
 
 
-def build_blueprint_copy_request_notification_content(req: BlueprintCopyRequest) -> tuple[str, str, str]:
+def build_blueprint_copy_request_notification_content(
+    req: BlueprintCopyRequest,
+) -> tuple[str, str, str]:
     """Build default title/body text for provider notifications."""
     notification_context = {
         "username": req.requested_by.username,
@@ -233,7 +250,9 @@ def build_blueprint_copy_request_notification_content(req: BlueprintCopyRequest)
 
     if corp_labels:
         formatted_corps = ", ".join(sorted(corp_labels, key=str.lower))
-        corporate_source_line = _("Corporate source: %(corporations)s") % {"corporations": formatted_corps}
+        corporate_source_line = _("Corporate source: %(corporations)s") % {
+            "corporations": formatted_corps
+        }
 
     return notification_title, notification_body, corporate_source_line
 
@@ -252,7 +271,9 @@ def notify_blueprint_copy_request_providers(
     if not eligible_owner_ids:
         return
 
-    default_title, default_body, corporate_source_line = build_blueprint_copy_request_notification_content(req)
+    default_title, default_body, corporate_source_line = (
+        build_blueprint_copy_request_notification_content(req)
+    )
     resolved_title = notification_title or default_title
     resolved_body = notification_body or default_body
 
@@ -331,7 +352,9 @@ def notify_blueprint_copy_request_providers(
             base_url=base_url,
         )
         if accept_link:
-            quick_actions.append(_("Accept: %(link)s") % {"link": f"[{link_cta}]({accept_link})"})
+            quick_actions.append(
+                _("Accept: %(link)s") % {"link": f"[{link_cta}]({accept_link})"}
+            )
 
         conditional_link = build_action_link(
             action="conditional",
@@ -340,7 +363,10 @@ def notify_blueprint_copy_request_providers(
             base_url=base_url,
         )
         if conditional_link:
-            quick_actions.append(_("Send conditions: %(link)s") % {"link": f"[{link_cta}]({conditional_link})"})
+            quick_actions.append(
+                _("Send conditions: %(link)s")
+                % {"link": f"[{link_cta}]({conditional_link})"}
+            )
 
         reject_link = build_action_link(
             action="reject",
@@ -349,10 +375,14 @@ def notify_blueprint_copy_request_providers(
             base_url=base_url,
         )
         if reject_link:
-            quick_actions.append(_("Decline: %(link)s") % {"link": f"[{link_cta}]({reject_link})"})
+            quick_actions.append(
+                _("Decline: %(link)s") % {"link": f"[{link_cta}]({reject_link})"}
+            )
 
         if quick_actions:
-            provider_body = f"{provider_body}\n\n{_('Quick actions:')}\n" + "\n".join(quick_actions)
+            provider_body = f"{provider_body}\n\n{_('Quick actions:')}\n" + "\n".join(
+                quick_actions
+            )
 
         notify_user(
             owner,

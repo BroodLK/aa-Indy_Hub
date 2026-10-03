@@ -18,7 +18,9 @@ def rename_permission_labels(apps, schema_editor):
     }
 
     for codename, name in updates.items():
-        Permission.objects.filter(content_type=blueprint_ct, codename=codename).update(name=name)
+        Permission.objects.filter(content_type=blueprint_ct, codename=codename).update(
+            name=name
+        )
 
 
 def revert_permission_labels(apps, schema_editor):
@@ -37,7 +39,9 @@ def revert_permission_labels(apps, schema_editor):
     }
 
     for codename, name in updates.items():
-        Permission.objects.filter(content_type=blueprint_ct, codename=codename).update(name=name)
+        Permission.objects.filter(content_type=blueprint_ct, codename=codename).update(
+            name=name
+        )
 
 
 class Migration(migrations.Migration):

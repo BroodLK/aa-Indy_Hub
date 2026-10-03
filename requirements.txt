@@ -1,5 +1,5 @@
 allianceauth>=4.2,<6
-django-esi>=8,<10
+django-esi>=8,<11
 django-eveonline-sde>=0.0.1b9
 requests>=2.31
 

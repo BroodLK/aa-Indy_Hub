@@ -473,6 +473,7 @@
     --bs-table-striped-bg: transparent;
     --bs-table-color: var(--me-text);
     --bs-table-border-color: var(--me-line);
+
     color: var(--me-text);
 }
 

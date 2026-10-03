@@ -151,8 +151,8 @@ class MaterialExchangeConfigRenderContractTests(TestCase):
             self.assertIn(control, content)
 
         self.assertIn('"60000003": null', content)
-        self.assertIn('showMaterialExchangeConfigToast', content)
-        self.assertIn('me-market-tree-state is-partial', content)
+        self.assertIn("showMaterialExchangeConfigToast", content)
+        self.assertIn("me-market-tree-state is-partial", content)
 
         expected_fields = [
             'name="corporation_id"',

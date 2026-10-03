@@ -317,9 +317,16 @@ class PageLoadingOverlayTests(SimpleTestCase):
         )
         self.assertIn("material_exchange_loading.css", base_template)
         # Dropdown navigation links must have data-indy-loading
-        self.assertIn('data-indy-loading="{% trans \'Loading Blueprints\' %}"', base_template)
-        self.assertIn('data-indy-loading="{% trans \'Loading Industry Jobs\' %}"', base_template)
-        self.assertIn('data-indy-loading="{% trans \'Loading Production Simulations\' %}"', base_template)
+        self.assertIn(
+            "data-indy-loading=\"{% trans 'Loading Blueprints' %}\"", base_template
+        )
+        self.assertIn(
+            "data-indy-loading=\"{% trans 'Loading Industry Jobs' %}\"", base_template
+        )
+        self.assertIn(
+            "data-indy-loading=\"{% trans 'Loading Production Simulations' %}\"",
+            base_template,
+        )
 
     def test_loading_script_handles_indy_loading_triggers(self) -> None:
         script = (STATIC / "js" / "material_exchange_loading.js").read_text(
@@ -385,7 +392,9 @@ class CraftAssetRefreshReactiveUITests(SimpleTestCase):
         self.assertIn("revalidateDesignatedBay", self.template)
         self.assertIn("window.revalidateMaterialsSourceBay", self.script)
         self.assertIn("buyTabButton.addEventListener('shown.bs.tab'", self.script)
-        self.assertIn("computeButton.addEventListener('click', async () =>", self.script)
+        self.assertIn(
+            "computeButton.addEventListener('click', async () =>", self.script
+        )
 
 
 class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
@@ -414,7 +423,9 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("decorateNeededRowsWithBuyback", self.script)
         self.assertIn("describeBuybackItem", self.script)
 
-    def test_craft_js_hides_buyback_button_and_shows_em_dash_when_owned_enough(self) -> None:
+    def test_craft_js_hides_buyback_button_and_shows_em_dash_when_owned_enough(
+        self,
+    ) -> None:
         self.assertIn("isCraftRowCoveredByOwned", self.script)
         self.assertIn("craft-buyback-owned-dash", self.script)
         self.assertIn("Available in buyback, but you already own enough", self.script)
@@ -430,9 +441,16 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("Refines into", self.script)
         self.assertIn("Order Ore", self.script)
         self.assertIn("data-target-mineral-type-id", self.script)
-        self.assertNotIn("Open Ore Converter", self.script.split("craft-ore-suggestions-popover")[1].split("bootstrap.Popover.getOrCreateInstance")[0])
+        self.assertNotIn(
+            "Open Ore Converter",
+            self.script.split("craft-ore-suggestions-popover")[1].split(
+                "bootstrap.Popover.getOrCreateInstance"
+            )[0],
+        )
 
-    def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(self) -> None:
+    def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(
+        self,
+    ) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)
         self.assertIn("indyHubMaterialExchangeBuyPrefill", self.buy_template)
         self.assertIn("pre-selected", self.buy_template)
@@ -452,9 +470,9 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
     def setUp(self) -> None:
         self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
         self.script = CRAFT_JS.read_text(encoding="utf-8")
-        self.inline_script = (
-            STATIC / "js" / "craft_bp_inline.js"
-        ).read_text(encoding="utf-8")
+        self.inline_script = (STATIC / "js" / "craft_bp_inline.js").read_text(
+            encoding="utf-8"
+        )
 
     def test_owned_bpcs_are_checked_by_default_in_config_tab(self) -> None:
         self.assertIn(
@@ -462,7 +480,7 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
             self.template,
         )
         self.assertIn(
-            "{% if bc.user_owns and bc.is_copy %}data-owned-bpc=\"true\"{% endif %}",
+            '{% if bc.user_owns and bc.is_copy %}data-owned-bpc="true"{% endif %}',
             self.template,
         )
 
@@ -470,7 +488,9 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
         self.assertIn("bp.is_owned && bp.is_copy", self.template)
         self.assertIn("presetOwnedBtn", self.template)
 
-    def test_sync_configure_visibility_preselects_planned_component_owned_bpcs(self) -> None:
+    def test_sync_configure_visibility_preselects_planned_component_owned_bpcs(
+        self,
+    ) -> None:
         self.assertIn("syncConfigureVisibilityWithPlan", self.script)
         self.assertIn("isOwnedCopy", self.script)
         self.assertIn("isPlannedForProduction", self.script)

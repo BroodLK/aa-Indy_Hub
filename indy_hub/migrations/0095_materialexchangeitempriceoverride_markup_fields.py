@@ -22,7 +22,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="materialexchangeitempriceoverride",
             name="buy_markup_percent_override",
-            field=models.DecimalField(blank=True, decimal_places=2, max_digits=6, null=True),
+            field=models.DecimalField(
+                blank=True, decimal_places=2, max_digits=6, null=True
+            ),
         ),
         migrations.AddField(
             model_name="materialexchangeitempriceoverride",
@@ -37,6 +39,8 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="materialexchangeitempriceoverride",
             name="sell_markup_percent_override",
-            field=models.DecimalField(blank=True, decimal_places=2, max_digits=6, null=True),
+            field=models.DecimalField(
+                blank=True, decimal_places=2, max_digits=6, null=True
+            ),
         ),
     ]

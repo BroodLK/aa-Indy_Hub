@@ -22,7 +22,10 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("type_id", models.IntegerField(help_text="EVE item type ID")),
-                ("type_name", models.CharField(blank=True, db_index=True, max_length=255)),
+                (
+                    "type_name",
+                    models.CharField(blank=True, db_index=True, max_length=255),
+                ),
                 (
                     "sell_price_override",
                     models.DecimalField(
@@ -63,7 +66,9 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="materialexchangeitempriceoverride",
-            index=models.Index(fields=["config", "type_id"], name="me_ovr_cfg_type_idx"),
+            index=models.Index(
+                fields=["config", "type_id"], name="me_ovr_cfg_type_idx"
+            ),
         ),
         migrations.AddIndex(
             model_name="materialexchangeitempriceoverride",

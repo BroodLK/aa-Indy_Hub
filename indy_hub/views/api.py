@@ -2078,7 +2078,9 @@ def convert_minerals_to_compressed_ore(request):
                 for item in result.get("excess_minerals_details", [])
             ],
             "excess_minerals_value": float(result.get("excess_minerals_value", 0.0)),
-            "net_effective_cost": float(result.get("net_effective_cost", result["total_cost"])),
+            "net_effective_cost": float(
+                result.get("net_effective_cost", result["total_cost"])
+            ),
             "logistics": result.get(
                 "logistics",
                 {
@@ -2088,7 +2090,9 @@ def convert_minerals_to_compressed_ore(request):
                     "volume_reduction_percent": 0.0,
                 },
             ),
-            "optimization_strategy": result.get("optimization_strategy", optimization_strategy),
+            "optimization_strategy": result.get(
+                "optimization_strategy", optimization_strategy
+            ),
             "prices_estimated": result.get("prices_estimated", False),
             # Real provenance: which prices were used, how old they are, and
             # whether a refresh was queued instead of fetched inline.

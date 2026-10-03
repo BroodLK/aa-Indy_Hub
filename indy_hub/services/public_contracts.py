@@ -119,7 +119,10 @@ def _coerce_openapi_value(value, *, _depth: int = 0):
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, dict):
-        return {str(key): _coerce_openapi_value(item, _depth=_depth + 1) for key, item in value.items()}
+        return {
+            str(key): _coerce_openapi_value(item, _depth=_depth + 1)
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple, set)):
         return [_coerce_openapi_value(item, _depth=_depth + 1) for item in value]
 
@@ -214,18 +217,25 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
 
     if signature is not None:
         params = signature.parameters
-        accepts_var_kwargs = any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in params.values())
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in params.values()
+        )
         if not accepts_var_kwargs:
             filtered_attempts: list[dict] = []
             for attempt_kwargs in attempts:
-                filtered = {key: value for key, value in attempt_kwargs.items() if key in params}
+                filtered = {
+                    key: value for key, value in attempt_kwargs.items() if key in params
+                }
                 filtered_attempts.append(filtered)
             attempts.extend(filtered_attempts)
 
     deduped_attempts: list[dict] = []
     seen_signatures: set[tuple[tuple[str, str], ...]] = set()
     for attempt_kwargs in attempts:
-        marker = tuple(sorted((str(key), repr(value)) for key, value in attempt_kwargs.items()))
+        marker = tuple(
+            sorted((str(key), repr(value)) for key, value in attempt_kwargs.items())
+        )
         if marker in seen_signatures:
             continue
         seen_signatures.add(marker)
@@ -302,12 +312,18 @@ def _run_openapi_operation(operation, prefer_disable_etag: bool = False, **kwarg
             raise PublicContractsError(
                 f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}: {last_error}"
             ) from last_error
-        raise PublicContractsError(f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}")
+        raise PublicContractsError(
+            f"HTTPNotModified unresolved for {getattr(operation, '__name__', repr(operation))}"
+        )
 
     if last_error is not None:
-        raise PublicContractsError(f"{type(last_error).__name__}: {last_error}") from last_error
+        raise PublicContractsError(
+            f"{type(last_error).__name__}: {last_error}"
+        ) from last_error
 
-    raise PublicContractsError("OpenAPI operation call failed without an explicit exception")
+    raise PublicContractsError(
+        "OpenAPI operation call failed without an explicit exception"
+    )
 
 
 def _fetch_public_contract_page_cached(
@@ -316,7 +332,8 @@ def _fetch_public_contract_page_cached(
     page: int,
 ) -> list[dict]:
     cache_key = (
-        f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:" f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v5"
+        f"indy_hub:esi:contracts:public:{THE_FORGE_REGION_ID}:"
+        f"datasource:{ESI_DATASOURCE}:page:{int(page)}:v5"
     )
 
     def _loader() -> list[dict]:
@@ -354,7 +371,10 @@ def _fetch_public_contract_items_cached(
     get_public_contract_items,
     contract_id: int,
 ) -> list[dict]:
-    cache_key = f"indy_hub:esi:contracts:public_items:" f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v5"
+    cache_key = (
+        f"indy_hub:esi:contracts:public_items:"
+        f"datasource:{ESI_DATASOURCE}:contract:{int(contract_id)}:v5"
+    )
 
     def _loader() -> list[dict]:
         try:
@@ -371,7 +391,9 @@ def _fetch_public_contract_items_cached(
                 exc,
             )
             return []
-        except Exception as exc:  # Defensive: never let a single bad contract poison all lookups.
+        except (
+            Exception
+        ) as exc:  # Defensive: never let a single bad contract poison all lookups.
             logger.debug(
                 "Skipping public contract items contract_id=%s due to unexpected error: %s",
                 contract_id,
@@ -426,7 +448,9 @@ def _row_value(row: dict, *keys: str):
 def _is_jita_contract(contract: dict) -> bool:
     start_location_id = int(_row_value(contract, "start_location_id") or 0)
     end_location_id = int(_row_value(contract, "end_location_id") or 0)
-    return _is_jita_location_id(start_location_id) or _is_jita_location_id(end_location_id)
+    return _is_jita_location_id(start_location_id) or _is_jita_location_id(
+        end_location_id
+    )
 
 
 def _is_jita_location_id(location_id: int) -> bool:
@@ -464,7 +488,9 @@ def _is_jita_location_id(location_id: int) -> bool:
                 if isinstance(station_row, dict):
                     station_system_id = int(station_row.get("system_id") or 0)
                     station_name = str(station_row.get("name") or "").strip().lower()
-                    in_jita = station_system_id == JITA_SYSTEM_ID or "jita" in station_name
+                    in_jita = (
+                        station_system_id == JITA_SYSTEM_ID or "jita" in station_name
+                    )
             except Exception:
                 in_jita = False
     elif location_id > 0:
@@ -487,7 +513,9 @@ def _extract_price(contract: dict) -> Decimal:
     return price + reward
 
 
-def _extract_matching_bpc_items(items: list[dict], *, blueprint_type_id: int) -> list[dict]:
+def _extract_matching_bpc_items(
+    items: list[dict], *, blueprint_type_id: int
+) -> list[dict]:
     matches: list[dict] = []
     for item in items:
         if int(_row_value(item, "type_id") or 0) != blueprint_type_id:
@@ -544,8 +572,12 @@ def fetch_jita_public_bpc_contracts(
         "get_contracts_public_items_contract_id",
     )
     if not callable(get_public_contracts) or not callable(get_public_contract_items):
-        logger.warning("Contracts OpenAPI operations are unavailable for public BPC lookup")
-        raise PublicContractsError("Required Contracts OpenAPI operations are unavailable")
+        logger.warning(
+            "Contracts OpenAPI operations are unavailable for public BPC lookup"
+        )
+        raise PublicContractsError(
+            "Required Contracts OpenAPI operations are unavailable"
+        )
 
     cache_key = (
         f"indy_hub:craft_bpc_offers:v8:"
@@ -582,7 +614,11 @@ def fetch_jita_public_bpc_contracts(
                     stats["scanned"] += 1
 
                     # ESI public contracts commonly uses "type", while some wrappers expose "contract_type".
-                    contract_type = str(_row_value(contract, "contract_type", "type") or "").strip().lower()
+                    contract_type = (
+                        str(_row_value(contract, "contract_type", "type") or "")
+                        .strip()
+                        .lower()
+                    )
                     if contract_type and contract_type != "item_exchange":
                         stats["type_filtered"] += 1
                         continue
@@ -592,7 +628,9 @@ def fetch_jita_public_bpc_contracts(
                     if status and status != "outstanding":
                         stats["status_filtered"] += 1
                         continue
-                    expires_at_dt = _parse_esi_datetime(_row_value(contract, "date_expired"))
+                    expires_at_dt = _parse_esi_datetime(
+                        _row_value(contract, "date_expired")
+                    )
                     if expires_at_dt is not None and expires_at_dt <= now_utc:
                         stats["expired_filtered"] += 1
                         continue
@@ -603,7 +641,10 @@ def fetch_jita_public_bpc_contracts(
                     if require_title_hint and normalized_name:
                         title = _normalize_title(_row_value(contract, "title"))
                         short_name = normalized_name.replace(" blueprint", "").strip()
-                        if not title or (normalized_name not in title and (not short_name or short_name not in title)):
+                        if not title or (
+                            normalized_name not in title
+                            and (not short_name or short_name not in title)
+                        ):
                             stats["title_filtered"] += 1
                             continue
 
@@ -669,7 +710,9 @@ def fetch_jita_public_bpc_contracts(
             issued_at = str(_row_value(contract, "date_issued") or "")
             expires_at = str(_row_value(contract, "date_expired") or "")
             runs = max(1, sum(max(1, int(match.get("runs") or 1)) for match in matches))
-            copies = max(1, sum(max(1, int(match.get("copies") or 1)) for match in matches))
+            copies = max(
+                1, sum(max(1, int(match.get("copies") or 1)) for match in matches)
+            )
             me_values = [int(match.get("me") or 0) for match in matches]
             te_values = [int(match.get("te") or 0) for match in matches]
             me = min(me_values) if me_values else 0
@@ -681,10 +724,16 @@ def fetch_jita_public_bpc_contracts(
                     "contract_id": contract_id,
                     "title": str(_row_value(contract, "title") or "").strip(),
                     "issuer_id": int(_row_value(contract, "issuer_id") or 0),
-                    "start_location_id": int(_row_value(contract, "start_location_id") or 0),
-                    "end_location_id": int(_row_value(contract, "end_location_id") or 0),
+                    "start_location_id": int(
+                        _row_value(contract, "start_location_id") or 0
+                    ),
+                    "end_location_id": int(
+                        _row_value(contract, "end_location_id") or 0
+                    ),
                     "price_total": total_price_float,
-                    "price_per_run": (total_price_float / runs) if runs > 0 else total_price_float,
+                    "price_per_run": (
+                        (total_price_float / runs) if runs > 0 else total_price_float
+                    ),
                     "runs": runs,
                     "copies": copies,
                     "me": me,

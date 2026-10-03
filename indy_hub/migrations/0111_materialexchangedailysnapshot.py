@@ -26,7 +26,9 @@ class Migration(migrations.Migration):
                 ("corporation_id", models.BigIntegerField(db_index=True)),
                 (
                     "wallet_division",
-                    models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(7)]),
+                    models.IntegerField(
+                        validators=[MinValueValidator(1), MaxValueValidator(7)]
+                    ),
                 ),
                 ("snapshot_date", models.DateField(db_index=True)),
                 (
@@ -40,12 +42,16 @@ class Migration(migrations.Migration):
                 ("inventory_hangar_count", models.IntegerField(default=0)),
                 (
                     "wallet_balance",
-                    models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=20, null=True
+                    ),
                 ),
                 ("wallet_balance_available", models.BooleanField(default=False)),
                 (
                     "total_asset_value",
-                    models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=20, null=True
+                    ),
                 ),
                 ("assets_scope_missing", models.BooleanField(default=False)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),

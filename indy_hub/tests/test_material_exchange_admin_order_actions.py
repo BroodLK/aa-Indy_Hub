@@ -108,7 +108,9 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
 
         order.refresh_from_db()
         self.assertEqual(order.status, MaterialExchangeSellOrder.Status.REJECTED)
-        self.assertEqual(order.status_before_rejection, MaterialExchangeSellOrder.Status.VALIDATED)
+        self.assertEqual(
+            order.status_before_rejection, MaterialExchangeSellOrder.Status.VALIDATED
+        )
 
         response = self.client.post(
             reverse("indy_hub:material_exchange_reopen_sell", args=[order.id]),
@@ -121,7 +123,9 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
         self.assertEqual(order.status_before_rejection, "")
 
     @patch("indy_hub.notifications.notify_user")
-    def test_reject_and_reopen_buy_order_restores_previous_status(self, mock_notify_user) -> None:
+    def test_reject_and_reopen_buy_order_restores_previous_status(
+        self, mock_notify_user
+    ) -> None:
         order = MaterialExchangeBuyOrder.objects.create(
             config=self.config,
             buyer=self.member,
@@ -138,7 +142,9 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
 
         order.refresh_from_db()
         self.assertEqual(order.status, MaterialExchangeBuyOrder.Status.REJECTED)
-        self.assertEqual(order.status_before_rejection, MaterialExchangeBuyOrder.Status.VALIDATED)
+        self.assertEqual(
+            order.status_before_rejection, MaterialExchangeBuyOrder.Status.VALIDATED
+        )
 
         response = self.client.post(
             reverse("indy_hub:material_exchange_reopen_buy", args=[order.id]),
@@ -151,7 +157,9 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
         self.assertEqual(order.status_before_rejection, "")
 
     @patch("indy_hub.notifications.notify_user")
-    def test_reject_buy_order_quietly_skips_buyer_notification(self, mock_notify_user) -> None:
+    def test_reject_buy_order_quietly_skips_buyer_notification(
+        self, mock_notify_user
+    ) -> None:
         order = MaterialExchangeBuyOrder.objects.create(
             config=self.config,
             buyer=self.member,
@@ -161,14 +169,19 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
         self.client.force_login(self.admin)
         response = self.client.post(
             reverse("indy_hub:material_exchange_reject_buy", args=[order.id]),
-            {"next": reverse("indy_hub:material_exchange_history"), "notify_buyer": "0"},
+            {
+                "next": reverse("indy_hub:material_exchange_history"),
+                "notify_buyer": "0",
+            },
         )
         self.assertEqual(response.status_code, 302)
         mock_notify_user.assert_not_called()
 
         order.refresh_from_db()
         self.assertEqual(order.status, MaterialExchangeBuyOrder.Status.REJECTED)
-        self.assertEqual(order.status_before_rejection, MaterialExchangeBuyOrder.Status.DRAFT)
+        self.assertEqual(
+            order.status_before_rejection, MaterialExchangeBuyOrder.Status.DRAFT
+        )
 
     def test_history_page_shows_reopen_actions_for_rejected_orders(self) -> None:
         sell_order = MaterialExchangeSellOrder.objects.create(
@@ -185,8 +198,16 @@ class MaterialExchangeAdminOrderActionsTests(TestCase):
         )
 
         self.client.force_login(self.admin)
-        response = self.client.get(reverse("indy_hub:material_exchange_history") + "?status=rejected")
+        response = self.client.get(
+            reverse("indy_hub:material_exchange_history") + "?status=rejected"
+        )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, reverse("indy_hub:material_exchange_reopen_sell", args=[sell_order.id]))
-        self.assertContains(response, reverse("indy_hub:material_exchange_reopen_buy", args=[buy_order.id]))
+        self.assertContains(
+            response,
+            reverse("indy_hub:material_exchange_reopen_sell", args=[sell_order.id]),
+        )
+        self.assertContains(
+            response,
+            reverse("indy_hub:material_exchange_reopen_buy", args=[buy_order.id]),
+        )

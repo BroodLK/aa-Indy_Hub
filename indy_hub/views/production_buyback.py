@@ -219,7 +219,6 @@ def production_buyback_availability(request):
                 "location_label": str(row.get("buy_location_label") or ""),
             }
 
-        # AA Example App
         from ..services.reprocessing import (
             get_ore_type_ids,
             get_portion_size_map,
@@ -282,7 +281,10 @@ def production_buyback_availability(request):
                     }
 
                 for mineral_type_id, base_yield_per_portion in outputs.items():
-                    if base_yield_per_portion <= 0 or mineral_type_id not in requested_set:
+                    if (
+                        base_yield_per_portion <= 0
+                        or mineral_type_id not in requested_set
+                    ):
                         continue
                     refined_yield_per_portion = int(
                         math.floor(Decimal(str(base_yield_per_portion)) * refine_ratio)
@@ -336,7 +338,11 @@ def production_buyback_availability(request):
             "stock_stale": stock_age is None or stock_age > STOCK_STALE_AFTER_SECONDS,
             "buy_page_url": reverse("indy_hub:material_exchange_buy"),
             "ore_suggestions": ore_suggestions,
-            "refine_rate_percent": float(refine_rate_percent if "refine_rate_percent" in locals() else Decimal("84.2")),
+            "refine_rate_percent": float(
+                refine_rate_percent
+                if "refine_rate_percent" in locals()
+                else Decimal("84.2")
+            ),
         }
     )
 

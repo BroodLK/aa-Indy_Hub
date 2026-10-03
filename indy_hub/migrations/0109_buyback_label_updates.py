@@ -168,7 +168,10 @@ class Migration(migrations.Migration):
             name="admin_force_unavailable",
             field=models.BooleanField(
                 default=False,
-                help_text=("When enabled by a Buyback admin, the reprocessor cannot self-enable " "availability."),
+                help_text=(
+                    "When enabled by a Buyback admin, the reprocessor cannot self-enable "
+                    "availability."
+                ),
             ),
         ),
     ]

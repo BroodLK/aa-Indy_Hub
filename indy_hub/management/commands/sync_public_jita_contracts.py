@@ -35,7 +35,9 @@ def _estimate_contract_cache_size_bytes() -> int:
         total = 0
         with connection.cursor() as cursor:
             for table_name in table_names:
-                cursor.execute("SELECT COALESCE(pg_total_relation_size(%s), 0)", [table_name])
+                cursor.execute(
+                    "SELECT COALESCE(pg_total_relation_size(%s), 0)", [table_name]
+                )
                 row = cursor.fetchone() or [0]
                 total += int(row[0] or 0)
         return total
@@ -84,7 +86,9 @@ class Command(BaseCommand):
         force = bool(options.get("force"))
         max_pages = max(1, int(options.get("max_pages") or 2000))
 
-        self.stdout.write(f"Syncing Public Jita contracts (force={force}, max_pages={max_pages})...")
+        self.stdout.write(
+            f"Syncing Public Jita contracts (force={force}, max_pages={max_pages})..."
+        )
 
         result = sync_public_jita_contract_cache(force=force, max_pages=max_pages)
         meta = get_public_jita_contract_cache_meta()
@@ -94,9 +98,13 @@ class Command(BaseCommand):
         size_bytes = _estimate_contract_cache_size_bytes()
 
         if result.get("ok"):
-            self.stdout.write(self.style.SUCCESS("Public Jita contract sync completed."))
+            self.stdout.write(
+                self.style.SUCCESS("Public Jita contract sync completed.")
+            )
         elif str(result.get("skipped")) == "locked":
-            self.stdout.write(self.style.WARNING("Sync skipped: another sync run is in progress."))
+            self.stdout.write(
+                self.style.WARNING("Sync skipped: another sync run is in progress.")
+            )
         else:
             self.stdout.write(self.style.WARNING("Sync completed with warnings."))
 
@@ -108,4 +116,6 @@ class Command(BaseCommand):
             f"is_cached={bool(meta.get('is_cached'))}"
         )
         self.stdout.write(f"Rows: contracts={contracts_count} items={items_count}")
-        self.stdout.write(f"Approx size: {size_bytes} bytes ({_format_bytes(size_bytes)})")
+        self.stdout.write(
+            f"Approx size: {size_bytes} bytes ({_format_bytes(size_bytes)})"
+        )

@@ -97,6 +97,7 @@ class ParseBpcSourceTests(SimpleTestCase):
 
 class BlueprintSourceTests(TestCase):
     def setUp(self) -> None:
+        # Alliance Auth (External Libs)
         from eve_sde.models import Constellation, NPCStation, Region, SolarSystem
 
         self.region_forge, _ = Region.objects.get_or_create(
@@ -232,7 +233,9 @@ class BlueprintSourceTests(TestCase):
 
     def test_list_asset_sources_returns_regions_and_systems(self) -> None:
         data = list_asset_sources(self.user, blueprints=True)
-        self.assertTrue(any(r["region_id"] == REGION_THE_FORGE for r in data["regions"]))
+        self.assertTrue(
+            any(r["region_id"] == REGION_THE_FORGE for r in data["regions"])
+        )
         self.assertTrue(any(s["system_id"] == SYSTEM_JITA for s in data["systems"]))
 
 

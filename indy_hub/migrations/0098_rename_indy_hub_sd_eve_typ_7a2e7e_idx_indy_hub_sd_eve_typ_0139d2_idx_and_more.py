@@ -15,7 +15,9 @@ class Migration(migrations.Migration):
             model_name="esicontractitem",
             name="raw_quantity",
             field=models.IntegerField(
-                blank=True, help_text="Raw quantity from ESI; -1 or -2 indicates item is inside a container", null=True
+                blank=True,
+                help_text="Raw quantity from ESI; -1 or -2 indicates item is inside a container",
+                null=True,
             ),
         ),
         migrations.AlterField(

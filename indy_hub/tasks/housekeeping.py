@@ -66,7 +66,9 @@ def _select_users_for_stale_snapshots(
     snapshot_map = {int(cid): last for cid, last in rows}
     cutoff = now - timedelta(hours=stale_hours)
 
-    stale_ids = {int(cid) for cid, last in snapshot_map.items() if last and last < cutoff}
+    stale_ids = {
+        int(cid) for cid, last in snapshot_map.items() if last and last < cutoff
+    }
     missing_ids = set(character_ids) - set(snapshot_map)
     target_ids = stale_ids | missing_ids
 
@@ -96,7 +98,9 @@ def refresh_stale_snapshots() -> dict[str, int]:
             .distinct()
         )
         skill_user_ids = _select_users_for_stale_snapshots(
-            token_pairs=[(int(uid), int(cid)) for uid, cid in skill_tokens if uid and cid],
+            token_pairs=[
+                (int(uid), int(cid)) for uid, cid in skill_tokens if uid and cid
+            ],
             snapshot_model=IndustrySkillSnapshot,
             stale_hours=SKILL_SNAPSHOT_STALE_HOURS,
             now=now,
@@ -123,7 +127,9 @@ def refresh_stale_snapshots() -> dict[str, int]:
             .distinct()
         )
         role_user_ids = _select_users_for_stale_snapshots(
-            token_pairs=[(int(uid), int(cid)) for uid, cid in role_tokens if uid and cid],
+            token_pairs=[
+                (int(uid), int(cid)) for uid, cid in role_tokens if uid and cid
+            ],
             snapshot_model=CharacterRoles,
             stale_hours=ROLE_SNAPSHOT_STALE_HOURS,
             now=now,
@@ -164,7 +170,11 @@ def refresh_stale_snapshots() -> dict[str, int]:
                 ).values_list("character_id", "last_updated")
                 status_map = {int(cid): last for cid, last in status_rows}
                 missing = set(char_ids) - set(status_map)
-                stale = {int(cid) for cid, last in status_map.items() if last and last < cutoff}
+                stale = {
+                    int(cid)
+                    for cid, last in status_map.items()
+                    if last and last < cutoff
+                }
                 if missing or stale:
                     user = User.objects.filter(id=user_id).first()
                     if not user:

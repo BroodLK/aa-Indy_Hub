@@ -44,7 +44,7 @@ dynamic = [
 ]
 dependencies = [
     "allianceauth>4.2,<6",
-    "django-esi>=8,<10",
+    "django-esi>=8,<11",
     "django-eveonline-sde>=0.0.1b9",
     "requests>=2.31",
 ]
@@ -79,7 +79,7 @@ known_django = [ "django" ]
 skip_gitignore = true
 
 [tool.flake8]
-exclude = [ ".git", "*migrations*", ".tox", "dist", "htmlcov" ]
+exclude = [ ".git", "*migrations*", ".tox", "dist", "htmlcov", ".venv", "node_modules" ]
 max-line-length = 119
 select = [ "C", "E", "F", "W", "B", "B950" ]
 ignore = [ "E203", "E231", "E501", "W503", "W291", "W293" ]

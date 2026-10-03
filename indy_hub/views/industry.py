@@ -1454,11 +1454,13 @@ def personnal_bp_list(request, scope="character"):
         # Fetch allowed type IDs for the selected activities
         id_list = ",".join(str(i) for i in filter_ids)
         with connection.cursor() as cursor:
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 SELECT DISTINCT eve_type_id
                 FROM indy_hub_sdeindustryactivityproduct
                 WHERE activity_id IN ({id_list})
-                """)
+                """
+            )
             allowed_type_ids = [row[0] for row in cursor.fetchall()]
         owner_kind_filter = (
             Blueprint.OwnerKind.CORPORATION

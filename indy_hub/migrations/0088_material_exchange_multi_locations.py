@@ -89,7 +89,10 @@ class Migration(migrations.Migration):
             model_name="materialexchangeconfig",
             name="location_match_mode",
             field=models.CharField(
-                choices=[("name_or_id", "Match by name or ID"), ("strict_id", "Match by ID only")],
+                choices=[
+                    ("name_or_id", "Match by name or ID"),
+                    ("strict_id", "Match by ID only"),
+                ],
                 default="name_or_id",
                 help_text="How contract locations are matched during validation.",
                 max_length=20,

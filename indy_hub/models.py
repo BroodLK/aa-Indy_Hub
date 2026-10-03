@@ -3942,7 +3942,9 @@ class CapitalShipOrder(models.Model):
     upfront_payment_agreed_at = models.DateTimeField(
         null=True,
         blank=True,
-        help_text=_("When the user acknowledged and agreed to the upfront payment terms."),
+        help_text=_(
+            "When the user acknowledged and agreed to the upfront payment terms."
+        ),
     )
     anomaly_reason = models.TextField(blank=True)
     notes = models.TextField(blank=True)

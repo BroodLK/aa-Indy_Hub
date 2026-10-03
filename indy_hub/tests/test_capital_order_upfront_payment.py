@@ -1,10 +1,11 @@
-# Django
-from unittest.mock import patch
+# Standard Library
 from decimal import Decimal
+from unittest.mock import patch
+
+# Django
 from django.contrib.auth.models import Permission, User
 from django.test import TestCase
 from django.urls import reverse
-from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
@@ -52,11 +53,17 @@ class CapitalOrderUpfrontPaymentTests(TestCase):
             hangar_division=1,
         )
 
-        self.pilot = User.objects.create_user(username="test_pilot", password="password")
-        self.pilot.user_permissions.add(Permission.objects.get(codename="can_access_indy_hub"))
+        self.pilot = User.objects.create_user(
+            username="test_pilot", password="password"
+        )
+        self.pilot.user_permissions.add(
+            Permission.objects.get(codename="can_access_indy_hub")
+        )
         assign_main_character(self.pilot, character_id=9001)
 
-        self.manager = User.objects.create_user(username="cap_manager", password="password")
+        self.manager = User.objects.create_user(
+            username="cap_manager", password="password"
+        )
         self.manager.user_permissions.add(
             Permission.objects.get(codename="can_access_indy_hub"),
             Permission.objects.get(codename="can_manage_capital_orders"),
@@ -67,7 +74,9 @@ class CapitalOrderUpfrontPaymentTests(TestCase):
         self.client.force_login(user)
 
     @patch("indy_hub.views.capital_ship_orders._load_capital_ship_options_for_editor")
-    def test_config_view_saves_upfront_payment_settings(self, mock_editor_options) -> None:
+    def test_config_view_saves_upfront_payment_settings(
+        self, mock_editor_options
+    ) -> None:
         mock_editor_options.return_value = [
             {
                 "type_id": 19720,
@@ -117,7 +126,9 @@ class CapitalOrderUpfrontPaymentTests(TestCase):
             }
         ]
         self.config.capital_upfront_payment_required = True
-        self.config.capital_upfront_payment_reason = "Payment must be secured before build."
+        self.config.capital_upfront_payment_reason = (
+            "Payment must be secured before build."
+        )
         self.config.capital_upfront_payment_refunds_allowed = True
         self.config.save(
             update_fields=[
@@ -151,7 +162,9 @@ class CapitalOrderUpfrontPaymentTests(TestCase):
             }
         ]
         self.config.capital_upfront_payment_required = True
-        self.config.capital_upfront_payment_reason = "Payment must be secured before build."
+        self.config.capital_upfront_payment_reason = (
+            "Payment must be secured before build."
+        )
         self.config.capital_upfront_payment_refunds_allowed = False
         self.config.save(
             update_fields=[
@@ -190,6 +203,8 @@ class CapitalOrderUpfrontPaymentTests(TestCase):
         order = CapitalShipOrder.objects.first()
         self.assertIsNotNone(order)
         self.assertTrue(order.upfront_payment_required)
-        self.assertEqual(order.upfront_payment_reason, "Payment must be secured before build.")
+        self.assertEqual(
+            order.upfront_payment_reason, "Payment must be secured before build."
+        )
         self.assertFalse(order.upfront_payment_refunds_allowed)
         self.assertIsNotNone(order.upfront_payment_agreed_at)

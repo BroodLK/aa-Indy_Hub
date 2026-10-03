@@ -16,7 +16,8 @@ class Command(BaseCommand):
         before_contracts = PublicJitaContract.objects.count()
         before_items = PublicJitaContractItem.objects.count()
         self.stdout.write(
-            f"Clearing public Jita contract cache rows " f"(contracts={before_contracts}, items={before_items})..."
+            f"Clearing public Jita contract cache rows "
+            f"(contracts={before_contracts}, items={before_items})..."
         )
 
         with transaction.atomic():

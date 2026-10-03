@@ -50,7 +50,9 @@ def normalize_ship_class_key(raw_value: str) -> str:
     if not normalized:
         return ""
     normalized = normalized.replace("-", "_").replace(" ", "_")
-    normalized = "".join(char if (char.isalnum() or char == "_") else "_" for char in normalized).strip("_")
+    normalized = "".join(
+        char if (char.isalnum() or char == "_") else "_" for char in normalized
+    ).strip("_")
     return normalized
 
 
@@ -124,18 +126,25 @@ def _load_base_capital_ship_options() -> list[dict[str, object]]:
     return options
 
 
-def _sort_capital_ship_options(options: list[dict[str, object]]) -> list[dict[str, object]]:
+def _sort_capital_ship_options(
+    options: list[dict[str, object]],
+) -> list[dict[str, object]]:
     return sorted(
         options,
         key=lambda row: (
             _SHIP_CLASS_ORDER.get(normalize_ship_class_key(row.get("ship_class")), 99),
-            str(row.get("ship_class_label") or default_ship_class_label(str(row.get("ship_class") or ""))).lower(),
+            str(
+                row.get("ship_class_label")
+                or default_ship_class_label(str(row.get("ship_class") or ""))
+            ).lower(),
             str(row.get("type_name") or "").lower(),
         ),
     )
 
 
-def load_capital_ship_options(*, config: MaterialExchangeConfig | None = None) -> list[dict[str, object]]:
+def load_capital_ship_options(
+    *, config: MaterialExchangeConfig | None = None
+) -> list[dict[str, object]]:
     """Return enabled capital hull options for the current config."""
     base_options = _load_base_capital_ship_options()
     if not config:
@@ -147,7 +156,8 @@ def load_capital_ship_options(*, config: MaterialExchangeConfig | None = None) -
             "type_name": str(row["type_name"]),
             "ship_class": normalize_ship_class_key(row.get("ship_class")),
             "ship_class_label": str(
-                row.get("ship_class_label") or default_ship_class_label(str(row.get("ship_class") or ""))
+                row.get("ship_class_label")
+                or default_ship_class_label(str(row.get("ship_class") or ""))
             ),
         }
         for row in base_options
@@ -161,7 +171,8 @@ def load_capital_ship_options(*, config: MaterialExchangeConfig | None = None) -
         disabled_type_ids = set()
     try:
         disabled_groups = {
-            normalize_ship_class_key(group_value) for group_value in config.get_capital_disabled_ship_groups()
+            normalize_ship_class_key(group_value)
+            for group_value in config.get_capital_disabled_ship_groups()
         }
         disabled_groups.discard("")
     except Exception:
@@ -193,7 +204,8 @@ def load_capital_ship_options_for_editor(
             "type_name": str(row["type_name"]),
             "ship_class": normalize_ship_class_key(row.get("ship_class")),
             "ship_class_label": str(
-                row.get("ship_class_label") or default_ship_class_label(str(row.get("ship_class") or ""))
+                row.get("ship_class_label")
+                or default_ship_class_label(str(row.get("ship_class") or ""))
             ),
             "enabled": True,
         }

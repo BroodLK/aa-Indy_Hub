@@ -10,7 +10,9 @@ def backfill_sell_order_source_location(apps, schema_editor):
 
     config_cache = {}
 
-    for order in MaterialExchangeSellOrder.objects.filter(source_location_id__isnull=True).iterator():
+    for order in MaterialExchangeSellOrder.objects.filter(
+        source_location_id__isnull=True
+    ).iterator():
         config = config_cache.get(order.config_id)
         if config is None:
             config = MaterialExchangeConfig.objects.filter(id=order.config_id).first()
@@ -46,7 +48,9 @@ def backfill_sell_order_source_location(apps, schema_editor):
                 source_location_id = primary_id
 
         if not source_location_name:
-            source_location_name = str(getattr(config, "structure_name", None) or "").strip()
+            source_location_name = str(
+                getattr(config, "structure_name", None) or ""
+            ).strip()
         if not source_location_name and source_location_id:
             source_location_name = f"Structure {source_location_id}"
 

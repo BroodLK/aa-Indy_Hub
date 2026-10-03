@@ -76,7 +76,9 @@ class MaterialExchangeBuyMultibuyParseTests(TestCase):
             "indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts",
             side_effect=self._resolve_type_ids,
         ):
-            rows, invalid_lines = _parse_sell_estimate_input("10 Tritanium\nPyerite 5\n3 Tritanium\nBad Line")
+            rows, invalid_lines = _parse_sell_estimate_input(
+                "10 Tritanium\nPyerite 5\n3 Tritanium\nBad Line"
+            )
 
         rows_by_type = {int(row["type_id"]): int(row["quantity"]) for row in rows}
         self.assertEqual(rows_by_type, {34: 13, 35: 5})

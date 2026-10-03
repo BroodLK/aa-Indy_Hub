@@ -69,6 +69,7 @@ class FuzzworkPriceCacheTests(TestCase):
 
     def test_failed_batch_is_not_cached_as_unpriced(self):
         # Local
+        # AA Example App
         from indy_hub.services.fuzzwork import FuzzworkError
 
         with patch("indy_hub.services.fuzzwork.fetch_fuzzwork_prices") as mock_fetch:
@@ -108,11 +109,20 @@ class SellPageStockSyncDispatchTests(TestCase):
     @patch("indy_hub.views.material_exchange.messages")
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
-    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
-    @patch("indy_hub.views.material_exchange.get_user_assets_cached", return_value=([], False))
+    @patch(
+        "indy_hub.views.material_exchange._get_corp_name_for_hub",
+        return_value="Test Corp",
+    )
+    @patch(
+        "indy_hub.views.material_exchange.get_user_assets_cached",
+        return_value=([], False),
+    )
     @patch("indy_hub.views.material_exchange.sync_material_exchange_stock")
     @patch("indy_hub.views.material_exchange._get_material_exchange_config")
-    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch(
+        "indy_hub.views.material_exchange._is_material_exchange_enabled",
+        return_value=True,
+    )
     @patch("indy_hub.views.material_exchange.render")
     def test_stale_stock_dispatches_sync_task_instead_of_running_it(
         self,
@@ -141,11 +151,20 @@ class SellPageStockSyncDispatchTests(TestCase):
     @patch("indy_hub.views.material_exchange.messages")
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
-    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
-    @patch("indy_hub.views.material_exchange.get_user_assets_cached", return_value=([], False))
+    @patch(
+        "indy_hub.views.material_exchange._get_corp_name_for_hub",
+        return_value="Test Corp",
+    )
+    @patch(
+        "indy_hub.views.material_exchange.get_user_assets_cached",
+        return_value=([], False),
+    )
     @patch("indy_hub.views.material_exchange.sync_material_exchange_stock")
     @patch("indy_hub.views.material_exchange._get_material_exchange_config")
-    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch(
+        "indy_hub.views.material_exchange._is_material_exchange_enabled",
+        return_value=True,
+    )
     @patch("indy_hub.views.material_exchange.render")
     def test_repeat_views_do_not_queue_duplicate_sync_tasks(
         self,
@@ -173,11 +192,20 @@ class SellPageStockSyncDispatchTests(TestCase):
     @patch("indy_hub.views.material_exchange.messages")
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
-    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
-    @patch("indy_hub.views.material_exchange.get_user_assets_cached", return_value=([], False))
+    @patch(
+        "indy_hub.views.material_exchange._get_corp_name_for_hub",
+        return_value="Test Corp",
+    )
+    @patch(
+        "indy_hub.views.material_exchange.get_user_assets_cached",
+        return_value=([], False),
+    )
     @patch("indy_hub.views.material_exchange.sync_material_exchange_stock")
     @patch("indy_hub.views.material_exchange._get_material_exchange_config")
-    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch(
+        "indy_hub.views.material_exchange._is_material_exchange_enabled",
+        return_value=True,
+    )
     @patch("indy_hub.views.material_exchange.render")
     def test_fresh_stock_does_not_dispatch_sync_task(
         self,
@@ -223,17 +251,29 @@ class SellPageAssetReadTests(TestCase):
 
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
-    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
-    @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config", return_value=None)
+    @patch(
+        "indy_hub.views.material_exchange._get_corp_name_for_hub",
+        return_value="Test Corp",
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_allowed_type_ids_for_config",
+        return_value=None,
+    )
     @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange.get_user_assets_cached")
-    @patch("indy_hub.views.material_exchange._get_reserved_sell_quantities", return_value={})
+    @patch(
+        "indy_hub.views.material_exchange._get_reserved_sell_quantities",
+        return_value={},
+    )
     @patch(
         "indy_hub.views.material_exchange._get_item_price_override_maps",
         return_value=({}, {}),
     )
     @patch("indy_hub.views.material_exchange._get_material_exchange_config")
-    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch(
+        "indy_hub.views.material_exchange._is_material_exchange_enabled",
+        return_value=True,
+    )
     @patch("indy_hub.views.material_exchange.render")
     def test_get_reads_cached_assets_once(
         self,
@@ -253,7 +293,9 @@ class SellPageAssetReadTests(TestCase):
         self.config.save(update_fields=["last_stock_sync"])
         mock_get_config.return_value = self.config
         mock_render.return_value = HttpResponse("ok")
-        mock_fetch_prices.return_value = {34: {"buy": Decimal("10"), "sell": Decimal("11")}}
+        mock_fetch_prices.return_value = {
+            34: {"buy": Decimal("10"), "sell": Decimal("11")}
+        }
         mock_get_user_assets_cached.return_value = (
             [
                 {

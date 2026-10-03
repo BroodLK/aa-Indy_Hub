@@ -54,7 +54,10 @@ def _indy_hub_permission_label(permission):
         "can_manage_capital_orders",
         "can_build_capital_orders",
     }
-    if permission.content_type.app_label == "indy_hub" and permission.codename in target_codenames:
+    if (
+        permission.content_type.app_label == "indy_hub"
+        and permission.codename in target_codenames
+    ):
         return f"indy_hub | {permission.name}"
     return str(permission)
 
@@ -344,21 +347,30 @@ class NotificationWebhookAdmin(admin.ModelAdmin):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             corp_choices = list(
-                CorporationSharingSetting.objects.values_list("corporation_id", "corporation_name")
+                CorporationSharingSetting.objects.values_list(
+                    "corporation_id", "corporation_name"
+                )
                 .distinct()
                 .order_by("corporation_name")
             )
             self.fields["corporations"].choices = [
-                (str(corp_id), corp_name or str(corp_id)) for corp_id, corp_name in corp_choices
+                (str(corp_id), corp_name or str(corp_id))
+                for corp_id, corp_name in corp_choices
             ]
             if "ping_here" in self.fields:
-                self.fields["ping_here"].help_text = "Send an @here mention with webhook notifications."
+                self.fields["ping_here"].help_text = (
+                    "Send an @here mention with webhook notifications."
+                )
 
             instance = getattr(self, "instance", None)
             if instance and instance.pk and instance.corporation_ids:
-                self.fields["corporations"].initial = [str(corp_id) for corp_id in instance.corporation_ids]
+                self.fields["corporations"].initial = [
+                    str(corp_id) for corp_id in instance.corporation_ids
+                ]
 
-            selected_type = self.data.get("webhook_type") or (instance.webhook_type if instance else None)
+            selected_type = self.data.get("webhook_type") or (
+                instance.webhook_type if instance else None
+            )
             if selected_type == NotificationWebhook.TYPE_MATERIAL_EXCHANGE:
                 self.fields["corporations"].disabled = True
 
@@ -515,8 +527,12 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
             super().__init__(*args, **kwargs)
             self.fields["channel_id"].label = "Manual channel ID"
             self.fields["channel_id"].required = False
-            self.fields["channel_id"].help_text = "Used when the target channel is not listed above."
-            self.fields["ping_role_id"].help_text = "Optional Discord role ID to mention when posting the poll."
+            self.fields["channel_id"].help_text = (
+                "Used when the target channel is not listed above."
+            )
+            self.fields["ping_role_id"].help_text = (
+                "Optional Discord role ID to mention when posting the poll."
+            )
             self.fields["current_winner_option"].help_text = (
                 "Optional seed for the current winner. Leave blank to let the first result establish it."
             )
@@ -559,7 +575,9 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                     instance = getattr(self, "instance", None)
                     if instance and instance.pk and instance.crontab_schedule_id:
                         used_crontab_ids.append(instance.crontab_schedule_id)
-                    for crontab in CrontabSchedule.objects.filter(id__in=sorted(set(used_crontab_ids))).order_by(
+                    for crontab in CrontabSchedule.objects.filter(
+                        id__in=sorted(set(used_crontab_ids))
+                    ).order_by(
                         "timezone",
                         "month_of_year",
                         "day_of_month",
@@ -568,7 +586,9 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                         "minute",
                     ):
                         label = getattr(crontab, "human_readable", str(crontab))
-                        crontab_choices.append((str(crontab.id), f"{label} [#{crontab.id}]"))
+                        crontab_choices.append(
+                            (str(crontab.id), f"{label} [#{crontab.id}]")
+                        )
                 except Exception:
                     pass
             self.fields["crontab_schedule_id"].choices = crontab_choices
@@ -579,7 +599,9 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                 if instance.channel_id and str(instance.channel_id) in known_ids:
                     self.fields["known_channel_id"].initial = str(instance.channel_id)
                 if instance.crontab_schedule_id:
-                    self.fields["crontab_schedule_id"].initial = str(instance.crontab_schedule_id)
+                    self.fields["crontab_schedule_id"].initial = str(
+                        instance.crontab_schedule_id
+                    )
 
         def clean(self):
             cleaned = super().clean()
@@ -593,7 +615,11 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
                     "Select a known channel or provide a manual Discord channel ID.",
                 )
 
-            options = [line.strip() for line in (cleaned.get("options_text") or "").splitlines() if line.strip()]
+            options = [
+                line.strip()
+                for line in (cleaned.get("options_text") or "").splitlines()
+                if line.strip()
+            ]
             crontab_schedule_id = (cleaned.get("crontab_schedule_id") or "").strip()
             if not crontab_schedule_id:
                 self.add_error(
@@ -615,7 +641,11 @@ class WeeklyMiningPollConfigAdmin(admin.ModelAdmin):
             return instance
 
     form = WeeklyMiningPollConfigForm
-    actions = ["enable_selected_configs", "disable_selected_configs", "post_selected_now"]
+    actions = [
+        "enable_selected_configs",
+        "disable_selected_configs",
+        "post_selected_now",
+    ]
     list_display = [
         "system_name",
         "poll_name",
@@ -1186,7 +1216,10 @@ class ReprocessingServiceRequestAdmin(admin.ModelAdmin):
         "processor_character_name",
     ]
     readonly_fields = ["created_at", "updated_at"]
-    inlines = [ReprocessingServiceRequestItemInline, ReprocessingServiceRequestOutputInline]
+    inlines = [
+        ReprocessingServiceRequestItemInline,
+        ReprocessingServiceRequestOutputInline,
+    ]
 
 
 @admin.register(MaterialExchangeTransaction)

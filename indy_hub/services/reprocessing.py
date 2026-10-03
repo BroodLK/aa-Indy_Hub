@@ -5,9 +5,9 @@ from __future__ import annotations
 # Standard Library
 import math
 import re
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from collections.abc import Iterable
+from decimal import ROUND_FLOOR, Decimal
 from functools import lru_cache
-from typing import Iterable
 
 # Django
 from django.db import connection, models
@@ -565,11 +565,11 @@ def get_ore_type_ids(type_ids: Iterable[int]) -> set[int]:
     Matches asteroid category (25) OR names containing "Compressed" whose market
     group ancestry (up to 5 levels) includes valid raw material groups, OR items
     whose market group ancestry matches any of the industrial raw material groups:
-      - Gas Clouds Materials
-      - Ice Products
-      - Minerals
-      - Raw Materials (Standard Ores, Moon Ores, Ice Ores, Abyssal Materials, etc.)
-      - Reaction Materials
+        - Gas Clouds Materials
+        - Ice Products
+        - Minerals
+        - Raw Materials (Standard Ores, Moon Ores, Ice Ores, Abyssal Materials, etc.)
+        - Reaction Materials
     Excludes "Batch Compressed" and non-industrial items (modules, ships, rigs, drones, etc.).
     Returns empty when SDE isn't available.
     """
@@ -831,7 +831,7 @@ def _get_processing_skill_candidates_from_sde() -> tuple[tuple[int, str], ...]:
                 LEFT JOIN eve_sde_itemcategory c
                     ON c.id = g.category_id
                 WHERE LOWER(COALESCE(t.name_en, t.name, '')) LIKE %s
-                  AND LOWER(COALESCE(c.name_en, c.name, '')) LIKE %s
+                    AND LOWER(COALESCE(c.name_en, c.name, '')) LIKE %s
                 ORDER BY t.id
                 """,
                 ["% processing", "%skill%"],
@@ -1148,10 +1148,8 @@ def contract_items_match_with_tolerance(
         delta = abs(actual_qty - expected_qty)
         if delta > max_delta:
             errors.append(
-                (
-                    f"{get_type_name(type_id)} quantity mismatch: expected {expected_qty:,}, "
-                    f"actual {actual_qty:,} (allowed +/- {max_delta:,})"
-                )
+                f"{get_type_name(type_id)} quantity mismatch: expected {expected_qty:,}, "
+                f"actual {actual_qty:,} (allowed +/- {max_delta:,})"
             )
 
     return (len(errors) == 0), errors
@@ -1438,8 +1436,7 @@ def _solve_optimal_compressed_ore_portions(
 
     tax_multiplier = 1.0 + float(facility_tax_percent or Decimal("0.00")) / 100.0
     mineral_prices_map = {
-        int(k): float(v or Decimal("0.00"))
-        for k, v in (mineral_prices or {}).items()
+        int(k): float(v or Decimal("0.00")) for k, v in (mineral_prices or {}).items()
     }
 
     # Evaluate a portion allocation dictionary {ore_id: portions}
@@ -1497,7 +1494,11 @@ def _solve_optimal_compressed_ore_portions(
             refined_p = pdata["refined_per_portion"]
             cost_p = float(pdata["cost_per_portion"])
             vol_p = float(pdata["vol_per_portion"])
-            weight_p = vol_p if optimization_strategy == "volume" else (cost_p * tax_multiplier)
+            weight_p = (
+                vol_p
+                if optimization_strategy == "volume"
+                else (cost_p * tax_multiplier)
+            )
 
             need_cov = 0.0
             for mid, prod_qty in refined_p.items():
@@ -1545,15 +1546,23 @@ def _solve_optimal_compressed_ore_portions(
     mineral_ids = list(mineral_demands.keys())
     demands = [float(mineral_demands[mid]) for mid in mineral_ids]
     ores_yields = [
-        {mid: float(ore_portion_data[oid]["refined_per_portion"].get(mid, 0.0)) for mid in mineral_ids}
+        {
+            mid: float(ore_portion_data[oid]["refined_per_portion"].get(mid, 0.0))
+            for mid in mineral_ids
+        }
         for oid in ore_ids
     ]
     if optimization_strategy == "volume":
         weights = [float(ore_portion_data[oid]["vol_per_portion"]) for oid in ore_ids]
     else:
-        weights = [float(ore_portion_data[oid]["cost_per_portion"]) * tax_multiplier for oid in ore_ids]
+        weights = [
+            float(ore_portion_data[oid]["cost_per_portion"]) * tax_multiplier
+            for oid in ore_ids
+        ]
 
-    lp_bound, primal_x = _solve_dual_simplex_lp(mineral_ids, demands, ores_yields, weights)
+    lp_bound, primal_x = _solve_dual_simplex_lp(
+        mineral_ids, demands, ores_yields, weights
+    )
 
     # Candidate A: Direct ceiling of non-zero LP variables
     ceil_candidate: dict[int, int] = {}
@@ -1578,7 +1587,10 @@ def _solve_optimal_compressed_ore_portions(
             floor_candidate[oid] = fl_val
             for mid, ref_qty in ore_portion_data[oid]["refined_per_portion"].items():
                 if mid in rem_from_floor:
-                    rem_from_floor[mid] = max(0, rem_from_floor[mid] - int(math.floor(float(ref_qty) * fl_val)))
+                    rem_from_floor[mid] = max(
+                        0,
+                        rem_from_floor[mid] - int(math.floor(float(ref_qty) * fl_val)),
+                    )
 
     if any(q > 0 for q in rem_from_floor.values()):
         # Greedily satisfy residual
@@ -1592,8 +1604,16 @@ def _solve_optimal_compressed_ore_portions(
                 refined_p = pdata["refined_per_portion"]
                 cost_p = float(pdata["cost_per_portion"])
                 vol_p = float(pdata["vol_per_portion"])
-                w_p = vol_p if optimization_strategy == "volume" else (cost_p * tax_multiplier)
-                need_c = sum(min(float(rem_from_floor.get(mid, 0)), float(pq)) for mid, pq in refined_p.items() if rem_from_floor.get(mid, 0) > 0)
+                w_p = (
+                    vol_p
+                    if optimization_strategy == "volume"
+                    else (cost_p * tax_multiplier)
+                )
+                need_c = sum(
+                    min(float(rem_from_floor.get(mid, 0)), float(pq))
+                    for mid, pq in refined_p.items()
+                    if rem_from_floor.get(mid, 0) > 0
+                )
                 if need_c <= 0:
                     continue
                 eff = w_p / need_c
@@ -1603,14 +1623,20 @@ def _solve_optimal_compressed_ore_portions(
             if b_oid is None:
                 break
             b_refined = ore_portion_data[b_oid]["refined_per_portion"]
-            counts = [math.ceil(float(rem_from_floor[m]) / float(pq)) for m, pq in b_refined.items() if rem_from_floor.get(m, 0) > 0 and float(pq) > 0]
+            counts = [
+                math.ceil(float(rem_from_floor[m]) / float(pq))
+                for m, pq in b_refined.items()
+                if rem_from_floor.get(m, 0) > 0 and float(pq) > 0
+            ]
             if not counts:
                 break
             add_p = max(1, min(counts))
             res_portions[b_oid] = res_portions.get(b_oid, 0) + add_p
             for m, pq in b_refined.items():
                 if m in rem_from_floor:
-                    rem_from_floor[m] = max(0, rem_from_floor[m] - int(math.floor(float(pq) * add_p)))
+                    rem_from_floor[m] = max(
+                        0, rem_from_floor[m] - int(math.floor(float(pq) * add_p))
+                    )
 
         is_fl_feas, score_fl, _ = eval_candidate(res_portions)
         if is_fl_feas and (not is_g_feasible or score_fl < best_score):
@@ -1720,7 +1746,9 @@ def calculate_compressed_ore_for_minerals(
             refresh_compressed_ore_prices.delay()
             refresh_queued = True
         except Exception:
-            logger.warning("Unable to queue compressed ore price refresh", exc_info=True)
+            logger.warning(
+                "Unable to queue compressed ore price refresh", exc_info=True
+            )
 
     # Load ore data from cache
     update_progress("Running calculation...")
@@ -1878,7 +1906,8 @@ def calculate_compressed_ore_for_minerals(
                 "type_name": get_type_name(ore_type_id),
                 "quantity": ore_qty,
                 "portion_size": int(ore_portion_data[ore_type_id]["portion_size"]),
-                "portions": ore_qty // int(ore_portion_data[ore_type_id]["portion_size"]),
+                "portions": ore_qty
+                // int(ore_portion_data[ore_type_id]["portion_size"]),
                 "unit_price": ore_unit_price,
                 "total_cost": ore_total_cost,
                 "unit_volume_m3": unit_vol,
@@ -1912,9 +1941,9 @@ def calculate_compressed_ore_for_minerals(
         )
     excess_minerals_details.sort(key=lambda x: x["type_name"])
 
-    net_effective_cost = max(Decimal("0.00"), gross_cost - excess_minerals_value).quantize(
-        Decimal("0.01")
-    )
+    net_effective_cost = max(
+        Decimal("0.00"), gross_cost - excess_minerals_value
+    ).quantize(Decimal("0.01"))
 
     # Logistics Volume Calculations
     raw_minerals_vol_m3 = round(

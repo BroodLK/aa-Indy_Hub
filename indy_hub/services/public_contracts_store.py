@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # Standard Library
 from datetime import timedelta
+from datetime import timezone as dt_timezone
 from decimal import Decimal
 from typing import Any
 
@@ -152,7 +153,7 @@ def _build_rate_limited_result(*, now: timezone.datetime) -> dict[str, Any] | No
         return None
 
     if timezone.is_naive(last_sync_at):
-        last_sync_at = timezone.make_aware(last_sync_at, timezone=timezone.utc)
+        last_sync_at = timezone.make_aware(last_sync_at, timezone=dt_timezone.utc)
 
     next_allowed_at = last_sync_at + timedelta(seconds=MIN_SYNC_INTERVAL_SECONDS)
     retry_in_seconds = int((next_allowed_at - now).total_seconds())

@@ -6,8 +6,8 @@ from __future__ import annotations
 import csv
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 # Alliance Auth (External Libs)
 from eve_sde.models import ItemType
@@ -117,11 +117,15 @@ def _load_market_groups_from_jsonl(
                 continue
             update_buffer.append(SdeMarketGroup(id=group_id, parent_id=parent_id))
             if len(update_buffer) >= batch_size:
-                SdeMarketGroup.objects.bulk_update(update_buffer, ["parent_id"], batch_size=batch_size)
+                SdeMarketGroup.objects.bulk_update(
+                    update_buffer, ["parent_id"], batch_size=batch_size
+                )
                 update_buffer.clear()
 
         if update_buffer:
-            SdeMarketGroup.objects.bulk_update(update_buffer, ["parent_id"], batch_size=batch_size)
+            SdeMarketGroup.objects.bulk_update(
+                update_buffer, ["parent_id"], batch_size=batch_size
+            )
     return created
 
 
@@ -163,7 +167,9 @@ def _load_industry_products_from_jsonl(
 
     _bulk_flush(SdeIndustryActivityProduct, buffer, batch_size=batch_size)
     if skipped:
-        logger.warning("Skipped %s product rows due to missing ItemType entries", skipped)
+        logger.warning(
+            "Skipped %s product rows due to missing ItemType entries", skipped
+        )
     return created
 
 
@@ -205,7 +211,9 @@ def _load_industry_materials_from_jsonl(
 
     _bulk_flush(SdeIndustryActivityMaterial, buffer, batch_size=batch_size)
     if skipped:
-        logger.warning("Skipped %s material rows due to missing ItemType entries", skipped)
+        logger.warning(
+            "Skipped %s material rows due to missing ItemType entries", skipped
+        )
     return created
 
 
@@ -229,14 +237,20 @@ def _load_industry_from_blueprints_jsonl(
 
     def _flush_products() -> None:
         if product_buffer:
-            _bulk_flush(SdeIndustryActivityProduct, product_buffer, batch_size=batch_size)
+            _bulk_flush(
+                SdeIndustryActivityProduct, product_buffer, batch_size=batch_size
+            )
 
     def _flush_materials() -> None:
         if material_buffer:
-            _bulk_flush(SdeIndustryActivityMaterial, material_buffer, batch_size=batch_size)
+            _bulk_flush(
+                SdeIndustryActivityMaterial, material_buffer, batch_size=batch_size
+            )
 
     for row in _iter_jsonl_rows(file_path):
-        eve_type_id = _as_int(row.get("_key")) or _as_int(row.get("typeID") or row.get("blueprintTypeID"))
+        eve_type_id = _as_int(row.get("_key")) or _as_int(
+            row.get("typeID") or row.get("blueprintTypeID")
+        )
         if not eve_type_id:
             continue
         if eve_type_id not in existing_types:
@@ -259,7 +273,9 @@ def _load_industry_from_blueprints_jsonl(
             for product in products:
                 if not isinstance(product, dict):
                     continue
-                product_type_id = _as_int(product.get("typeID") or product.get("productTypeID"))
+                product_type_id = _as_int(
+                    product.get("typeID") or product.get("productTypeID")
+                )
                 if not product_type_id:
                     continue
                 if product_type_id not in existing_types:
@@ -282,7 +298,9 @@ def _load_industry_from_blueprints_jsonl(
             for material in materials:
                 if not isinstance(material, dict):
                     continue
-                material_type_id = _as_int(material.get("typeID") or material.get("materialTypeID"))
+                material_type_id = _as_int(
+                    material.get("typeID") or material.get("materialTypeID")
+                )
                 if not material_type_id:
                     continue
                 if material_type_id not in existing_types:
@@ -343,7 +361,10 @@ def _load_industry_products_from_csv(
             product_type_id = _as_int(row.get("productTypeID"))
             if not eve_type_id or not product_type_id:
                 continue
-            if eve_type_id not in existing_types or product_type_id not in existing_types:
+            if (
+                eve_type_id not in existing_types
+                or product_type_id not in existing_types
+            ):
                 skipped += 1
                 continue
             activity_id = _as_int(row.get("activityID"), 0) or 0
@@ -362,7 +383,9 @@ def _load_industry_products_from_csv(
 
     _bulk_flush(SdeIndustryActivityProduct, buffer, batch_size=batch_size)
     if skipped:
-        logger.warning("Skipped %s product rows due to missing ItemType entries", skipped)
+        logger.warning(
+            "Skipped %s product rows due to missing ItemType entries", skipped
+        )
     return created
 
 
@@ -378,7 +401,9 @@ def load_industry_sde(
     """Load industry activity data (products/materials + market groups) from the SDE."""
 
     if not ItemType.objects.exists():
-        raise SdeIndustryLoadError("ItemType table is empty. Run `python manage.py esde_load_sde` first.")
+        raise SdeIndustryLoadError(
+            "ItemType table is empty. Run `python manage.py esde_load_sde` first."
+        )
 
     folder = Path(sde_folder or DEFAULT_SDE_FOLDER)
 
@@ -431,7 +456,9 @@ def load_industry_sde(
                     cleanup=cleanup,
                 )
             else:
-                raise SdeIndustryLoadError("industryActivityProducts.jsonl not found and no CSV fallback present.")
+                raise SdeIndustryLoadError(
+                    "industryActivityProducts.jsonl not found and no CSV fallback present."
+                )
 
     materials_file = folder / "industryActivityMaterials.jsonl"
     if materials_file.exists():
@@ -441,7 +468,9 @@ def load_industry_sde(
             cleanup=cleanup,
         )
     elif not used_blueprints:
-        logger.warning("industryActivityMaterials.jsonl not found; material requirements will be missing.")
+        logger.warning(
+            "industryActivityMaterials.jsonl not found; material requirements will be missing."
+        )
 
     if download and not keep_sde_folder:
         try:

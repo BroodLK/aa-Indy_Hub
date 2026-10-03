@@ -14,7 +14,9 @@ from indy_hub.tasks.user import update_user_roles_snapshots
 
 class ESIQueueBatchingTests(SimpleTestCase):
     @patch("indy_hub.tasks.industry.update_user_skill_snapshots.apply_async")
-    @patch("indy_hub.tasks.industry.update_character_skill_snapshot_for_character.apply_async")
+    @patch(
+        "indy_hub.tasks.industry.update_character_skill_snapshot_for_character.apply_async"
+    )
     @patch("indy_hub.tasks.industry.Token.objects.filter")
     @patch("indy_hub.tasks.industry._is_user_active", return_value=True)
     @patch("indy_hub.tasks.industry.User.objects.filter")

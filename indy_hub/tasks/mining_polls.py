@@ -24,7 +24,9 @@ def _queue_bot_task(function_name: str, run_id: int) -> bool:
         # Third Party
         from aadiscordbot.tasks import run_task_function
     except Exception:
-        logger.exception("aadiscordbot task queue is unavailable for poll run %s", run_id)
+        logger.exception(
+            "aadiscordbot task queue is unavailable for poll run %s", run_id
+        )
         return False
 
     run_task_function.apply_async(

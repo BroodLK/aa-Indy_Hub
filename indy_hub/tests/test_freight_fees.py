@@ -227,5 +227,8 @@ class FreightFeesServiceTests(SimpleTestCase):
         self.assertEqual(routes[2]["start_location_name"], "Zeta Start")
 
     def test_get_available_routes_from_jita_alias_returns_all_routes(self):
-        with patch("indy_hub.services.freight_fees.get_available_routes", return_value=[{"pricing_id": 1}]):
+        with patch(
+            "indy_hub.services.freight_fees.get_available_routes",
+            return_value=[{"pricing_id": 1}],
+        ):
             self.assertEqual(get_available_routes_from_jita(), [{"pricing_id": 1}])

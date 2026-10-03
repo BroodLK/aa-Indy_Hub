@@ -56,7 +56,9 @@ def apply_markup_with_jita_bounds(
     return price
 
 
-def compute_sell_price_to_member(*, config, jita_buy: Decimal, jita_sell: Decimal) -> Decimal:
+def compute_sell_price_to_member(
+    *, config, jita_buy: Decimal, jita_sell: Decimal
+) -> Decimal:
     """Price when member buys FROM hub (uses config.buy_markup_*)."""
 
     return apply_markup_with_jita_bounds(
@@ -68,7 +70,9 @@ def compute_sell_price_to_member(*, config, jita_buy: Decimal, jita_sell: Decima
     )
 
 
-def compute_buy_price_from_member(*, config, jita_buy: Decimal, jita_sell: Decimal) -> Decimal:
+def compute_buy_price_from_member(
+    *, config, jita_buy: Decimal, jita_sell: Decimal
+) -> Decimal:
     """Price when member sells TO hub (uses config.sell_markup_*)."""
 
     return apply_markup_with_jita_bounds(

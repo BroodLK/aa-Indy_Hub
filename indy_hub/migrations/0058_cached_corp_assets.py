@@ -37,7 +37,9 @@ class Migration(migrations.Migration):
                 ("is_blueprint", models.BooleanField(default=False)),
                 (
                     "synced_at",
-                    models.DateTimeField(db_index=True, default=django.utils.timezone.now),
+                    models.DateTimeField(
+                        db_index=True, default=django.utils.timezone.now
+                    ),
                 ),
             ],
             options={
@@ -48,7 +50,9 @@ class Migration(migrations.Migration):
                         fields=["corporation_id", "location_id"],
                         name="cca_corp_loc_idx",
                     ),
-                    models.Index(fields=["corporation_id", "type_id"], name="cca_corp_type_idx"),
+                    models.Index(
+                        fields=["corporation_id", "type_id"], name="cca_corp_type_idx"
+                    ),
                     models.Index(
                         fields=["corporation_id", "location_flag"],
                         name="cca_corp_flag_idx",
@@ -73,12 +77,16 @@ class Migration(migrations.Migration):
                 ("name", models.CharField(max_length=255)),
                 (
                     "synced_at",
-                    models.DateTimeField(db_index=True, default=django.utils.timezone.now),
+                    models.DateTimeField(
+                        db_index=True, default=django.utils.timezone.now
+                    ),
                 ),
             ],
             options={
                 "indexes": [
-                    models.Index(fields=["corporation_id", "division"], name="ccd_corp_div_idx"),
+                    models.Index(
+                        fields=["corporation_id", "division"], name="ccd_corp_div_idx"
+                    ),
                 ],
                 "unique_together": {("corporation_id", "division")},
             },

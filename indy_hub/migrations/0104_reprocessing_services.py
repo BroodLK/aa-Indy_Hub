@@ -18,12 +18,26 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="ReprocessingServiceProfile",
             fields=[
-                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
                 ("character_id", models.BigIntegerField(db_index=True, unique=True)),
                 ("character_name", models.CharField(blank=True, max_length=255)),
-                ("corporation_id", models.BigIntegerField(blank=True, db_index=True, null=True)),
+                (
+                    "corporation_id",
+                    models.BigIntegerField(blank=True, db_index=True, null=True),
+                ),
                 ("corporation_name", models.CharField(blank=True, max_length=255)),
-                ("alliance_id", models.BigIntegerField(blank=True, db_index=True, null=True)),
+                (
+                    "alliance_id",
+                    models.BigIntegerField(blank=True, db_index=True, null=True),
+                ),
                 ("alliance_name", models.CharField(blank=True, max_length=255)),
                 (
                     "selected_corporation_id",
@@ -65,12 +79,18 @@ class Migration(migrations.Migration):
                         default=Decimal("5.00"),
                         help_text="Reward percentage based on Jita sell value of refined outputs.",
                         max_digits=6,
-                        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
+                        validators=[
+                            MinValueValidator(Decimal("0")),
+                            MaxValueValidator(Decimal("100")),
+                        ],
                     ),
                 ),
                 ("selected_clone_id", models.BigIntegerField(blank=True, null=True)),
                 ("selected_clone_label", models.CharField(blank=True, max_length=255)),
-                ("selected_implant_type_ids", models.JSONField(blank=True, default=list)),
+                (
+                    "selected_implant_type_ids",
+                    models.JSONField(blank=True, default=list),
+                ),
                 ("selected_implant_names", models.JSONField(blank=True, default=list)),
                 (
                     "beancounter_bonus_percent",
@@ -81,24 +101,37 @@ class Migration(migrations.Migration):
                         max_digits=6,
                     ),
                 ),
-                ("reprocessing_skill_level", models.PositiveSmallIntegerField(default=0)),
-                ("reprocessing_efficiency_level", models.PositiveSmallIntegerField(default=0)),
+                (
+                    "reprocessing_skill_level",
+                    models.PositiveSmallIntegerField(default=0),
+                ),
+                (
+                    "reprocessing_efficiency_level",
+                    models.PositiveSmallIntegerField(default=0),
+                ),
                 ("processing_skill_level", models.PositiveSmallIntegerField(default=0)),
                 ("skill_levels", models.JSONField(blank=True, default=dict)),
                 ("structure_id", models.BigIntegerField(db_index=True, default=0)),
                 ("structure_name", models.CharField(blank=True, max_length=255)),
                 ("structure_type_id", models.IntegerField(blank=True, null=True)),
                 ("structure_type_name", models.CharField(blank=True, max_length=255)),
-                ("structure_location_name", models.CharField(blank=True, max_length=255)),
+                (
+                    "structure_location_name",
+                    models.CharField(blank=True, max_length=255),
+                ),
                 (
                     "structure_bonus_percent",
-                    models.DecimalField(decimal_places=3, default=Decimal("0.000"), max_digits=6),
+                    models.DecimalField(
+                        decimal_places=3, default=Decimal("0.000"), max_digits=6
+                    ),
                 ),
                 ("rig_profile_key", models.CharField(blank=True, max_length=80)),
                 ("rig_profile_name", models.CharField(blank=True, max_length=255)),
                 (
                     "rig_bonus_percent",
-                    models.DecimalField(decimal_places=3, default=Decimal("0.000"), max_digits=6),
+                    models.DecimalField(
+                        decimal_places=3, default=Decimal("0.000"), max_digits=6
+                    ),
                 ),
                 (
                     "estimated_yield_percent",
@@ -139,12 +172,34 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="ReprocessingServiceRequest",
             fields=[
-                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
-                ("request_reference", models.CharField(blank=True, db_index=True, max_length=64, unique=True)),
-                ("requester_character_id", models.BigIntegerField(blank=True, null=True)),
-                ("requester_character_name", models.CharField(blank=True, max_length=255)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "request_reference",
+                    models.CharField(
+                        blank=True, db_index=True, max_length=64, unique=True
+                    ),
+                ),
+                (
+                    "requester_character_id",
+                    models.BigIntegerField(blank=True, null=True),
+                ),
+                (
+                    "requester_character_name",
+                    models.CharField(blank=True, max_length=255),
+                ),
                 ("processor_character_id", models.BigIntegerField(db_index=True)),
-                ("processor_character_name", models.CharField(blank=True, max_length=255)),
+                (
+                    "processor_character_name",
+                    models.CharField(blank=True, max_length=255),
+                ),
                 (
                     "status",
                     models.CharField(
@@ -166,33 +221,62 @@ class Migration(migrations.Migration):
                 ("structure_id", models.BigIntegerField(default=0)),
                 ("structure_name", models.CharField(blank=True, max_length=255)),
                 ("structure_type_name", models.CharField(blank=True, max_length=255)),
-                ("structure_location_name", models.CharField(blank=True, max_length=255)),
+                (
+                    "structure_location_name",
+                    models.CharField(blank=True, max_length=255),
+                ),
                 (
                     "margin_percent_snapshot",
-                    models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=6),
+                    models.DecimalField(
+                        decimal_places=2, default=Decimal("0.00"), max_digits=6
+                    ),
                 ),
                 (
                     "estimated_yield_percent_snapshot",
-                    models.DecimalField(decimal_places=3, default=Decimal("0.000"), max_digits=6),
+                    models.DecimalField(
+                        decimal_places=3, default=Decimal("0.000"), max_digits=6
+                    ),
                 ),
                 (
                     "estimated_output_value",
-                    models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=20),
+                    models.DecimalField(
+                        decimal_places=2, default=Decimal("0.00"), max_digits=20
+                    ),
                 ),
-                ("reward_isk", models.DecimalField(decimal_places=2, default=Decimal("0.00"), max_digits=20)),
+                (
+                    "reward_isk",
+                    models.DecimalField(
+                        decimal_places=2, default=Decimal("0.00"), max_digits=20
+                    ),
+                ),
                 (
                     "tolerance_percent",
                     models.DecimalField(
                         decimal_places=2,
                         default=Decimal("1.00"),
                         max_digits=5,
-                        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("5"))],
+                        validators=[
+                            MinValueValidator(Decimal("0")),
+                            MaxValueValidator(Decimal("5")),
+                        ],
                     ),
                 ),
-                ("inbound_contract_id", models.BigIntegerField(blank=True, db_index=True, null=True)),
-                ("inbound_contract_verified_at", models.DateTimeField(blank=True, null=True)),
-                ("return_contract_id", models.BigIntegerField(blank=True, db_index=True, null=True)),
-                ("return_contract_verified_at", models.DateTimeField(blank=True, null=True)),
+                (
+                    "inbound_contract_id",
+                    models.BigIntegerField(blank=True, db_index=True, null=True),
+                ),
+                (
+                    "inbound_contract_verified_at",
+                    models.DateTimeField(blank=True, null=True),
+                ),
+                (
+                    "return_contract_id",
+                    models.BigIntegerField(blank=True, db_index=True, null=True),
+                ),
+                (
+                    "return_contract_verified_at",
+                    models.DateTimeField(blank=True, null=True),
+                ),
                 ("notes", models.TextField(blank=True)),
                 ("dispute_reason", models.TextField(blank=True)),
                 ("cancelled_at", models.DateTimeField(blank=True, null=True)),
@@ -234,13 +318,31 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="ReprocessingServiceRequestOutput",
             fields=[
-                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
                 ("type_id", models.IntegerField(db_index=True)),
                 ("type_name", models.CharField(blank=True, max_length=255)),
                 ("expected_quantity", models.BigIntegerField(default=0)),
                 ("actual_quantity", models.BigIntegerField(blank=True, null=True)),
-                ("estimated_unit_price", models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True)),
-                ("estimated_total_value", models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True)),
+                (
+                    "estimated_unit_price",
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=20, null=True
+                    ),
+                ),
+                (
+                    "estimated_total_value",
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=20, null=True
+                    ),
+                ),
                 (
                     "request",
                     models.ForeignKey(
@@ -260,7 +362,15 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="ReprocessingServiceRequestItem",
             fields=[
-                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
                 ("type_id", models.IntegerField(db_index=True)),
                 ("type_name", models.CharField(blank=True, max_length=255)),
                 ("quantity", models.BigIntegerField(validators=[MinValueValidator(1)])),
@@ -284,36 +394,54 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="reprocessingserviceprofile",
-            index=models.Index(fields=["approval_status", "is_available"], name="indy_hub_re_approva_b1f5f7_idx"),
-        ),
-        migrations.AddIndex(
-            model_name="reprocessingserviceprofile",
-            index=models.Index(fields=["character_name"], name="indy_hub_re_charact_94e9a8_idx"),
+            index=models.Index(
+                fields=["approval_status", "is_available"],
+                name="indy_hub_re_approva_b1f5f7_idx",
+            ),
         ),
         migrations.AddIndex(
             model_name="reprocessingserviceprofile",
             index=models.Index(
-                fields=["estimated_yield_percent", "margin_percent"], name="indy_hub_re_estima_7c7564_idx"
+                fields=["character_name"], name="indy_hub_re_charact_94e9a8_idx"
+            ),
+        ),
+        migrations.AddIndex(
+            model_name="reprocessingserviceprofile",
+            index=models.Index(
+                fields=["estimated_yield_percent", "margin_percent"],
+                name="indy_hub_re_estima_7c7564_idx",
             ),
         ),
         migrations.AddIndex(
             model_name="reprocessingservicerequest",
-            index=models.Index(fields=["status", "-created_at"], name="indy_hub_re_status_681ee5_idx"),
+            index=models.Index(
+                fields=["status", "-created_at"], name="indy_hub_re_status_681ee5_idx"
+            ),
         ),
         migrations.AddIndex(
             model_name="reprocessingservicerequest",
-            index=models.Index(fields=["requester", "-created_at"], name="indy_hub_re_request_f1b7d8_idx"),
+            index=models.Index(
+                fields=["requester", "-created_at"],
+                name="indy_hub_re_request_f1b7d8_idx",
+            ),
         ),
         migrations.AddIndex(
             model_name="reprocessingservicerequest",
-            index=models.Index(fields=["processor_user", "-created_at"], name="indy_hub_re_process_357efd_idx"),
+            index=models.Index(
+                fields=["processor_user", "-created_at"],
+                name="indy_hub_re_process_357efd_idx",
+            ),
         ),
         migrations.AddIndex(
             model_name="reprocessingservicerequestitem",
-            index=models.Index(fields=["request", "type_id"], name="indy_hub_re_request_1822d6_idx"),
+            index=models.Index(
+                fields=["request", "type_id"], name="indy_hub_re_request_1822d6_idx"
+            ),
         ),
         migrations.AddIndex(
             model_name="reprocessingservicerequestoutput",
-            index=models.Index(fields=["request", "type_id"], name="indy_hub_re_request_aeb3ec_idx"),
+            index=models.Index(
+                fields=["request", "type_id"], name="indy_hub_re_request_aeb3ec_idx"
+            ),
         ),
     ]

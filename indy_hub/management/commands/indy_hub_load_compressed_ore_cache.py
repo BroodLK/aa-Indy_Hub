@@ -28,7 +28,9 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if options.get("clear_only"):
             cleared = clear_compressed_ore_cache()
-            self.stdout.write(self.style.SUCCESS(f"Cleared {cleared} compressed ore cache rows."))
+            self.stdout.write(
+                self.style.SUCCESS(f"Cleared {cleared} compressed ore cache rows.")
+            )
             return
 
         success, message = _populate_compressed_ore_cache()

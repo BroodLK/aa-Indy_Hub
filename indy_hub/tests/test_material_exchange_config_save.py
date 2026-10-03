@@ -182,7 +182,9 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             ],
             False,
         )
-        mock_resolve_structure_names.return_value = {second_structure_id: "Created Structure"}
+        mock_resolve_structure_names.return_value = {
+            second_structure_id: "Created Structure"
+        }
 
         post_data = self._base_post_data()
         post_data["sell_structure_ids"] = [str(second_structure_id)]
@@ -234,7 +236,9 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         ]
         post_data["buy_structure_ids"] = [str(self.config.structure_id)]
         post_data["allowed_market_groups_sell"] = ["200", "300"]
-        post_data["allowed_market_groups_sell_by_structure_json"] = f'{{"{int(self.config.structure_id)}":[200]}}'
+        post_data["allowed_market_groups_sell_by_structure_json"] = (
+            f'{{"{int(self.config.structure_id)}":[200]}}'
+        )
 
         request = self._build_request(post_data)
         with patch(
@@ -360,25 +364,39 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         buy_only_structure_id = sell_structure_id + 1
         post_data = self._base_post_data()
         post_data["sell_structure_ids"] = [str(sell_structure_id)]
-        post_data["buy_structure_ids"] = [str(sell_structure_id), str(buy_only_structure_id)]
+        post_data["buy_structure_ids"] = [
+            str(sell_structure_id),
+            str(buy_only_structure_id),
+        ]
         post_data["primary_structure_id"] = str(buy_only_structure_id)
 
         request = self._build_request(post_data)
-        with patch(
-            "indy_hub.views.material_exchange_config._get_corp_structures",
-            return_value=(
-                [
-                    {"id": sell_structure_id, "name": "Sell Alpha", "flags": ["CorpSAG1"]},
-                    {"id": buy_only_structure_id, "name": "Buy Beta", "flags": ["CorpSAG1"]},
-                ],
-                False,
+        with (
+            patch(
+                "indy_hub.views.material_exchange_config._get_corp_structures",
+                return_value=(
+                    [
+                        {
+                            "id": sell_structure_id,
+                            "name": "Sell Alpha",
+                            "flags": ["CorpSAG1"],
+                        },
+                        {
+                            "id": buy_only_structure_id,
+                            "name": "Buy Beta",
+                            "flags": ["CorpSAG1"],
+                        },
+                    ],
+                    False,
+                ),
             ),
-        ), patch(
-            "indy_hub.views.material_exchange_config.resolve_structure_names",
-            return_value={
-                sell_structure_id: "Sell Alpha",
-                buy_only_structure_id: "Buy Beta",
-            },
+            patch(
+                "indy_hub.views.material_exchange_config.resolve_structure_names",
+                return_value={
+                    sell_structure_id: "Sell Alpha",
+                    buy_only_structure_id: "Buy Beta",
+                },
+            ),
         ):
             response = _handle_config_save(request, self.config)
 
@@ -396,21 +414,32 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         post_data["primary_structure_id"] = str(buy_only_structure_id + 99)
 
         request = self._build_request(post_data)
-        with patch(
-            "indy_hub.views.material_exchange_config._get_corp_structures",
-            return_value=(
-                [
-                    {"id": sell_structure_id, "name": "Sell Alpha", "flags": ["CorpSAG1"]},
-                    {"id": buy_only_structure_id, "name": "Buy Beta", "flags": ["CorpSAG1"]},
-                ],
-                False,
+        with (
+            patch(
+                "indy_hub.views.material_exchange_config._get_corp_structures",
+                return_value=(
+                    [
+                        {
+                            "id": sell_structure_id,
+                            "name": "Sell Alpha",
+                            "flags": ["CorpSAG1"],
+                        },
+                        {
+                            "id": buy_only_structure_id,
+                            "name": "Buy Beta",
+                            "flags": ["CorpSAG1"],
+                        },
+                    ],
+                    False,
+                ),
             ),
-        ), patch(
-            "indy_hub.views.material_exchange_config.resolve_structure_names",
-            return_value={
-                sell_structure_id: "Sell Alpha",
-                buy_only_structure_id: "Buy Beta",
-            },
+            patch(
+                "indy_hub.views.material_exchange_config.resolve_structure_names",
+                return_value={
+                    sell_structure_id: "Sell Alpha",
+                    buy_only_structure_id: "Buy Beta",
+                },
+            ),
         ):
             response = _handle_config_save(request, self.config)
 
@@ -447,7 +476,9 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             ],
             False,
         )
-        mock_resolve_structure_names.return_value = {int(self.config.structure_id): "Test Structure"}
+        mock_resolve_structure_names.return_value = {
+            int(self.config.structure_id): "Test Structure"
+        }
 
         post_data = self._base_post_data()
         request = self._build_request(post_data)
@@ -478,7 +509,9 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
             ],
             False,
         )
-        mock_resolve_structure_names.return_value = {int(self.config.structure_id): "Test Structure"}
+        mock_resolve_structure_names.return_value = {
+            int(self.config.structure_id): "Test Structure"
+        }
 
         post_data = self._base_post_data()
         post_data["hangar_division"] = "7"
@@ -505,7 +538,11 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         response = _handle_config_save(request, self.config)
 
         self.assertEqual(response.status_code, 302)
-        overrides = list(MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by("type_id"))
+        overrides = list(
+            MaterialExchangeItemPriceOverride.objects.filter(
+                config=self.config
+            ).order_by("type_id")
+        )
         self.assertEqual(len(overrides), 2)
         self.assertEqual(overrides[0].type_id, 34)
         self.assertEqual(overrides[0].sell_markup_percent_override, Decimal("-5.00"))
@@ -529,7 +566,11 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         response = _handle_config_save(request, self.config)
 
         self.assertEqual(response.status_code, 302)
-        overrides = list(MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by("type_id"))
+        overrides = list(
+            MaterialExchangeItemPriceOverride.objects.filter(
+                config=self.config
+            ).order_by("type_id")
+        )
         self.assertEqual(len(overrides), 1)
         self.assertEqual(overrides[0].type_id, 34)
         self.assertEqual(overrides[0].sell_markup_percent_override, Decimal("7.10"))
@@ -559,7 +600,11 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.config.refresh_from_db()
 
-        db_rows = list(MaterialExchangeItemPriceOverride.objects.filter(config=self.config).order_by("type_id"))
+        db_rows = list(
+            MaterialExchangeItemPriceOverride.objects.filter(
+                config=self.config
+            ).order_by("type_id")
+        )
         self.assertEqual(len(db_rows), 1)
         self.assertEqual(db_rows[0].type_id, 34)
         self.assertEqual(db_rows[0].sell_markup_percent_override, Decimal("-5.00"))
@@ -760,7 +805,9 @@ class MaterialExchangeConfigSaveCheckboxTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.config.refresh_from_db()
         payload = dict(self.config.container_price_overrides or {})
-        self.assertEqual(str(payload.get("sell_markup_percent_override") or ""), "-7.50")
+        self.assertEqual(
+            str(payload.get("sell_markup_percent_override") or ""), "-7.50"
+        )
         self.assertEqual(str(payload.get("sell_markup_base_override") or ""), "sell")
         self.assertEqual(str(payload.get("buy_price_override") or ""), "12.34")
         self.assertIsNone(payload.get("buy_markup_percent_override"))

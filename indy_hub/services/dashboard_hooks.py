@@ -8,9 +8,7 @@ from typing import Any
 
 # Django
 from django.contrib.auth.models import User
-from django.db.models import F, Q
 from django.urls import reverse
-from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 # Alliance Auth
@@ -35,6 +33,7 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
         return None
 
     try:
+        # AA Example App
         from indy_hub.models import (
             CapitalShipOrder,
             CapitalShipOrderChat,
@@ -66,7 +65,9 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
 
         user_orders_qs = (
             CapitalShipOrder.objects.filter(requester=user)
-            .select_related("chat", "in_production_by", "gathering_materials_by", "offer_updated_by")
+            .select_related(
+                "chat", "in_production_by", "gathering_materials_by", "offer_updated_by"
+            )
             .order_by("-updated_at")
         )
 
@@ -103,7 +104,10 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
             has_unread_chat = False
             if chat and chat.is_open and chat.last_message_at:
                 if chat.last_message_role != CapitalShipOrderChat.SenderRole.REQUESTER:
-                    if not chat.requester_last_seen_at or chat.requester_last_seen_at < chat.last_message_at:
+                    if (
+                        not chat.requester_last_seen_at
+                        or chat.requester_last_seen_at < chat.last_message_at
+                    ):
                         has_unread_chat = True
 
             # Determine price to display
@@ -117,22 +121,34 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
 
             # Determine ETA to display
             eta_display = ""
-            if order.definitive_eta_min_days is not None and order.definitive_eta_max_days is not None:
+            if (
+                order.definitive_eta_min_days is not None
+                and order.definitive_eta_max_days is not None
+            ):
                 eta_display = _("Definitive ETA: %(min)d–%(max)d days") % {
                     "min": order.definitive_eta_min_days,
                     "max": order.definitive_eta_max_days,
                 }
-            elif order.likely_eta_min_days is not None and order.likely_eta_max_days is not None:
+            elif (
+                order.likely_eta_min_days is not None
+                and order.likely_eta_max_days is not None
+            ):
                 eta_display = _("Agreed ETA: %(min)d–%(max)d days") % {
                     "min": order.likely_eta_min_days,
                     "max": order.likely_eta_max_days,
                 }
-            elif order.offer_eta_min_days is not None and order.offer_eta_max_days is not None:
+            elif (
+                order.offer_eta_min_days is not None
+                and order.offer_eta_max_days is not None
+            ):
                 eta_display = _("Proposed ETA: %(min)d–%(max)d days") % {
                     "min": order.offer_eta_min_days,
                     "max": order.offer_eta_max_days,
                 }
-            elif order.guideline_eta_min_days is not None and order.guideline_eta_max_days is not None:
+            elif (
+                order.guideline_eta_min_days is not None
+                and order.guideline_eta_max_days is not None
+            ):
                 eta_display = _("Estimated ETA: %(min)d–%(max)d days") % {
                     "min": order.guideline_eta_min_days,
                     "max": order.guideline_eta_max_days,
@@ -151,7 +167,9 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
                 "ship_class_label": default_ship_class_label(order.ship_class),
                 "status": order.status,
                 "status_display": order.get_status_display(),
-                "status_badge_class": status_badge_classes.get(order.status, "bg-secondary"),
+                "status_badge_class": status_badge_classes.get(
+                    order.status, "bg-secondary"
+                ),
                 "step": step,
                 "total_steps": 5,
                 "price_display": price_display,
@@ -176,12 +194,18 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
                         "title": _("Capital Offer Pending Confirmation"),
                         "reference": order.order_reference,
                         "ship_name": order.ship_type_name,
-                        "message": _("Builder proposed %(price)s, %(eta)s. Click to review and confirm.")
+                        "message": _(
+                            "Builder proposed %(price)s, %(eta)s. Click to review and confirm."
+                        )
                         % {
                             "price": _format_price_isk(order.offer_price_isk),
                             "eta": f"{order.offer_eta_min_days}-{order.offer_eta_max_days}d",
                         },
-                        "url": f"{reverse('indy_hub:capital_ship_orders')}?open_chat={chat.id}" if chat else reverse("indy_hub:capital_ship_orders"),
+                        "url": (
+                            f"{reverse('indy_hub:capital_ship_orders')}?open_chat={chat.id}"
+                            if chat
+                            else reverse("indy_hub:capital_ship_orders")
+                        ),
                         "badge": _("Action Required"),
                         "badge_class": "bg-warning text-dark",
                         "timestamp": order.offer_updated_at or order.updated_at,
@@ -204,13 +228,14 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
                 )
 
         # Builder / Manager metrics
-        is_builder_or_manager = (
-            user.has_perm("indy_hub.can_manage_capital_orders")
-            or user.has_perm("indy_hub.can_build_capital_orders")
-        )
+        is_builder_or_manager = user.has_perm(
+            "indy_hub.can_manage_capital_orders"
+        ) or user.has_perm("indy_hub.can_build_capital_orders")
         builder_queue_summary = None
         if is_builder_or_manager:
-            all_active_qs = CapitalShipOrder.objects.exclude(status__in=terminal_statuses)
+            all_active_qs = CapitalShipOrder.objects.exclude(
+                status__in=terminal_statuses
+            )
             unclaimed_count = all_active_qs.filter(
                 status=CapitalShipOrder.Status.WAITING,
                 gathering_materials_by__isnull=True,
@@ -246,5 +271,9 @@ def get_capital_orders_dashboard_data(user: User) -> dict[str, Any] | None:
         }
 
     except Exception as exc:
-        logger.warning("Error collecting capital orders dashboard hook data: %s", exc, exc_info=True)
+        logger.warning(
+            "Error collecting capital orders dashboard hook data: %s",
+            exc,
+            exc_info=True,
+        )
         return None

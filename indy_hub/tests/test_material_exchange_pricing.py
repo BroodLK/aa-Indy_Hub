@@ -175,18 +175,20 @@ class MaterialExchangePricingTests(TestCase):
         self.assertAlmostEqual(float(actual), float(expected), places=2)
 
     def test_effective_sell_unit_price_uses_item_markup_override(self):
-        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
-            config=self.config,
-            type_id=self.stock.type_id,
-            jita_buy=Decimal("5.00"),
-            jita_sell=Decimal("6.00"),
-            sell_override_map={
-                self.stock.type_id: {
-                    "kind": "markup",
-                    "percent": Decimal("20.00"),
-                    "base": "sell",
-                }
-            },
+        effective_price, default_price, has_override = (
+            _compute_effective_sell_unit_price(
+                config=self.config,
+                type_id=self.stock.type_id,
+                jita_buy=Decimal("5.00"),
+                jita_sell=Decimal("6.00"),
+                sell_override_map={
+                    self.stock.type_id: {
+                        "kind": "markup",
+                        "percent": Decimal("20.00"),
+                        "base": "sell",
+                    }
+                },
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.25"))
@@ -194,36 +196,42 @@ class MaterialExchangePricingTests(TestCase):
         self.assertTrue(has_override)
 
     def test_effective_buy_unit_price_uses_item_markup_override(self):
-        effective_price, default_price, has_override = _compute_effective_buy_unit_price(
-            stock_item=self.stock,
-            buy_override_map={
-                self.stock.type_id: {
-                    "kind": "markup",
-                    "percent": Decimal("-10.00"),
-                    "base": "sell",
-                }
-            },
+        effective_price, default_price, has_override = (
+            _compute_effective_buy_unit_price(
+                stock_item=self.stock,
+                buy_override_map={
+                    self.stock.type_id: {
+                        "kind": "markup",
+                        "percent": Decimal("-10.00"),
+                        "base": "sell",
+                    }
+                },
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.50"))
         self.assertEqual(effective_price, Decimal("5.40"))
         self.assertTrue(has_override)
 
-    def test_effective_sell_unit_price_uses_market_group_override_when_no_item_rule(self):
-        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
-            config=self.config,
-            type_id=self.stock.type_id,
-            jita_buy=Decimal("5.00"),
-            jita_sell=Decimal("6.00"),
-            sell_override_map={},
-            sell_market_group_override_map={
-                300: {
-                    "kind": "markup",
-                    "percent": Decimal("10.00"),
-                    "base": "buy",
-                }
-            },
-            type_market_group_path_map={self.stock.type_id: [100, 200, 300]},
+    def test_effective_sell_unit_price_uses_market_group_override_when_no_item_rule(
+        self,
+    ):
+        effective_price, default_price, has_override = (
+            _compute_effective_sell_unit_price(
+                config=self.config,
+                type_id=self.stock.type_id,
+                jita_buy=Decimal("5.00"),
+                jita_sell=Decimal("6.00"),
+                sell_override_map={},
+                sell_market_group_override_map={
+                    300: {
+                        "kind": "markup",
+                        "percent": Decimal("10.00"),
+                        "base": "buy",
+                    }
+                },
+                type_market_group_path_map={self.stock.type_id: [100, 200, 300]},
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.25"))
@@ -231,18 +239,20 @@ class MaterialExchangePricingTests(TestCase):
         self.assertTrue(has_override)
 
     def test_effective_sell_unit_price_uses_container_override_when_in_container(self):
-        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
-            config=self.config,
-            type_id=self.stock.type_id,
-            jita_buy=Decimal("5.00"),
-            jita_sell=Decimal("6.00"),
-            sell_override_map={},
-            sell_market_group_override_map={},
-            sell_container_override={
-                "kind": "fixed",
-                "price": Decimal("4.10"),
-            },
-            in_container=True,
+        effective_price, default_price, has_override = (
+            _compute_effective_sell_unit_price(
+                config=self.config,
+                type_id=self.stock.type_id,
+                jita_buy=Decimal("5.00"),
+                jita_sell=Decimal("6.00"),
+                sell_override_map={},
+                sell_market_group_override_map={},
+                sell_container_override={
+                    "kind": "fixed",
+                    "price": Decimal("4.10"),
+                },
+                in_container=True,
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.25"))
@@ -250,23 +260,25 @@ class MaterialExchangePricingTests(TestCase):
         self.assertTrue(has_override)
 
     def test_effective_sell_unit_price_item_rule_beats_container_rule(self):
-        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
-            config=self.config,
-            type_id=self.stock.type_id,
-            jita_buy=Decimal("5.00"),
-            jita_sell=Decimal("6.00"),
-            sell_override_map={
-                self.stock.type_id: {
+        effective_price, default_price, has_override = (
+            _compute_effective_sell_unit_price(
+                config=self.config,
+                type_id=self.stock.type_id,
+                jita_buy=Decimal("5.00"),
+                jita_sell=Decimal("6.00"),
+                sell_override_map={
+                    self.stock.type_id: {
+                        "kind": "fixed",
+                        "price": Decimal("3.90"),
+                    }
+                },
+                sell_market_group_override_map={},
+                sell_container_override={
                     "kind": "fixed",
-                    "price": Decimal("3.90"),
-                }
-            },
-            sell_market_group_override_map={},
-            sell_container_override={
-                "kind": "fixed",
-                "price": Decimal("4.10"),
-            },
-            in_container=True,
+                    "price": Decimal("4.10"),
+                },
+                in_container=True,
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.25"))
@@ -274,42 +286,48 @@ class MaterialExchangePricingTests(TestCase):
         self.assertTrue(has_override)
 
     def test_effective_sell_unit_price_item_rule_beats_market_group_rule(self):
-        effective_price, default_price, has_override = _compute_effective_sell_unit_price(
-            config=self.config,
-            type_id=self.stock.type_id,
-            jita_buy=Decimal("5.00"),
-            jita_sell=Decimal("6.00"),
-            sell_override_map={
-                self.stock.type_id: {
-                    "kind": "fixed",
-                    "price": Decimal("4.00"),
-                }
-            },
-            sell_market_group_override_map={
-                300: {
-                    "kind": "markup",
-                    "percent": Decimal("25.00"),
-                    "base": "sell",
-                }
-            },
-            type_market_group_path_map={self.stock.type_id: [100, 200, 300]},
+        effective_price, default_price, has_override = (
+            _compute_effective_sell_unit_price(
+                config=self.config,
+                type_id=self.stock.type_id,
+                jita_buy=Decimal("5.00"),
+                jita_sell=Decimal("6.00"),
+                sell_override_map={
+                    self.stock.type_id: {
+                        "kind": "fixed",
+                        "price": Decimal("4.00"),
+                    }
+                },
+                sell_market_group_override_map={
+                    300: {
+                        "kind": "markup",
+                        "percent": Decimal("25.00"),
+                        "base": "sell",
+                    }
+                },
+                type_market_group_path_map={self.stock.type_id: [100, 200, 300]},
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.25"))
         self.assertEqual(effective_price, Decimal("4.00"))
         self.assertTrue(has_override)
 
-    def test_effective_buy_unit_price_uses_market_group_override_when_no_item_rule(self):
-        effective_price, default_price, has_override = _compute_effective_buy_unit_price(
-            stock_item=self.stock,
-            buy_override_map={},
-            buy_market_group_override_map={
-                200: {
-                    "kind": "fixed",
-                    "price": Decimal("14.00"),
-                }
-            },
-            type_market_group_path_map={self.stock.type_id: [100, 200]},
+    def test_effective_buy_unit_price_uses_market_group_override_when_no_item_rule(
+        self,
+    ):
+        effective_price, default_price, has_override = (
+            _compute_effective_buy_unit_price(
+                stock_item=self.stock,
+                buy_override_map={},
+                buy_market_group_override_map={
+                    200: {
+                        "kind": "fixed",
+                        "price": Decimal("14.00"),
+                    }
+                },
+                type_market_group_path_map={self.stock.type_id: [100, 200]},
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.50"))
@@ -317,16 +335,18 @@ class MaterialExchangePricingTests(TestCase):
         self.assertTrue(has_override)
 
     def test_effective_buy_unit_price_uses_container_override_when_in_container(self):
-        effective_price, default_price, has_override = _compute_effective_buy_unit_price(
-            stock_item=self.stock,
-            buy_override_map={},
-            buy_market_group_override_map={},
-            buy_container_override={
-                "kind": "markup",
-                "percent": Decimal("10.00"),
-                "base": "sell",
-            },
-            in_container=True,
+        effective_price, default_price, has_override = (
+            _compute_effective_buy_unit_price(
+                stock_item=self.stock,
+                buy_override_map={},
+                buy_market_group_override_map={},
+                buy_container_override={
+                    "kind": "markup",
+                    "percent": Decimal("10.00"),
+                    "base": "sell",
+                },
+                in_container=True,
+            )
         )
 
         self.assertEqual(default_price, Decimal("5.50"))
@@ -343,7 +363,9 @@ class MaterialExchangePricingTests(TestCase):
             sell_price_override=Decimal("4.00"),
         )
 
-        sell_override_map, _buy_override_map = _get_item_price_override_maps(self.config)
+        sell_override_map, _buy_override_map = _get_item_price_override_maps(
+            self.config
+        )
         self.assertIn(self.stock.type_id, sell_override_map)
         self.assertEqual(sell_override_map[self.stock.type_id]["kind"], "fixed")
         self.assertEqual(
@@ -378,10 +400,14 @@ class MaterialExchangePricingTests(TestCase):
 
         self.assertIn(self.stock.type_id, sell_override_map)
         self.assertEqual(sell_override_map[self.stock.type_id]["kind"], "markup")
-        self.assertEqual(sell_override_map[self.stock.type_id]["percent"], Decimal("12.50"))
+        self.assertEqual(
+            sell_override_map[self.stock.type_id]["percent"], Decimal("12.50")
+        )
         self.assertEqual(sell_override_map[self.stock.type_id]["base"], "sell")
 
-    def test_profile_scoped_market_group_override_beats_global_when_profile_matches(self):
+    def test_profile_scoped_market_group_override_beats_global_when_profile_matches(
+        self,
+    ):
         self.config.market_group_price_overrides = [
             {
                 "market_group_id": 300,

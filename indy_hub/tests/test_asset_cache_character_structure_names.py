@@ -104,11 +104,17 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
                 side_effect=resolve_side_effect,
             ) as mocked_resolve,
         ):
-            refreshed_assets, scope_missing = asset_cache._refresh_character_assets(user)
+            refreshed_assets, scope_missing = asset_cache._refresh_character_assets(
+                user
+            )
 
         self.assertFalse(scope_missing)
         self.assertEqual(len(refreshed_assets), 3)
-        by_item_id = {int(row["item_id"]): row for row in refreshed_assets if row.get("item_id") is not None}
+        by_item_id = {
+            int(row["item_id"]): row
+            for row in refreshed_assets
+            if row.get("item_id") is not None
+        }
         self.assertEqual(
             by_item_id[container_item_id].get("set_name"),
             "Example Production Container",
@@ -116,12 +122,16 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
         self.assertEqual(by_item_id[non_container_item_id].get("set_name"), "")
 
         # Ensure assets got written with new fields.
-        container_row = CachedCharacterAsset.objects.get(user=user, item_id=container_item_id)
+        container_row = CachedCharacterAsset.objects.get(
+            user=user, item_id=container_item_id
+        )
         self.assertEqual(container_row.raw_location_id, structure_id)
         self.assertEqual(container_row.location_id, structure_id)
         self.assertEqual(container_row.set_name, "Example Production Container")
 
-        non_container_row = CachedCharacterAsset.objects.get(user=user, item_id=non_container_item_id)
+        non_container_row = CachedCharacterAsset.objects.get(
+            user=user, item_id=non_container_item_id
+        )
         self.assertEqual(non_container_row.set_name, "")
 
         mocked_fetch_names.assert_called_once()
@@ -131,7 +141,9 @@ class CharacterAssetRefreshStructureNameTests(TestCase):
 
         # Ensure we attempted to resolve/cache the structure name.
         self.assertTrue(mocked_resolve.called)
-        self.assertTrue(CachedStructureName.objects.filter(structure_id=structure_id).exists())
+        self.assertTrue(
+            CachedStructureName.objects.filter(structure_id=structure_id).exists()
+        )
 
 
 class CorporationAssetRefreshNameTests(TestCase):
@@ -191,11 +203,17 @@ class CorporationAssetRefreshNameTests(TestCase):
             ) as mocked_fetch_names,
             patch.object(asset_cache, "_cache_corp_structure_names", return_value={}),
         ):
-            refreshed_assets, scope_missing = asset_cache._refresh_corp_assets(corporation_id)
+            refreshed_assets, scope_missing = asset_cache._refresh_corp_assets(
+                corporation_id
+            )
 
         self.assertFalse(scope_missing)
         self.assertEqual(len(refreshed_assets), 3)
-        by_item_id = {int(row["item_id"]): row for row in refreshed_assets if row.get("item_id") is not None}
+        by_item_id = {
+            int(row["item_id"]): row
+            for row in refreshed_assets
+            if row.get("item_id") is not None
+        }
         self.assertEqual(
             by_item_id[container_item_id].get("set_name"),
             "Corp Container Name",
@@ -267,7 +285,9 @@ class CorporationAssetRefreshNameTests(TestCase):
         self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0].get("set_name"), "Persisted Corp Container")
 
-    def test_get_corp_assets_cached_skips_backfill_when_set_name_persisted(self) -> None:
+    def test_get_corp_assets_cached_skips_backfill_when_set_name_persisted(
+        self,
+    ) -> None:
         corporation_id = 98123458
         item_id = 1044300603012
         cache.clear()
@@ -348,7 +368,9 @@ class CorporationAssetRefreshNameTests(TestCase):
             )
 
         self.assertFalse(scope_missing)
-        by_item_id = {int(row["item_id"]): row for row in assets if row.get("item_id") is not None}
+        by_item_id = {
+            int(row["item_id"]): row for row in assets if row.get("item_id") is not None
+        }
         self.assertEqual(
             by_item_id[container_item_id].get("set_name"),
             "Backfilled Corp Container",
@@ -361,7 +383,9 @@ class CorporationAssetRefreshNameTests(TestCase):
         self.assertEqual(container_row.set_name, "Backfilled Corp Container")
         mocked_fetch_names.assert_called_once()
 
-    def test_consume_cached_corp_assets_for_buy_completion_consumes_nested_items(self) -> None:
+    def test_consume_cached_corp_assets_for_buy_completion_consumes_nested_items(
+        self,
+    ) -> None:
         corporation_id = 98123459
         structure_id = 1042090993674
         container_item_id = 1044300603020
@@ -413,7 +437,9 @@ class CorporationAssetRefreshNameTests(TestCase):
         self.assertEqual(summary.get("consumed_by_type", {}).get(34), 7)
         self.assertEqual(summary.get("remaining_by_type", {}).get(34), None)
 
-    def test_add_cached_corp_assets_for_sell_completion_updates_and_creates_rows(self) -> None:
+    def test_add_cached_corp_assets_for_sell_completion_updates_and_creates_rows(
+        self,
+    ) -> None:
         corporation_id = 98123460
         structure_a = 1042090993674
         structure_b = 1042090993999

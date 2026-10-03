@@ -11,7 +11,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Dict, List, Optional, Set, Tuple
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
@@ -45,13 +44,13 @@ class ManufacturingJob:
     activity_id: int = ACTIVITY_MANUFACTURING
     material_efficiency: int = 0
     time_efficiency: int = 0
-    dependencies: List[int] = field(default_factory=list)
-    required_skills: List[dict] = field(default_factory=list)
+    dependencies: list[int] = field(default_factory=list)
+    required_skills: list[dict] = field(default_factory=list)
     chunk_index: int = 1
     chunk_count: int = 1
 
     # Scheduling info
-    assigned_slot: Optional[int] = None
+    assigned_slot: int | None = None
     start_time_seconds: int = 0
     end_time_seconds: int = 0
 
@@ -88,10 +87,10 @@ class IndustrySlot:
     character_name: str
     slot_name: str = ""
     max_concurrent_jobs: int = 1
-    skill_levels: Dict[int, int] = field(default_factory=dict)
+    skill_levels: dict[int, int] = field(default_factory=dict)
 
     # Scheduling state
-    jobs: List[ManufacturingJob] = field(default_factory=list)
+    jobs: list[ManufacturingJob] = field(default_factory=list)
     available_at_seconds: int = 0
 
     def add_job(self, job: ManufacturingJob, start_time: int):
@@ -102,7 +101,7 @@ class IndustrySlot:
         self.jobs.append(job)
         self.available_at_seconds = job.end_time_seconds
 
-    def meets_skill_requirements(self, requirements: List[dict]) -> bool:
+    def meets_skill_requirements(self, requirements: list[dict]) -> bool:
         if not requirements:
             return True
 
@@ -121,18 +120,18 @@ class IndustrySlot:
 class BuildSchedule:
     """Complete build schedule with time estimates and slot assignments."""
 
-    jobs: List[ManufacturingJob]
-    slots: List[IndustrySlot]
+    jobs: list[ManufacturingJob]
+    slots: list[IndustrySlot]
     total_sequential_time_seconds: int
     total_parallel_time_seconds: int
-    critical_path: List[int] = field(default_factory=list)
-    recommendations: List[dict] = field(default_factory=list)
+    critical_path: list[int] = field(default_factory=list)
+    recommendations: list[dict] = field(default_factory=list)
     schedule_mode: str = "fastest"
     requested_slot_count: int = 0
     used_slot_count: int = 0
-    final_product_item_type_id: Optional[int] = None
-    component_completion_time_seconds: Optional[int] = None
-    component_target_time_seconds: Optional[int] = None
+    final_product_item_type_id: int | None = None
+    component_completion_time_seconds: int | None = None
+    component_target_time_seconds: int | None = None
 
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -361,8 +360,8 @@ def detect_blueprint_activity_type(blueprint_type_id: int) -> int:
 
 def get_base_manufacturing_time(
     blueprint_type_id: int,
-    activity_id: Optional[int] = None,
-) -> Tuple[int, int]:
+    activity_id: int | None = None,
+) -> tuple[int, int]:
     """
     Get base manufacturing/reaction time for a blueprint from eve_sde.
     """
@@ -403,11 +402,11 @@ def get_base_manufacturing_time(
 @lru_cache(maxsize=512)
 def get_blueprint_skill_requirements(
     blueprint_type_id: int,
-    activity_id: Optional[int] = None,
-) -> Tuple[Tuple[int, int, str], ...]:
+    activity_id: int | None = None,
+) -> tuple[tuple[int, int, str], ...]:
     """Return the blueprint skill requirements for the requested activity."""
     if blueprint_type_id <= 0:
-        return tuple()
+        return ()
 
     if activity_id is None:
         activity_id = detect_blueprint_activity_type(blueprint_type_id)
@@ -417,7 +416,7 @@ def get_blueprint_skill_requirements(
         from eveuniverse.models import EveIndustryActivitySkill
     except ImportError:
         logger.warning("eveuniverse not available for blueprint skill lookup")
-        return tuple()
+        return ()
 
     try:
         requirements = (
@@ -450,11 +449,11 @@ def get_blueprint_skill_requirements(
             blueprint_type_id,
             exc,
         )
-        return tuple()
+        return ()
 
 
 def format_skill_requirements(
-    requirements: List[dict] | Tuple[Tuple[int, int, str], ...],
+    requirements: list[dict] | tuple[tuple[int, int, str], ...],
 ) -> str:
     """Return a compact human-readable requirements string."""
     parts: list[str] = []
@@ -471,7 +470,7 @@ def format_skill_requirements(
     return ", ".join(parts)
 
 
-def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
+def build_dependency_tree(jobs_data: list[dict]) -> dict[int, list[int]]:
     """
     Build dependency tree for production items.
 
@@ -480,7 +479,7 @@ def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
     # AA Example App
     from indy_hub.models import SdeIndustryActivityMaterial
 
-    dependencies: Dict[int, List[int]] = {}
+    dependencies: dict[int, list[int]] = {}
     producing_items = {job["item_type_id"] for job in jobs_data}
 
     for job in jobs_data:
@@ -506,7 +505,7 @@ def build_dependency_tree(jobs_data: List[dict]) -> Dict[int, List[int]]:
     return dependencies
 
 
-def split_runs_evenly(total_runs: int, chunk_count: int) -> List[int]:
+def split_runs_evenly(total_runs: int, chunk_count: int) -> list[int]:
     """Split runs into near-equal chunks."""
     normalized_runs = max(0, int(total_runs))
     normalized_chunks = max(1, int(chunk_count))
@@ -522,9 +521,9 @@ def split_runs_evenly(total_runs: int, chunk_count: int) -> List[int]:
 
 
 def split_jobs_evenly_across_slots(
-    jobs: List[ManufacturingJob],
+    jobs: list[ManufacturingJob],
     total_slot_count: int,
-) -> List[ManufacturingJob]:
+) -> list[ManufacturingJob]:
     """
     Split each item into balanced jobs so available slot lanes can work in parallel.
 
@@ -532,8 +531,8 @@ def split_jobs_evenly_across_slots(
     split jobs for each dependency item have completed.
     """
     normalized_slot_count = max(1, int(total_slot_count))
-    expanded_jobs: List[ManufacturingJob] = []
-    jobs_by_item_type: Dict[int, List[ManufacturingJob]] = {}
+    expanded_jobs: list[ManufacturingJob] = []
+    jobs_by_item_type: dict[int, list[ManufacturingJob]] = {}
     next_job_id = 1
 
     for job in jobs:
@@ -543,7 +542,7 @@ def split_jobs_evenly_across_slots(
 
         chunk_count = len(run_chunks)
         remaining_quantity = max(0, int(job.quantity_needed))
-        split_jobs: List[ManufacturingJob] = []
+        split_jobs: list[ManufacturingJob] = []
 
         for chunk_index, chunk_runs in enumerate(run_chunks, start=1):
             chunk_capacity = chunk_runs * max(1, int(job.quantity_per_run))
@@ -602,8 +601,8 @@ def clone_slot(slot: IndustrySlot) -> IndustrySlot:
 
 
 def component_completion_time_seconds(
-    jobs: List[ManufacturingJob],
-    final_product_item_type_id: Optional[int] = None,
+    jobs: list[ManufacturingJob],
+    final_product_item_type_id: int | None = None,
 ) -> int:
     """Return when all non-final-product jobs have completed."""
     if not jobs:
@@ -622,8 +621,8 @@ def component_completion_time_seconds(
 
 
 def _slot_capability_score(
-    slot: IndustrySlot, jobs: List[ManufacturingJob]
-) -> Tuple[int, int]:
+    slot: IndustrySlot, jobs: list[ManufacturingJob]
+) -> tuple[int, int]:
     """Score how broadly a slot can satisfy the selected job set."""
     eligible_jobs = [
         job for job in jobs if slot.meets_skill_requirements(job.required_skills)
@@ -641,10 +640,10 @@ def _slot_capability_score(
 
 
 def select_slot_subset(
-    slots: List[IndustrySlot],
-    jobs: List[ManufacturingJob],
+    slots: list[IndustrySlot],
+    jobs: list[ManufacturingJob],
     slot_limit: int,
-) -> List[IndustrySlot]:
+) -> list[IndustrySlot]:
     """Pick the most capable subset of slots while preserving display order."""
     normalized_limit = max(0, min(int(slot_limit), len(slots)))
     if normalized_limit <= 0:
@@ -664,13 +663,13 @@ def select_slot_subset(
 
 
 def _build_schedule_with_slot_limit(
-    original_jobs: List[ManufacturingJob],
-    available_slots: List[IndustrySlot],
+    original_jobs: list[ManufacturingJob],
+    available_slots: list[IndustrySlot],
     slot_limit: int,
     *,
     schedule_mode: str,
-    final_product_item_type_id: Optional[int] = None,
-    component_target_time_seconds: Optional[int] = None,
+    final_product_item_type_id: int | None = None,
+    component_target_time_seconds: int | None = None,
 ) -> BuildSchedule:
     """Build a schedule variant for a specific number of active slots."""
     selected_slots = select_slot_subset(available_slots, original_jobs, slot_limit)
@@ -693,19 +692,19 @@ def _build_schedule_with_slot_limit(
 
 
 def calculate_schedule_for_mode(
-    original_jobs: List[ManufacturingJob],
-    available_slots: List[IndustrySlot],
+    original_jobs: list[ManufacturingJob],
+    available_slots: list[IndustrySlot],
     *,
     schedule_mode: str = "fastest",
-    final_product_item_type_id: Optional[int] = None,
-    component_target_time_seconds: Optional[int] = None,
+    final_product_item_type_id: int | None = None,
+    component_target_time_seconds: int | None = None,
 ) -> BuildSchedule:
     """Calculate a schedule using the requested optimization mode."""
     normalized_mode = str(schedule_mode or "fastest").strip().lower() or "fastest"
     slot_count = len(available_slots)
 
     if normalized_mode == "fewest_slots":
-        last_error: Optional[ValueError] = None
+        last_error: ValueError | None = None
         for candidate_slot_count in range(1, slot_count + 1):
             try:
                 return _build_schedule_with_slot_limit(
@@ -724,8 +723,8 @@ def calculate_schedule_for_mode(
         if component_target_time_seconds is None or component_target_time_seconds <= 0:
             raise ValueError("Enter a valid component completion target in days.")
 
-        best_fallback: Optional[BuildSchedule] = None
-        last_error: Optional[ValueError] = None
+        best_fallback: BuildSchedule | None = None
+        last_error: ValueError | None = None
 
         for candidate_slot_count in range(1, slot_count + 1):
             try:
@@ -801,10 +800,10 @@ def calculate_schedule_for_mode(
 
 
 def schedule_jobs_critical_path(
-    jobs: List[ManufacturingJob],
-    slots: List[IndustrySlot],
+    jobs: list[ManufacturingJob],
+    slots: list[IndustrySlot],
     *,
-    preferred_item_type_id: Optional[int] = None,
+    preferred_item_type_id: int | None = None,
 ) -> BuildSchedule:
     """
     Schedule jobs using a dependency-aware critical-path approach.
@@ -817,9 +816,9 @@ def schedule_jobs_critical_path(
             total_parallel_time_seconds=0,
         )
 
-    dep_map: Dict[int, Set[int]] = {job.job_id: set(job.dependencies) for job in jobs}
-    job_map: Dict[int, ManufacturingJob] = {job.job_id: job for job in jobs}
-    reverse_dep_map: Dict[int, Set[int]] = {job.job_id: set() for job in jobs}
+    dep_map: dict[int, set[int]] = {job.job_id: set(job.dependencies) for job in jobs}
+    job_map: dict[int, ManufacturingJob] = {job.job_id: job for job in jobs}
+    reverse_dep_map: dict[int, set[int]] = {job.job_id: set() for job in jobs}
     for job in jobs:
         for dep_id in dep_map.get(job.job_id, set()):
             if dep_id in reverse_dep_map:
@@ -828,9 +827,9 @@ def schedule_jobs_critical_path(
     preferred_job_ids = {
         job.job_id for job in jobs if job.item_type_id == preferred_item_type_id
     }
-    generic_tail_cache: Dict[int, int] = {}
-    preferred_tail_cache: Dict[int, int] = {}
-    reaches_preferred_cache: Dict[int, bool] = {}
+    generic_tail_cache: dict[int, int] = {}
+    preferred_tail_cache: dict[int, int] = {}
+    reaches_preferred_cache: dict[int, bool] = {}
 
     def calc_generic_tail(job_id: int) -> int:
         if job_id in generic_tail_cache:
@@ -880,20 +879,20 @@ def schedule_jobs_critical_path(
     preferred_priority = {job.job_id: calc_preferred_tail(job.job_id) for job in jobs}
     generic_priority = {job.job_id: calc_generic_tail(job.job_id) for job in jobs}
 
-    scheduled_jobs: List[ManufacturingJob] = []
-    completed_job_times: Dict[int, int] = {}
+    scheduled_jobs: list[ManufacturingJob] = []
+    completed_job_times: dict[int, int] = {}
 
     for slot in slots:
         slot.jobs = []
         slot.available_at_seconds = 0
 
-    unscheduled_job_ids: Set[int] = {job.job_id for job in jobs}
+    unscheduled_job_ids: set[int] = {job.job_id for job in jobs}
 
     while unscheduled_job_ids:
-        best_choice_key: Optional[Tuple[int, int, int, int, int, int, int]] = None
-        best_choice_slot: Optional[IndustrySlot] = None
-        best_choice_job: Optional[ManufacturingJob] = None
-        blocked_job_ids: Set[int] = set()
+        best_choice_key: tuple[int, int, int, int, int, int, int] | None = None
+        best_choice_slot: IndustrySlot | None = None
+        best_choice_job: ManufacturingJob | None = None
+        blocked_job_ids: set[int] = set()
 
         for job_id in list(unscheduled_job_ids):
             deps = dep_map.get(job_id, set())
@@ -1002,13 +1001,13 @@ def schedule_jobs_critical_path(
 
 
 def find_critical_path(
-    jobs: List[ManufacturingJob],
-    dep_map: Dict[int, Set[int]],
-    job_map: Dict[int, ManufacturingJob],
-) -> List[int]:
+    jobs: list[ManufacturingJob],
+    dep_map: dict[int, set[int]],
+    job_map: dict[int, ManufacturingJob],
+) -> list[int]:
     """Find the critical path (longest dependency chain) in the job graph."""
 
-    def longest_path_from(job_id: int, visited: Set[int]) -> Tuple[int, List[int]]:
+    def longest_path_from(job_id: int, visited: set[int]) -> tuple[int, list[int]]:
         if job_id in visited:
             return (0, [])
 
@@ -1022,7 +1021,7 @@ def find_critical_path(
             return (job.total_time_seconds, [job_id])
 
         best_length = 0
-        best_path: List[int] = []
+        best_path: list[int] = []
         for dep_id in deps:
             if dep_id not in job_map:
                 continue
@@ -1034,7 +1033,7 @@ def find_critical_path(
         return (best_length + job.total_time_seconds, best_path + [job_id])
 
     max_length = 0
-    critical_path: List[int] = []
+    critical_path: list[int] = []
     for job in jobs:
         length, path = longest_path_from(job.job_id, set())
         if length > max_length:
@@ -1055,12 +1054,12 @@ def slot_idle_seconds(slot: IndustrySlot) -> int:
 
 
 def generate_recommendations(
-    jobs: List[ManufacturingJob],
-    slots: List[IndustrySlot],
+    jobs: list[ManufacturingJob],
+    slots: list[IndustrySlot],
     total_time: int,
-    critical_path: List[int],
-    job_map: Dict[int, ManufacturingJob],
-) -> List[dict]:
+    critical_path: list[int],
+    job_map: dict[int, ManufacturingJob],
+) -> list[dict]:
     """Actionable schedule findings, each with a measured effect and a target.
 
     Returns structured records rather than sentences so the client can localize
@@ -1072,7 +1071,7 @@ def generate_recommendations(
     built. Where an effect is an estimate it is stated as an upper bound, not a
     promised saving -- nothing here re-runs the allocator.
     """
-    recommendations: List[dict] = []
+    recommendations: list[dict] = []
     span = max(total_time, 1)
 
     if slots:

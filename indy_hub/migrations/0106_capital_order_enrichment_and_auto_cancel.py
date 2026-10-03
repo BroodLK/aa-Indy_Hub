@@ -29,7 +29,8 @@ class Migration(migrations.Migration):
             field=models.PositiveIntegerField(
                 default=0,
                 help_text=(
-                    "Grace period before auto-cancel once requester is in the wrong state. " "0 means immediate."
+                    "Grace period before auto-cancel once requester is in the wrong state. "
+                    "0 means immediate."
                 ),
             ),
         ),
@@ -40,7 +41,8 @@ class Migration(migrations.Migration):
                 blank=True,
                 default=list,
                 help_text=(
-                    "Capital order statuses eligible for auto-cancel when requester " "leaves preapproved state."
+                    "Capital order statuses eligible for auto-cancel when requester "
+                    "leaves preapproved state."
                 ),
             ),
         ),
@@ -61,7 +63,9 @@ class Migration(migrations.Migration):
             field=models.JSONField(
                 blank=True,
                 default=list,
-                help_text=("State names treated as preapproved for capital-order auto-cancel checks."),
+                help_text=(
+                    "State names treated as preapproved for capital-order auto-cancel checks."
+                ),
             ),
         ),
         migrations.AddField(
@@ -82,7 +86,9 @@ class Migration(migrations.Migration):
             field=models.JSONField(
                 blank=True,
                 default=list,
-                help_text=("Ship type IDs hidden from the capital order menu for this configuration."),
+                help_text=(
+                    "Ship type IDs hidden from the capital order menu for this configuration."
+                ),
             ),
         ),
         migrations.AddField(
@@ -182,7 +188,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="capitalshiporder",
             name="agreed_price_isk",
-            field=models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+            field=models.DecimalField(
+                blank=True, decimal_places=2, max_digits=20, null=True
+            ),
         ),
         migrations.AddField(
             model_name="capitalshiporder",
@@ -222,7 +230,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="capitalshiporder",
             name="guideline_price_isk",
-            field=models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+            field=models.DecimalField(
+                blank=True, decimal_places=2, max_digits=20, null=True
+            ),
         ),
         migrations.AddField(
             model_name="capitalshiporder",
@@ -262,7 +272,9 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="capitalshiporder",
             name="offer_price_isk",
-            field=models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+            field=models.DecimalField(
+                blank=True, decimal_places=2, max_digits=20, null=True
+            ),
         ),
         migrations.AddField(
             model_name="capitalshiporder",
@@ -382,7 +394,9 @@ class Migration(migrations.Migration):
                 "indexes": [
                     models.Index(fields=["order_id"], name="cap_chat_order_idx"),
                     models.Index(fields=["requester_id"], name="cap_chat_req_idx"),
-                    models.Index(fields=["is_open", "updated_at"], name="cap_chat_state_idx"),
+                    models.Index(
+                        fields=["is_open", "updated_at"], name="cap_chat_state_idx"
+                    ),
                 ],
             },
         ),
@@ -441,8 +455,12 @@ class Migration(migrations.Migration):
                 "ordering": ["-created_at", "-id"],
                 "default_permissions": (),
                 "indexes": [
-                    models.Index(fields=["order_id", "created_at"], name="cap_evt_order_idx"),
-                    models.Index(fields=["event_type", "created_at"], name="cap_evt_type_idx"),
+                    models.Index(
+                        fields=["order_id", "created_at"], name="cap_evt_order_idx"
+                    ),
+                    models.Index(
+                        fields=["event_type", "created_at"], name="cap_evt_type_idx"
+                    ),
                 ],
             },
         ),
@@ -496,7 +514,9 @@ class Migration(migrations.Migration):
                 "ordering": ["created_at", "id"],
                 "default_permissions": (),
                 "indexes": [
-                    models.Index(fields=["chat_id", "created_at"], name="cap_msg_chat_idx"),
+                    models.Index(
+                        fields=["chat_id", "created_at"], name="cap_msg_chat_idx"
+                    ),
                 ],
             },
         ),

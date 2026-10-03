@@ -39,7 +39,9 @@ class MaterialExchangeReservationTests(TestCase):
         self.user_a = User.objects.create_user("buyer_a", password="secret123")
         self.user_b = User.objects.create_user("buyer_b", password="secret123")
 
-    def _create_buy_item(self, *, status: str, quantity: int, type_id: int = 34) -> None:
+    def _create_buy_item(
+        self, *, status: str, quantity: int, type_id: int = 34
+    ) -> None:
         order = MaterialExchangeBuyOrder.objects.create(
             config=self.config,
             buyer=self.user_a,
@@ -86,8 +88,12 @@ class MaterialExchangeReservationTests(TestCase):
         self.assertEqual(reserved.get(34), 79)
 
     def test_reserved_buy_quantities_support_type_filter(self):
-        self._create_buy_item(status=MaterialExchangeBuyOrder.Status.DRAFT, quantity=2, type_id=34)
-        self._create_buy_item(status=MaterialExchangeBuyOrder.Status.DRAFT, quantity=5, type_id=35)
+        self._create_buy_item(
+            status=MaterialExchangeBuyOrder.Status.DRAFT, quantity=2, type_id=34
+        )
+        self._create_buy_item(
+            status=MaterialExchangeBuyOrder.Status.DRAFT, quantity=5, type_id=35
+        )
 
         reserved_34 = _get_reserved_buy_quantities(config=self.config, type_ids={34})
         reserved_35 = _get_reserved_buy_quantities(config=self.config, type_ids={35})
@@ -111,7 +117,9 @@ class MaterialExchangeReservationTests(TestCase):
         )
 
         completed_at = timezone.now()
-        MaterialExchangeBuyOrder.objects.filter(pk=completed_order.pk).update(updated_at=completed_at)
+        MaterialExchangeBuyOrder.objects.filter(pk=completed_order.pk).update(
+            updated_at=completed_at
+        )
 
         # No post-completion stock sync yet -> still reserved.
         reserved_without_sync = _get_reserved_buy_quantities(
@@ -170,7 +178,11 @@ class MaterialExchangeReservationTests(TestCase):
         # Unlike the sell side, REJECTED/CANCELLED buy orders never removed
         # items from the corp hangar, so they release immediately regardless
         # of when the last stock sync ran.
-        for stock_synced_at in (None, timezone.now() - timedelta(hours=1), timezone.now()):
+        for stock_synced_at in (
+            None,
+            timezone.now() - timedelta(hours=1),
+            timezone.now(),
+        ):
             reserved = _get_reserved_buy_quantities(
                 config=self.config,
                 type_ids={35, 36},
@@ -347,7 +359,9 @@ class MaterialExchangeReservationTests(TestCase):
         )
 
         completed_at = timezone.now()
-        MaterialExchangeSellOrder.objects.filter(pk=completed_order.pk).update(updated_at=completed_at)
+        MaterialExchangeSellOrder.objects.filter(pk=completed_order.pk).update(
+            updated_at=completed_at
+        )
 
         # No post-completion asset sync yet -> still reserved.
         reserved_without_sync = _get_reserved_sell_quantities(
@@ -412,9 +426,9 @@ class MaterialExchangeReservationTests(TestCase):
         )
 
         terminal_at = timezone.now()
-        MaterialExchangeSellOrder.objects.filter(pk__in=[cancelled_order.pk, rejected_order.pk]).update(
-            updated_at=terminal_at
-        )
+        MaterialExchangeSellOrder.objects.filter(
+            pk__in=[cancelled_order.pk, rejected_order.pk]
+        ).update(updated_at=terminal_at)
 
         # No post-terminal asset sync yet -> still reserved.
         reserved_without_sync = _get_reserved_sell_quantities(

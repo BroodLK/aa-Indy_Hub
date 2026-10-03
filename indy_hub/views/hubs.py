@@ -44,9 +44,14 @@ def settings_hub(request):
 
     # Buyback counters
     context["material_exchange_config_total"] = MaterialExchangeConfig.objects.count()
-    context["material_exchange_enabled"] = MaterialExchangeSettings.get_solo().is_enabled
+    context["material_exchange_enabled"] = (
+        MaterialExchangeSettings.get_solo().is_enabled
+    )
     context["material_exchange_config_active"] = (
-        1 if context["material_exchange_enabled"] and context["material_exchange_config_total"] else 0
+        1
+        if context["material_exchange_enabled"]
+        and context["material_exchange_config_total"]
+        else 0
     )
 
     logger.debug(

@@ -37,7 +37,11 @@ class IndyHubConfig(AppConfig):
             return
 
         if plan:
-            indy_plan = [backwards for migration, backwards in plan if migration.app_label == "indy_hub"]
+            indy_plan = [
+                backwards
+                for migration, backwards in plan
+                if migration.app_label == "indy_hub"
+            ]
             if indy_plan and all(indy_plan):
                 try:
                     from .tasks import remove_periodic_tasks
@@ -52,13 +56,17 @@ class IndyHubConfig(AppConfig):
                 return
 
         if not apps.is_installed("django_celery_beat"):
-            logger.warning("django_celery_beat not installed; skipping periodic tasks setup.")
+            logger.warning(
+                "django_celery_beat not installed; skipping periodic tasks setup."
+            )
             return
 
         # Check that Celery Beat tables exist before attempting to sync tasks.
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT 1 FROM django_celery_beat_crontabschedule LIMIT 1")
+                cursor.execute(
+                    "SELECT 1 FROM django_celery_beat_crontabschedule LIMIT 1"
+                )
         except Exception as e:
             logger.warning(
                 "Celery Beat tables not available, skipping periodic tasks setup: %s",

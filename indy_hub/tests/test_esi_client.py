@@ -14,7 +14,7 @@ from indy_hub.services.esi_client import ESIClient
 class ESIClientPaginationTest(SimpleTestCase):
     def test_fetch_paginated_propagates_force_refresh_to_results(self):
         client = ESIClient.__new__(ESIClient)
-        client._get_token = MagicMock(return_value=object())
+        client._get_token = MagicMock(return_value=MagicMock())
         result_obj = MagicMock()
         result_obj.results.return_value = [{"contract_id": 1}]
         operation_fn = MagicMock(return_value=result_obj)
@@ -43,15 +43,17 @@ class ESIClientPaginationTest(SimpleTestCase):
         client._get_token = MagicMock(return_value=token_obj)
 
         first_result = MagicMock()
-        first_result.results.side_effect = HTTPNotModified()
+        first_result.results.side_effect = HTTPNotModified(status_code=304, headers={})
 
         second_result = MagicMock()
-        second_result.results.side_effect = HTTPNotModified()
+        second_result.results.side_effect = HTTPNotModified(status_code=304, headers={})
 
         third_result = MagicMock()
         third_result.results.return_value = [{"contract_id": 7}]
 
-        operation_fn = MagicMock(side_effect=[first_result, second_result, third_result])
+        operation_fn = MagicMock(
+            side_effect=[first_result, second_result, third_result]
+        )
         client._resolve_operation = MagicMock(return_value=operation_fn)
         client._coerce_mapping = MagicMock(side_effect=lambda item: item)
 
@@ -76,10 +78,10 @@ class ESIClientAuthedCallTest(SimpleTestCase):
         token_obj = MagicMock()
 
         first_result = MagicMock()
-        first_result.results.side_effect = HTTPNotModified()
+        first_result.results.side_effect = HTTPNotModified(status_code=304, headers={})
 
         second_result = MagicMock()
-        second_result.results.side_effect = HTTPNotModified()
+        second_result.results.side_effect = HTTPNotModified(status_code=304, headers={})
 
         third_result = MagicMock()
         third_result.results.return_value = {"ok": True}
@@ -96,5 +98,7 @@ class ESIClientAuthedCallTest(SimpleTestCase):
         )
 
         self.assertEqual(payload, {"ok": True})
-        second_result.results.assert_called_once_with(force_refresh=False, use_cache=True)
+        second_result.results.assert_called_once_with(
+            force_refresh=False, use_cache=True
+        )
         third_result.results.assert_called_once_with(use_etag=False)

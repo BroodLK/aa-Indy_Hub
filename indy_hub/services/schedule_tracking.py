@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 # Standard Library
+from collections.abc import Iterable
 from datetime import datetime, timedelta
-from typing import Any, Iterable
+from typing import Any
 
 # Django
 from django.utils import timezone

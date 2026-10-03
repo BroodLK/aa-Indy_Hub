@@ -17,8 +17,9 @@ in a different cache and would need director rights.
 from __future__ import annotations
 
 # Standard Library
+from collections.abc import Iterable
 from datetime import timedelta
-from typing import Any, Iterable
+from typing import Any
 
 # Django
 from django.db.models import Max
@@ -240,6 +241,7 @@ def _npc_station_names(location_ids: Iterable[int]) -> dict[int, str]:
 
 def _get_region_name(region_id: int) -> str:
     try:
+        # Alliance Auth (External Libs)
         from eve_sde.models import Region
 
         row = Region.objects.filter(id=region_id).values_list("name", flat=True).first()
@@ -250,9 +252,14 @@ def _get_region_name(region_id: int) -> str:
 
 def _get_system_name(system_id: int) -> str:
     try:
+        # Alliance Auth (External Libs)
         from eve_sde.models import SolarSystem
 
-        row = SolarSystem.objects.filter(id=system_id).values_list("name", flat=True).first()
+        row = (
+            SolarSystem.objects.filter(id=system_id)
+            .values_list("name", flat=True)
+            .first()
+        )
         return str(row or "").strip()
     except Exception:
         return ""
@@ -277,6 +284,7 @@ def resolve_location_system_and_region(
 
     results: dict[int, dict[str, Any]] = {}
     try:
+        # Alliance Auth (External Libs)
         from eve_sde.models import NPCStation
 
         stations = NPCStation.objects.filter(id__in=ids).select_related(
@@ -284,14 +292,8 @@ def resolve_location_system_and_region(
         )
         for station in stations:
             system = getattr(station, "solar_system", None)
-            constellation = (
-                getattr(system, "constellation", None) if system else None
-            )
-            region = (
-                getattr(constellation, "region", None)
-                if constellation
-                else None
-            )
+            constellation = getattr(system, "constellation", None) if system else None
+            region = getattr(constellation, "region", None) if constellation else None
             results[int(station.id)] = {
                 "station_name": str(getattr(station, "name", "") or "").strip(),
                 "system_id": int(system.id) if system else None,
@@ -305,6 +307,7 @@ def resolve_location_system_and_region(
     unresolved_ids = [loc_id for loc_id in ids if loc_id not in results]
     if unresolved_ids:
         try:
+            # Alliance Auth (External Libs)
             from eve_sde.models import SolarSystem
 
             structures = CachedStructureName.objects.filter(
@@ -329,9 +332,7 @@ def resolve_location_system_and_region(
                     getattr(system, "constellation", None) if system else None
                 )
                 region = (
-                    getattr(constellation, "region", None)
-                    if constellation
-                    else None
+                    getattr(constellation, "region", None) if constellation else None
                 )
                 results[s_id] = {
                     "station_name": s_name,
@@ -1182,9 +1183,7 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
             "system_id": target_id,
             "system_name": system_name,
             "location_name": (
-                f"Solar System: {system_name}"
-                if system_name
-                else f"System {target_id}"
+                f"Solar System: {system_name}" if system_name else f"System {target_id}"
             ),
             "item_ids": item_ids,
             "rejected": False,
@@ -1204,9 +1203,7 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
             "location_name": "All eligible locations",
         }
     names = resolve_cached_location_names([location_id])
-    loc_meta = resolve_location_system_and_region([location_id]).get(
-        location_id, {}
-    )
+    loc_meta = resolve_location_system_and_region([location_id]).get(location_id, {})
     last_synced = (
         CachedCharacterAsset.objects.filter(
             user=user, location_id=location_id, is_blueprint=True

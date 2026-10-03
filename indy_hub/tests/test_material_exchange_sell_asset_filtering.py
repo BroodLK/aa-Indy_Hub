@@ -49,7 +49,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         "indy_hub.views.material_exchange.get_type_name",
         return_value="Capital Construction Parts Blueprint",
     )
-    def test_asset_is_blueprint_detects_singleton_blueprint_from_type_name_lookup(self, _mock_get_type_name):
+    def test_asset_is_blueprint_detects_singleton_blueprint_from_type_name_lookup(
+        self, _mock_get_type_name
+    ):
         self.assertTrue(
             _asset_is_blueprint(
                 {
@@ -126,11 +128,13 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         ]
         mock_get_user_assets_cached.return_value = (assets, False)
 
-        aggregated, by_character, by_location, scope_missing = _fetch_user_assets_for_structure_data(
-            self.user,
-            self.structure_id,
-            allow_refresh=False,
-            config=self.config,
+        aggregated, by_character, by_location, scope_missing = (
+            _fetch_user_assets_for_structure_data(
+                self.user,
+                self.structure_id,
+                allow_refresh=False,
+                config=self.config,
+            )
         )
 
         self.assertFalse(scope_missing)
@@ -174,11 +178,13 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         ]
         mock_get_user_assets_cached.return_value = (assets, False)
 
-        aggregated, _by_character, _by_location, _scope_missing = _fetch_user_assets_for_structure_data(
-            self.user,
-            self.structure_id,
-            allow_refresh=False,
-            config=self.config,
+        aggregated, _by_character, _by_location, _scope_missing = (
+            _fetch_user_assets_for_structure_data(
+                self.user,
+                self.structure_id,
+                allow_refresh=False,
+                config=self.config,
+            )
         )
 
         self.assertEqual(aggregated.get(999), 1)
@@ -195,7 +201,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
             35: "Pyerite",
             36: "Mexallon",
         }
-        mock_get_type_name.side_effect = lambda type_id: name_map.get(int(type_id), f"Type {type_id}")
+        mock_get_type_name.side_effect = lambda type_id: name_map.get(
+            int(type_id), f"Type {type_id}"
+        )
 
         assets = [
             {
@@ -272,7 +280,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertEqual(by_type[36]["depth"], 0)
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_nests_with_location_parent_fallback(self, mock_get_type_name):
+    def test_build_sell_material_rows_nests_with_location_parent_fallback(
+        self, mock_get_type_name
+    ):
         mock_get_type_name.side_effect = lambda type_id: {
             1000: "Station Container",
             34: "Tritanium",
@@ -321,9 +331,13 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertTrue(item_rows[0]["container_path"])
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_blueprint_copy_is_zero_priced(self, mock_get_type_name):
+    def test_build_sell_material_rows_blueprint_copy_is_zero_priced(
+        self, mock_get_type_name
+    ):
         mock_get_type_name.side_effect = lambda type_id: (
-            "Capital Armor Plates Blueprint" if int(type_id) == 77777 else f"Type {type_id}"
+            "Capital Armor Plates Blueprint"
+            if int(type_id) == 77777
+            else f"Type {type_id}"
         )
 
         assets = [
@@ -360,8 +374,12 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertIn("_bpc_", rows[0]["form_quantity_field_name"])
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_splits_same_type_by_character(self, mock_get_type_name) -> None:
-        mock_get_type_name.side_effect = lambda type_id: "Tritanium" if int(type_id) == 34 else f"Type {type_id}"
+    def test_build_sell_material_rows_splits_same_type_by_character(
+        self, mock_get_type_name
+    ) -> None:
+        mock_get_type_name.side_effect = lambda type_id: (
+            "Tritanium" if int(type_id) == 34 else f"Type {type_id}"
+        )
 
         assets = [
             {
@@ -407,7 +425,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertEqual(by_character_name["Pilot Bravo"]["available_quantity"], 7)
 
     @patch("indy_hub.views.material_exchange.get_type_name")
-    def test_build_sell_material_rows_keeps_unaccepted_items_as_disabled_rows(self, mock_get_type_name) -> None:
+    def test_build_sell_material_rows_keeps_unaccepted_items_as_disabled_rows(
+        self, mock_get_type_name
+    ) -> None:
         mock_get_type_name.side_effect = lambda type_id: {
             34: "Tritanium",
             35: "Pyerite",
@@ -441,12 +461,20 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertEqual(rows[0]["user_quantity"], 7)
         self.assertEqual(rows[0]["available_quantity"], 0)
         self.assertTrue(rows[0]["is_disabled"])
-        self.assertEqual(rows[0]["disable_reason"], "Item not accepted in its current location")
+        self.assertEqual(
+            rows[0]["disable_reason"], "Item not accepted in its current location"
+        )
 
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
-    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
-    @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config", return_value=None)
+    @patch(
+        "indy_hub.views.material_exchange._get_corp_name_for_hub",
+        return_value="Test Corp",
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_allowed_type_ids_for_config",
+        return_value=None,
+    )
     @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange.get_user_assets_cached")
     @patch("indy_hub.views.material_exchange._fetch_user_assets_for_structure_data")
@@ -456,7 +484,10 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         return_value=({}, {}),
     )
     @patch("indy_hub.views.material_exchange._get_material_exchange_config")
-    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch(
+        "indy_hub.views.material_exchange._is_material_exchange_enabled",
+        return_value=True,
+    )
     @patch("indy_hub.views.material_exchange.render")
     def test_sell_view_display_reservations_do_not_type_filter_query(
         self,
@@ -478,7 +509,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
 
         mock_get_config.return_value = self.config
         mock_render.return_value = HttpResponse("ok")
-        mock_fetch_prices.return_value = {34: {"buy": Decimal("10"), "sell": Decimal("11")}}
+        mock_fetch_prices.return_value = {
+            34: {"buy": Decimal("10"), "sell": Decimal("11")}
+        }
 
         # Stale aggregated data misses type 35, while raw asset data still contains it.
         mock_fetch_assets_for_structures.return_value = (
@@ -524,7 +557,10 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
 
     @patch("indy_hub.views.material_exchange.build_nav_context", return_value={})
     @patch("indy_hub.views.material_exchange._build_nav_context", return_value={})
-    @patch("indy_hub.views.material_exchange._get_corp_name_for_hub", return_value="Test Corp")
+    @patch(
+        "indy_hub.views.material_exchange._get_corp_name_for_hub",
+        return_value="Test Corp",
+    )
     @patch("indy_hub.views.material_exchange._get_allowed_type_ids_for_config")
     @patch("indy_hub.views.material_exchange._fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange.get_user_assets_cached")
@@ -535,7 +571,10 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         return_value=({}, {}),
     )
     @patch("indy_hub.views.material_exchange._get_material_exchange_config")
-    @patch("indy_hub.views.material_exchange._is_material_exchange_enabled", return_value=True)
+    @patch(
+        "indy_hub.views.material_exchange._is_material_exchange_enabled",
+        return_value=True,
+    )
     @patch("indy_hub.views.material_exchange.render")
     def test_sell_view_keeps_location_rejected_items_visible_as_disabled_rows(
         self,
@@ -557,8 +596,12 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
 
         mock_get_config.return_value = self.config
         mock_render.return_value = HttpResponse("ok")
-        mock_fetch_prices.return_value = {34: {"buy": Decimal("10"), "sell": Decimal("11")}}
-        mock_allowed_type_ids.side_effect = lambda _config, mode, structure_id=None: {34} if mode == "sell" else None
+        mock_fetch_prices.return_value = {
+            34: {"buy": Decimal("10"), "sell": Decimal("11")}
+        }
+        mock_allowed_type_ids.side_effect = lambda _config, mode, structure_id=None: (
+            {34} if mode == "sell" else None
+        )
         mock_fetch_assets_for_structures.return_value = (
             {34: 5},
             {9001: {34: 5, 35: 7}},
@@ -598,7 +641,9 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         context = mock_render.call_args.args[2]
-        material_rows = [row for row in context["materials"] if row.get("row_kind") == "item"]
+        material_rows = [
+            row for row in context["materials"] if row.get("row_kind") == "item"
+        ]
         rows_by_type = {int(row["type_id"]): row for row in material_rows}
 
         self.assertIn(34, rows_by_type)
@@ -606,4 +651,7 @@ class MaterialExchangeSellAssetFilteringTests(TestCase):
         self.assertFalse(rows_by_type[34]["is_disabled"])
         self.assertTrue(rows_by_type[35]["is_disabled"])
         self.assertEqual(rows_by_type[35]["available_quantity"], 0)
-        self.assertEqual(rows_by_type[35]["disable_reason"], "Item not accepted in its current location")
+        self.assertEqual(
+            rows_by_type[35]["disable_reason"],
+            "Item not accepted in its current location",
+        )

@@ -173,7 +173,9 @@ class WeeklyMiningPollTaskTests(TestCase):
         )
 
     @patch("indy_hub.tasks.mining_polls._queue_bot_task", return_value=True)
-    def test_dispatch_due_weekly_mining_polls_creates_and_queues_run(self, mock_queue) -> None:
+    def test_dispatch_due_weekly_mining_polls_creates_and_queues_run(
+        self, mock_queue
+    ) -> None:
         now = timezone.now().replace(second=0, microsecond=0)
         config = self.create_due_config(now=now)
 
@@ -188,7 +190,9 @@ class WeeklyMiningPollTaskTests(TestCase):
         mock_queue.assert_called_once()
 
     @patch("indy_hub.tasks.mining_polls._queue_bot_task", return_value=True)
-    def test_queue_closed_weekly_mining_polls_marks_runs_pending_resolution(self, mock_queue) -> None:
+    def test_queue_closed_weekly_mining_polls_marks_runs_pending_resolution(
+        self, mock_queue
+    ) -> None:
         now = timezone.now()
         config = WeeklyMiningPollConfig.objects.create(
             system_name="Y-2ANO",

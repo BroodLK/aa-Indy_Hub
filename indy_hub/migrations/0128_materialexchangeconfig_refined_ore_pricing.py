@@ -1,5 +1,7 @@
+# Standard Library
 from decimal import Decimal
 
+# Django
 import django.core.validators
 from django.db import migrations, models
 

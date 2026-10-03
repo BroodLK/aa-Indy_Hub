@@ -16,6 +16,10 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership, UserProfile
+from allianceauth.eveonline.models import EveCharacter
+
 # AA Example App
 # Local
 from indy_hub.models import (
@@ -53,6 +57,38 @@ from indy_hub.views.reprocessing_services import (
     _infer_supported_structure_type,
     _parse_request_item_lines,
 )
+
+
+def _assign_main_character(user: User, *, character_id: int) -> EveCharacter:
+    character, _ = EveCharacter.objects.get_or_create(
+        character_id=character_id,
+        defaults={
+            "character_name": f"Pilot {character_id}",
+            "corporation_id": 2_000_000,
+            "corporation_name": "Test Corp",
+            "corporation_ticker": "TEST",
+        },
+    )
+    CharacterOwnership.objects.update_or_create(
+        user=user,
+        character=character,
+        defaults={"owner_hash": f"hash-{character_id}-{user.id}"},
+    )
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    profile.main_character = character
+    profile.save(update_fields=["main_character"])
+    return character
+
+
+def _grant_indy_permissions(user: User, *codenames: str) -> None:
+    required = {"can_access_indy_hub"}
+    required.update(codenames)
+    permissions = Permission.objects.filter(codename__in=required)
+    found = {perm.codename: perm for perm in permissions}
+    missing = required - found.keys()
+    if missing:
+        raise AssertionError(f"Missing permissions: {sorted(missing)}")
+    user.user_permissions.add(*found.values())
 
 
 class ReprocessingReferenceTests(TestCase):
@@ -122,7 +158,9 @@ class ReprocessingProfileModelTests(TestCase):
         "indy_hub.models.generate_reprocessing_reference",
         return_value="REPROCESSING-1111111111",
     )
-    def test_request_reference_collision_fallback_keeps_reprocessing_prefix(self, _mock_ref):
+    def test_request_reference_collision_fallback_keeps_reprocessing_prefix(
+        self, _mock_ref
+    ):
         profile = ReprocessingServiceProfile.objects.create(
             user=self.user,
             character_id=9000004,
@@ -150,12 +188,12 @@ class ReprocessingProfileModelTests(TestCase):
 class ReprocessingAdminAvailabilityToggleTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_user("reproc_admin", password="secret")
+        _assign_main_character(self.admin, character_id=92000001)
+        _grant_indy_permissions(self.admin, "can_manage_material_hub")
+
         self.processor = User.objects.create_user("reproc_processor", password="secret")
-        permission = Permission.objects.get(
-            content_type__app_label="indy_hub",
-            codename="can_manage_material_hub",
-        )
-        self.admin.user_permissions.add(permission)
+        _assign_main_character(self.processor, character_id=92000002)
+        _grant_indy_permissions(self.processor)
 
     @patch("indy_hub.views.reprocessing_services.notify_user")
     def test_admin_disable_sets_lock_and_unavailable(self, _mock_notify):
@@ -231,12 +269,12 @@ class ReprocessingAdminAvailabilityToggleTests(TestCase):
 class ReprocessingMyRequestsViewTests(TestCase):
     def setUp(self):
         self.viewer = User.objects.create_user("reproc_viewer", password="secret")
+        _assign_main_character(self.viewer, character_id=93000001)
+        _grant_indy_permissions(self.viewer)
+
         self.other_user = User.objects.create_user("reproc_other", password="secret")
-        permission = Permission.objects.get(
-            content_type__app_label="indy_hub",
-            codename="can_access_indy_hub",
-        )
-        self.viewer.user_permissions.add(permission)
+        _assign_main_character(self.other_user, character_id=93000002)
+        _grant_indy_permissions(self.other_user)
 
         self.other_profile = ReprocessingServiceProfile.objects.create(
             user=self.other_user,
@@ -296,20 +334,16 @@ class ReprocessingMyRequestsViewTests(TestCase):
 class ReprocessingCancelRequestTests(TestCase):
     def setUp(self):
         self.requester = User.objects.create_user("cancel_requester", password="secret")
+        _assign_main_character(self.requester, character_id=95000001)
+        _grant_indy_permissions(self.requester)
+
         self.processor = User.objects.create_user("cancel_processor", password="secret")
-        access_permission = Permission.objects.get(
-            content_type__app_label="indy_hub",
-            codename="can_access_indy_hub",
-        )
-        manage_permission = Permission.objects.get(
-            content_type__app_label="indy_hub",
-            codename="can_manage_material_hub",
-        )
-        self.requester.user_permissions.add(access_permission)
-        self.processor.user_permissions.add(access_permission)
+        _assign_main_character(self.processor, character_id=95000002)
+        _grant_indy_permissions(self.processor)
+
         self.admin = User.objects.create_user("cancel_admin", password="secret")
-        self.admin.user_permissions.add(access_permission)
-        self.admin.user_permissions.add(manage_permission)
+        _assign_main_character(self.admin, character_id=95000003)
+        _grant_indy_permissions(self.admin, "can_manage_material_hub")
         self.profile = ReprocessingServiceProfile.objects.create(
             user=self.processor,
             character_id=95000001,
@@ -333,11 +367,15 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.post(reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id]))
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
+        )
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("indy_hub:index"))
-        self.assertFalse(ReprocessingServiceRequest.objects.filter(id=service_request.id).exists())
+        self.assertFalse(
+            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
+        )
 
     def test_disputed_request_detail_shows_cancel_permission_for_requester(self):
         service_request = ReprocessingServiceRequest.objects.create(
@@ -353,7 +391,9 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.get(reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]))
+        response = self.client.get(
+            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["can_cancel"])
@@ -373,17 +413,23 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.admin)
-        detail_response = self.client.get(reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]))
+        detail_response = self.client.get(
+            reverse("indy_hub:reprocessing_request_detail", args=[service_request.id])
+        )
         self.assertEqual(detail_response.status_code, 200)
         self.assertTrue(detail_response.context["is_admin"])
         self.assertTrue(detail_response.context["can_cancel"])
         self.assertTrue(detail_response.context["can_admin_delete"])
         self.assertContains(detail_response, "Admin Delete Request")
 
-        delete_response = self.client.post(reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id]))
+        delete_response = self.client.post(
+            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
+        )
         self.assertEqual(delete_response.status_code, 302)
         self.assertEqual(delete_response.url, reverse("indy_hub:index"))
-        self.assertFalse(ReprocessingServiceRequest.objects.filter(id=service_request.id).exists())
+        self.assertFalse(
+            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
+        )
 
     @patch("indy_hub.views.reprocessing_services.notify_user")
     def test_requester_cannot_cancel_completed_request(self, _mock_notify):
@@ -400,14 +446,18 @@ class ReprocessingCancelRequestTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.post(reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id]))
+        response = self.client.post(
+            reverse("indy_hub:reprocessing_request_cancel", args=[service_request.id])
+        )
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
             response.url,
             reverse("indy_hub:reprocessing_request_detail", args=[service_request.id]),
         )
-        self.assertTrue(ReprocessingServiceRequest.objects.filter(id=service_request.id).exists())
+        self.assertTrue(
+            ReprocessingServiceRequest.objects.filter(id=service_request.id).exists()
+        )
 
 
 class ReprocessingContractMatcherTests(TestCase):
@@ -569,13 +619,20 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             for query in args:
                 filtered = [row for row in filtered if self._matches_q(row, query)]
             for lookup, expected in kwargs.items():
-                filtered = [row for row in filtered if self._matches_lookup(row, lookup, expected)]
+                filtered = [
+                    row
+                    for row in filtered
+                    if self._matches_lookup(row, lookup, expected)
+                ]
             return self.__class__(filtered)
 
         def values_list(self, *fields, flat=False):
             if flat and len(fields) == 1:
                 return [self._resolve_attr(row, fields[0]) for row in self.rows]
-            return [tuple(self._resolve_attr(row, field) for field in fields) for row in self.rows]
+            return [
+                tuple(self._resolve_attr(row, field) for field in fields)
+                for row in self.rows
+            ]
 
         def _resolve_attr(self, obj, lookup):
             value = obj
@@ -667,7 +724,9 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
         )
 
         fake_item_type_model = SimpleNamespace(
-            objects=self._FakeQuerySet([ore_type, moon_ore_type, module_type, batch_ore_type])
+            objects=self._FakeQuerySet(
+                [ore_type, moon_ore_type, module_type, batch_ore_type]
+            )
         )
         mock_outputs.side_effect = {
             ore_type.id: {34: 400},
@@ -703,14 +762,19 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             any_order=True,
         )
         stored_type_ids = {
-            kwargs["ore_type_id"] for _args, kwargs in mock_cache_model.objects.update_or_create.call_args_list
+            kwargs["ore_type_id"]
+            for _args, kwargs in mock_cache_model.objects.update_or_create.call_args_list
         }
         self.assertEqual(stored_type_ids, {ore_type.id, moon_ore_type.id})
 
     @patch("indy_hub.services.reprocessing.clear_compressed_ore_cache")
     def test_populate_cache_reports_missing_eve_sde_item_data(self, _mock_clear_cache):
-        fake_item_type_model = SimpleNamespace(objects=SimpleNamespace(exists=lambda: False))
-        fake_item_type_materials_model = SimpleNamespace(objects=SimpleNamespace(exists=lambda: True))
+        fake_item_type_model = SimpleNamespace(
+            objects=SimpleNamespace(exists=lambda: False)
+        )
+        fake_item_type_materials_model = SimpleNamespace(
+            objects=SimpleNamespace(exists=lambda: True)
+        )
 
         with (
             patch("eve_sde.models.ItemType", fake_item_type_model),
@@ -725,6 +789,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
         self.assertIn("esde_load_sde", message)
 
     def test_get_ore_type_ids_filters_market_groups_and_excludes_modules(self):
+        # AA Example App
         from indy_hub.services.reprocessing import get_ore_type_ids
 
         asteroid_group = self._FakeGroup(category_id=25)
@@ -810,9 +875,7 @@ class CompressedOreCachePopulationTests(SimpleTestCase):
             cloak_module,
             ship_item,
         ]
-        fake_item_type_model = SimpleNamespace(
-            objects=self._FakeQuerySet(all_types)
-        )
+        fake_item_type_model = SimpleNamespace(objects=self._FakeQuerySet(all_types))
 
         with patch("eve_sde.models.ItemType", fake_item_type_model):
             result = get_ore_type_ids([t.id for t in all_types])
@@ -846,8 +909,13 @@ class CompressedOreCalculationSetupTests(SimpleTestCase):
 
 
 class CompressedOreCalculationPerformanceTests(SimpleTestCase):
-    @patch("indy_hub.services.reprocessing.get_type_name", return_value="Compressed Veldspar")
-    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=1)
+    @patch(
+        "indy_hub.services.reprocessing.get_type_name",
+        return_value="Compressed Veldspar",
+    )
+    @patch(
+        "indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=1
+    )
     @patch("indy_hub.models.CompressedOreCache")
     def test_large_static_requirement_is_solved_without_single_portion_loop(
         self,
@@ -877,8 +945,13 @@ class CompressedOreCalculationPerformanceTests(SimpleTestCase):
         self.assertEqual(result["compressed_ores"][0]["quantity"], 50000)
         self.assertEqual(result["total_cost"], Decimal("100000.00"))
 
-    @patch("indy_hub.services.reprocessing.get_type_name", return_value="Compressed Veldspar")
-    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=1)
+    @patch(
+        "indy_hub.services.reprocessing.get_type_name",
+        return_value="Compressed Veldspar",
+    )
+    @patch(
+        "indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=1
+    )
     @patch("indy_hub.models.CompressedOreCache")
     def test_ignores_ores_with_sell_price_at_or_below_one_isk(
         self,
@@ -936,8 +1009,13 @@ class CompressedOreCalculationPerformanceTests(SimpleTestCase):
 
 class CompressedOreOptimizationAndLogisticsTests(SimpleTestCase):
     @patch("indy_hub.services.reprocessing.get_type_volume", return_value=0.15)
-    @patch("indy_hub.services.reprocessing.get_type_name", side_effect=lambda tid: f"Ore {tid}")
-    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100)
+    @patch(
+        "indy_hub.services.reprocessing.get_type_name",
+        side_effect=lambda tid: f"Ore {tid}",
+    )
+    @patch(
+        "indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100
+    )
     @patch("indy_hub.models.CompressedOreCache")
     def test_lp_solver_finds_cheapest_combination_across_multi_minerals(
         self,
@@ -985,8 +1063,13 @@ class CompressedOreOptimizationAndLogisticsTests(SimpleTestCase):
         self.assertGreater(logistics["volume_reduction_percent"], 0)
 
     @patch("indy_hub.services.reprocessing.get_type_volume", return_value=0.15)
-    @patch("indy_hub.services.reprocessing.get_type_name", side_effect=lambda tid: f"Ore {tid}")
-    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100)
+    @patch(
+        "indy_hub.services.reprocessing.get_type_name",
+        side_effect=lambda tid: f"Ore {tid}",
+    )
+    @patch(
+        "indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100
+    )
     @patch("indy_hub.models.CompressedOreCache")
     def test_facility_tax_and_byproduct_valuation_calculations(
         self,
@@ -1022,9 +1105,17 @@ class CompressedOreOptimizationAndLogisticsTests(SimpleTestCase):
         self.assertEqual(result["excess_minerals_value"], Decimal("200.00"))
         self.assertEqual(result["net_effective_cost"], Decimal("850.00"))  # 1050 - 200
 
-    @patch("indy_hub.services.reprocessing.get_type_volume", side_effect=lambda tid: 0.10 if tid == 1 else 0.50)
-    @patch("indy_hub.services.reprocessing.get_type_name", side_effect=lambda tid: f"Ore {tid}")
-    @patch("indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100)
+    @patch(
+        "indy_hub.services.reprocessing.get_type_volume",
+        side_effect=lambda tid: 0.10 if tid == 1 else 0.50,
+    )
+    @patch(
+        "indy_hub.services.reprocessing.get_type_name",
+        side_effect=lambda tid: f"Ore {tid}",
+    )
+    @patch(
+        "indy_hub.services.reprocessing.get_reprocessing_portion_size", return_value=100
+    )
     @patch("indy_hub.models.CompressedOreCache")
     def test_volume_optimization_strategy_favors_lower_freight(
         self,
@@ -1079,12 +1170,16 @@ class CompressedOrePriceUpdateTests(SimpleTestCase):
         self.assertTrue(success, message)
         self.assertIn("Updated prices for 2 compressed ores", message)
         self.assertEqual(mock_cache_model.objects.filter.call_count, 2)
-        second_update = mock_cache_model.objects.filter.return_value.update.call_args_list[-1]
+        second_update = (
+            mock_cache_model.objects.filter.return_value.update.call_args_list[-1]
+        )
         self.assertEqual(second_update.kwargs["sell_price"], Decimal("0"))
 
 
 class CompressedOreCacheCommandTests(SimpleTestCase):
-    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache.clear_compressed_ore_cache")
+    @patch(
+        "indy_hub.management.commands.indy_hub_load_compressed_ore_cache.clear_compressed_ore_cache"
+    )
     def test_clear_only_option(self, mock_clear_cache):
         mock_clear_cache.return_value = 12
         out = StringIO()
@@ -1093,11 +1188,20 @@ class CompressedOreCacheCommandTests(SimpleTestCase):
 
         self.assertIn("Cleared 12 compressed ore cache rows.", out.getvalue())
 
-    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache._update_compressed_ore_prices")
-    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache._populate_compressed_ore_cache")
-    def test_populates_cache_and_updates_prices(self, mock_populate, mock_update_prices):
+    @patch(
+        "indy_hub.management.commands.indy_hub_load_compressed_ore_cache._update_compressed_ore_prices"
+    )
+    @patch(
+        "indy_hub.management.commands.indy_hub_load_compressed_ore_cache._populate_compressed_ore_cache"
+    )
+    def test_populates_cache_and_updates_prices(
+        self, mock_populate, mock_update_prices
+    ):
         mock_populate.return_value = (True, "Populated cache with 99 compressed ores")
-        mock_update_prices.return_value = (True, "Updated prices for 99 compressed ores")
+        mock_update_prices.return_value = (
+            True,
+            "Updated prices for 99 compressed ores",
+        )
         out = StringIO()
 
         call_command("indy_hub_load_compressed_ore_cache", stdout=out)
@@ -1106,7 +1210,9 @@ class CompressedOreCacheCommandTests(SimpleTestCase):
         self.assertIn("Populated cache with 99 compressed ores", output)
         self.assertIn("Updated prices for 99 compressed ores", output)
 
-    @patch("indy_hub.management.commands.indy_hub_load_compressed_ore_cache._populate_compressed_ore_cache")
+    @patch(
+        "indy_hub.management.commands.indy_hub_load_compressed_ore_cache._populate_compressed_ore_cache"
+    )
     def test_raises_command_error_when_population_fails(self, mock_populate):
         mock_populate.return_value = (False, "bad cache state")
 
@@ -1253,8 +1359,6 @@ class ReprocessingSkillResolutionTests(TestCase):
 
 
 class ReprocessingCorptoolsFallbackTests(TestCase):
-    @patch("indy_hub.services.reprocessing.Token.get_token", side_effect=Exception("no token"))
-    @patch("indy_hub.services.reprocessing._get_operation", return_value=None)
     @patch(
         "indy_hub.services.reprocessing._fetch_corptools_skill_levels",
         return_value={3385: {"active": 5, "trained": 5}},
@@ -1262,14 +1366,10 @@ class ReprocessingCorptoolsFallbackTests(TestCase):
     def test_skill_lookup_uses_corptools_cache_when_esi_unavailable(
         self,
         _mock_corptools,
-        _mock_op,
-        _mock_token,
     ):
         levels = fetch_character_skill_levels(9000001)
         self.assertEqual(levels.get(3385, {}).get("active"), 5)
 
-    @patch("indy_hub.services.reprocessing.Token.get_token", side_effect=Exception("no token"))
-    @patch("indy_hub.services.reprocessing._get_operation", return_value=None)
     @patch(
         "indy_hub.services.reprocessing._fetch_corptools_clone_options",
         return_value=[
@@ -1280,7 +1380,9 @@ class ReprocessingCorptoolsFallbackTests(TestCase):
                 "location_name": "Jita IV",
                 "implant_type_ids": [27118],
                 "implant_names": ["Eifyr and Co. 'Beancounter' Reprocessing RX-804"],
-                "beancounter_implants": ["Eifyr and Co. 'Beancounter' Reprocessing RX-804"],
+                "beancounter_implants": [
+                    "Eifyr and Co. 'Beancounter' Reprocessing RX-804"
+                ],
                 "beancounter_bonus_percent": Decimal("4.000"),
             }
         ],
@@ -1288,8 +1390,6 @@ class ReprocessingCorptoolsFallbackTests(TestCase):
     def test_clone_lookup_uses_corptools_cache_when_esi_unavailable(
         self,
         _mock_corptools,
-        _mock_op,
-        _mock_token,
     ):
         clones = fetch_character_clone_options(9000001)
         self.assertEqual(len(clones), 1)
@@ -1344,7 +1444,9 @@ class _FakeAssetQuerySet:
         for key, value in kwargs.items():
             if key == "location_id__in":
                 wanted = {int(v) for v in (value or [])}
-                rows = [row for row in rows if int(row.get("location_id") or 0) in wanted]
+                rows = [
+                    row for row in rows if int(row.get("location_id") or 0) in wanted
+                ]
                 continue
             raise AssertionError(f"Unsupported filter key in test fake queryset: {key}")
         return _FakeAssetQuerySet(rows)
@@ -1356,7 +1458,9 @@ class _FakeAssetQuerySet:
 class ReprocessingRigDetectionTests(TestCase):
     def test_rig_name_includes_asteroid_variant(self):
         self.assertEqual(
-            _infer_rig_profile_key_from_type_name("Standup M-Set Asteroid Ore Grading Processor I"),
+            _infer_rig_profile_key_from_type_name(
+                "Standup M-Set Asteroid Ore Grading Processor I"
+            ),
             "ore_t1",
         )
 
@@ -1386,9 +1490,9 @@ class ReprocessingRigDetectionTests(TestCase):
             ),
             False,
         )
-        mock_get_type_name.side_effect = lambda type_id: {8888: "Standup M-Set Moon Ore Grading Processor II"}.get(
-            int(type_id), f"Type {type_id}"
-        )
+        mock_get_type_name.side_effect = lambda type_id: {
+            8888: "Standup M-Set Moon Ore Grading Processor II"
+        }.get(int(type_id), f"Type {type_id}")
 
         result = _infer_structure_rigs_from_cached_assets([98000001], [9001])
 
@@ -1396,10 +1500,22 @@ class ReprocessingRigDetectionTests(TestCase):
 
 
 class ReprocessingStructureDiscoveryTests(TestCase):
-    @patch("indy_hub.views.reprocessing_services._resolve_system_security_modifiers", return_value={})
-    @patch("indy_hub.views.reprocessing_services.shared_client.resolve_ids_to_names", return_value={})
-    @patch("indy_hub.views.reprocessing_services._infer_structure_rigs_from_cached_assets", return_value={})
-    @patch("indy_hub.views.reprocessing_services._infer_structure_rigs_from_corptools", return_value={})
+    @patch(
+        "indy_hub.views.reprocessing_services._resolve_system_security_modifiers",
+        return_value={},
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services.shared_client.resolve_ids_to_names",
+        return_value={},
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._infer_structure_rigs_from_cached_assets",
+        return_value={},
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._infer_structure_rigs_from_corptools",
+        return_value={},
+    )
     @patch(
         "indy_hub.views.reprocessing_services._get_cached_structure_name_map",
         return_value={9001: "BNX-AS - Bucket 6-2"},
@@ -1422,7 +1538,10 @@ class ReprocessingStructureDiscoveryTests(TestCase):
             }
         ],
     )
-    @patch("indy_hub.views.reprocessing_services._get_alliance_corporation_ids", return_value=[98000001])
+    @patch(
+        "indy_hub.views.reprocessing_services._get_alliance_corporation_ids",
+        return_value=[98000001],
+    )
     def test_discovery_excludes_metenox_rows_even_with_asset_flags(
         self,
         _mock_alliance_ids,
@@ -1434,7 +1553,9 @@ class ReprocessingStructureDiscoveryTests(TestCase):
         _mock_location_names,
         _mock_security_modifiers,
     ):
-        rows = _fetch_reprocessing_structures(user=None, selected_corporation_id=98000001)
+        rows = _fetch_reprocessing_structures(
+            user=None, selected_corporation_id=98000001
+        )
 
         self.assertEqual(rows, [])
 
@@ -1447,16 +1568,25 @@ class ReprocessingRequestLineParsingTests(TestCase):
         mock_resolve,
         mock_get_type_name,
     ):
-        mock_resolve.side_effect = lambda text: {"Tritanium": 34, "Pyerite": 35}.get(str(text).strip())
-        mock_get_type_name.side_effect = lambda type_id: {34: "Tritanium", 35: "Pyerite"}.get(
+        mock_resolve.side_effect = lambda text: {"Tritanium": 34, "Pyerite": 35}.get(
+            str(text).strip()
+        )
+        mock_get_type_name.side_effect = lambda type_id: {
+            34: "Tritanium",
+            35: "Pyerite",
+        }.get(
             int(type_id),
             f"Type {type_id}",
         )
 
-        rows, errors = _parse_request_item_lines("Tritanium\t1,250\nPyerite\t2\u202f000")
+        rows, errors = _parse_request_item_lines(
+            "Tritanium\t1,250\nPyerite\t2\u202f000"
+        )
 
         self.assertEqual(errors, [])
-        self.assertEqual(rows, [{"type_id": 35, "quantity": 2000}, {"type_id": 34, "quantity": 1250}])
+        self.assertEqual(
+            rows, [{"type_id": 35, "quantity": 2000}, {"type_id": 34, "quantity": 1250}]
+        )
 
     @patch("indy_hub.views.reprocessing_services.get_type_name")
     @patch("indy_hub.views.reprocessing_services._resolve_type_id_from_text")
@@ -1466,7 +1596,9 @@ class ReprocessingRequestLineParsingTests(TestCase):
         mock_get_type_name,
     ):
         mock_resolve.side_effect = lambda text: {"Tritanium": 34}.get(str(text).strip())
-        mock_get_type_name.side_effect = lambda type_id: {34: "Tritanium"}.get(int(type_id), f"Type {type_id}")
+        mock_get_type_name.side_effect = lambda type_id: {34: "Tritanium"}.get(
+            int(type_id), f"Type {type_id}"
+        )
 
         rows, errors = _parse_request_item_lines("Tritanium\t1,000\t4.50 m3")
 
@@ -1578,11 +1710,15 @@ class ReprocessingAutomationTaskTests(TestCase):
         inbound.status = "in_progress"
         inbound.acceptor_id = 91000001
         inbound.date_accepted = timezone.now()
-        inbound.save(update_fields=["status", "acceptor_id", "date_accepted", "last_synced"])
+        inbound.save(
+            update_fields=["status", "acceptor_id", "date_accepted", "last_synced"]
+        )
 
         auto_progress_reprocessing_requests()
         self.request.refresh_from_db()
-        self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.PROCESSING)
+        self.assertEqual(
+            self.request.status, ReprocessingServiceRequest.Status.PROCESSING
+        )
         self.assertIsNotNone(self.request.inbound_contract_verified_at)
         self.assertTrue(
             any(
@@ -1612,7 +1748,9 @@ class ReprocessingAutomationTaskTests(TestCase):
         auto_progress_reprocessing_requests()
         self.request.refresh_from_db()
         self.assertEqual(self.request.return_contract_id, return_contract.contract_id)
-        self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.COMPLETED)
+        self.assertEqual(
+            self.request.status, ReprocessingServiceRequest.Status.COMPLETED
+        )
         self.assertIsNotNone(self.request.completed_at)
         self.assertTrue(
             any(
@@ -1643,13 +1781,17 @@ class ReprocessingAutomationTaskTests(TestCase):
 
         auto_progress_reprocessing_requests()
         self.request.refresh_from_db()
-        self.assertEqual(self.request.status, ReprocessingServiceRequest.Status.DISPUTED)
+        self.assertEqual(
+            self.request.status, ReprocessingServiceRequest.Status.DISPUTED
+        )
         self.assertIn("Inbound contract items", self.request.dispute_reason)
         self.assertIn("Missing:", self.request.dispute_reason)
         self.assertIn("expected 100, actual 99", self.request.dispute_reason)
         self.assertGreaterEqual(mock_notify_user.call_count, 2)
         titles = [call.args[1] for call in mock_notify_user.call_args_list]
-        self.assertTrue(all(title == "Reprocessing Request Anomaly" for title in titles))
+        self.assertTrue(
+            all(title == "Reprocessing Request Anomaly" for title in titles)
+        )
 
 
 class ReprocessingCharacterContractSyncTests(TestCase):
@@ -1676,8 +1818,12 @@ class ReprocessingCharacterContractSyncTests(TestCase):
             reward_isk=Decimal("1000.00"),
         )
 
-    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contract_items")
-    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contracts")
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contract_items"
+    )
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contracts"
+    )
     def test_syncs_character_contracts_for_active_reprocessing_requests(
         self,
         mock_fetch_contracts,
@@ -1730,8 +1876,12 @@ class ReprocessingCharacterContractSyncTests(TestCase):
         self.assertIn(self.request.request_reference, contract.title)
         self.assertEqual(ESIContractItem.objects.filter(contract=contract).count(), 1)
 
-    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contract_items")
-    @patch("indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contracts")
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contract_items"
+    )
+    @patch(
+        "indy_hub.tasks.material_exchange_contracts.shared_client.fetch_character_contracts"
+    )
     def test_syncs_items_for_finished_reprocessing_contracts(
         self,
         mock_fetch_contracts,
@@ -1788,7 +1938,9 @@ class ReprocessingCharacterContractSyncTests(TestCase):
 
 
 class ReprocessingCycleExecutionTests(TestCase):
-    def test_reprocessing_steps_run_when_material_exchange_disabled_or_unconfigured(self):
+    def test_reprocessing_steps_run_when_material_exchange_disabled_or_unconfigured(
+        self,
+    ):
         with (
             patch(
                 "indy_hub.tasks.material_exchange_contracts.MaterialExchangeSettings.get_solo",
@@ -1798,14 +1950,18 @@ class ReprocessingCycleExecutionTests(TestCase):
                 "indy_hub.tasks.material_exchange_contracts.MaterialExchangeConfig.objects.exists",
                 return_value=False,
             ),
-            patch("indy_hub.tasks.material_exchange_contracts.sync_esi_contracts") as mock_sync_esi,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.sync_esi_contracts"
+            ) as mock_sync_esi,
             patch(
                 "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_sell_orders"
             ) as mock_validate_sell,
             patch(
                 "indy_hub.tasks.material_exchange_contracts.validate_material_exchange_buy_orders"
             ) as mock_validate_buy,
-            patch("indy_hub.tasks.material_exchange_contracts.process_capital_ship_orders") as mock_capital_orders,
+            patch(
+                "indy_hub.tasks.material_exchange_contracts.process_capital_ship_orders"
+            ) as mock_capital_orders,
             patch(
                 "indy_hub.tasks.material_exchange_contracts.check_completed_material_exchange_contracts"
             ) as mock_check_completed,
@@ -1882,7 +2038,9 @@ class ReprocessingWaitingReminderTests(TestCase):
         self.assertTrue(any("3 days" in message for message in messages))
 
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
-    def test_skips_waiting_reminder_after_inbound_contract_submission(self, mock_notify_user):
+    def test_skips_waiting_reminder_after_inbound_contract_submission(
+        self, mock_notify_user
+    ):
         service_request = ReprocessingServiceRequest.objects.create(
             requester=self.requester,
             processor_profile=self.profile,
@@ -1903,16 +2061,21 @@ class ReprocessingWaitingReminderTests(TestCase):
 class ReprocessingScopeWarningsViewTests(TestCase):
     def setUp(self):
         self.requester = User.objects.create_user("scope_req_user", password="secret")
-        self.processor = User.objects.create_user("scope_proc_user", password="secret")
-        permission = Permission.objects.get(
-            content_type__app_label="indy_hub",
-            codename="can_access_indy_hub",
-        )
-        self.requester.user_permissions.add(permission)
-        self.processor.user_permissions.add(permission)
+        _assign_main_character(self.requester, character_id=96000001)
+        _grant_indy_permissions(self.requester)
 
-    @patch("indy_hub.views.reprocessing_services._character_has_required_scopes", return_value=False)
-    @patch("indy_hub.views.reprocessing_services._get_user_main_character", return_value=(91020001, "Scope Requester"))
+        self.processor = User.objects.create_user("scope_proc_user", password="secret")
+        _assign_main_character(self.processor, character_id=96000002)
+        _grant_indy_permissions(self.processor)
+
+    @patch(
+        "indy_hub.views.reprocessing_services._character_has_required_scopes",
+        return_value=False,
+    )
+    @patch(
+        "indy_hub.views.reprocessing_services._get_user_main_character",
+        return_value=(91020001, "Scope Requester"),
+    )
     @patch(
         "indy_hub.views.reprocessing_services._get_user_character_rows",
         return_value=[
@@ -1939,7 +2102,9 @@ class ReprocessingScopeWarningsViewTests(TestCase):
         )
 
         self.client.force_login(self.requester)
-        response = self.client.get(reverse("indy_hub:reprocessing_request_create", args=[profile.id]))
+        response = self.client.get(
+            reverse("indy_hub:reprocessing_request_create", args=[profile.id])
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["requester_has_required_scopes"])
@@ -1981,7 +2146,10 @@ class ReprocessingScopeWarningsViewTests(TestCase):
             }
         ],
     )
-    @patch("indy_hub.views.reprocessing_services.fetch_character_skill_levels", return_value={})
+    @patch(
+        "indy_hub.views.reprocessing_services.fetch_character_skill_levels",
+        return_value={},
+    )
     @patch(
         "indy_hub.views.reprocessing_services._character_has_required_scopes",
         side_effect=lambda _user, character_id: int(character_id) == 91020001,

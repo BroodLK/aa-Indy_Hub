@@ -26,7 +26,9 @@ class Migration(migrations.Migration):
                 ("poll_name", models.CharField(max_length=180)),
                 (
                     "channel_id",
-                    models.BigIntegerField(help_text="Discord channel ID used for posting."),
+                    models.BigIntegerField(
+                        help_text="Discord channel ID used for posting."
+                    ),
                 ),
                 (
                     "ping_role_id",
@@ -157,7 +159,9 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="weeklyminingpollconfig",
-            index=models.Index(fields=["last_scheduled_post_at"], name="indy_hub_wmp_last_post_idx"),
+            index=models.Index(
+                fields=["last_scheduled_post_at"], name="indy_hub_wmp_last_post_idx"
+            ),
         ),
         migrations.AddIndex(
             model_name="weeklyminingpollrun",

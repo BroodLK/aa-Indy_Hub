@@ -9,18 +9,23 @@ from django.core.cache import cache
 from django.test import TestCase
 
 # AA Example App
-from indy_hub.models import Blueprint, MaterialExchangeConfig, MaterialExchangeItemPriceOverride, MaterialExchangeStock
+from indy_hub.models import (
+    Blueprint,
+    MaterialExchangeConfig,
+    MaterialExchangeItemPriceOverride,
+    MaterialExchangeStock,
+)
 from indy_hub.services.asset_cache import make_managed_hangar_location_id
 from indy_hub.tasks.material_exchange import _sync_stock_impl
 from indy_hub.views.material_exchange import (
     _apply_reserved_quantities_to_buy_stock_snapshot,
     _build_buy_material_rows,
     _get_buy_browse_snapshot_cache_key,
-    _get_buy_submission_snapshot_cache_key,
     _get_buy_location_scoped_corp_assets,
-    _get_buy_stock_snapshot_for_submission,
     _get_buy_stock_blueprint_variant_map,
     _get_buy_stock_blueprint_variant_map_from_scoped_assets,
+    _get_buy_stock_snapshot_for_submission,
+    _get_buy_submission_snapshot_cache_key,
     _get_corp_blueprint_details_by_item_id,
     _selected_buy_stock_items_share_source_location,
     _store_buy_submission_snapshot,
@@ -88,7 +93,9 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         stock = MaterialExchangeStock.objects.get(config=self.config, type_id=34)
         self.assertEqual(stock.quantity, 15)
         self.assertEqual(stock.source_structure_ids, [1001, 1002])
-        self.assertEqual(stock.source_structure_names, ["Structure Alpha", "Structure Beta"])
+        self.assertEqual(
+            stock.source_structure_names, ["Structure Alpha", "Structure Beta"]
+        )
 
     @patch("indy_hub.tasks.material_exchange.sync_material_exchange_prices")
     @patch("indy_hub.tasks.material_exchange.get_type_name", return_value="Tritanium")
@@ -100,7 +107,9 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         _mock_sync_prices,
     ):
         office_folder_item_id = 5002
-        managed_location_id = make_managed_hangar_location_id(office_folder_item_id, self.config.hangar_division)
+        managed_location_id = make_managed_hangar_location_id(
+            office_folder_item_id, self.config.hangar_division
+        )
 
         corp_assets = [
             {
@@ -144,7 +153,13 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         self.config.buy_structure_ids = [1001]
         self.config.buy_structure_names = ["Structure Alpha"]
         self.config.hangar_division = 1
-        self.config.save(update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"])
+        self.config.save(
+            update_fields=[
+                "buy_structure_ids",
+                "buy_structure_names",
+                "hangar_division",
+            ]
+        )
 
         corp_assets = [
             # Station-style parent container in hangar (no OfficeFolder row).
@@ -189,17 +204,27 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
             jita_sell_price=Decimal("6.00"),
         )
 
-        with patch("indy_hub.views.material_exchange._stock_item_is_allowed_for_buy", return_value=True):
-            cached_snapshot = rebuild_material_exchange_buy_browse_snapshot_cache(config=self.config)
+        with patch(
+            "indy_hub.views.material_exchange._stock_item_is_allowed_for_buy",
+            return_value=True,
+        ):
+            cached_snapshot = rebuild_material_exchange_buy_browse_snapshot_cache(
+                config=self.config
+            )
         cache_key = _get_buy_browse_snapshot_cache_key(self.config)
 
         self.assertEqual(cache.get(cache_key), cached_snapshot)
         self.assertEqual(len(cached_snapshot["stock_rows"]), 1)
         self.assertEqual(cached_snapshot["stock_rows"][0]["type_id"], 34)
         self.assertEqual(cached_snapshot["stock_rows"][0]["quantity"], 15)
-        self.assertEqual(cached_snapshot["stock_meta_by_type"][34]["source_structure_ids"], [1001, 1002])
+        self.assertEqual(
+            cached_snapshot["stock_meta_by_type"][34]["source_structure_ids"],
+            [1001, 1002],
+        )
 
-    def test_apply_reserved_quantities_to_buy_stock_snapshot_preserves_row_order_distribution(self):
+    def test_apply_reserved_quantities_to_buy_stock_snapshot_preserves_row_order_distribution(
+        self,
+    ):
         static_snapshot = {
             "stock_rows": [
                 {
@@ -241,14 +266,24 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
             reserved_quantities={34: 3},
         )
 
-        self.assertEqual(reserved_snapshot["stock_meta_by_type"][34]["reserved_quantity"], 3)
-        self.assertEqual(reserved_snapshot["stock_meta_by_type"][34]["available_quantity"], 7)
+        self.assertEqual(
+            reserved_snapshot["stock_meta_by_type"][34]["reserved_quantity"], 3
+        )
+        self.assertEqual(
+            reserved_snapshot["stock_meta_by_type"][34]["available_quantity"], 7
+        )
         self.assertEqual(reserved_snapshot["stock_rows"][0]["available_quantity"], 4)
         self.assertEqual(reserved_snapshot["stock_rows"][0]["reserved_quantity"], 0)
         self.assertEqual(reserved_snapshot["stock_rows"][2]["available_quantity"], 3)
         self.assertEqual(reserved_snapshot["stock_rows"][2]["reserved_quantity"], 3)
-        self.assertEqual(reserved_snapshot["stock_rows"][0]["form_quantity_field_name"], "qty_34_std_root_0")
-        self.assertEqual(reserved_snapshot["stock_rows"][2]["form_quantity_field_name"], "qty_34_std_incan_2")
+        self.assertEqual(
+            reserved_snapshot["stock_rows"][0]["form_quantity_field_name"],
+            "qty_34_std_root_0",
+        )
+        self.assertEqual(
+            reserved_snapshot["stock_rows"][2]["form_quantity_field_name"],
+            "qty_34_std_incan_2",
+        )
         self.assertIn(0, reserved_snapshot["stock_row_by_index"])
         self.assertIn(2, reserved_snapshot["stock_row_by_index"])
 
@@ -277,7 +312,9 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         }
         cache.set(_get_buy_browse_snapshot_cache_key(self.config), static_snapshot, 60)
 
-        with patch("indy_hub.views.material_exchange.rebuild_material_exchange_buy_browse_snapshot_cache") as mock_rebuild:
+        with patch(
+            "indy_hub.views.material_exchange.rebuild_material_exchange_buy_browse_snapshot_cache"
+        ) as mock_rebuild:
             snapshot = _get_buy_stock_snapshot_for_submission(
                 config=self.config,
                 submitted_type_ids={34},
@@ -288,7 +325,9 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
         self.assertEqual(snapshot["stock_meta_by_type"][34]["reserved_quantity"], 3)
         self.assertEqual(snapshot["stock_meta_by_type"][34]["available_quantity"], 7)
         self.assertEqual(snapshot["stock_rows"][0]["available_quantity"], 7)
-        self.assertEqual(snapshot["stock_rows"][0]["form_quantity_field_name"], "qty_34_std_root_0")
+        self.assertEqual(
+            snapshot["stock_rows"][0]["form_quantity_field_name"], "qty_34_std_root_0"
+        )
         self.assertIn(0, snapshot["stock_row_by_index"])
 
     def test_get_buy_stock_snapshot_for_submission_uses_submission_snapshot_token(self):
@@ -324,7 +363,9 @@ class MaterialExchangeStockMultiLocationTests(TestCase):
 
         cache.delete(_get_buy_browse_snapshot_cache_key(self.config))
 
-        with patch("indy_hub.views.material_exchange.rebuild_material_exchange_buy_browse_snapshot_cache") as mock_rebuild:
+        with patch(
+            "indy_hub.views.material_exchange.rebuild_material_exchange_buy_browse_snapshot_cache"
+        ) as mock_rebuild:
             snapshot = _get_buy_stock_snapshot_for_submission(
                 config=self.config,
                 submitted_type_ids={34},
@@ -398,7 +439,13 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.config.buy_structure_ids = [1001]
         self.config.buy_structure_names = ["Structure Alpha"]
         self.config.hangar_division = 1
-        self.config.save(update_fields=["buy_structure_ids", "buy_structure_names", "hangar_division"])
+        self.config.save(
+            update_fields=[
+                "buy_structure_ids",
+                "buy_structure_names",
+                "hangar_division",
+            ]
+        )
 
         corp_assets = [
             {
@@ -440,7 +487,9 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(scoped_by_item_id[5003]["source_structure_ids"], [1001])
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_buy_stock_blueprint_variant_map_detects_bpc(self, mock_get_corp_assets_cached):
+    def test_buy_stock_blueprint_variant_map_detects_bpc(
+        self, mock_get_corp_assets_cached
+    ):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
         self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
@@ -467,7 +516,9 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
 
         self.assertEqual(variants.get(77777), "bpc")
 
-    def test_buy_stock_blueprint_variant_map_from_scoped_assets_reuses_prefetched_details(self):
+    def test_buy_stock_blueprint_variant_map_from_scoped_assets_reuses_prefetched_details(
+        self,
+    ):
         scoped_assets = [
             {
                 "item_id": 3001,
@@ -491,7 +542,9 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(variants.get(77777), "bpc")
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_buy_stock_blueprint_variant_map_prefers_corp_blueprint_copy_records(self, mock_get_corp_assets_cached):
+    def test_buy_stock_blueprint_variant_map_prefers_corp_blueprint_copy_records(
+        self, mock_get_corp_assets_cached
+    ):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
         self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
@@ -612,7 +665,9 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(details[item_id]["runs"], 10)
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_buy_stock_variant_map_uses_legacy_corp_row_even_if_owner_kind_stale(self, mock_get_corp_assets_cached):
+    def test_buy_stock_variant_map_uses_legacy_corp_row_even_if_owner_kind_stale(
+        self, mock_get_corp_assets_cached
+    ):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
         self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
@@ -659,7 +714,9 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(variants.get(77780), "bpc")
 
     @patch("indy_hub.views.material_exchange.get_corp_assets_cached")
-    def test_buy_stock_blueprint_variant_map_detects_mixed(self, mock_get_corp_assets_cached):
+    def test_buy_stock_blueprint_variant_map_detects_mixed(
+        self, mock_get_corp_assets_cached
+    ):
         self.config.buy_structure_ids = [1001]
         self.config.hangar_division = 1
         self.config.save(update_fields=["buy_structure_ids", "hangar_division"])
@@ -789,7 +846,9 @@ class MaterialExchangeBuyLocationCompatibilityTests(TestCase):
         self.assertEqual(item_rows[0]["bpc_runs"], 7)
         self.assertEqual(item_rows[0]["display_sell_price_to_member"], 0)
 
-    def test_build_buy_material_rows_uses_profile_specific_price_for_matching_source_profile(self):
+    def test_build_buy_material_rows_uses_profile_specific_price_for_matching_source_profile(
+        self,
+    ):
         MaterialExchangeItemPriceOverride.objects.create(
             config=self.config,
             type_id=34,

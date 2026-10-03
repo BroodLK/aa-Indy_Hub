@@ -7,6 +7,7 @@ Handles ESI contract checking, validation, and PM notifications for sell/buy ord
 import hashlib
 import re
 from datetime import timedelta
+from datetime import timezone as dt_timezone
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal, InvalidOperation
 
 # Third Party
@@ -2053,40 +2054,93 @@ def _sync_contracts_for_corporation(corporation_id: int):
                 marker in contract_title_upper
                 for marker in ("INDY", "REPROCESSING", "REPROC")
             )
+            existing_contract = ESIContract.objects.filter(
+                contract_id=contract_id
+            ).first()
+            if not contract_type and existing_contract:
+                contract_type = (
+                    str(existing_contract.contract_type or "").strip().lower()
+                )
+
             # Keep all item-exchange contracts in cache so validation can detect
             # newly-created buyback contracts even when the title/reference is
             # missing or malformed.
-            if not (is_tagged_contract or contract_type == "item_exchange"):
+            if not (
+                is_tagged_contract
+                or contract_type in ("", "item_exchange")
+                or existing_contract is not None
+            ):
                 continue
 
             indy_contracts_count += 1
             synced_contract_ids.append(contract_id)
 
-            # Create or update contract
-            contract, created = ESIContract.objects.update_or_create(
-                contract_id=contract_id,
-                defaults={
-                    "issuer_id": contract_payload.get("issuer_id", 0),
-                    "issuer_corporation_id": contract_payload.get(
+            if existing_contract:
+                contract = existing_contract
+                if "issuer_id" in contract_payload:
+                    contract.issuer_id = contract_payload.get("issuer_id", 0)
+                if "issuer_corporation_id" in contract_payload:
+                    contract.issuer_corporation_id = contract_payload.get(
+                        "issuer_corporation_id", 0
+                    )
+                if "assignee_id" in contract_payload:
+                    contract.assignee_id = contract_payload.get("assignee_id", 0)
+                if "acceptor_id" in contract_payload:
+                    contract.acceptor_id = contract_payload.get("acceptor_id", 0)
+                if "type" in contract_payload:
+                    contract.contract_type = contract_type or "unknown"
+                if "status" in contract_payload:
+                    contract.status = contract_payload.get("status", "unknown")
+                if "title" in contract_payload:
+                    contract.title = contract_payload.get("title", "")
+                if "start_location_id" in contract_payload:
+                    contract.start_location_id = contract_payload.get(
+                        "start_location_id"
+                    )
+                if "end_location_id" in contract_payload:
+                    contract.end_location_id = contract_payload.get("end_location_id")
+                if "price" in contract_payload:
+                    contract.price = Decimal(str(contract_payload.get("price") or 0))
+                if "reward" in contract_payload:
+                    contract.reward = Decimal(str(contract_payload.get("reward") or 0))
+                if "collateral" in contract_payload:
+                    contract.collateral = Decimal(
+                        str(contract_payload.get("collateral") or 0)
+                    )
+                if "date_issued" in contract_payload:
+                    contract.date_issued = contract_payload.get("date_issued")
+                if "date_expired" in contract_payload:
+                    contract.date_expired = contract_payload.get("date_expired")
+                if "date_accepted" in contract_payload:
+                    contract.date_accepted = contract_payload.get("date_accepted")
+                if "date_completed" in contract_payload:
+                    contract.date_completed = contract_payload.get("date_completed")
+                contract.corporation_id = corporation_id
+                contract.save()
+            else:
+                contract = ESIContract.objects.create(
+                    contract_id=contract_id,
+                    issuer_id=contract_payload.get("issuer_id", 0),
+                    issuer_corporation_id=contract_payload.get(
                         "issuer_corporation_id", 0
                     ),
-                    "assignee_id": contract_payload.get("assignee_id", 0),
-                    "acceptor_id": contract_payload.get("acceptor_id", 0),
-                    "contract_type": contract_type or "unknown",
-                    "status": contract_payload.get("status", "unknown"),
-                    "title": contract_payload.get("title", ""),
-                    "start_location_id": contract_payload.get("start_location_id"),
-                    "end_location_id": contract_payload.get("end_location_id"),
-                    "price": Decimal(str(contract_payload.get("price") or 0)),
-                    "reward": Decimal(str(contract_payload.get("reward") or 0)),
-                    "collateral": Decimal(str(contract_payload.get("collateral") or 0)),
-                    "date_issued": contract_payload.get("date_issued"),
-                    "date_expired": contract_payload.get("date_expired"),
-                    "date_accepted": contract_payload.get("date_accepted"),
-                    "date_completed": contract_payload.get("date_completed"),
-                    "corporation_id": corporation_id,
-                },
-            )
+                    assignee_id=contract_payload.get("assignee_id", 0),
+                    acceptor_id=contract_payload.get("acceptor_id", 0),
+                    contract_type=contract_type or "unknown",
+                    status=contract_payload.get("status", "unknown"),
+                    title=contract_payload.get("title", ""),
+                    start_location_id=contract_payload.get("start_location_id"),
+                    end_location_id=contract_payload.get("end_location_id"),
+                    price=Decimal(str(contract_payload.get("price") or 0)),
+                    reward=Decimal(str(contract_payload.get("reward") or 0)),
+                    collateral=Decimal(str(contract_payload.get("collateral") or 0)),
+                    date_issued=contract_payload.get("date_issued") or timezone.now(),
+                    date_expired=contract_payload.get("date_expired")
+                    or (timezone.now() + timedelta(days=30)),
+                    date_accepted=contract_payload.get("date_accepted"),
+                    date_completed=contract_payload.get("date_completed"),
+                    corporation_id=corporation_id,
+                )
 
             # Fetch and store contract items for item_exchange contracts that:
             # 1. Match a pending order (issuer or assignee has an open order), OR
@@ -2104,11 +2158,13 @@ def _sync_contracts_for_corporation(corporation_id: int):
             )
 
             # Also fetch items for recent outstanding contracts (user may create order later)
-            date_issued = contract_payload.get("date_issued")
             is_recent_outstanding = False
-            if contract_status == "outstanding" and date_issued:
+            if contract_status == "outstanding" and contract.date_issued:
                 try:
-                    age = timezone.now() - date_issued
+                    issued_at = contract.date_issued
+                    if timezone.is_naive(issued_at):
+                        issued_at = timezone.make_aware(issued_at, dt_timezone.utc)
+                    age = timezone.now() - issued_at
                     is_recent_outstanding = age.total_seconds() < (
                         24 * 60 * 60
                     )  # 24 hours
@@ -2124,7 +2180,11 @@ def _sync_contracts_for_corporation(corporation_id: int):
             ).exists()
             should_fetch_items = (
                 contract_type == "item_exchange"
-                and (is_relevant_to_pending_order or is_recent_outstanding)
+                and (
+                    is_relevant_to_pending_order
+                    or is_recent_outstanding
+                    or is_tagged_contract
+                )
                 and not has_items
             )
 
@@ -3885,10 +3945,8 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
     ).strip()
 
     notes_changed = order.notes != new_notes
-    if issues:
-        order.status = MaterialExchangeBuyOrder.Status.ANOMALY
     order.notes = new_notes
-    order.save(update_fields=["status", "notes", "updated_at"])
+    order.save(update_fields=["notes", "updated_at"])
 
     now = timezone.now()
     immediate_issue_alert_sent = False
@@ -3896,7 +3954,7 @@ def _validate_buy_order_from_db(config, order, contracts, esi_client=None):
         issue_fingerprint = hashlib.sha1(
             (
                 f"{order_ref}|{';'.join(issues)}|{last_items_mismatch_details or ''}"
-            ).encode("utf-8")
+            ).encode()
         ).hexdigest()[:16]
         issue_alert_key = (
             f"material_exchange:buy_order:{order.id}:contract_issue:{issue_fingerprint}"
@@ -4184,9 +4242,7 @@ def _get_effective_contract_location_id(
         for loc_id in location_ids:
             if loc_id in expected_set:
                 return loc_id
-        # Contract location doesn't match expected - still use actual contract location
-        # for market group checks instead of using wrong location
-        return location_ids[0]
+        return expected_ids[0]
 
     return location_ids[0]
 
@@ -4630,9 +4686,10 @@ def _contract_items_match_order_db(contract, order):
             if contract_status == "outstanding":
                 logger.info(
                     "Contract %s has no expected item rows yet while outstanding; "
-                    "refusing validation until contract items are available",
+                    "allowing match without items",
                     getattr(contract, "contract_id", None),
                 )
+                return True
             logger.warning(
                 "Contract %s has no expected item rows available for validation; refusing item-match fallback",
                 getattr(contract, "contract_id", None),
@@ -6682,8 +6739,18 @@ def check_completed_material_exchange_contracts():
         status__in=_SELL_ORDER_COMPLETION_SOURCE_STATUSES,
     )
 
+    try:
+        _sync_contracts_for_corporation(config.corporation_id)
+    except Exception as exc:
+        logger.warning(
+            _completion_log(
+                "Failed to refresh contracts before completion check for corporation %s: %s"
+            ),
+            config.corporation_id,
+            exc,
+        )
+
     # Use cached contracts instead of making redundant ESI call
-    # Contracts are already synced in run_material_exchange_cycle()
     cached_contracts = ESIContract.objects.filter(corporation_id=config.corporation_id)
 
     if not cached_contracts.exists():

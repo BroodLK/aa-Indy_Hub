@@ -46,9 +46,10 @@ def _ceil_price_to_step(value: Decimal, *, step: Decimal) -> Decimal:
     normalized_step = _to_decimal(step)
     if normalized_step <= 0 or normalized_value <= 0:
         return normalized_value.quantize(Decimal("0.01"))
-    return ((normalized_value / normalized_step).to_integral_value(rounding=ROUND_CEILING) * normalized_step).quantize(
-        Decimal("0.01")
-    )
+    return (
+        (normalized_value / normalized_step).to_integral_value(rounding=ROUND_CEILING)
+        * normalized_step
+    ).quantize(Decimal("0.01"))
 
 
 def _requires_blueprint_copy_cost_for_capital_hull(
@@ -73,7 +74,7 @@ def _requires_blueprint_copy_cost_for_capital_hull(
                 COALESCE(t.meta_group_id_raw, 0)
             FROM eve_sde_itemtype t
             LEFT JOIN eve_sde_itemgroup g
-              ON g.id = t.group_id
+                ON g.id = t.group_id
             WHERE t.id = %s
             LIMIT 1
             """,
@@ -144,7 +145,9 @@ def _get_blueprint_copy_cost_per_unit(
     return copy_cost
 
 
-def _load_capital_ship_options(config: MaterialExchangeConfig) -> list[dict[str, object]]:
+def _load_capital_ship_options(
+    config: MaterialExchangeConfig,
+) -> list[dict[str, object]]:
     return list(load_capital_ship_options(config=config))
 
 
@@ -157,7 +160,9 @@ def _prime_blueprint_cache_for_products(
     if not product_type_ids:
         return
 
-    normalized_type_ids = sorted({int(type_id) for type_id in product_type_ids if int(type_id) > 0})
+    normalized_type_ids = sorted(
+        {int(type_id) for type_id in product_type_ids if int(type_id) > 0}
+    )
     if not normalized_type_ids:
         return
 
@@ -168,7 +173,7 @@ def _prime_blueprint_cache_for_products(
             SELECT product_eve_type_id, eve_type_id, quantity
             FROM indy_hub_sdeindustryactivityproduct
             WHERE activity_id IN (1, 11)
-              AND product_eve_type_id IN ({placeholders})
+                AND product_eve_type_id IN ({placeholders})
             ORDER BY product_eve_type_id ASC, eve_type_id ASC
             """,
             normalized_type_ids,
@@ -178,7 +183,9 @@ def _prime_blueprint_cache_for_products(
             clean_blueprint_id = int(blueprint_id or 0)
             if clean_product_type_id <= 0 or clean_blueprint_id <= 0:
                 continue
-            blueprint_by_product_cache.setdefault(clean_product_type_id, clean_blueprint_id)
+            blueprint_by_product_cache.setdefault(
+                clean_product_type_id, clean_blueprint_id
+            )
             blueprint_output_qty_cache.setdefault(
                 clean_blueprint_id,
                 max(1, int(output_qty or 1)),
@@ -208,7 +215,7 @@ def _get_blueprint_for_product(
             SELECT eve_type_id, quantity
             FROM indy_hub_sdeindustryactivityproduct
             WHERE product_eve_type_id = %s
-              AND activity_id IN (1, 11)
+                AND activity_id IN (1, 11)
             ORDER BY eve_type_id ASC
             LIMIT 1
             """,
@@ -249,7 +256,7 @@ def _get_blueprint_output_qty(
             SELECT quantity
             FROM indy_hub_sdeindustryactivityproduct
             WHERE eve_type_id = %s
-              AND activity_id IN (1, 11)
+                AND activity_id IN (1, 11)
             LIMIT 1
             """,
             [clean_blueprint_id],
@@ -280,7 +287,7 @@ def _get_blueprint_material_rows(
             SELECT material_eve_type_id, quantity
             FROM indy_hub_sdeindustryactivitymaterial
             WHERE eve_type_id = %s
-              AND activity_id IN (1, 11)
+                AND activity_id IN (1, 11)
             """,
             [clean_blueprint_id],
         )
@@ -377,14 +384,18 @@ def _collect_leaf_buy_requirements(
                 )
                 continue
 
-        material_totals[int(material_type_id)] = material_totals.get(int(material_type_id), 0) + int(required_qty)
+        material_totals[int(material_type_id)] = material_totals.get(
+            int(material_type_id), 0
+        ) + int(required_qty)
 
 
 def _build_capital_buy_cost_map(
     allowed_hull_type_ids: set[int],
 ) -> tuple[dict[int, Decimal], dict[str, int]]:
     stats = {
-        "types_requested": len({int(type_id) for type_id in allowed_hull_type_ids if int(type_id) > 0}),
+        "types_requested": len(
+            {int(type_id) for type_id in allowed_hull_type_ids if int(type_id) > 0}
+        ),
         "blueprints_found": 0,
         "requirements_built": 0,
         "material_types_needed": 0,
@@ -407,7 +418,9 @@ def _build_capital_buy_cost_map(
     copy_cost_required_cache: dict[int, bool] = {}
     blueprint_copy_cost_cache: dict[int, Decimal | None] = {}
 
-    normalized_type_ids = {int(type_id) for type_id in allowed_hull_type_ids if int(type_id) > 0}
+    normalized_type_ids = {
+        int(type_id) for type_id in allowed_hull_type_ids if int(type_id) > 0
+    }
     _prime_blueprint_cache_for_products(
         normalized_type_ids,
         blueprint_by_product_cache=blueprint_by_product_cache,
@@ -459,7 +472,9 @@ def _build_capital_buy_cost_map(
 
     material_prices = fetch_fuzzwork_prices(sorted(all_material_type_ids))
     for material_type_id in all_material_type_ids:
-        sell_price = _to_decimal(material_prices.get(int(material_type_id), {}).get("sell"))
+        sell_price = _to_decimal(
+            material_prices.get(int(material_type_id), {}).get("sell")
+        )
         if sell_price > 0:
             stats["material_price_hits"] += 1
         else:
@@ -471,7 +486,9 @@ def _build_capital_buy_cost_map(
         missing_prices = False
 
         for material_type_id, quantity in requirements.items():
-            sell_price = _to_decimal(material_prices.get(int(material_type_id), {}).get("sell"))
+            sell_price = _to_decimal(
+                material_prices.get(int(material_type_id), {}).get("sell")
+            )
             if sell_price <= 0:
                 missing_prices = True
                 break
@@ -521,7 +538,9 @@ def sync_capital_ship_auto_estimates(
     for config in configs:
         ship_options = _load_capital_ship_options(config=config)
         allowed_type_ids = {
-            int(option.get("type_id") or 0) for option in ship_options if int(option.get("type_id") or 0) > 0
+            int(option.get("type_id") or 0)
+            for option in ship_options
+            if int(option.get("type_id") or 0) > 0
         }
         config_type_ids[int(config.id)] = allowed_type_ids
         all_allowed_type_ids.update(allowed_type_ids)

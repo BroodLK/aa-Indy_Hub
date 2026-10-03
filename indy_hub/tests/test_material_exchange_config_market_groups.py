@@ -41,7 +41,9 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         self.assertEqual(grouped_ids, {10, 20})
 
     @patch("indy_hub.views.material_exchange_config._build_market_group_index")
-    @patch("indy_hub.views.material_exchange_config._get_itemtype_market_group_name_rows")
+    @patch(
+        "indy_hub.views.material_exchange_config._get_itemtype_market_group_name_rows"
+    )
     def test_search_index_uses_itemtype_rows_for_item_names(
         self,
         mock_get_item_rows,
@@ -68,9 +70,17 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
     ):
         mock_build_market_group_index.return_value = {
             1: {"id": 1, "name": "Root", "parent_market_group_id": None},
-            30: {"id": 30, "name": "Blueprints & Reactions", "parent_market_group_id": 1},
+            30: {
+                "id": 30,
+                "name": "Blueprints & Reactions",
+                "parent_market_group_id": 1,
+            },
             331: {"id": 331, "name": "Ship Blueprints", "parent_market_group_id": 30},
-            777: {"id": 777, "name": "Frigate Blueprints", "parent_market_group_id": 331},
+            777: {
+                "id": 777,
+                "name": "Frigate Blueprints",
+                "parent_market_group_id": 331,
+            },
         }
 
         normalized = _normalize_market_group_ids_for_choice_depth(
@@ -81,16 +91,38 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         self.assertEqual(normalized, [30])
 
     @patch("indy_hub.views.material_exchange_config._build_market_group_index")
-    def test_non_expandable_groups_have_no_children_in_tree(self, mock_build_market_group_index):
+    def test_non_expandable_groups_have_no_children_in_tree(
+        self, mock_build_market_group_index
+    ):
         mock_build_market_group_index.return_value = {
             1: {"id": 1, "name": "Root", "parent_market_group_id": None},
             100: {"id": 100, "name": "Skills", "parent_market_group_id": 1},
-            101: {"id": 101, "name": "Special Edition Assets", "parent_market_group_id": 1},
-            102: {"id": 102, "name": "Structure Equipment", "parent_market_group_id": 1},
+            101: {
+                "id": 101,
+                "name": "Special Edition Assets",
+                "parent_market_group_id": 1,
+            },
+            102: {
+                "id": 102,
+                "name": "Structure Equipment",
+                "parent_market_group_id": 1,
+            },
             103: {"id": 103, "name": "Ships", "parent_market_group_id": 1},
-            200: {"id": 200, "name": "Spaceship Command", "parent_market_group_id": 100},
-            201: {"id": 201, "name": "Special Edition Frigates", "parent_market_group_id": 101},
-            202: {"id": 202, "name": "Structure Weapons", "parent_market_group_id": 102},
+            200: {
+                "id": 200,
+                "name": "Spaceship Command",
+                "parent_market_group_id": 100,
+            },
+            201: {
+                "id": 201,
+                "name": "Special Edition Frigates",
+                "parent_market_group_id": 101,
+            },
+            202: {
+                "id": 202,
+                "name": "Structure Weapons",
+                "parent_market_group_id": 102,
+            },
             203: {"id": 203, "name": "Frigates", "parent_market_group_id": 103},
         }
 
@@ -110,59 +142,119 @@ class MaterialExchangeConfigMarketGroupCoverageTests(TestCase):
         self.assertFalse(nodes_by_label["Structure Equipment"]["expandable"])
 
     @patch("indy_hub.views.material_exchange_config._build_market_group_index")
-    def test_manufacture_research_tree_includes_grandchildren(self, mock_build_market_group_index):
+    def test_manufacture_research_tree_includes_grandchildren(
+        self, mock_build_market_group_index
+    ):
         mock_build_market_group_index.return_value = {
             1: {"id": 1, "name": "Root", "parent_market_group_id": None},
-            200: {"id": 200, "name": "Manufacture & Research", "parent_market_group_id": 1},
+            200: {
+                "id": 200,
+                "name": "Manufacture & Research",
+                "parent_market_group_id": 1,
+            },
             210: {"id": 210, "name": "Components", "parent_market_group_id": 200},
             211: {"id": 211, "name": "Materials", "parent_market_group_id": 200},
-            212: {"id": 212, "name": "Research Equipment", "parent_market_group_id": 200},
-            310: {"id": 310, "name": "Advanced Components", "parent_market_group_id": 210},
+            212: {
+                "id": 212,
+                "name": "Research Equipment",
+                "parent_market_group_id": 200,
+            },
+            310: {
+                "id": 310,
+                "name": "Advanced Components",
+                "parent_market_group_id": 210,
+            },
             311: {"id": 311, "name": "Minerals", "parent_market_group_id": 211},
             312: {"id": 312, "name": "Datacores", "parent_market_group_id": 212},
         }
 
         tree = _get_market_group_tree()
-        manufacture_node = next(node for node in tree if node.get("label") == "Manufacture & Research")
+        manufacture_node = next(
+            node for node in tree if node.get("label") == "Manufacture & Research"
+        )
         components_node = next(
-            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Components"
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Components"
         )
         materials_node = next(
-            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Materials"
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Materials"
         )
         research_node = next(
-            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Research Equipment"
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Research Equipment"
         )
 
         self.assertTrue(components_node["expandable"])
-        self.assertTrue(any(g["label"] == "Advanced Components" for g in components_node["children"]))
-        self.assertTrue(any(g["label"] == "Minerals" for g in materials_node["children"]))
-        self.assertTrue(any(g["label"] == "Datacores" for g in research_node["children"]))
+        self.assertTrue(
+            any(
+                g["label"] == "Advanced Components" for g in components_node["children"]
+            )
+        )
+        self.assertTrue(
+            any(g["label"] == "Minerals" for g in materials_node["children"])
+        )
+        self.assertTrue(
+            any(g["label"] == "Datacores" for g in research_node["children"])
+        )
 
     @patch("indy_hub.views.material_exchange_config._build_market_group_index")
-    def test_manufacture_research_tree_recurses_beyond_grandchildren(self, mock_build_market_group_index):
+    def test_manufacture_research_tree_recurses_beyond_grandchildren(
+        self, mock_build_market_group_index
+    ):
         mock_build_market_group_index.return_value = {
             1: {"id": 1, "name": "Root", "parent_market_group_id": None},
-            200: {"id": 200, "name": "Manufacture & Research", "parent_market_group_id": 1},
+            200: {
+                "id": 200,
+                "name": "Manufacture & Research",
+                "parent_market_group_id": 1,
+            },
             211: {"id": 211, "name": "Materials", "parent_market_group_id": 200},
-            311: {"id": 311, "name": "Planetary Materials", "parent_market_group_id": 211},
-            411: {"id": 411, "name": "Raw Planetary Materials", "parent_market_group_id": 311},
-            412: {"id": 412, "name": "Refined Planetary Materials", "parent_market_group_id": 311},
+            311: {
+                "id": 311,
+                "name": "Planetary Materials",
+                "parent_market_group_id": 211,
+            },
+            411: {
+                "id": 411,
+                "name": "Raw Planetary Materials",
+                "parent_market_group_id": 311,
+            },
+            412: {
+                "id": 412,
+                "name": "Refined Planetary Materials",
+                "parent_market_group_id": 311,
+            },
         }
 
         tree = _get_market_group_tree()
-        manufacture_node = next(node for node in tree if node.get("label") == "Manufacture & Research")
+        manufacture_node = next(
+            node for node in tree if node.get("label") == "Manufacture & Research"
+        )
         materials_node = next(
-            child for child in (manufacture_node.get("children") or []) if child.get("label") == "Materials"
+            child
+            for child in (manufacture_node.get("children") or [])
+            if child.get("label") == "Materials"
         )
         planetary_materials_node = next(
-            child for child in (materials_node.get("children") or []) if child.get("label") == "Planetary Materials"
+            child
+            for child in (materials_node.get("children") or [])
+            if child.get("label") == "Planetary Materials"
         )
 
         self.assertTrue(planetary_materials_node["expandable"])
         self.assertTrue(
-            any(child["label"] == "Raw Planetary Materials" for child in planetary_materials_node["children"])
+            any(
+                child["label"] == "Raw Planetary Materials"
+                for child in planetary_materials_node["children"]
+            )
         )
         self.assertTrue(
-            any(child["label"] == "Refined Planetary Materials" for child in planetary_materials_node["children"])
+            any(
+                child["label"] == "Refined Planetary Materials"
+                for child in planetary_materials_node["children"]
+            )
         )

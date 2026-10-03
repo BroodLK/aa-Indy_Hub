@@ -2,6 +2,8 @@
 
 # Third Party
 from celery import shared_task
+
+# Django
 from django.core.cache import cache
 
 # Alliance Auth
@@ -10,8 +12,8 @@ from allianceauth.services.hooks import get_extension_logger
 # AA Example App
 # Local
 from indy_hub.services.capital_price_estimates import sync_capital_ship_auto_estimates
-from indy_hub.services.public_contracts_store import sync_public_jita_contract_cache
 from indy_hub.services.public_contract_scanner import scan_public_contracts
+from indy_hub.services.public_contracts_store import sync_public_jita_contract_cache
 
 logger = get_extension_logger(__name__)
 
@@ -23,11 +25,11 @@ def _scanner_state(task_id, state):
 @shared_task(name="indy_hub.tasks.public_contracts.run_ship_price_scanner", bind=True)
 def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
     """Run ship price scanner and update task state with results."""
-    
+
     max_pages = max(1, min(int(max_pages or 10), 2000))
     results = []
     logs = ["Scanner task started..."]
-    
+
     progress = {
         "status": "PROGRESS",
         "logs": logs,
@@ -36,12 +38,7 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
     }
     _scanner_state(self.request.id, progress)
     self.update_state(
-        state="PROGRESS",
-        meta={
-            "logs": logs,
-            "results_count": 0,
-            "latest_log": logs[0]
-        }
+        state="PROGRESS", meta={"logs": logs, "results_count": 0, "latest_log": logs[0]}
     )
 
     def progress_callback(msg, diagnostics=None):
@@ -62,31 +59,28 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
                 "logs": logs[-20:],  # Keep last 20 log lines
                 "results_count": len(results),
                 "latest_log": msg,
-                "diagnostics": diagnostics
-            }
+                "diagnostics": diagnostics,
+            },
         )
 
     try:
         scan_result = scan_public_contracts(
             character_id=character_id,
             max_pages=max_pages,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
         completed = {
             "status": "COMPLETED",
             "results": scan_result["results"],
             "diagnostics": scan_result["diagnostics"],
-            "logs": logs
+            "logs": logs,
         }
         _scanner_state(self.request.id, completed)
         return completed
     except Exception as exc:
         logger.exception("Ship price scanner task failed")
         _scanner_state(self.request.id, {"status": "FAILURE", "error": str(exc)})
-        self.update_state(
-            state="FAILURE",
-            meta={"error": str(exc)}
-        )
+        self.update_state(state="FAILURE", meta={"error": str(exc)})
         raise
 
 
@@ -94,7 +88,9 @@ def run_ship_price_scanner(self, character_id: int = 0, max_pages: int = 10):
 def sync_public_jita_contracts(*, force: bool = False, max_pages: int = 2000):
     """Sync public Jita contracts into local DB cache."""
     safe_max_pages = max(1, int(max_pages or 2000))
-    result = sync_public_jita_contract_cache(force=bool(force), max_pages=safe_max_pages)
+    result = sync_public_jita_contract_cache(
+        force=bool(force), max_pages=safe_max_pages
+    )
     logger.info(
         "Public Jita contracts sync task completed force=%s max_pages=%s result=%s",
         bool(force),

@@ -9,7 +9,8 @@ hand-entered by an admin or derived by the sync task, nor how old it is.
 from __future__ import annotations
 
 # Standard Library
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 # Standard Library
 from math import floor, isfinite
-from typing import Optional
 
 # Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
@@ -62,14 +61,18 @@ def _normalize_line_item(raw_item: dict) -> dict | None:
 
     return {
         "type_id": type_id,
-        "type_name": str(raw_item.get("type_name") or raw_item.get("typeName") or f"Type {type_id}"),
+        "type_name": str(
+            raw_item.get("type_name") or raw_item.get("typeName") or f"Type {type_id}"
+        ),
         "quantity": quantity,
         "unit_volume_m3": unit_volume_m3,
         "unit_collateral_isk": unit_collateral_isk,
     }
 
 
-def _get_max_units_for_constraint(remaining_capacity: float | None, unit_value: float) -> int:
+def _get_max_units_for_constraint(
+    remaining_capacity: float | None, unit_value: float
+) -> int:
     if remaining_capacity is None:
         return 10**12
     if unit_value <= 0:
@@ -119,9 +122,12 @@ def _allocate_line_items_to_contracts(
         if remaining_quantity <= 0:
             continue
 
-        single_unit_exceeds_volume = max_volume_m3 is not None and item["unit_volume_m3"] > max_volume_m3 + 1e-9
+        single_unit_exceeds_volume = (
+            max_volume_m3 is not None and item["unit_volume_m3"] > max_volume_m3 + 1e-9
+        )
         single_unit_exceeds_collateral = (
-            max_collateral_isk is not None and item["unit_collateral_isk"] > max_collateral_isk + 1e-9
+            max_collateral_isk is not None
+            and item["unit_collateral_isk"] > max_collateral_isk + 1e-9
         )
         if single_unit_exceeds_volume or single_unit_exceeds_collateral:
             limits = []
@@ -139,10 +145,14 @@ def _allocate_line_items_to_contracts(
 
             contract = contracts[-1]
             remaining_volume_capacity = (
-                None if max_volume_m3 is None else max(0.0, max_volume_m3 - contract["volume_m3"])
+                None
+                if max_volume_m3 is None
+                else max(0.0, max_volume_m3 - contract["volume_m3"])
             )
             remaining_collateral_capacity = (
-                None if max_collateral_isk is None else max(0.0, max_collateral_isk - contract["collateral_isk"])
+                None
+                if max_collateral_isk is None
+                else max(0.0, max_collateral_isk - contract["collateral_isk"])
             )
 
             max_units_by_volume = _get_max_units_for_constraint(
@@ -153,7 +163,9 @@ def _allocate_line_items_to_contracts(
                 remaining_collateral_capacity,
                 item["unit_collateral_isk"],
             )
-            quantity_to_add = min(remaining_quantity, max_units_by_volume, max_units_by_collateral)
+            quantity_to_add = min(
+                remaining_quantity, max_units_by_volume, max_units_by_collateral
+            )
 
             if quantity_to_add <= 0:
                 if contract["items"]:
@@ -174,7 +186,7 @@ def calculate_import_fees(
     total_volume_m3: float,
     total_collateral_isk: float,
     line_items: list[dict] | None = None,
-) -> Optional[dict]:
+) -> dict | None:
     """
     Calculate import fees from Jita 4-4 to destination using aa-freight pricing.
 
@@ -228,7 +240,9 @@ def calculate_import_fees(
 
     if not pricing:
         if pricing_id:
-            logger.debug("No active freight pricing found for pricing_id=%s", pricing_id)
+            logger.debug(
+                "No active freight pricing found for pricing_id=%s", pricing_id
+            )
         else:
             logger.debug(
                 f"No freight route found from Jita 4-4 ({JITA_4_4_STATION_ID}) "
@@ -237,8 +251,14 @@ def calculate_import_fees(
         return None
 
     max_volume_m3 = _get_positive_limit(pricing, "volume_max", "max_volume")
-    max_collateral_isk = _get_positive_limit(pricing, "collateral_max", "max_collateral")
-    normalized_items = [item for item in (_normalize_line_item(raw_item) for raw_item in (line_items or [])) if item]
+    max_collateral_isk = _get_positive_limit(
+        pricing, "collateral_max", "max_collateral"
+    )
+    normalized_items = [
+        item
+        for item in (_normalize_line_item(raw_item) for raw_item in (line_items or []))
+        if item
+    ]
 
     if normalized_items:
         contracts, allocation_issues = _allocate_line_items_to_contracts(

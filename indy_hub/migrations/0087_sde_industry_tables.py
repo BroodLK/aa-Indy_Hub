@@ -39,7 +39,15 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="SdeIndustryActivityProduct",
             fields=[
-                ("id", models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "id",
+                    models.AutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
                 ("activity_id", models.IntegerField(db_index=True)),
                 ("quantity", models.PositiveIntegerField(default=0)),
                 (
@@ -68,7 +76,15 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name="SdeIndustryActivityMaterial",
             fields=[
-                ("id", models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "id",
+                    models.AutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
                 ("activity_id", models.IntegerField(db_index=True)),
                 ("quantity", models.PositiveIntegerField(default=0)),
                 (
@@ -96,7 +112,9 @@ class Migration(migrations.Migration):
         ),
         migrations.AddIndex(
             model_name="sdemarketgroup",
-            index=models.Index(fields=["parent"], name="indy_hub_sd_parent__ef0318_idx"),
+            index=models.Index(
+                fields=["parent"], name="indy_hub_sd_parent__ef0318_idx"
+            ),
         ),
         migrations.AddIndex(
             model_name="sdeindustryactivityproduct",

@@ -19,11 +19,15 @@ class Migration(migrations.Migration):
                 ("reprocessing_outputs", models.JSONField(default=dict)),
                 (
                     "buy_price",
-                    models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=20, null=True
+                    ),
                 ),
                 (
                     "sell_price",
-                    models.DecimalField(blank=True, decimal_places=2, max_digits=20, null=True),
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=20, null=True
+                    ),
                 ),
                 ("reprocessing_data_updated", models.DateTimeField(auto_now_add=True)),
                 ("pricing_data_updated", models.DateTimeField(blank=True, null=True)),

@@ -27,7 +27,9 @@ ITEM_LINE_SPLIT_RE = re.compile(r"\s*(?:;|\|)\s*")
 ITEM_QTY_RE = re.compile(r"^(.+?)\s*(?:x|\*)\s*([0-9][0-9,.\s']*)$", re.IGNORECASE)
 NEXT_NUMERIC_ITEM_START_RE = re.compile(r"^[1-9]\d*(?:MN|M|mm|K)\b", re.IGNORECASE)
 NUMBER_GROUPING_RE = re.compile(r"(?<=\d)[,.'\s](?=\d)")
-NUMERIC_LEADING_ITEMS_FILE = Path(__file__).resolve().parent / "data" / "numeric_leading_items.tsv"
+NUMERIC_LEADING_ITEMS_FILE = (
+    Path(__file__).resolve().parent / "data" / "numeric_leading_items.tsv"
+)
 
 
 def collapse_whitespace(value: str | None) -> str:
@@ -80,7 +82,7 @@ def _numeric_leading_item_prefixes() -> tuple[str, ...]:
     try:
         raw_lines = NUMERIC_LEADING_ITEMS_FILE.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return tuple()
+        return ()
 
     for raw_line in raw_lines:
         line = str(raw_line or "").strip()
@@ -165,7 +167,9 @@ def split_quantity_and_remainder(raw_tail: str) -> tuple[int | None, str]:
                 # names that start with a digit (``17 100K Bounty ...``).
                 # Absorbing it there glues the quantity to the name prefix and
                 # corrupts both.
-                if char == " " and _looks_like_known_numeric_item_name_start(stripped_tail[index + 1 :]):
+                if char == " " and _looks_like_known_numeric_item_name_start(
+                    stripped_tail[index + 1 :]
+                ):
                     break
                 index += 1
                 continue
@@ -225,7 +229,9 @@ def parse_contract_export(raw_text: str) -> dict[str, str]:
             label = parts[0]
             if label in CONTRACT_EXPORT_LABELS:
                 value = " ".join(part for part in parts[1:] if part).strip()
-                fields[label] = value if label in MULTILINE_LABELS else collapse_whitespace(value)
+                fields[label] = (
+                    value if label in MULTILINE_LABELS else collapse_whitespace(value)
+                )
                 current_label = label
                 continue
 
@@ -235,7 +241,11 @@ def parse_contract_export(raw_text: str) -> dict[str, str]:
         )
         if matched_label is not None:
             value = line[len(matched_label) :].strip("\t :")
-            fields[matched_label] = value if matched_label in MULTILINE_LABELS else collapse_whitespace(value)
+            fields[matched_label] = (
+                value
+                if matched_label in MULTILINE_LABELS
+                else collapse_whitespace(value)
+            )
             current_label = matched_label
             continue
 
@@ -289,10 +299,16 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
             # This matters for names such as ``100K Bounty ...`` because the
             # leading number is part of the canonical name, not the quantity.
             leading_quantity = parse_positive_quantity(tab_parts[0])
-            if leading_quantity is not None and _record_item(" ".join(tab_parts[1:]), leading_quantity):
+            if leading_quantity is not None and _record_item(
+                " ".join(tab_parts[1:]), leading_quantity
+            ):
                 continue
             tab_quantity = next(
-                (quantity for part in tab_parts[1:] if (quantity := parse_positive_quantity(part)) is not None),
+                (
+                    quantity
+                    for part in tab_parts[1:]
+                    if (quantity := parse_positive_quantity(part)) is not None
+                ),
                 None,
             )
             if _record_item(tab_parts[0], tab_quantity):
@@ -320,7 +336,10 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
         leading_match = re.match(r"^([0-9][0-9,.' ]*)\s+(.+)$", line)
         if leading_match:
             leading_quantity = parse_positive_quantity(leading_match.group(1))
-            if leading_quantity is not None and _looks_like_known_numeric_item_name_start(leading_match.group(2)):
+            if (
+                leading_quantity is not None
+                and _looks_like_known_numeric_item_name_start(leading_match.group(2))
+            ):
                 if _record_item(leading_match.group(2), leading_quantity):
                     continue
 
@@ -339,7 +358,9 @@ def parse_contract_items(raw_value: str | None) -> tuple[Counter[str], dict[str,
     return items, labels
 
 
-def summarize_counter(counter: Counter[str], labels: dict[str, str] | None = None) -> list[str]:
+def summarize_counter(
+    counter: Counter[str], labels: dict[str, str] | None = None
+) -> list[str]:
     labels = labels or {}
     summary: list[str] = []
     for key in sorted(counter.keys()):

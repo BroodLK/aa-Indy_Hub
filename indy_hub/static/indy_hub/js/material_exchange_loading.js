@@ -53,14 +53,18 @@
     }
 
     function showFromTrigger(trigger) {
-        const title = trigger.getAttribute('data-indy-loading') ||
-                      trigger.getAttribute('data-loading-overlay') ||
-                      trigger.getAttribute('data-me-loading') ||
-                      '';
-        const detail = trigger.getAttribute('data-indy-loading-detail') ||
-                       trigger.getAttribute('data-loading-detail') ||
-                       trigger.getAttribute('data-me-loading-detail') ||
-                       '';
+        const title = (
+            trigger.getAttribute('data-indy-loading')
+            || trigger.getAttribute('data-loading-overlay')
+            || trigger.getAttribute('data-me-loading')
+            || ''
+        );
+        const detail = (
+            trigger.getAttribute('data-indy-loading-detail')
+            || trigger.getAttribute('data-loading-detail')
+            || trigger.getAttribute('data-me-loading-detail')
+            || ''
+        );
         showOverlay(title, detail);
     }
 

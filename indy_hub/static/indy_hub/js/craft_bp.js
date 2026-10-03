@@ -9516,15 +9516,12 @@ function updateMaterialsTabFromState() {
         const card = document.createElement('div');
         card.className = 'craft-group-card card shadow-sm mb-4';
         card.innerHTML = `
-            <div class="card-header craft-group-header d-flex align-items-center justify-content-between bg-body-secondary"
-                 role="button" tabindex="0" aria-expanded="true">
+            <div class="card-header craft-group-header d-flex align-items-center justify-content-between bg-body-secondary" role="button" tabindex="0" aria-expanded="true">
                 <div class="me-2 fw-semibold">
                     <i class="fas fa-layer-group text-primary me-2" aria-hidden="true"></i>${escapeHtml(groupName)}
                 </div>
                 <div class="d-flex align-items-center gap-2">
-                    <span class="badge bg-primary-subtle text-primary fw-semibold"
-                          title="${escapeHtml(countLabel)}"
-                          aria-label="${escapeHtml(`${groupItems.length} — ${countLabel}`)}">${groupItems.length}</span>
+                    <span class="badge bg-primary-subtle text-primary fw-semibold" title="${escapeHtml(countLabel)}" aria-label="${escapeHtml(`${groupItems.length} — ${countLabel}`)}">${groupItems.length}</span>
                     <i class="fas fa-chevron-down craft-group-toggle text-muted" aria-hidden="true"></i>
                 </div>
             </div>

@@ -339,18 +339,12 @@
                                             {% endif %}
                                         </td>
                                         <td>
-                                            {% if order.user_display_definitive_eta %}
-                                                <div class="fw-bold text-primary">{{ order.user_display_definitive_eta }}</div>
-                                                <span class="badge bg-primary-subtle text-primary py-0 px-1 small">{% trans "Definitive" %}</span>
-                                            {% elif order.user_display_likely_eta %}
-                                                <div class="text-body">{{ order.user_display_likely_eta }}</div>
-                                                <span class="badge bg-info-subtle text-info py-0 px-1 small">{% trans "Agreed window" %}</span>
-                                            {% elif order.user_display_offer_eta %}
-                                                <div class="text-warning">{{ order.user_display_offer_eta }}</div>
-                                                <span class="badge bg-warning-subtle text-warning py-0 px-1 small">{% trans "Proposed" %}</span>
-                                            {% elif order.user_display_guideline_eta %}
-                                                <div class="text-muted">{{ order.user_display_guideline_eta }}</div>
-                                                <span class="badge bg-secondary-subtle text-secondary py-0 px-1 small">{% trans "Estimated" %}</span>
+                                            {% if order.display_eta_is_overdue %}
+                                                <span class="text-danger fw-semibold">{% trans "Overdue" %}</span>
+                                                <div class="cap-muted-mini">{{ order.display_eta_label }}</div>
+                                            {% elif order.display_eta_min_days is not None and order.display_eta_max_days is not None %}
+                                                {% if order.display_eta_is_countdown %}~{% endif %}{{ order.display_eta_min_days|intcomma }}-{{ order.display_eta_max_days|intcomma }} {% trans "days" %}
+                                                <div class="cap-muted-mini">{{ order.display_eta_label }}</div>
                                             {% else %}
                                                 <span class="text-muted">-</span>
                                             {% endif %}

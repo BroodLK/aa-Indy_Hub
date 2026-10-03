@@ -84,8 +84,18 @@ class BuildSchedulerTests(SimpleTestCase):
 
         jobs = split_jobs_evenly_across_slots([parent, child], 2)
         slots = [
-            IndustrySlot(slot_id=0, character_id=1, character_name="Builder", slot_name="Builder #1"),
-            IndustrySlot(slot_id=1, character_id=1, character_name="Builder", slot_name="Builder #2"),
+            IndustrySlot(
+                slot_id=0,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #1",
+            ),
+            IndustrySlot(
+                slot_id=1,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #2",
+            ),
         ]
 
         schedule = schedule_jobs_critical_path(jobs, slots)
@@ -205,8 +215,18 @@ class BuildSchedulerTests(SimpleTestCase):
             ),
         ]
         slots = [
-            IndustrySlot(slot_id=0, character_id=1, character_name="Builder", slot_name="Builder #1"),
-            IndustrySlot(slot_id=1, character_id=1, character_name="Builder", slot_name="Builder #2"),
+            IndustrySlot(
+                slot_id=0,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #1",
+            ),
+            IndustrySlot(
+                slot_id=1,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #2",
+            ),
         ]
 
         schedule = schedule_jobs_critical_path(
@@ -296,9 +316,24 @@ class BuildSchedulerTests(SimpleTestCase):
             dependencies=[901],
         )
         slots = [
-            IndustrySlot(slot_id=0, character_id=1, character_name="Builder", slot_name="Builder #1"),
-            IndustrySlot(slot_id=1, character_id=1, character_name="Builder", slot_name="Builder #2"),
-            IndustrySlot(slot_id=2, character_id=1, character_name="Builder", slot_name="Builder #3"),
+            IndustrySlot(
+                slot_id=0,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #1",
+            ),
+            IndustrySlot(
+                slot_id=1,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #2",
+            ),
+            IndustrySlot(
+                slot_id=2,
+                character_id=1,
+                character_name="Builder",
+                slot_name="Builder #3",
+            ),
         ]
 
         schedule = calculate_schedule_for_mode(

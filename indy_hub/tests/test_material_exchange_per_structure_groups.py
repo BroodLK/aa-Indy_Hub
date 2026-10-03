@@ -79,8 +79,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         mock_get_type_ids.assert_not_called()
         mock_expand_market_group_ids.assert_not_called()
 
-    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={200})
-    @patch("indy_hub.views.material_exchange._get_type_ids_for_market_group_branches", return_value={34, 35})
+    @patch(
+        "indy_hub.views.material_exchange._expand_market_group_ids", return_value={200}
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_type_ids_for_market_group_branches",
+        return_value={34, 35},
+    )
     def test_sell_structure_specific_groups_override_global_groups(
         self,
         mock_get_type_ids,
@@ -95,8 +100,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         self.assertEqual(allowed_type_ids, {34, 35})
         mock_get_type_ids.assert_called_once_with({200})
 
-    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={100})
-    @patch("indy_hub.views.material_exchange._get_type_ids_for_market_group_branches", return_value={36})
+    @patch(
+        "indy_hub.views.material_exchange._expand_market_group_ids", return_value={100}
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_type_ids_for_market_group_branches",
+        return_value={36},
+    )
     def test_sell_structure_without_override_uses_global_groups(
         self,
         mock_get_type_ids,
@@ -114,8 +124,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         self.assertEqual(allowed_type_ids, {36})
         mock_get_type_ids.assert_called_once_with({100})
 
-    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={500})
-    @patch("indy_hub.views.material_exchange._get_type_ids_for_market_group_branches", return_value={37})
+    @patch(
+        "indy_hub.views.material_exchange._expand_market_group_ids", return_value={500}
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_type_ids_for_market_group_branches",
+        return_value={37},
+    )
     def test_sell_structure_without_override_uses_default_profile_before_global_groups(
         self,
         mock_get_type_ids,
@@ -148,8 +163,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         self.assertEqual(allowed_type_ids, {37})
         mock_get_type_ids.assert_called_once_with({500})
 
-    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={300})
-    @patch("indy_hub.views.material_exchange._get_type_ids_for_market_group_branches", return_value={44})
+    @patch(
+        "indy_hub.views.material_exchange._expand_market_group_ids", return_value={300}
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_type_ids_for_market_group_branches",
+        return_value={44},
+    )
     def test_buy_structure_specific_groups_override_global_groups(
         self,
         mock_get_type_ids,
@@ -184,8 +204,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         mock_get_type_ids.assert_not_called()
         mock_expand_market_group_ids.assert_not_called()
 
-    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={150})
-    @patch("indy_hub.views.material_exchange._get_type_ids_for_market_group_branches", return_value={45})
+    @patch(
+        "indy_hub.views.material_exchange._expand_market_group_ids", return_value={150}
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_type_ids_for_market_group_branches",
+        return_value={45},
+    )
     def test_buy_structure_without_override_uses_global_groups(
         self,
         mock_get_type_ids,
@@ -203,8 +228,13 @@ class MaterialExchangePerStructureGroupTests(TestCase):
         self.assertEqual(allowed_type_ids, {45})
         mock_get_type_ids.assert_called_once_with({150})
 
-    @patch("indy_hub.views.material_exchange._expand_market_group_ids", return_value={700})
-    @patch("indy_hub.views.material_exchange._get_type_ids_for_market_group_branches", return_value={46})
+    @patch(
+        "indy_hub.views.material_exchange._expand_market_group_ids", return_value={700}
+    )
+    @patch(
+        "indy_hub.views.material_exchange._get_type_ids_for_market_group_branches",
+        return_value={46},
+    )
     def test_buy_structure_without_override_uses_default_profile_before_global_groups(
         self,
         mock_get_type_ids,

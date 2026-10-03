@@ -144,7 +144,9 @@ def my_orders(request):
     Display all orders (sell + buy) for the current user.
     Shows order reference, status, items count, total price, timestamps.
     """
-    emit_view_analytics_event(view_name="material_exchange_orders.my_orders", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange_orders.my_orders", request=request
+    )
     logger.debug("Material exchange orders list accessed (user_id=%s)", request.user.id)
     # Optimize: Annotate items_count to avoid N+1 queries
     # Get all sell orders for user with annotated count
@@ -169,7 +171,9 @@ def my_orders(request):
     for order in sell_orders:
         timeline = _build_timeline_breadcrumb(order, "sell")
         is_closed = order.status in {"completed", "rejected", "cancelled"}
-        corporation_name = get_corporation_name(getattr(order.config, "corporation_id", None))
+        corporation_name = get_corporation_name(
+            getattr(order.config, "corporation_id", None)
+        )
         order_location_label = _resolve_sell_order_location_label(order)
         all_orders.append(
             {
@@ -198,7 +202,9 @@ def my_orders(request):
         is_closed = order.status in {"completed", "rejected", "cancelled"}
         buyer_main_character = _resolve_main_character_name(order.buyer)
         buyer_recipients = _resolve_linked_character_names(order.buyer)
-        recipient_label = _format_recipients_for_display(buyer_recipients, fallback=buyer_main_character)
+        recipient_label = _format_recipients_for_display(
+            buyer_recipients, fallback=buyer_main_character
+        )
         order_location_label = _resolve_buy_order_location_label(order)
         all_orders.append(
             {
@@ -232,10 +238,14 @@ def my_orders(request):
     page_obj = paginator.get_page(page_number)
 
     # Optimize: Use aggregate instead of separate count() calls
-    orders_stats = MaterialExchangeSellOrder.objects.filter(Q(seller=request.user) | Q(pk__in=[])).aggregate(
+    orders_stats = MaterialExchangeSellOrder.objects.filter(
+        Q(seller=request.user) | Q(pk__in=[])
+    ).aggregate(
         sell_count=Count("id", filter=Q(seller=request.user)),
     )
-    buy_stats = MaterialExchangeBuyOrder.objects.filter(buyer=request.user).aggregate(buy_count=Count("id"))
+    buy_stats = MaterialExchangeBuyOrder.objects.filter(buyer=request.user).aggregate(
+        buy_count=Count("id")
+    )
 
     context = {
         "page_obj": page_obj,
@@ -262,7 +272,9 @@ def sell_order_detail(request, order_id):
     Display detailed view of a specific sell order.
     Shows order reference prominently, items, status timeline, contract info.
     """
-    emit_view_analytics_event(view_name="material_exchange_orders.sell_order_detail", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange_orders.sell_order_detail", request=request
+    )
     queryset = MaterialExchangeSellOrder.objects.prefetch_related("items")
 
     # Admins can inspect any order; regular users limited to their own
@@ -296,7 +308,9 @@ def sell_order_detail(request, order_id):
     # Build refined-ore breakdowns per item (scaled by ordered quantity) using
     # the current config. Silent no-op when refined pricing is disabled or the
     # item isn't an ore with a computable breakdown.
-    refined_breakdowns_by_item_id = _build_sell_order_item_breakdowns(config=config, items=items)
+    refined_breakdowns_by_item_id = _build_sell_order_item_breakdowns(
+        config=config, items=items
+    )
 
     # Status timeline + breadcrumb
     timeline = _build_status_timeline(order, "sell")
@@ -327,7 +341,9 @@ def buy_order_detail(request, order_id):
     Display detailed view of a specific buy order.
     Shows order reference prominently, items, status timeline, delivery info.
     """
-    emit_view_analytics_event(view_name="material_exchange_orders.buy_order_detail", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange_orders.buy_order_detail", request=request
+    )
     queryset = MaterialExchangeBuyOrder.objects.prefetch_related("items")
 
     # Admins can inspect any order; regular users limited to their own
@@ -362,8 +378,11 @@ def buy_order_detail(request, order_id):
     buyer_main_character = _resolve_main_character_name(order.buyer)
     buyer_recipients = _resolve_linked_character_names(order.buyer)
     selected_recipient = str(order.recipient_character_name or "").strip()
-    contract_check_recipient_label = selected_recipient or _format_recipients_for_display(
-        buyer_recipients, fallback=buyer_main_character
+    contract_check_recipient_label = (
+        selected_recipient
+        or _format_recipients_for_display(
+            buyer_recipients, fallback=buyer_main_character
+        )
     )
     order_location_label = _resolve_buy_order_location_label(order)
     contract_check_amount_label = _buy_order_amount_label_for_user(order, request.user)
@@ -400,7 +419,9 @@ def _build_contract_check_payload(
 ):
     fields = parse_contract_export(raw_text)
     expected_items, expected_item_labels = build_expected_items(order.items.all())
-    actual_items, actual_item_labels = parse_contract_items(fields.get("Items For Sale", ""))
+    actual_items, actual_item_labels = parse_contract_items(
+        fields.get("Items For Sale", "")
+    )
     expected_items_summary = summarize_counter(expected_items, expected_item_labels)
     actual_items_summary = summarize_counter(actual_items, expected_item_labels)
 
@@ -434,11 +455,15 @@ def _build_contract_check_payload(
         location_label = location_candidates[0]
     expected_reference = order.order_reference or f"INDY-{order.id}"
     expected_amount_display = f"{expected_amount:,.0f} ISK"
-    actual_amount_display = f"{actual_amount:,.0f} ISK" if actual_amount is not None else ""
+    actual_amount_display = (
+        f"{actual_amount:,.0f} ISK" if actual_amount is not None else ""
+    )
 
     checks = []
 
-    contract_type_ok = normalize_text(actual_contract_type) == normalize_text("Item Exchange")
+    contract_type_ok = normalize_text(actual_contract_type) == normalize_text(
+        "Item Exchange"
+    )
     checks.append(
         {
             "key": "contract_type",
@@ -450,12 +475,16 @@ def _build_contract_check_payload(
             "copy_value": "Item Exchange",
             "copy_label": _("Copy contract type"),
             "message": (
-                _("Contract type is correct.") if contract_type_ok else _("Contract type must be Item Exchange.")
+                _("Contract type is correct.")
+                if contract_type_ok
+                else _("Contract type must be Item Exchange.")
             ),
         }
     )
 
-    description_ok = normalize_text(actual_description) == normalize_text(expected_reference)
+    description_ok = normalize_text(actual_description) == normalize_text(
+        expected_reference
+    )
     checks.append(
         {
             "key": "description",
@@ -463,7 +492,9 @@ def _build_contract_check_payload(
             "passed": description_ok,
             "expected": expected_reference,
             "actual": actual_description,
-            "reminder": _("The Description field must exactly match the order reference."),
+            "reminder": _(
+                "The Description field must exactly match the order reference."
+            ),
             "copy_value": expected_reference,
             "copy_label": _("Copy description"),
             "message": (
@@ -474,12 +505,17 @@ def _build_contract_check_payload(
         }
     )
 
-    normalized_recipients = {normalize_text(name) for name in recipient_names if normalize_text(name)}
+    normalized_recipients = {
+        normalize_text(name) for name in recipient_names if normalize_text(name)
+    }
     normalized_availability = normalize_text(actual_availability)
     availability_ok = bool(normalized_recipients) and any(
-        expected_name in normalized_availability for expected_name in normalized_recipients
+        expected_name in normalized_availability
+        for expected_name in normalized_recipients
     )
-    availability_expected = recipient_names if len(recipient_names) > 1 else recipient_label
+    availability_expected = (
+        recipient_names if len(recipient_names) > 1 else recipient_label
+    )
     availability_reminder = (
         _("Availability must target one of the linked buyer characters.")
         if order_type == "buy" and len(recipient_names) > 1
@@ -501,13 +537,17 @@ def _build_contract_check_payload(
             "copy_value": recipient_names[0] if recipient_names else "",
             "copy_label": _("Copy recipient"),
             "message": (
-                _("Availability points to the expected recipient.") if availability_ok else availability_fail_message
+                _("Availability points to the expected recipient.")
+                if availability_ok
+                else availability_fail_message
             ),
         }
     )
 
     normalized_location_candidates = {
-        normalize_text(candidate) for candidate in location_candidates if normalize_text(candidate)
+        normalize_text(candidate)
+        for candidate in location_candidates
+        if normalize_text(candidate)
     }
     actual_location_normalized = normalize_text(actual_location)
     location_ok = bool(normalized_location_candidates) and any(
@@ -516,7 +556,9 @@ def _build_contract_check_payload(
         or actual_location_normalized in expected_location
         for expected_location in normalized_location_candidates
     )
-    location_expected = location_candidates if len(location_candidates) > 1 else location_label
+    location_expected = (
+        location_candidates if len(location_candidates) > 1 else location_label
+    )
     location_reminder = (
         _("Location must match one of the accepted locations for this order.")
         if len(location_candidates) > 1
@@ -542,7 +584,9 @@ def _build_contract_check_payload(
             "reminder": location_reminder,
             "copy_value": location_label or location_candidates[0],
             "copy_label": _("Copy location"),
-            "message": (location_pass_message if location_ok else location_fail_message),
+            "message": (
+                location_pass_message if location_ok else location_fail_message
+            ),
         }
     )
 
@@ -558,7 +602,9 @@ def _build_contract_check_payload(
             "copy_value": str(expected_amount),
             "copy_label": _("Copy amount"),
             "message": (
-                _("Amount matches the order total.") if amount_ok else _("Amount does not match the order total.")
+                _("Amount matches the order total.")
+                if amount_ok
+                else _("Amount does not match the order total.")
             ),
         }
     )
@@ -592,11 +638,17 @@ def _build_contract_check_payload(
             "passed": items_ok,
             "expected": expected_items_summary,
             "actual": actual_items_summary,
-            "reminder": _("Items For Sale must contain exactly the same items and quantities as the order."),
+            "reminder": _(
+                "Items For Sale must contain exactly the same items and quantities as the order."
+            ),
             "detail_sections": item_detail_sections,
             "copy_value": expected_items_copy,
             "copy_label": _("Copy expected items"),
-            "message": (_("Items match the order exactly.") if items_ok else _("Items do not match the order.")),
+            "message": (
+                _("Items match the order exactly.")
+                if items_ok
+                else _("Items do not match the order.")
+            ),
         }
     )
 
@@ -606,7 +658,9 @@ def _build_contract_check_payload(
         "summary": (
             _("Contract looks valid.")
             if ok
-            else _("Contract has mismatches that should be fixed before in-game validation.")
+            else _(
+                "Contract has mismatches that should be fixed before in-game validation."
+            )
         ),
         "checks": checks,
         "expected": {
@@ -631,21 +685,27 @@ def _build_contract_check_payload(
 def _buy_order_amount_label_for_user(order: MaterialExchangeBuyOrder, user) -> str:
     """Return the buy-order amount label for the current user perspective."""
     is_manager = _can_manage_material_hub(user)
-    is_order_buyer = bool(user and getattr(user, "id", None) == getattr(order, "buyer_id", None))
+    is_order_buyer = bool(
+        user and getattr(user, "id", None) == getattr(order, "buyer_id", None)
+    )
     if is_manager and not is_order_buyer:
         return _("I will receive")
     return _("I will pay")
 
 
 def _get_sell_order_for_request(request, order_id):
-    queryset = MaterialExchangeSellOrder.objects.prefetch_related("items").select_related("config", "seller")
+    queryset = MaterialExchangeSellOrder.objects.prefetch_related(
+        "items"
+    ).select_related("config", "seller")
     if _can_manage_material_hub(request.user):
         return get_object_or_404(queryset, id=order_id)
     return get_object_or_404(queryset, id=order_id, seller=request.user)
 
 
 def _get_buy_order_for_request(request, order_id):
-    queryset = MaterialExchangeBuyOrder.objects.prefetch_related("items").select_related("config", "buyer")
+    queryset = MaterialExchangeBuyOrder.objects.prefetch_related(
+        "items"
+    ).select_related("config", "buyer")
     if _can_manage_material_hub(request.user):
         return get_object_or_404(queryset, id=order_id)
     return get_object_or_404(queryset, id=order_id, buyer=request.user)
@@ -666,7 +726,9 @@ def sell_order_check_contract(request, order_id):
             status=400,
         )
 
-    corporation_name = get_corporation_name(getattr(order.config, "corporation_id", None))
+    corporation_name = get_corporation_name(
+        getattr(order.config, "corporation_id", None)
+    )
     location_candidates, location_label = _get_sell_contract_check_locations(order)
     payload = _build_contract_check_payload(
         order=order,
@@ -695,7 +757,11 @@ def buy_order_check_contract(request, order_id):
         )
 
     selected_recipient = str(order.recipient_character_name or "").strip()
-    buyer_recipients = [selected_recipient] if selected_recipient else _resolve_linked_character_names(order.buyer)
+    buyer_recipients = (
+        [selected_recipient]
+        if selected_recipient
+        else _resolve_linked_character_names(order.buyer)
+    )
     if not buyer_recipients:
         fallback_buyer = _resolve_main_character_name(order.buyer)
         buyer_recipients = [fallback_buyer] if fallback_buyer else []
@@ -743,7 +809,9 @@ def _dedupe_labels(values: Iterable[str | None]) -> list[str]:
     return labels
 
 
-def _get_sell_contract_check_locations(order: MaterialExchangeSellOrder) -> tuple[list[str], str]:
+def _get_sell_contract_check_locations(
+    order: MaterialExchangeSellOrder,
+) -> tuple[list[str], str]:
     source_name = str(getattr(order, "source_location_name", "") or "").strip()
     source_id = getattr(order, "source_location_id", None)
     try:
@@ -763,7 +831,10 @@ def _get_sell_contract_check_locations(order: MaterialExchangeSellOrder) -> tupl
 
     name_map = config.get_sell_structure_name_map() or {}
     location_ids = config.get_sell_structure_ids()
-    candidates: list[str] = []
+    candidates = [
+        str(config.structure_name or "").strip(),
+        f"Structure {config.structure_id}",
+    ]
     for raw_location_id in location_ids or []:
         try:
             location_id = int(raw_location_id or 0)
@@ -774,11 +845,6 @@ def _get_sell_contract_check_locations(order: MaterialExchangeSellOrder) -> tupl
         candidates.append(str(name_map.get(location_id, "") or "").strip())
         candidates.append(f"Structure {location_id}")
 
-    if not candidates:
-        candidates = [
-            str(config.structure_name or "").strip(),
-            f"Structure {config.structure_id}",
-        ]
     candidates = _dedupe_labels(candidates)
     return candidates, (candidates[0] if candidates else "")
 
@@ -788,13 +854,19 @@ def _resolve_sell_order_location_label(order: MaterialExchangeSellOrder) -> str:
     return label
 
 
-def _infer_buy_order_location_from_stock(order: MaterialExchangeBuyOrder) -> tuple[int | None, str]:
+def _infer_buy_order_location_from_stock(
+    order: MaterialExchangeBuyOrder,
+) -> tuple[int | None, str]:
     config = getattr(order, "config", None)
     if not config:
         return None, ""
 
     try:
-        type_ids = {int(type_id) for type_id in order.items.values_list("type_id", flat=True) if int(type_id) > 0}
+        type_ids = {
+            int(type_id)
+            for type_id in order.items.values_list("type_id", flat=True)
+            if int(type_id) > 0
+        }
     except Exception:
         type_ids = set()
     if not type_ids:
@@ -842,12 +914,15 @@ def _infer_buy_order_location_from_stock(order: MaterialExchangeBuyOrder) -> tup
     selected_location_id = sorted(common_location_ids)[0]
     name_map = config.get_buy_structure_name_map() or {}
     selected_location_name = (
-        str(name_map.get(selected_location_id, "") or "").strip() or f"Structure {selected_location_id}"
+        str(name_map.get(selected_location_id, "") or "").strip()
+        or f"Structure {selected_location_id}"
     )
     return selected_location_id, selected_location_name
 
 
-def _get_buy_contract_check_locations(order: MaterialExchangeBuyOrder) -> tuple[list[str], str]:
+def _get_buy_contract_check_locations(
+    order: MaterialExchangeBuyOrder,
+) -> tuple[list[str], str]:
     source_name = str(getattr(order, "source_location_name", "") or "").strip()
     source_id = getattr(order, "source_location_id", None)
     try:
@@ -870,7 +945,9 @@ def _get_buy_contract_check_locations(order: MaterialExchangeBuyOrder) -> tuple[
         fallback = _dedupe_labels([source_name])
         return fallback, (fallback[0] if fallback else "")
 
-    inferred_location_id, inferred_location_name = _infer_buy_order_location_from_stock(order)
+    inferred_location_id, inferred_location_name = _infer_buy_order_location_from_stock(
+        order
+    )
     if inferred_location_id and inferred_location_id > 0:
         inferred_id_label = f"Structure {inferred_location_id}"
         candidates = _dedupe_labels([inferred_location_name, inferred_id_label])
@@ -934,7 +1011,9 @@ def _resolve_linked_character_names(user) -> list[str]:
             .filter(user=user)
             .order_by("character__character_name")
         ):
-            linked_names.append(str(getattr(ownership.character, "character_name", "") or "").strip())
+            linked_names.append(
+                str(getattr(ownership.character, "character_name", "") or "").strip()
+            )
     except Exception:
         linked_names = []
 
@@ -945,11 +1024,15 @@ def _resolve_linked_character_names(user) -> list[str]:
 
     normalized_main = normalize_text(main_character_name)
     ordered_names = [main_character_name]
-    ordered_names.extend(name for name in linked_names if normalize_text(name) != normalized_main)
+    ordered_names.extend(
+        name for name in linked_names if normalize_text(name) != normalized_main
+    )
     return _dedupe_labels(ordered_names)
 
 
-def _format_recipients_for_display(recipient_names: list[str], *, fallback: str = "") -> str:
+def _format_recipients_for_display(
+    recipient_names: list[str], *, fallback: str = ""
+) -> str:
     names = _dedupe_labels(recipient_names)
     if not names:
         return fallback
@@ -1022,7 +1105,8 @@ def _build_timeline_breadcrumb(order, order_type):
         breadcrumb.append(
             {
                 "status": _("Order Created"),
-                "completed": order.status in ["draft", "awaiting_validation", "validated", "completed"],
+                "completed": order.status
+                in ["draft", "awaiting_validation", "validated", "completed"],
                 "icon": "fa-pen",
                 "color": "secondary",
             }
@@ -1031,7 +1115,8 @@ def _build_timeline_breadcrumb(order, order_type):
         breadcrumb.append(
             {
                 "status": _("Awaiting Corp Contract"),
-                "completed": order.status in ["awaiting_validation", "validated", "completed"],
+                "completed": order.status
+                in ["awaiting_validation", "validated", "completed"],
                 "icon": "fa-file",
                 "color": "secondary",
             }
@@ -1137,7 +1222,9 @@ def _build_status_timeline(order, order_type):
                         else _("Anomaly - Contract Refused In-Game (Redo Required)")
                     ),
                     "timestamp": order.updated_at,
-                    "user": (order.approved_by.username if order.approved_by else "System"),
+                    "user": (
+                        order.approved_by.username if order.approved_by else "System"
+                    ),
                     "completed": True,
                     "icon": "fa-exclamation-triangle",
                     "color": "danger",
@@ -1173,7 +1260,9 @@ def _build_status_timeline(order, order_type):
                 {
                     "status": _("Rejected"),
                     "timestamp": order.updated_at,
-                    "user": (order.approved_by.username if order.approved_by else "System"),
+                    "user": (
+                        order.approved_by.username if order.approved_by else "System"
+                    ),
                     "completed": True,
                     "icon": "fa-times-circle",
                     "color": "danger",
@@ -1267,7 +1356,9 @@ def _build_status_timeline(order, order_type):
                 {
                     "status": _("Rejected"),
                     "timestamp": order.updated_at,
-                    "user": (order.approved_by.username if order.approved_by else "System"),
+                    "user": (
+                        order.approved_by.username if order.approved_by else "System"
+                    ),
                     "completed": True,
                     "icon": "fa-times-circle",
                     "color": "danger",
@@ -1284,7 +1375,9 @@ def sell_order_delete(request, order_id):
     Delete a sell order.
     Only owner can delete, only if not completed/rejected/cancelled.
     """
-    emit_view_analytics_event(view_name="material_exchange_orders.sell_order_delete", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange_orders.sell_order_delete", request=request
+    )
     order = _get_sell_order_for_request(request, order_id)
     is_manager = _can_manage_material_hub(request.user)
 
@@ -1335,7 +1428,9 @@ def buy_order_delete(request, order_id):
     Delete a buy order.
     Only owner can delete, only if not completed/rejected/cancelled.
     """
-    emit_view_analytics_event(view_name="material_exchange_orders.buy_order_delete", request=request)
+    emit_view_analytics_event(
+        view_name="material_exchange_orders.buy_order_delete", request=request
+    )
     order = _get_buy_order_for_request(request, order_id)
     is_manager = _can_manage_material_hub(request.user)
 
