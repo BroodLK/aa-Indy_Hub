@@ -4735,8 +4735,10 @@ function restoreMETEFromLocalStorage(storageKey) {
                     const card = input.closest('.craft-bp-card');
                     const isOwned = input.getAttribute('data-blueprint-owned') === 'true'
                         || input.getAttribute('data-owned-bpc') === 'true'
+                        || input.getAttribute('data-owned-bpo') === 'true'
                         || card?.getAttribute('data-blueprint-owned') === 'true'
                         || card?.getAttribute('data-owned-bpc') === 'true'
+                        || card?.getAttribute('data-owned-bpo') === 'true'
                         || (function() {
                             const bp = blueprintConfigsByTypeId?.get?.(typeId);
                             return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));
@@ -4784,9 +4786,6 @@ function restoreMETEFromLocalStorage(storageKey) {
                 const useInput = document.querySelector(`#configure-pane input.bp-use-input[data-blueprint-type-id="${typeId}"]`);
                 if (useInput && !useInput.disabled) {
                     useInput.checked = Boolean(bpConfig.use);
-                    if (!useInput.checked) {
-                        useInput.dataset.userExplicitlyUnchecked = 'true';
-                    }
                 }
             }
         }
@@ -4808,8 +4807,10 @@ function restoreMETEFromLocalStorage(storageKey) {
                 const card = input.closest('.craft-bp-card');
                 const isOwned = input.getAttribute('data-blueprint-owned') === 'true'
                     || input.getAttribute('data-owned-bpc') === 'true'
+                    || input.getAttribute('data-owned-bpo') === 'true'
                     || card?.getAttribute('data-blueprint-owned') === 'true'
                     || card?.getAttribute('data-owned-bpc') === 'true'
+                    || card?.getAttribute('data-owned-bpo') === 'true'
                     || (function() {
                         const bp = blueprintConfigsByTypeId?.get?.(typeId);
                         return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));
@@ -7957,6 +7958,7 @@ function syncConfigureVisibilityWithPlan() {
         const isOwned = !notOwned
             || String(card.getAttribute('data-blueprint-owned') || '').trim().toLowerCase() === 'true'
             || String(card.getAttribute('data-owned-bpc') || '').trim().toLowerCase() === 'true'
+            || String(card.getAttribute('data-owned-bpo') || '').trim().toLowerCase() === 'true'
             || (function() {
                 const bp = configs.find((c) => Number(c.type_id || c.typeId) === blueprintTypeId);
                 return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));

@@ -3362,8 +3362,16 @@ def craft_bp(request, type_id):
             bpc_source = {"token": "all", "item_ids": None, "rejected": True}
 
         try:
+            from allianceauth.authentication.models import CharacterOwnership
+            from django.db.models import Q
+
+            user_char_ids = list(
+                CharacterOwnership.objects.filter(user=request.user).values_list(
+                    "character__character_id", flat=True
+                )
+            )
             user_blueprints = Blueprint.objects.filter(
-                owner_user=request.user,
+                Q(owner_user=request.user) | Q(character_id__in=user_char_ids),
                 owner_kind=Blueprint.OwnerKind.CHARACTER,  # exclude corp-owned blueprints
             )
             if bpc_source.get("item_ids") is not None:
@@ -3390,7 +3398,8 @@ def craft_bp(request, type_id):
                     },
                 )
 
-                if bp_type == "ORIGINAL":
+                bp_type_str = str(bp_type or "").strip().upper()
+                if bp_type_str in ("ORIGINAL", "BPO"):
                     # Keep the best ORIGINAL (higher ME/TE first)
                     if not entry["original"]:
                         entry["original"] = {"me": bp_me, "te": bp_te}
@@ -3412,6 +3421,38 @@ def craft_bp(request, type_id):
                             bp_me == cur["me"] and bp_te > cur["te"]
                         ):
                             entry["best_copy"] = {"me": bp_me, "te": bp_te}
+
+            # Check CachedCharacterAsset as fallback
+            try:
+                cached_bp_assets = CachedCharacterAsset.objects.filter(
+                    user=request.user,
+                    is_blueprint=True,
+                )
+                if bpc_source.get("item_ids") is not None:
+                    cached_bp_assets = cached_bp_assets.filter(
+                        item_id__in=sorted(bpc_source["item_ids"])
+                    )
+                for asset in cached_bp_assets.values("type_id", "quantity"):
+                    asset_type_id = asset.get("type_id")
+                    if not asset_type_id:
+                        continue
+                    entry = user_bp_map.setdefault(
+                        asset_type_id,
+                        {
+                            "original": None,
+                            "best_copy": None,
+                            "copy_runs_total": 0,
+                        },
+                    )
+                    qty = asset.get("quantity", 1)
+                    if qty == -1:
+                        if not entry["original"]:
+                            entry["original"] = {"me": 0, "te": 0}
+                    elif qty == -2:
+                        if not entry["best_copy"]:
+                            entry["best_copy"] = {"me": 0, "te": 0}
+            except Exception:
+                pass
 
             # --- Load available blueprints from sharing system ---
             # Determine viewer affiliations
