@@ -3804,6 +3804,10 @@ function initializeMETEHandlers() {
             const targetTab = event.target.getAttribute('data-tab-name');
             craftBPDebugLog(`Tab switched to: ${targetTab}`);
 
+            if (targetTab === 'schedule' && buildScheduleData && typeof renderGanttChart === 'function') {
+                renderGanttChart(buildScheduleData);
+            }
+
             // If we're leaving the Configure tab and have pending changes, apply them
             if (targetTab !== 'configure' && window.craftBPFlags?.hasPendingMETEChanges) {
                 window.craftBPFlags.switchingToTab = targetTab;
@@ -4728,12 +4732,20 @@ function restoreMETEFromLocalStorage(storageKey) {
                     if (!typeId || input.disabled) {
                         return;
                     }
-                    const isOwnedCopy = input.getAttribute('data-owned-bpc') === 'true';
+                    const card = input.closest('.craft-bp-card');
+                    const isOwned = input.getAttribute('data-blueprint-owned') === 'true'
+                        || input.getAttribute('data-owned-bpc') === 'true'
+                        || card?.getAttribute('data-blueprint-owned') === 'true'
+                        || card?.getAttribute('data-owned-bpc') === 'true'
+                        || (function() {
+                            const bp = blueprintConfigsByTypeId?.get?.(typeId);
+                            return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));
+                        })();
                     const productTypeId = Number(input.getAttribute('data-product-type-id')) || typeId;
                     const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
                     if (urlUseIds.has(typeId)) {
                         input.checked = true;
-                    } else if (!isOwnedCopy || !isPlannedForProduction) {
+                    } else if (!isOwned || !isPlannedForProduction) {
                         input.checked = false;
                     }
                 });
@@ -4793,12 +4805,20 @@ function restoreMETEFromLocalStorage(storageKey) {
                 if (!typeId || input.disabled) {
                     return;
                 }
-                const isOwnedCopy = input.getAttribute('data-owned-bpc') === 'true';
+                const card = input.closest('.craft-bp-card');
+                const isOwned = input.getAttribute('data-blueprint-owned') === 'true'
+                    || input.getAttribute('data-owned-bpc') === 'true'
+                    || card?.getAttribute('data-blueprint-owned') === 'true'
+                    || card?.getAttribute('data-owned-bpc') === 'true'
+                    || (function() {
+                        const bp = blueprintConfigsByTypeId?.get?.(typeId);
+                        return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));
+                    })();
                 const productTypeId = Number(input.getAttribute('data-product-type-id')) || typeId;
                 const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
                 if (urlUseIds.has(typeId)) {
                     input.checked = true;
-                } else if (!isOwnedCopy || !isPlannedForProduction) {
+                } else if (!isOwned || !isPlannedForProduction) {
                     input.checked = false;
                 }
             });
@@ -7934,13 +7954,15 @@ function syncConfigureVisibilityWithPlan() {
         }
         const isPlannedForProduction = isProductPlannedForProduction(productTypeId);
         const notOwned = String(card.getAttribute('data-blueprint-not-owned') || '').trim().toLowerCase() === 'true';
-        const isOwnedCopy = String(card.getAttribute('data-owned-bpc') || '').trim().toLowerCase() === 'true'
+        const isOwned = !notOwned
+            || String(card.getAttribute('data-blueprint-owned') || '').trim().toLowerCase() === 'true'
+            || String(card.getAttribute('data-owned-bpc') || '').trim().toLowerCase() === 'true'
             || (function() {
                 const bp = configs.find((c) => Number(c.type_id || c.typeId) === blueprintTypeId);
-                return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned) && (bp.is_copy || bp.isCopy));
+                return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));
             })();
         const hasSelectedContracts = getSelectedContractOffersForBlueprint(blueprintTypeId).length > 0;
-        const keepVisible = isPlannedForProduction && !notOwned;
+        const keepVisible = isPlannedForProduction && isOwned;
         card.classList.toggle('d-none', !keepVisible);
         const useInput = card.querySelector('input.bp-use-input[data-blueprint-type-id]');
         if (useInput) {
@@ -7948,11 +7970,11 @@ function syncConfigureVisibilityWithPlan() {
                 useInput.checked = false;
                 useInput.dataset.contractDriven = 'false';
                 useInput.dispatchEvent(new Event('change', { bubbles: true }));
-            } else if (useInput.checked && notOwned && !hasSelectedContracts) {
+            } else if (useInput.checked && !isOwned && !hasSelectedContracts) {
                 useInput.checked = false;
                 useInput.dataset.contractDriven = 'false';
                 useInput.dispatchEvent(new Event('change', { bubbles: true }));
-            } else if (!useInput.checked && isPlannedForProduction && isOwnedCopy && !useInput.disabled && useInput.dataset.userExplicitlyUnchecked !== 'true') {
+            } else if (!useInput.checked && isPlannedForProduction && isOwned && !useInput.disabled && useInput.dataset.userExplicitlyUnchecked !== 'true') {
                 useInput.checked = true;
                 useInput.dispatchEvent(new Event('change', { bubbles: true }));
             }
@@ -11561,6 +11583,15 @@ function initBuildSchedule() {
     renderScheduleTrackingControls();
 
     updateBuildScheduleModeControls();
+
+    window.addEventListener('resize', () => {
+        if (buildScheduleData && typeof renderGanttChart === 'function') {
+            const ganttPane = document.getElementById('ganttChart');
+            if (ganttPane && (ganttPane.offsetParent !== null || ganttPane.clientWidth > 0)) {
+                renderGanttChart(buildScheduleData);
+            }
+        }
+    });
 }
 
 function getBuildScheduleMode() {
@@ -12128,11 +12159,20 @@ function renderGanttChart(schedule) {
         return;
     }
 
-    const baseWidth = 1000;
-    const timelineWidth = Math.max(420, baseWidth * ganttZoomLevel);
+    const outerContainer = document.getElementById('ganttChartContainer');
+    const availableContainerWidth = Math.max(
+        600,
+        Math.floor(
+            (outerContainer ? outerContainer.clientWidth : 0)
+            || (container ? container.clientWidth : 0)
+            || 1000
+        ) - 32
+    );
     const labelWidth = 150;
     const leadingGap = 16;
-    const chartWidth = labelWidth + leadingGap + timelineWidth;
+    const baseTimelineWidth = Math.max(420, availableContainerWidth - labelWidth - leadingGap);
+    const timelineWidth = Math.max(420, baseTimelineWidth * Math.max(0.3, Number(ganttZoomLevel) || 1.0));
+    const chartWidth = Math.max(availableContainerWidth, labelWidth + leadingGap + timelineWidth);
     const rowHeight = 40;
     const headerHeight = 32;
     const chartHeight = (slots.length * rowHeight) + headerHeight;
@@ -12143,7 +12183,7 @@ function renderGanttChart(schedule) {
     const pixelsPerSecond = timelineWidth / safeMaxTime;
     const timelineStartX = labelWidth + leadingGap;
 
-    let svg = `<svg width="${chartWidth}" height="${chartHeight}" font-size="12">`;
+    let svg = `<svg width="${chartWidth}" height="${chartHeight}" font-size="12" style="width: 100%; min-width: ${chartWidth}px; display: block;">`;
     svg += `<rect x="0" y="0" width="${chartWidth}" height="${chartHeight}" fill="var(--gantt-surface)" rx="8"/>`;
 
     // Clamped, so a zero-length plan cannot produce a degenerate axis.

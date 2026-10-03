@@ -1685,6 +1685,7 @@ html[data-theme="darkly"] .craft-gantt-surface {
 
 .craft-gantt-surface svg {
     display: block;
+    width: 100%;
 }
 
 /* The bar is the hit target; lift it so the reader sees it respond. */

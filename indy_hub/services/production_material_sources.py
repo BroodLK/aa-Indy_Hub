@@ -45,6 +45,8 @@ MAX_CONTAINER_DEPTH = 25
 # Cap the type filter so a crafted query cannot fan out unboundedly.
 MAX_TYPE_FILTER = 500
 
+PLAYER_STRUCTURE_ID_MIN = 2_147_483_648
+
 NON_HANGAR_FLAGS = {
     "Cargo",
     "DroneBay",
@@ -172,8 +174,12 @@ def _is_personal_hangar_asset(
         except (TypeError, ValueError):
             current_type_id = 0
 
-        # Any ship in the ancestry or as the asset itself is excluded
-        if current_type_id in ship_type_ids:
+        # Any ship in the ancestry or as the asset itself (if not a blueprint) is excluded
+        is_bp = bool(
+            current.get("_row", {}).get("is_blueprint", False)
+            or current.get("is_blueprint", False)
+        )
+        if not is_bp and current_type_id in ship_type_ids:
             return False
 
         current_flag = str(current.get("location_flag", "") or "")
@@ -443,6 +449,60 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
             "synced_at",
         )
     )
+
+    if blueprints:
+        try:
+            # Alliance Auth
+            from allianceauth.authentication.models import CharacterOwnership
+            from django.db.models import Q
+            from indy_hub.models import Blueprint, CachedStructureName
+
+            user_char_ids = list(
+                CharacterOwnership.objects.filter(user=user).values_list(
+                    "character__character_id", flat=True
+                )
+            )
+            bp_rows = list(
+                Blueprint.objects.filter(
+                    Q(owner_user=user) | Q(character_id__in=user_char_ids)
+                ).values(
+                    "item_id",
+                    "character_id",
+                    "location_id",
+                    "location_name",
+                    "location_flag",
+                    "type_id",
+                    "quantity",
+                    "last_updated",
+                )
+            )
+            for bp in bp_rows:
+                lid = bp.get("location_id")
+                if not lid:
+                    continue
+                loc_name = str(bp.get("location_name") or "").strip()
+                if loc_name and int(lid) >= PLAYER_STRUCTURE_ID_MIN:
+                    CachedStructureName.objects.get_or_create(
+                        structure_id=int(lid),
+                        defaults={"name": loc_name},
+                    )
+                all_user_assets.append(
+                    {
+                        "item_id": bp["item_id"],
+                        "character_id": bp["character_id"] or 0,
+                        "raw_location_id": bp["location_id"],
+                        "location_id": bp["location_id"],
+                        "location_flag": bp["location_flag"] or "Hangar",
+                        "type_id": bp["type_id"],
+                        "set_name": bp["location_name"] or "",
+                        "quantity": bp["quantity"] or 1,
+                        "is_blueprint": True,
+                        "synced_at": bp["last_updated"],
+                    }
+                )
+        except Exception:
+            pass
+
     if not all_user_assets:
         return {
             "sources": [],
@@ -914,6 +974,35 @@ def _extract_blueprint_ids_for_locations(
     loc_list = sorted({int(lid) for lid in location_ids if int(lid) > 0})
     if not loc_list:
         return set()
+
+    matched_ids: set[int] = set()
+
+    # Match from Blueprint model
+    try:
+        # Alliance Auth
+        from allianceauth.authentication.models import CharacterOwnership
+        from django.db.models import Q
+        from indy_hub.models import Blueprint
+
+        user_char_ids = list(
+            CharacterOwnership.objects.filter(user=user).values_list(
+                "character__character_id", flat=True
+            )
+        )
+        bp_filter = Q(location_id__in=loc_list) & (
+            Q(owner_user=user) | Q(character_id__in=user_char_ids)
+        )
+        if int(character_id or 0) > 0:
+            bp_filter &= Q(character_id=int(character_id))
+
+        for item_id in Blueprint.objects.filter(bp_filter).values_list(
+            "item_id", flat=True
+        ):
+            if item_id:
+                matched_ids.add(int(item_id))
+    except Exception:
+        pass
+
     filter_kwargs: dict[str, Any] = {
         "user": user,
         "location_id__in": loc_list,
@@ -934,31 +1023,28 @@ def _extract_blueprint_ids_for_locations(
             "set_name",
         )
     )
-    if not location_assets:
-        return set()
+    if location_assets:
+        all_type_ids = {
+            int(row["type_id"]) for row in location_assets if row.get("type_id")
+        }
+        ship_type_ids = _get_ship_type_ids(all_type_ids)
+        esi_rows = _rows_as_esi_shape(location_assets)
+        index = build_asset_index_by_item_id(esi_rows)
 
-    all_type_ids = {
-        int(row["type_id"]) for row in location_assets if row.get("type_id")
-    }
-    ship_type_ids = _get_ship_type_ids(all_type_ids)
-    esi_rows = _rows_as_esi_shape(location_assets)
-    index = build_asset_index_by_item_id(esi_rows)
-
-    matched_ids = set()
-    for asset in esi_rows:
-        raw_row = asset["_row"]
-        if not bool(raw_row.get("is_blueprint", False)):
-            continue
-        if not _is_personal_hangar_asset(
-            asset,
-            index,
-            ship_type_ids=ship_type_ids,
-            location_id=raw_row.get("location_id"),
-        ):
-            continue
-        item_id = raw_row.get("item_id")
-        if item_id:
-            matched_ids.add(int(item_id))
+        for asset in esi_rows:
+            raw_row = asset["_row"]
+            if not bool(raw_row.get("is_blueprint", False)):
+                continue
+            if not _is_personal_hangar_asset(
+                asset,
+                index,
+                ship_type_ids=ship_type_ids,
+                location_id=raw_row.get("location_id"),
+            ):
+                continue
+            item_id = raw_row.get("item_id")
+            if item_id:
+                matched_ids.add(int(item_id))
 
     return matched_ids
 
@@ -978,12 +1064,42 @@ def blueprint_item_ids_at_source(
     Returns None when the user has no cached blueprints there.
     Excludes ships and blueprints inside ships.
     """
-    if int(region_id or 0) > 0:
-        loc_ids = list(
-            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+    loc_id_set: set[int] = set()
+    try:
+        # Alliance Auth
+        from allianceauth.authentication.models import CharacterOwnership
+        from django.db.models import Q
+        from indy_hub.models import Blueprint
+
+        user_char_ids = list(
+            CharacterOwnership.objects.filter(user=user).values_list(
+                "character__character_id", flat=True
+            )
+        )
+        bp_locs = (
+            Blueprint.objects.filter(
+                Q(owner_user=user) | Q(character_id__in=user_char_ids)
+            )
             .values_list("location_id", flat=True)
             .distinct()
         )
+        for lid in bp_locs:
+            if lid and int(lid) > 0:
+                loc_id_set.add(int(lid))
+    except Exception:
+        pass
+
+    for lid in (
+        CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+        .values_list("location_id", flat=True)
+        .distinct()
+    ):
+        if lid and int(lid) > 0:
+            loc_id_set.add(int(lid))
+
+    loc_ids = sorted(loc_id_set)
+
+    if int(region_id or 0) > 0:
         meta_map = resolve_location_system_and_region(loc_ids)
         target_loc_ids = [
             loc_id
@@ -998,11 +1114,6 @@ def blueprint_item_ids_at_source(
         return matched_ids if matched_ids else None
 
     if int(system_id or 0) > 0:
-        loc_ids = list(
-            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
-            .values_list("location_id", flat=True)
-            .distinct()
-        )
         meta_map = resolve_location_system_and_region(loc_ids)
         target_loc_ids = [
             loc_id
@@ -1039,48 +1150,50 @@ def blueprint_item_ids_at_source(
             "set_name",
         )
     )
-    if not location_assets:
-        return None
 
-    all_type_ids = {
-        int(row["type_id"]) for row in location_assets if row.get("type_id")
-    }
-    ship_type_ids = _get_ship_type_ids(all_type_ids)
-    esi_rows = _rows_as_esi_shape(location_assets)
-    index = build_asset_index_by_item_id(esi_rows)
+    matched_ids = _extract_blueprint_ids_for_locations(
+        user, [int(location_id)], character_id=character_id
+    )
 
-    if container_item_id:
-        container_asset = index.get(int(container_item_id))
-        if not container_asset:
-            return set()
-        c_type_id = int(container_asset.get("_row", {}).get("type_id", 0) or 0)
-        if c_type_id in ship_type_ids or not _is_personal_hangar_asset(
-            container_asset,
-            index,
-            ship_type_ids=ship_type_ids,
-            location_id=location_id,
-        ):
-            return set()
+    if location_assets:
+        all_type_ids = {
+            int(row["type_id"]) for row in location_assets if row.get("type_id")
+        }
+        ship_type_ids = _get_ship_type_ids(all_type_ids)
+        esi_rows = _rows_as_esi_shape(location_assets)
+        index = build_asset_index_by_item_id(esi_rows)
 
-    matched_ids = set()
-    for asset in esi_rows:
-        raw_row = asset["_row"]
-        if not bool(raw_row.get("is_blueprint", False)):
-            continue
-        if not _is_personal_hangar_asset(
-            asset,
-            index,
-            ship_type_ids=ship_type_ids,
-            location_id=location_id,
-        ):
-            continue
-        if container_item_id and not _has_container_ancestor(
-            asset, index, container_item_id
-        ):
-            continue
-        item_id = raw_row.get("item_id")
-        if item_id:
-            matched_ids.add(int(item_id))
+        if container_item_id:
+            container_asset = index.get(int(container_item_id))
+            if not container_asset:
+                return set()
+            c_type_id = int(container_asset.get("_row", {}).get("type_id", 0) or 0)
+            if c_type_id in ship_type_ids or not _is_personal_hangar_asset(
+                container_asset,
+                index,
+                ship_type_ids=ship_type_ids,
+                location_id=location_id,
+            ):
+                return set()
+
+        for asset in esi_rows:
+            raw_row = asset["_row"]
+            if not bool(raw_row.get("is_blueprint", False)):
+                continue
+            if not _is_personal_hangar_asset(
+                asset,
+                index,
+                ship_type_ids=ship_type_ids,
+                location_id=location_id,
+            ):
+                continue
+            if container_item_id and not _has_container_ancestor(
+                asset, index, container_item_id
+            ):
+                continue
+            item_id = raw_row.get("item_id")
+            if item_id:
+                matched_ids.add(int(item_id))
 
     if not matched_ids and not container_item_id:
         return None
@@ -1106,6 +1219,71 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
             "location_name": "All eligible locations",
         }
 
+    def _get_bpc_loc_ids_and_last_synced(
+        target_locs: list[int],
+    ) -> tuple[list[int], Any]:
+        last_dt = (
+            CachedCharacterAsset.objects.filter(
+                user=user, location_id__in=target_locs, is_blueprint=True
+            )
+            .aggregate(last=Max("synced_at"))
+            .get("last")
+        )
+        try:
+            # Alliance Auth
+            from allianceauth.authentication.models import CharacterOwnership
+            from django.db.models import Q
+            from indy_hub.models import Blueprint
+
+            user_char_ids = list(
+                CharacterOwnership.objects.filter(user=user).values_list(
+                    "character__character_id", flat=True
+                )
+            )
+            bp_last = (
+                Blueprint.objects.filter(
+                    Q(location_id__in=target_locs)
+                    & (Q(owner_user=user) | Q(character_id__in=user_char_ids))
+                )
+                .aggregate(last=Max("last_updated"))
+                .get("last")
+            )
+            if bp_last and (not last_dt or bp_last > last_dt):
+                last_dt = bp_last
+        except Exception:
+            pass
+        return target_locs, last_dt
+
+    all_bpc_loc_ids_set: set[int] = set(
+        CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
+        .values_list("location_id", flat=True)
+        .distinct()
+    )
+    try:
+        # Alliance Auth
+        from allianceauth.authentication.models import CharacterOwnership
+        from django.db.models import Q
+        from indy_hub.models import Blueprint
+
+        user_char_ids = list(
+            CharacterOwnership.objects.filter(user=user).values_list(
+                "character__character_id", flat=True
+            )
+        )
+        for lid in (
+            Blueprint.objects.filter(
+                Q(owner_user=user) | Q(character_id__in=user_char_ids)
+            )
+            .values_list("location_id", flat=True)
+            .distinct()
+        ):
+            if lid and int(lid) > 0:
+                all_bpc_loc_ids_set.add(int(lid))
+    except Exception:
+        pass
+
+    all_bpc_loc_ids = sorted(all_bpc_loc_ids_set)
+
     if scope == "region":
         item_ids = blueprint_item_ids_at_source(user, region_id=target_id)
         if item_ids is None:
@@ -1117,24 +1295,13 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
                 "location_name": "All eligible locations",
             }
         region_name = _get_region_name(target_id)
-        loc_ids = list(
-            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
-            .values_list("location_id", flat=True)
-            .distinct()
-        )
-        meta_map = resolve_location_system_and_region(loc_ids)
+        meta_map = resolve_location_system_and_region(all_bpc_loc_ids)
         target_loc_ids = [
             loc_id
-            for loc_id in loc_ids
+            for loc_id in all_bpc_loc_ids
             if meta_map.get(loc_id, {}).get("region_id") == int(target_id)
         ]
-        last_synced = (
-            CachedCharacterAsset.objects.filter(
-                user=user, location_id__in=target_loc_ids, is_blueprint=True
-            )
-            .aggregate(last=Max("synced_at"))
-            .get("last")
-        )
+        _, last_synced = _get_bpc_loc_ids_and_last_synced(target_loc_ids)
         return {
             "token": f"region:{target_id}",
             "scope": "region",
@@ -1159,24 +1326,13 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
                 "location_name": "All eligible locations",
             }
         system_name = _get_system_name(target_id)
-        loc_ids = list(
-            CachedCharacterAsset.objects.filter(user=user, is_blueprint=True)
-            .values_list("location_id", flat=True)
-            .distinct()
-        )
-        meta_map = resolve_location_system_and_region(loc_ids)
+        meta_map = resolve_location_system_and_region(all_bpc_loc_ids)
         target_loc_ids = [
             loc_id
-            for loc_id in loc_ids
+            for loc_id in all_bpc_loc_ids
             if meta_map.get(loc_id, {}).get("system_id") == int(target_id)
         ]
-        last_synced = (
-            CachedCharacterAsset.objects.filter(
-                user=user, location_id__in=target_loc_ids, is_blueprint=True
-            )
-            .aggregate(last=Max("synced_at"))
-            .get("last")
-        )
+        _, last_synced = _get_bpc_loc_ids_and_last_synced(target_loc_ids)
         return {
             "token": f"system:{target_id}",
             "scope": "system",
@@ -1204,13 +1360,7 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
         }
     names = resolve_cached_location_names([location_id])
     loc_meta = resolve_location_system_and_region([location_id]).get(location_id, {})
-    last_synced = (
-        CachedCharacterAsset.objects.filter(
-            user=user, location_id=location_id, is_blueprint=True
-        )
-        .aggregate(last=Max("synced_at"))
-        .get("last")
-    )
+    _, last_synced = _get_bpc_loc_ids_and_last_synced([location_id])
     if raw_token_str.startswith("container:"):
         token_out = f"container:{location_id}:{container_item_id}"
     elif raw_token_str.startswith("station:"):

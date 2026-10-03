@@ -491,6 +491,21 @@ def _get_user_alliance_corporation_ids(user) -> list[int]:
         if alliance_id_int > 0:
             alliance_ids.add(alliance_id_int)
 
+    # In case character__alliance_id was None on EveCharacter, look up EveCorporationInfo
+    if corp_ids:
+        try:
+            for a_id in EveCorporationInfo.objects.filter(
+                corporation_id__in=list(corp_ids)
+            ).values_list("alliance_id", flat=True):
+                try:
+                    a_id_int = int(a_id or 0)
+                except (TypeError, ValueError):
+                    a_id_int = 0
+                if a_id_int > 0:
+                    alliance_ids.add(a_id_int)
+        except Exception:
+            pass
+
     if alliance_ids:
         try:
             alliance_corp_rows = EveCorporationInfo.objects.filter(
@@ -506,113 +521,209 @@ def _get_user_alliance_corporation_ids(user) -> list[int]:
         except Exception:
             pass
 
+    # Include configured holding corporations from MaterialExchangeConfig
+    try:
+        from indy_hub.models import MaterialExchangeConfig
+
+        for cfg_corp_id in MaterialExchangeConfig.objects.values_list(
+            "corporation_id", flat=True
+        ):
+            if cfg_corp_id and int(cfg_corp_id) > 0:
+                corp_ids.add(int(cfg_corp_id))
+    except Exception:
+        pass
+
+    # Include corporations from CachedCorporationAsset
+    try:
+        from indy_hub.models import CachedCorporationAsset
+
+        for asset_corp_id in (
+            CachedCorporationAsset.objects.values_list("corporation_id", flat=True)
+            .distinct()
+        ):
+            if asset_corp_id and int(asset_corp_id) > 0:
+                corp_ids.add(int(asset_corp_id))
+    except Exception:
+        pass
+
     return sorted(corp_ids)
 
 
 def _load_corptools_engineering_structures(
     corporation_ids: list[int],
 ) -> list[dict[str, object]]:
-    try:
-        # Third Party
-        from corptools.models.audits import CorporationAudit
-        from corptools.models.structures import Structure
-    except Exception:
-        return []
+    structures: list[dict[str, object]] = []
+    seen_structure_ids: set[int] = set()
 
     corp_ids = [int(corp_id) for corp_id in corporation_ids if int(corp_id) > 0]
     if not corp_ids:
         return []
 
     try:
+        # Third Party
+        from corptools.models.audits import CorporationAudit
+        from corptools.models.structures import Structure
+        from django.db.models import Q
+
         corp_audits = CorporationAudit.objects.filter(
             corporation__corporation_id__in=corp_ids
         ).select_related("corporation")
         rows = (
             Structure.objects.filter(
-                corporation__in=corp_audits,
+                Q(corporation__in=corp_audits)
+                | Q(corporation__corporation__corporation_id__in=corp_ids),
                 type_id__in=list(ENGINEERING_COMPLEX_TYPE_INFO.keys()),
             )
             .select_related("corporation__corporation", "system_name")
             .order_by("structure_id")
         )
-    except Exception:
-        return []
 
-    structures: list[dict[str, object]] = []
-    for row in rows:
-        try:
-            structure_id = int(getattr(row, "structure_id", 0) or 0)
-            structure_type_id = int(getattr(row, "type_id", 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        if structure_id <= 0 or structure_type_id not in ENGINEERING_COMPLEX_TYPE_INFO:
-            continue
+        for row in rows:
+            try:
+                structure_id = int(getattr(row, "structure_id", 0) or 0)
+                structure_type_id = int(getattr(row, "type_id", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if (
+                structure_id <= 0
+                or structure_id in seen_structure_ids
+                or structure_type_id not in ENGINEERING_COMPLEX_TYPE_INFO
+            ):
+                continue
 
-        type_info = ENGINEERING_COMPLEX_TYPE_INFO[structure_type_id]
+            seen_structure_ids.add(structure_id)
+            type_info = ENGINEERING_COMPLEX_TYPE_INFO[structure_type_id]
 
-        try:
-            location_id = int(getattr(row, "system_id", 0) or 0)
-        except (TypeError, ValueError):
-            location_id = 0
+            try:
+                location_id = int(getattr(row, "system_id", 0) or 0)
+            except (TypeError, ValueError):
+                location_id = 0
 
-        location_name = ""
-        system_name_obj = getattr(row, "system_name", None)
-        if system_name_obj is not None:
-            location_name = str(getattr(system_name_obj, "name", "") or "").strip()
+            location_name = ""
+            system_name_obj = getattr(row, "system_name", None)
+            if system_name_obj is not None:
+                location_name = str(getattr(system_name_obj, "name", "") or "").strip()
 
-        owner_corporation_id = None
-        owner_corporation_name = ""
-        owner_corporation = getattr(row, "corporation", None)
-        owner_corporation_eve = (
-            getattr(owner_corporation, "corporation", None)
-            if owner_corporation is not None
-            else None
-        )
-        try:
-            owner_corporation_id = (
-                int(getattr(owner_corporation_eve, "corporation_id", 0) or 0) or None
-            )
-        except (TypeError, ValueError):
             owner_corporation_id = None
-
-        if owner_corporation_id:
-            owner_corporation_name = str(
-                getattr(owner_corporation_eve, "corporation_name", "") or ""
-            ).strip()
-            if not owner_corporation_name:
-                owner_corporation_name = str(
-                    get_corporation_name(owner_corporation_id) or ""
+            owner_corporation_name = ""
+            owner_corporation = getattr(row, "corporation", None)
+            owner_corporation_eve = (
+                getattr(owner_corporation, "corporation", None)
+                if owner_corporation is not None
+                else None
+            )
+            try:
+                owner_corporation_id = (
+                    int(getattr(owner_corporation_eve, "corporation_id", 0) or 0) or None
                 )
+            except (TypeError, ValueError):
+                owner_corporation_id = None
 
-        # Structures come from the corporation audit's stored copy, which is
-        # why a viewer without director roles can still pick them. Report how
-        # old that copy is so the UI never presents it as a live ESI read.
-        structures_updated_at = getattr(
-            owner_corporation, "last_update_structures", None
-        )
+            if owner_corporation_id:
+                owner_corporation_name = str(
+                    getattr(owner_corporation_eve, "corporation_name", "") or ""
+                ).strip()
+                if not owner_corporation_name:
+                    owner_corporation_name = str(
+                        get_corporation_name(owner_corporation_id) or ""
+                    )
 
-        structures.append(
-            {
-                "structure_id": structure_id,
-                "structure_name": str(getattr(row, "name", "") or "").strip()
-                or f"Structure {structure_id}",
-                "structure_type_id": structure_type_id,
-                "structure_type_key": str(type_info["key"]),
-                "structure_type_name": str(type_info["label"]),
-                "material_bonus": float(type_info["material_bonus"]),
-                "location_id": location_id if location_id > 0 else None,
-                "location_name": location_name,
-                "owner_corporation_id": owner_corporation_id,
-                "owner_corporation_name": owner_corporation_name,
-                "rig_keys": [],
-                "rig_type_ids": [],
-                "facility_tax": None,
-                "is_cached": True,
-                "cached_at": (
-                    structures_updated_at.isoformat() if structures_updated_at else None
-                ),
-            }
+            structures_updated_at = getattr(
+                owner_corporation, "last_update_structures", None
+            )
+
+            structures.append(
+                {
+                    "structure_id": structure_id,
+                    "structure_name": str(getattr(row, "name", "") or "").strip()
+                    or f"Structure {structure_id}",
+                    "structure_type_id": structure_type_id,
+                    "structure_type_key": str(type_info["key"]),
+                    "structure_type_name": str(type_info["label"]),
+                    "material_bonus": float(type_info["material_bonus"]),
+                    "location_id": location_id if location_id > 0 else None,
+                    "location_name": location_name,
+                    "owner_corporation_id": owner_corporation_id,
+                    "owner_corporation_name": owner_corporation_name,
+                    "rig_keys": [],
+                    "rig_type_ids": [],
+                    "facility_tax": None,
+                    "is_cached": True,
+                    "cached_at": (
+                        structures_updated_at.isoformat()
+                        if structures_updated_at
+                        else None
+                    ),
+                }
+            )
+    except Exception:
+        pass
+
+    # Also check CachedCorporationAsset / CachedStructureName for engineering structures
+    try:
+        from indy_hub.models import CachedCorporationAsset, CachedStructureName
+
+        complex_type_ids = list(ENGINEERING_COMPLEX_TYPE_INFO.keys())
+        asset_rows = (
+            CachedCorporationAsset.objects.filter(
+                corporation_id__in=corp_ids,
+                type_id__in=complex_type_ids,
+            )
+            .values("item_id", "location_id", "type_id", "corporation_id", "synced_at")
+            .distinct()
         )
+        for asset in asset_rows:
+            structure_id = int(asset.get("location_id") or asset.get("item_id") or 0)
+            structure_type_id = int(asset.get("type_id") or 0)
+            if (
+                structure_id <= 0
+                or structure_id in seen_structure_ids
+                or structure_type_id not in ENGINEERING_COMPLEX_TYPE_INFO
+            ):
+                continue
+
+            seen_structure_ids.add(structure_id)
+            type_info = ENGINEERING_COMPLEX_TYPE_INFO[structure_type_id]
+            owner_corp_id = int(asset.get("corporation_id") or 0) or None
+            owner_corp_name = (
+                str(get_corporation_name(owner_corp_id) or "")
+                if owner_corp_id
+                else ""
+            )
+
+            struct_name_obj = CachedStructureName.objects.filter(
+                structure_id=structure_id
+            ).first()
+            struct_name = (
+                struct_name_obj.name
+                if struct_name_obj and struct_name_obj.name
+                else f"Structure {structure_id}"
+            )
+
+            synced_at = asset.get("synced_at")
+
+            structures.append(
+                {
+                    "structure_id": structure_id,
+                    "structure_name": struct_name,
+                    "structure_type_id": structure_type_id,
+                    "structure_type_key": str(type_info["key"]),
+                    "structure_type_name": str(type_info["label"]),
+                    "material_bonus": float(type_info["material_bonus"]),
+                    "location_id": None,
+                    "location_name": "",
+                    "owner_corporation_id": owner_corp_id,
+                    "owner_corporation_name": owner_corp_name,
+                    "rig_keys": [],
+                    "rig_type_ids": [],
+                    "facility_tax": None,
+                    "is_cached": True,
+                    "cached_at": (synced_at.isoformat() if synced_at else None),
+                }
+            )
+    except Exception:
+        pass
+
     return structures
 
 
