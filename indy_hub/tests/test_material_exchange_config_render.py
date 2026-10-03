@@ -176,3 +176,64 @@ class MaterialExchangeConfigRenderContractTests(TestCase):
         ]
         for field_name in expected_fields:
             self.assertIn(field_name, content)
+
+    def test_non_director_user_corporations_includes_configured_holding_corp(self) -> None:
+        from indy_hub.views.material_exchange_config import _get_user_corporations
+
+        corps = _get_user_corporations(self.user)
+        corp_ids = [c["id"] for c in corps]
+        self.assertIn(self.config.corporation_id, corp_ids)
+
+    @patch("indy_hub.views.material_exchange_config.resolve_structure_names")
+    def test_get_structures_returns_configured_structures_for_non_director(self, mock_resolve) -> None:
+        from indy_hub.models import CachedCorporationAsset
+        from indy_hub.views.material_exchange_config import material_exchange_get_structures
+        from django.utils import timezone
+        import json
+
+        now = timezone.now()
+        CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            location_id=1000000000001,
+            location_flag="OfficeFolder",
+            item_id=1,
+            type_id=35832,
+            synced_at=now,
+        )
+        CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            location_id=1000000000002,
+            location_flag="OfficeFolder",
+            item_id=2,
+            type_id=35832,
+            synced_at=now,
+        )
+        CachedCorporationAsset.objects.create(
+            corporation_id=self.config.corporation_id,
+            location_id=1000000000003,
+            location_flag="OfficeFolder",
+            item_id=3,
+            type_id=35832,
+            synced_at=now,
+        )
+
+        mock_resolve.return_value = {
+            1000000000001: "Primary Hub",
+            1000000000002: "Sell Alpha",
+            1000000000003: "Buy Beta",
+        }
+
+        request = self.factory.get(
+            reverse("indy_hub:material_exchange_get_structures", args=[self.config.corporation_id])
+        )
+        request.user = self.user
+
+        response = self._unwrap_view(material_exchange_get_structures)(
+            request, corp_id=self.config.corporation_id
+        )
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content.decode("utf-8"))
+        structure_ids = [s["id"] for s in data.get("structures", [])]
+        self.assertIn(1000000000001, structure_ids)
+        self.assertIn(1000000000002, structure_ids)
+        self.assertIn(1000000000003, structure_ids)

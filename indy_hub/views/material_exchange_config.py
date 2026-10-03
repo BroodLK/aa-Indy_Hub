@@ -671,8 +671,7 @@ def _get_token_for_corp(user, corp_id, scope, require_corporation_token: bool = 
 
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
-@tokens_required(scopes="esi-characters.read_corporation_roles.v1")
-def material_exchange_config(request, tokens):
+def material_exchange_config(request, *args, **kwargs):
     emit_view_analytics_event(
         view_name="material_exchange_config.page", request=request
     )
@@ -1313,10 +1312,7 @@ def material_exchange_toggle_active(request):
 
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
-@tokens_required(
-    scopes="esi-assets.read_corporation_assets.v1 esi-corporations.read_divisions.v1"
-)
-def material_exchange_get_structures(request, tokens, corp_id):
+def material_exchange_get_structures(request, corp_id, *args, **kwargs):
     emit_view_analytics_event(
         view_name="material_exchange_config.get_structures", request=request
     )
@@ -1346,7 +1342,7 @@ def material_exchange_get_structures(request, tokens, corp_id):
 
 
 def _find_director_character(user, corp_id):
-    """Find a character with DIRECTOR role in the given corporation.
+    """Find a character with DIRECTOR role or valid assets scope in the given corporation.
 
     Returns the character_id or None if not found.
     """
@@ -1357,43 +1353,17 @@ def _find_director_character(user, corp_id):
     # AA Example App
     from indy_hub.services.esi_client import shared_client
 
-    logger.warning(
-        "Looking for DIRECTOR character in corp %s for user %s", corp_id, user.username
-    )
-
-    # Get ALL character tokens for the user first
-    try:
-        all_tokens = Token.objects.filter(user=user).require_valid()
-        all_tokens_list = list(all_tokens)
-        logger.warning(
-            "Found %s valid tokens for user %s: %s",
-            len(all_tokens_list),
-            user.username,
-            [t.character_id for t in all_tokens_list],
-        )
-    except Exception as exc:
-        logger.warning("Failed to get tokens for user %s: %s", user.username, exc)
+    if not corp_id:
         return None
 
-    # Try tokens with the role-checking scope
     try:
-        scoped_tokens = (
-            Token.objects.filter(user=user)
-            .require_scopes(["esi-characters.read_corporation_roles.v1"])
-            .require_valid()
-        )
-        scoped_tokens_list = list(scoped_tokens)
-        logger.warning(
-            "Found %s tokens with role-checking scope for user %s: %s",
-            len(scoped_tokens_list),
-            user.username,
-            [t.character_id for t in scoped_tokens_list],
-        )
-    except Exception as exc:
-        logger.warning(
-            "Failed to filter tokens by scope for user %s: %s", user.username, exc
-        )
-        scoped_tokens_list = []
+        corp_id = int(corp_id)
+    except (TypeError, ValueError):
+        return None
+
+    logger.debug(
+        "Looking for DIRECTOR character in corp %s for user %s", corp_id, getattr(user, "username", "")
+    )
 
     def _coerce_list(value: object) -> list[str]:
         if isinstance(value, (list, tuple)):
@@ -1421,7 +1391,7 @@ def _find_director_character(user, corp_id):
                 return [str(role).upper() for role in (snapshot.roles or []) if role]
             return []
         except Exception as exc:
-            logger.warning(
+            logger.debug(
                 "Failed to fetch roles for character %s: %s",
                 character_id,
                 exc,
@@ -1429,11 +1399,6 @@ def _find_director_character(user, corp_id):
             return []
 
         if not isinstance(payload, dict):
-            logger.warning(
-                "Unexpected roles payload for character %s: %s",
-                character_id,
-                type(payload),
-            )
             return []
 
         role_payload = {
@@ -1452,139 +1417,59 @@ def _find_director_character(user, corp_id):
         )
         return [str(role).upper() for role in role_payload["roles"] if role]
 
-    # Check scoped tokens first
-    for token in scoped_tokens_list:
+    # 1. Try tokens belonging to the requesting user first
+    if user and getattr(user, "is_authenticated", False):
         try:
-            character_id = token.character_id
-            logger.warning(
-                "Checking character %s from scoped token",
-                character_id,
-            )
-
-            # Get the character from the database
-            try:
-                char = EveCharacter.objects.get(character_id=character_id)
-                char_corp_id = int(char.corporation_id) if char.corporation_id else None
-                logger.warning(
-                    "Character %s is in corp %s (looking for %s)",
-                    character_id,
-                    char_corp_id,
-                    corp_id,
-                )
-                if char_corp_id != int(corp_id):
-                    logger.warning(
-                        "Character %s is in corp %s, not %s - SKIPPING",
-                        character_id,
-                        char_corp_id,
-                        corp_id,
-                    )
+            user_tokens = Token.objects.filter(user=user).require_valid()
+            for token in user_tokens:
+                character_id = int(token.character_id)
+                try:
+                    char = EveCharacter.objects.get(character_id=character_id)
+                    char_corp_id = int(char.corporation_id) if char.corporation_id else None
+                    if char_corp_id != corp_id:
+                        continue
+                except EveCharacter.DoesNotExist:
                     continue
-            except EveCharacter.DoesNotExist:
-                logger.warning(
-                    "Character %s not found in database",
-                    character_id,
-                )
-                continue
 
-            logger.warning(
-                "Checking DIRECTOR role for character %s in corp %s",
-                character_id,
-                corp_id,
-            )
-
-            corp_roles = _load_roles(character_id)
-            logger.warning("Character %s roles: %s", character_id, corp_roles)
-
-            if "DIRECTOR" in corp_roles:
-                logger.warning(
-                    "Found DIRECTOR character %s for corporation %s",
-                    character_id,
-                    corp_id,
-                )
-                return character_id
-            else:
-                logger.warning(
-                    "Character %s does NOT have Director role (has: %s)",
-                    character_id,
-                    corp_roles,
-                )
+                corp_roles = _load_roles(character_id)
+                if "DIRECTOR" in corp_roles:
+                    return character_id
         except Exception as exc:
-            logger.warning(
-                "Failed to check director role for character %s: %s",
-                getattr(token, "character_id", "?"),
-                exc,
-            )
-            continue
+            logger.debug("Error checking user tokens for director: %s", exc)
 
-    # If no scoped tokens worked, try ALL tokens (they might have the scope but not filtered correctly)
-    logger.warning(
-        "No DIRECTOR found in scoped tokens, trying all tokens for user %s",
-        user.username,
-    )
-
-    all_tokens = Token.objects.filter(user=user).require_valid()
-    for token in all_tokens:
-        try:
-            character_id = token.character_id
-            logger.warning(
-                "Checking character %s from all tokens",
-                character_id,
-            )
-
-            # Get the character from the database
-            try:
-                char = EveCharacter.objects.get(character_id=character_id)
-                char_corp_id = int(char.corporation_id) if char.corporation_id else None
-                if char_corp_id != int(corp_id):
-                    continue
-            except EveCharacter.DoesNotExist:
-                continue
-
-            logger.warning(
-                "Checking DIRECTOR role for character %s (second pass)",
-                character_id,
-            )
-
+    # 2. Try any valid token belonging to the corporation across the instance
+    try:
+        corp_tokens = (
+            Token.objects.filter(character__corporation_id=corp_id)
+            .require_valid()
+        )
+        for token in corp_tokens:
+            character_id = int(token.character_id)
             corp_roles = _load_roles(character_id)
-            logger.warning(
-                "Character %s roles (second pass): %s", character_id, corp_roles
-            )
-
             if "DIRECTOR" in corp_roles:
-                logger.warning(
-                    "Found DIRECTOR character %s for corporation %s (second pass)",
-                    character_id,
-                    corp_id,
-                )
                 return character_id
-            else:
-                logger.warning(
-                    "Character %s does NOT have Director role in second pass (has: %s)",
-                    character_id,
-                    corp_roles,
-                )
-        except Exception as exc:
-            logger.warning(
-                "Unexpected error checking character %s: %s",
-                getattr(token, "character_id", "?"),
-                exc,
-            )
-            continue
+    except Exception as exc:
+        logger.debug("Error checking instance tokens for director: %s", exc)
 
-    logger.warning(
-        "No DIRECTOR character found for user %s in corporation %s",
-        user.username,
-        corp_id,
-    )
+    # 3. Fallback: check any token for this corporation with assets scope
+    try:
+        assets_token = (
+            Token.objects.filter(character__corporation_id=corp_id)
+            .require_scopes(["esi-assets.read_corporation_assets.v1"])
+            .require_valid()
+            .first()
+        )
+        if assets_token:
+            return int(assets_token.character_id)
+    except Exception as exc:
+        logger.debug("Error checking instance tokens for assets scope fallback: %s", exc)
+
     return None
 
 
 @login_required
 @indy_hub_permission_required("can_manage_material_hub")
-@tokens_required(
-    scopes="esi-characters.read_corporation_roles.v1 esi-assets.read_corporation_assets.v1"
-)
-def material_exchange_refresh_corp_assets(request, tokens):
+def material_exchange_refresh_corp_assets(request, *args, **kwargs):
     emit_view_analytics_event(
         view_name="material_exchange_config.refresh_corp_assets", request=request
     )
@@ -1612,18 +1497,10 @@ def material_exchange_refresh_corp_assets(request, tokens):
         )
 
     try:
-        # Find a DIRECTOR character for this corporation
+        # Find a DIRECTOR or assets character for this corporation
         director_char_id = _find_director_character(request.user, corp_id)
-        if not director_char_id:
-            return JsonResponse(
-                {
-                    "success": False,
-                    "error": "No character with DIRECTOR role found in this corporation",
-                },
-                status=400,
-            )
 
-        # Trigger task to refresh corp assets using the director character
+        # Trigger task to refresh corp assets using the director character (or auto-discovered token)
         # AA Example App
         from indy_hub.tasks.material_exchange import refresh_corp_assets_cached
 
@@ -1805,7 +1682,7 @@ def material_exchange_check_refresh_status(request, task_id):
 
 def _get_user_corporations(user):
     """
-    Get list of corporations the user has ESI access to.
+    Get list of corporations the user has ESI access to, plus any configured holding corps.
     Returns list of dicts with corp_id and corp_name.
     """
     # Alliance Auth
@@ -1822,8 +1699,7 @@ def _get_user_corporations(user):
             if token.character_id:
                 character_ids.add(int(token.character_id))
     except Exception:
-        logger.warning("Failed to list tokens for user %s", user.username)
-        return corporations
+        logger.warning("Failed to list tokens for user %s", getattr(user, "username", ""))
 
     for char_id in character_ids:
         try:
@@ -1851,6 +1727,48 @@ def _get_user_corporations(user):
                 "id": corp_id,
                 "name": getattr(corp_obj, "corporation_name", f"Corp {corp_id}"),
                 "ticker": getattr(corp_obj, "corporation_ticker", ""),
+            }
+        )
+        seen_corps.add(corp_id)
+
+    # Always include configured holding corp or corps with cached assets/tokens
+    # so non-directors who have tool access can manage/view configured structures.
+    extra_corp_ids = set()
+    try:
+        config = MaterialExchangeConfig.objects.first()
+        if config and config.corporation_id:
+            extra_corp_ids.add(int(config.corporation_id))
+    except Exception:
+        pass
+
+    try:
+        cached_asset_corps = CachedCorporationAsset.objects.values_list(
+            "corporation_id", flat=True
+        ).distinct()
+        for c_id in cached_asset_corps:
+            if c_id:
+                extra_corp_ids.add(int(c_id))
+    except Exception:
+        pass
+
+    for corp_id in extra_corp_ids:
+        if corp_id in seen_corps:
+            continue
+        try:
+            corp_obj = EveCorporationInfo.objects.filter(corporation_id=corp_id).first()
+            if corp_obj is None:
+                corp_obj = EveCorporationInfo.objects.create_corporation(int(corp_id))
+            corp_name = getattr(corp_obj, "corporation_name", f"Corp {corp_id}")
+            corp_ticker = getattr(corp_obj, "corporation_ticker", "")
+        except Exception:
+            corp_name = f"Corp {corp_id}"
+            corp_ticker = ""
+
+        corporations.append(
+            {
+                "id": corp_id,
+                "name": corp_name,
+                "ticker": corp_ticker,
             }
         )
         seen_corps.add(corp_id)
@@ -1938,7 +1856,7 @@ def _get_corp_structures(user, corp_id):
         cache.set(cache_key, result, 300)
         return result
 
-    # Resolve structure names using user's DIRECTOR characters
+    # Resolve structure names using user's DIRECTOR characters or cached structure names
     # This will use /universe/structures/{structure_id} for each structure
     try:
         structure_names = resolve_structure_names(

@@ -12499,6 +12499,14 @@ function findRecommendationTarget(target) {
     return null;
 }
 
+const CRAFT_RECOMMENDATION_STYLES = Object.freeze({
+    info: { alert: 'alert-info', icon: 'fa-info-circle' },
+    warning: { alert: 'alert-warning', icon: 'fa-exclamation-triangle' },
+    success: { alert: 'alert-success', icon: 'fa-check-circle' },
+    danger: { alert: 'alert-danger', icon: 'fa-exclamation-circle' },
+    error: { alert: 'alert-danger', icon: 'fa-exclamation-circle' },
+});
+
 function displayRecommendations(recommendations) {
     const container = document.getElementById('recommendationsList');
     if (!container) return;
