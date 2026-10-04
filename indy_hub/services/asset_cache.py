@@ -933,6 +933,11 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
             set_name = ""
             if item_id_int and item_id_int > 0:
                 set_name = str(asset_name_map.get(item_id_int) or "").strip()[:255]
+            is_bp = bool(
+                asset.get("is_blueprint")
+                or asset.get("is_blueprint_copy") is not None
+                or asset.get("quantity") in (-1, -2)
+            )
             rows.append(
                 CachedCorporationAsset(
                     corporation_id=int(corporation_id),
@@ -943,7 +948,7 @@ def _refresh_corp_assets(corporation_id: int) -> tuple[list[dict], bool]:
                     set_name=set_name,
                     quantity=int(asset.get("quantity", 0) or 0),
                     is_singleton=bool(asset.get("is_singleton", False)),
-                    is_blueprint=bool(asset.get("is_blueprint", False)),
+                    is_blueprint=is_bp,
                     synced_at=now,
                 )
             )
@@ -1832,6 +1837,11 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
             if item_id_int and item_id_int > 0:
                 set_name = str(asset_name_map.get(item_id_int) or "").strip()
 
+            is_bp = bool(
+                asset.get("is_blueprint")
+                or asset.get("is_blueprint_copy") is not None
+                or asset.get("quantity") in (-1, -2)
+            )
             row = CachedCharacterAsset(
                 user=user,
                 character_id=int(character_id),
@@ -1843,7 +1853,7 @@ def _refresh_character_assets(user) -> tuple[list[dict], bool]:
                 set_name=set_name,
                 quantity=int(asset.get("quantity", 0) or 0),
                 is_singleton=bool(asset.get("is_singleton", False)),
-                is_blueprint=bool(asset.get("is_blueprint", False)),
+                is_blueprint=is_bp,
                 synced_at=now,
             )
             rows.append(row)

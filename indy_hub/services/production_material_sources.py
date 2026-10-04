@@ -476,14 +476,26 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
                     "last_updated",
                 )
             )
+            container_item_ids = [
+                int(bp["location_id"]) for bp in bp_rows if bp.get("location_id")
+            ]
+            container_root_map: dict[int, int] = {}
+            if container_item_ids:
+                for c_item_id, c_root_loc in CachedCharacterAsset.objects.filter(
+                    user=user, item_id__in=container_item_ids
+                ).values_list("item_id", "location_id"):
+                    if c_item_id and c_root_loc:
+                        container_root_map[int(c_item_id)] = int(c_root_loc)
+
             for bp in bp_rows:
                 lid = bp.get("location_id")
                 if not lid:
                     continue
+                root_lid = container_root_map.get(int(lid), int(lid))
                 loc_name = str(bp.get("location_name") or "").strip()
-                if loc_name and int(lid) >= PLAYER_STRUCTURE_ID_MIN:
+                if loc_name and int(root_lid) >= PLAYER_STRUCTURE_ID_MIN:
                     CachedStructureName.objects.get_or_create(
-                        structure_id=int(lid),
+                        structure_id=int(root_lid),
                         defaults={"name": loc_name},
                     )
                 all_user_assets.append(
@@ -491,7 +503,7 @@ def list_asset_sources(user, *, blueprints: bool = False) -> dict[str, Any]:
                         "item_id": bp["item_id"],
                         "character_id": bp["character_id"] or 0,
                         "raw_location_id": bp["location_id"],
-                        "location_id": bp["location_id"],
+                        "location_id": root_lid,
                         "location_flag": bp["location_flag"] or "Hangar",
                         "type_id": bp["type_id"],
                         "set_name": bp["location_name"] or "",
@@ -969,10 +981,14 @@ def parse_bpc_source(value: Any) -> tuple[int, int]:
 
 
 def _extract_blueprint_ids_for_locations(
-    user, location_ids: Iterable[int], *, character_id: int = 0
+    user,
+    location_ids: Iterable[int],
+    *,
+    character_id: int = 0,
+    container_item_id: int = 0,
 ) -> set[int]:
     loc_list = sorted({int(lid) for lid in location_ids if int(lid) > 0})
-    if not loc_list:
+    if not loc_list and not container_item_id:
         return set()
 
     matched_ids: set[int] = set()
@@ -981,7 +997,7 @@ def _extract_blueprint_ids_for_locations(
     try:
         # Alliance Auth
         from allianceauth.authentication.models import CharacterOwnership
-        from django.db.models import Q
+        from django.db.models import F, Q
         from indy_hub.models import Blueprint
 
         user_char_ids = list(
@@ -989,9 +1005,23 @@ def _extract_blueprint_ids_for_locations(
                 "character__character_id", flat=True
             )
         )
-        bp_filter = Q(location_id__in=loc_list) & (
-            Q(owner_user=user) | Q(character_id__in=user_char_ids)
-        )
+        if container_item_id:
+            bp_filter = Q(location_id=int(container_item_id)) & (
+                Q(owner_user=user) | Q(character_id__in=user_char_ids)
+            )
+        else:
+            container_ids = list(
+                CachedCharacterAsset.objects.filter(
+                    user=user,
+                    location_id__in=loc_list,
+                )
+                .exclude(item_id=F("location_id"))
+                .values_list("item_id", flat=True)
+            )
+            bp_filter = (
+                Q(location_id__in=loc_list) | Q(location_id__in=container_ids)
+            ) & (Q(owner_user=user) | Q(character_id__in=user_char_ids))
+
         if int(character_id or 0) > 0:
             bp_filter &= Q(character_id=int(character_id))
 
@@ -1005,8 +1035,9 @@ def _extract_blueprint_ids_for_locations(
 
     filter_kwargs: dict[str, Any] = {
         "user": user,
-        "location_id__in": loc_list,
     }
+    if loc_list:
+        filter_kwargs["location_id__in"] = loc_list
     if int(character_id or 0) > 0:
         filter_kwargs["character_id"] = int(character_id)
 
@@ -1031,6 +1062,19 @@ def _extract_blueprint_ids_for_locations(
         esi_rows = _rows_as_esi_shape(location_assets)
         index = build_asset_index_by_item_id(esi_rows)
 
+        if container_item_id:
+            container_asset = index.get(int(container_item_id))
+            if container_asset:
+                c_type_id = int(container_asset.get("_row", {}).get("type_id", 0) or 0)
+                loc_check = loc_list[0] if loc_list else 0
+                if c_type_id in ship_type_ids or not _is_personal_hangar_asset(
+                    container_asset,
+                    index,
+                    ship_type_ids=ship_type_ids,
+                    location_id=loc_check or container_asset.get("location_id"),
+                ):
+                    return set()
+
         for asset in esi_rows:
             raw_row = asset["_row"]
             if not bool(raw_row.get("is_blueprint", False)):
@@ -1040,6 +1084,10 @@ def _extract_blueprint_ids_for_locations(
                 index,
                 ship_type_ids=ship_type_ids,
                 location_id=raw_row.get("location_id"),
+            ):
+                continue
+            if container_item_id and not _has_container_ancestor(
+                asset, index, container_item_id
             ):
                 continue
             item_id = raw_row.get("item_id")
@@ -1076,16 +1124,26 @@ def blueprint_item_ids_at_source(
                 "character__character_id", flat=True
             )
         )
-        bp_locs = (
+        bp_locs = list(
             Blueprint.objects.filter(
                 Q(owner_user=user) | Q(character_id__in=user_char_ids)
             )
             .values_list("location_id", flat=True)
             .distinct()
         )
-        for lid in bp_locs:
-            if lid and int(lid) > 0:
-                loc_id_set.add(int(lid))
+        bp_loc_ints = [int(lid) for lid in bp_locs if lid and int(lid) > 0]
+        container_root_map: dict[int, int] = {}
+        if bp_loc_ints:
+            for c_item_id, c_root_loc in CachedCharacterAsset.objects.filter(
+                user=user, item_id__in=bp_loc_ints
+            ).values_list("item_id", "location_id"):
+                if c_item_id and c_root_loc:
+                    container_root_map[int(c_item_id)] = int(c_root_loc)
+
+        for lid in bp_loc_ints:
+            root_lid = container_root_map.get(lid, lid)
+            if root_lid > 0:
+                loc_id_set.add(root_lid)
     except Exception:
         pass
 
@@ -1130,70 +1188,12 @@ def blueprint_item_ids_at_source(
     if int(location_id or 0) <= 0:
         return None
 
-    filter_kwargs: dict[str, Any] = {
-        "user": user,
-        "location_id": int(location_id),
-    }
-    if int(character_id or 0) > 0:
-        filter_kwargs["character_id"] = int(character_id)
-
-    location_assets = list(
-        CachedCharacterAsset.objects.filter(**filter_kwargs).values(
-            "item_id",
-            "character_id",
-            "raw_location_id",
-            "location_id",
-            "location_flag",
-            "type_id",
-            "is_blueprint",
-            "synced_at",
-            "set_name",
-        )
-    )
-
     matched_ids = _extract_blueprint_ids_for_locations(
-        user, [int(location_id)], character_id=character_id
+        user,
+        [int(location_id)],
+        character_id=character_id,
+        container_item_id=container_item_id,
     )
-
-    if location_assets:
-        all_type_ids = {
-            int(row["type_id"]) for row in location_assets if row.get("type_id")
-        }
-        ship_type_ids = _get_ship_type_ids(all_type_ids)
-        esi_rows = _rows_as_esi_shape(location_assets)
-        index = build_asset_index_by_item_id(esi_rows)
-
-        if container_item_id:
-            container_asset = index.get(int(container_item_id))
-            if not container_asset:
-                return set()
-            c_type_id = int(container_asset.get("_row", {}).get("type_id", 0) or 0)
-            if c_type_id in ship_type_ids or not _is_personal_hangar_asset(
-                container_asset,
-                index,
-                ship_type_ids=ship_type_ids,
-                location_id=location_id,
-            ):
-                return set()
-
-        for asset in esi_rows:
-            raw_row = asset["_row"]
-            if not bool(raw_row.get("is_blueprint", False)):
-                continue
-            if not _is_personal_hangar_asset(
-                asset,
-                index,
-                ship_type_ids=ship_type_ids,
-                location_id=location_id,
-            ):
-                continue
-            if container_item_id and not _has_container_ancestor(
-                asset, index, container_item_id
-            ):
-                continue
-            item_id = raw_row.get("item_id")
-            if item_id:
-                matched_ids.add(int(item_id))
 
     if not matched_ids and not container_item_id:
         return None
@@ -1232,7 +1232,7 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
         try:
             # Alliance Auth
             from allianceauth.authentication.models import CharacterOwnership
-            from django.db.models import Q
+            from django.db.models import F, Q
             from indy_hub.models import Blueprint
 
             user_char_ids = list(
@@ -1240,9 +1240,17 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
                     "character__character_id", flat=True
                 )
             )
+            container_ids = list(
+                CachedCharacterAsset.objects.filter(
+                    user=user,
+                    location_id__in=target_locs,
+                )
+                .exclude(item_id=F("location_id"))
+                .values_list("item_id", flat=True)
+            )
             bp_last = (
                 Blueprint.objects.filter(
-                    Q(location_id__in=target_locs)
+                    (Q(location_id__in=target_locs) | Q(location_id__in=container_ids))
                     & (Q(owner_user=user) | Q(character_id__in=user_char_ids))
                 )
                 .aggregate(last=Max("last_updated"))
@@ -1270,15 +1278,26 @@ def describe_bpc_source(user, token: Any) -> dict[str, Any]:
                 "character__character_id", flat=True
             )
         )
-        for lid in (
+        bp_locs = list(
             Blueprint.objects.filter(
                 Q(owner_user=user) | Q(character_id__in=user_char_ids)
             )
             .values_list("location_id", flat=True)
             .distinct()
-        ):
-            if lid and int(lid) > 0:
-                all_bpc_loc_ids_set.add(int(lid))
+        )
+        bp_loc_ints = [int(lid) for lid in bp_locs if lid and int(lid) > 0]
+        container_root_map: dict[int, int] = {}
+        if bp_loc_ints:
+            for c_item_id, c_root_loc in CachedCharacterAsset.objects.filter(
+                user=user, item_id__in=bp_loc_ints
+            ).values_list("item_id", "location_id"):
+                if c_item_id and c_root_loc:
+                    container_root_map[int(c_item_id)] = int(c_root_loc)
+
+        for lid in bp_loc_ints:
+            root_lid = container_root_map.get(lid, lid)
+            if root_lid > 0:
+                all_bpc_loc_ids_set.add(root_lid)
     except Exception:
         pass
 

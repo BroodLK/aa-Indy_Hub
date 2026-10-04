@@ -238,6 +238,55 @@ class BlueprintSourceTests(TestCase):
         )
         self.assertTrue(any(s["system_id"] == SYSTEM_JITA for s in data["systems"]))
 
+    def test_bp_model_in_cans_across_different_containers(self) -> None:
+        from indy_hub.models import Blueprint
+
+        bpo_can = 1_000_000_010
+        bpc_can = 1_000_000_020
+        # Register the two cans in CachedCharacterAsset at STATION
+        _asset(self.user, bpo_can, location_id=STATION, is_blueprint=False, type_id=3467)
+        _asset(self.user, bpc_can, location_id=STATION, is_blueprint=False, type_id=3467)
+
+        # Create BPO in bpo_can and BPC in bpc_can via Blueprint model
+        Blueprint.objects.create(
+            owner_user=self.user,
+            character_id=90000001,
+            item_id=701,
+            type_id=1001,
+            location_id=bpo_can,
+            location_flag="Hangar",
+            quantity=-1,
+            bp_type=Blueprint.BPType.ORIGINAL,
+        )
+        Blueprint.objects.create(
+            owner_user=self.user,
+            character_id=90000001,
+            item_id=702,
+            type_id=1002,
+            location_id=bpc_can,
+            location_flag="Hangar",
+            quantity=-2,
+            runs=10,
+            bp_type=Blueprint.BPType.COPY,
+        )
+
+        # Selecting station should find both 701 and 702 (plus existing 501, 502)
+        station_items = blueprint_item_ids_at_source(self.user, location_id=STATION)
+        self.assertIn(701, station_items)
+        self.assertIn(702, station_items)
+
+        # Selecting only the BPC can should find 702 and NOT 701
+        bpc_can_items = blueprint_item_ids_at_source(
+            self.user, location_id=STATION, container_item_id=bpc_can
+        )
+        self.assertEqual(bpc_can_items, {702})
+
+        # Selecting only the BPO can should find 701 and NOT 702
+        bpo_can_items = blueprint_item_ids_at_source(
+            self.user, location_id=STATION, container_item_id=bpo_can
+        )
+        self.assertEqual(bpo_can_items, {701})
+
 
 class BlueprintSourceWiringTests(SimpleTestCase):
     def test_view_narrows_owned_blueprints_by_source(self) -> None:
