@@ -3963,6 +3963,13 @@ def craft_bp(request, type_id):
         }
         freight_routes = get_available_routes()
 
+        from ..services.production_price_estimates import capital_estimates_for_types
+        from .api import _collect_payload_type_ids
+
+        all_product_type_ids = [product_type_id] if product_type_id else []
+        collected_type_ids = _collect_payload_type_ids(materials_tree, all_product_type_ids)
+        price_estimates = capital_estimates_for_types(collected_type_ids)
+
         blueprint_payload = {
             "type_id": type_id,
             "bp_type_id": type_id,
@@ -3980,6 +3987,7 @@ def craft_bp(request, type_id):
             "materials": _to_serializable(materials_list),
             "direct_materials": _to_serializable(direct_materials_list),
             "materials_tree": _to_serializable(materials_tree),
+            "price_estimates": _to_serializable(price_estimates),
             "craft_cycles_summary": _to_serializable(dict(craftables)),
             "blueprint_configs_grouped": (
                 _to_serializable(blueprint_configs_grouped)

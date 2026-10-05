@@ -629,7 +629,19 @@ def craft_bp_payload(request, type_id: int | None = None):
         all_product_type_ids,
     )
 
-    payload["price_estimates"] = capital_estimates_for_types(collected_type_ids)
+    price_estimates = capital_estimates_for_types(collected_type_ids)
+    payload["price_estimates"] = price_estimates
+
+    if price_estimates:
+        payload = build_multi_product_materials_tree(
+            products_manifest,
+            me_te_map=me_te_configs,
+            structure_bonus=structure_bonus,
+            rig_bonus=rig_bonus,
+            effective_material_bonus=effective_material_bonus,
+            price_estimates=price_estimates,
+        )
+        payload["price_estimates"] = price_estimates
 
     if debug_enabled:
         payload["_debug"] = _to_serializable(

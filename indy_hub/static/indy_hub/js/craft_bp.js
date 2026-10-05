@@ -164,6 +164,7 @@ function getBasketProducts() {
             product_name: prodName,
             runs: Math.max(1, Number(p.runs) || 1),
             product_type_id: prodId,
+            materials_tree: p.materials_tree,
             blueprint_icon_url: p.blueprint_icon_url || (bpId ? `https://images.evetech.net/types/${bpId}/bp?size=32` : undefined),
             product_icon_url: p.product_icon_url || (prodId ? `https://images.evetech.net/types/${prodId}/icon?size=32` : undefined),
             unit_cost: p.unit_cost,
@@ -191,8 +192,16 @@ function initDefaultBasketProducts() {
                 product_name: prodName,
                 runs: Math.max(1, Number(p.runs) || 1),
                 product_type_id: prodId,
+                materials_tree: p.materials_tree,
                 blueprint_icon_url: p.blueprint_icon_url || (bpId ? `https://images.evetech.net/types/${bpId}/bp?size=32` : undefined),
                 product_icon_url: p.product_icon_url || (prodId ? `https://images.evetech.net/types/${prodId}/icon?size=32` : undefined),
+                unit_cost: p.estimated_unit_cost ?? p.unit_cost,
+                total_cost: p.estimated_cost ?? p.total_cost,
+                unit_revenue: p.estimated_unit_revenue ?? p.unit_revenue,
+                total_revenue: p.estimated_revenue ?? p.total_revenue,
+                profit: p.estimated_profit ?? p.profit,
+                profit_margin: p.profit_margin_pct ?? p.profit_margin,
+                output_qty: p.final_product_qty ?? p.output_qty,
             };
         }).filter(p => p.blueprint_type_id > 0);
     } else {
@@ -208,8 +217,10 @@ function initDefaultBasketProducts() {
                 product_name: rootProductName,
                 runs: rootRuns,
                 product_type_id: rootProductTypeId,
+                materials_tree: window.BLUEPRINT_DATA?.materials_tree,
                 blueprint_icon_url: `https://images.evetech.net/types/${rootBpId}/bp?size=32`,
                 product_icon_url: rootProductTypeId ? `https://images.evetech.net/types/${rootProductTypeId}/icon?size=32` : undefined,
+                output_qty: Math.max(1, Number(window.BLUEPRINT_DATA?.final_product_qty || rootRuns)),
             }];
         } else {
             CRAFT_BASKET_STATE.products = [];
@@ -231,15 +242,16 @@ function syncBasketFromPayloadProducts(products) {
             runs: Math.max(1, Number(p.runs || existing?.runs || 1)),
             product_type_id: p.product_type_id ? Number(p.product_type_id) : existing?.product_type_id,
             product_name: prodName,
+            materials_tree: p.materials_tree || existing?.materials_tree,
             blueprint_icon_url: p.blueprint_icon_url || existing?.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`,
             product_icon_url: p.product_icon_url || existing?.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
-            unit_cost: p.estimated_unit_cost ?? p.unit_cost,
-            total_cost: p.estimated_cost ?? p.total_cost,
-            unit_revenue: p.estimated_unit_revenue ?? p.unit_revenue,
-            total_revenue: p.estimated_revenue ?? p.total_revenue,
-            profit: p.estimated_profit ?? p.profit,
-            profit_margin: p.profit_margin_pct ?? p.profit_margin,
-            output_qty: p.final_product_qty ?? p.output_qty,
+            unit_cost: p.estimated_unit_cost ?? p.unit_cost ?? existing?.unit_cost,
+            total_cost: p.estimated_cost ?? p.total_cost ?? existing?.total_cost,
+            unit_revenue: p.estimated_unit_revenue ?? p.unit_revenue ?? existing?.unit_revenue,
+            total_revenue: p.estimated_revenue ?? p.total_revenue ?? existing?.total_revenue,
+            profit: p.estimated_profit ?? p.profit ?? existing?.profit,
+            profit_margin: p.profit_margin_pct ?? p.profit_margin ?? existing?.profit_margin,
+            output_qty: p.final_product_qty ?? p.output_qty ?? existing?.output_qty,
         };
     });
     renderBasketItems();
@@ -409,6 +421,58 @@ function renderBasketItems() {
     container.innerHTML = html;
 }
 
+function getLiveUnitPriceForMaterial(typeId) {
+    if (!typeId) return 0;
+    const row = document.querySelector(`tr[data-type-id="${typeId}"]:not(.final-product-row)`);
+    if (row) {
+        const costInput = row.querySelector('.real-price, .cost-price-unit');
+        if (costInput) {
+            const val = getCraftPriceInputValue(costInput);
+            if (val > 0) return val;
+        }
+        const fuzzInput = row.querySelector('.fuzzwork-price');
+        if (fuzzInput) {
+            const val = getCraftPriceInputValue(fuzzInput);
+            if (val > 0) return val;
+        }
+    }
+    if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
+        const info = window.SimulationAPI.getPrice(typeId, 'buy');
+        if (info && typeof info.value === 'number' && info.value > 0) return info.value;
+        const fuzz = window.SimulationAPI.getPrice(typeId, 'fuzzwork');
+        if (fuzz && typeof fuzz.value === 'number' && fuzz.value > 0) return fuzz.value;
+    }
+    const estimates = window.BLUEPRINT_DATA?.price_estimates;
+    if (estimates && estimates[typeId]) {
+        const est = estimates[typeId];
+        const val = typeof est === 'object' ? Number(est.price || est.estimated_price || 0) : Number(est || 0);
+        if (val > 0) return val;
+    }
+    return 0;
+}
+
+function calculateTreeLeafCostClient(nodes) {
+    if (!Array.isArray(nodes) || nodes.length === 0) return 0;
+    let total = 0;
+    nodes.forEach(node => {
+        const typeId = Number(node.type_id || node.typeId || 0);
+        const sub = node.sub_materials;
+        let isBuy = false;
+        if (window.SimulationAPI && typeof window.SimulationAPI.getItemState === 'function') {
+            const state = window.SimulationAPI.getItemState(typeId);
+            if (state && state.mode === 'buy') isBuy = true;
+        }
+        if (sub && Array.isArray(sub) && sub.length > 0 && !isBuy) {
+            total += calculateTreeLeafCostClient(sub);
+        } else {
+            const qty = Number(node.quantity || node.qty || 0);
+            const unitPrice = getLiveUnitPriceForMaterial(typeId);
+            total += qty * unitPrice;
+        }
+    });
+    return total;
+}
+
 function renderPerProductBreakdown() {
     const tableBody = document.getElementById('perProductFinancialBody');
     const countBadge = document.getElementById('perProductCountBadge');
@@ -430,8 +494,20 @@ function renderPerProductBreakdown() {
         const imgUrl = prod.product_icon_url || prod.blueprint_icon_url || `https://images.evetech.net/types/${prod.blueprint_type_id}/bp?size=32`;
         const runs = Number(prod.runs) || 1;
         const outputQty = Number(prod.output_qty || prod.final_product_qty) || runs;
-        const unitCost = Number(prod.unit_cost) || 0;
-        const totalCost = Number(prod.total_cost) || 0;
+
+        let treeToCalc = prod.materials_tree;
+        if ((!treeToCalc || treeToCalc.length === 0) && products.length === 1) {
+            treeToCalc = window.BLUEPRINT_DATA?.materials_tree;
+        }
+
+        let totalCost = 0;
+        if (Array.isArray(treeToCalc) && treeToCalc.length > 0) {
+            totalCost = calculateTreeLeafCostClient(treeToCalc);
+        }
+        if (totalCost <= 0) {
+            totalCost = Number(prod.total_cost) || Number(prod.estimated_cost) || 0;
+        }
+        const unitCost = outputQty > 0 && totalCost > 0 ? (totalCost / outputQty) : (Number(prod.unit_cost) || Number(prod.estimated_unit_cost) || 0);
 
         let saleUnitPrice = 0;
         const prodTypeId = Number(prod.product_type_id || prod.type_id || 0);
@@ -443,11 +519,29 @@ function renderPerProductBreakdown() {
             if (saleUnitPrice <= 0 && window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
                 const p = window.SimulationAPI.getPrice(prodTypeId, 'sale');
                 if (p && typeof p.value === 'number') saleUnitPrice = p.value;
+                if (saleUnitPrice <= 0) {
+                    const f = window.SimulationAPI.getPrice(prodTypeId, 'fuzzwork');
+                    if (f && typeof f.value === 'number') saleUnitPrice = f.value;
+                }
+            }
+            if (saleUnitPrice <= 0) {
+                const fuzzInput = document.querySelector(`.fuzzwork-price[data-type-id="${prodTypeId}"]`);
+                if (fuzzInput) {
+                    saleUnitPrice = getCraftPriceInputValue(fuzzInput);
+                }
+            }
+            if (saleUnitPrice <= 0) {
+                const estimates = window.BLUEPRINT_DATA?.price_estimates;
+                if (estimates && estimates[prodTypeId]) {
+                    const est = estimates[prodTypeId];
+                    const val = typeof est === 'object' ? Number(est.price || est.estimated_price || 0) : Number(est || 0);
+                    if (val > 0) saleUnitPrice = val;
+                }
             }
         }
 
-        const totalRev = saleUnitPrice > 0 ? (outputQty * saleUnitPrice) : (Number(prod.total_revenue) || 0);
-        const profit = Number(prod.profit) || (totalRev - totalCost);
+        const totalRev = saleUnitPrice > 0 ? (outputQty * saleUnitPrice) : (Number(prod.total_revenue) || Number(prod.estimated_revenue) || 0);
+        const profit = totalRev - totalCost;
         const margin = totalRev > 0 ? ((profit / totalRev) * 100) : (prod.profit_margin !== undefined ? Number(prod.profit_margin) : 0);
         const marginClass = margin >= 0 ? 'text-success' : 'text-danger';
 
@@ -462,8 +556,8 @@ function renderPerProductBreakdown() {
                 <td class="text-end small">${formatInteger(runs)}</td>
                 <td class="text-end small">${formatInteger(outputQty)}</td>
                 <td class="text-end small text-muted">${unitCost > 0 ? (formatCraftPriceInputValue(unitCost) + ' ISK') : '—'}</td>
-                <td class="text-end small text-danger">${totalCost > 0 ? (formatCraftPriceInputValue(totalCost) + ' ISK') : '—'}</td>
-                <td class="text-end small text-success">${totalRev > 0 ? (formatCraftPriceInputValue(totalRev) + ' ISK') : '—'}</td>
+                <td class="text-end small ${totalCost > 0 ? 'text-danger' : 'text-muted'}">${totalCost > 0 ? (formatCraftPriceInputValue(totalCost) + ' ISK') : '—'}</td>
+                <td class="text-end small ${totalRev > 0 ? 'text-success' : 'text-muted'}">${totalRev > 0 ? (formatCraftPriceInputValue(totalRev) + ' ISK') : '—'}</td>
                 <td class="text-end small fw-bold ${profit >= 0 ? 'text-success' : 'text-danger'}">${(profit >= 0 ? '+' : '') + formatCraftPriceInputValue(profit)} ISK</td>
                 <td class="text-end small fw-semibold ${marginClass}">${margin.toFixed(1)}%</td>
             </tr>
