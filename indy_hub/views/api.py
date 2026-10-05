@@ -2631,15 +2631,16 @@ def search_blueprints(request):
         return JsonResponse({"results": []})
 
     sql = """
-        SELECT DISTINCT t.id, t.name, p.product_eve_type_id
+        SELECT DISTINCT t.id, t.name, p.product_eve_type_id, t2.name
         FROM eve_sde_itemtype t
         JOIN indy_hub_sdeindustryactivityproduct p ON t.id = p.eve_type_id
+        LEFT JOIN eve_sde_itemtype t2 ON p.product_eve_type_id = t2.id
         WHERE t.published = 1 AND p.activity_id IN (1, 9, 11)
-          AND (t.name LIKE %s OR t.id LIKE %s)
+          AND (t.name LIKE %s OR t.id LIKE %s OR t2.name LIKE %s)
         ORDER BY t.name ASC
         LIMIT %s
     """
-    params = [f"%{query}%", f"%{query}%", limit]
+    params = [f"%{query}%", f"%{query}%", f"%{query}%", limit]
     results = []
     try:
         with connection.cursor() as cursor:
@@ -2648,11 +2649,13 @@ def search_blueprints(request):
                 bp_id = int(row[0])
                 bp_name = str(row[1])
                 prod_id = int(row[2]) if row[2] else bp_id
+                prod_name = str(row[3]) if row[3] else bp_name.replace(" Blueprint", "").replace(" Reaction Formula", "")
                 results.append(
                     {
                         "blueprint_type_id": bp_id,
                         "blueprint_name": bp_name,
                         "product_type_id": prod_id,
+                        "product_name": prod_name,
                         "blueprint_icon_url": f"https://images.evetech.net/types/{bp_id}/bp?size=64",
                         "product_icon_url": (
                             f"https://images.evetech.net/types/{prod_id}/icon?size=64"

@@ -153,36 +153,59 @@ function getBasketProducts() {
     if (!Array.isArray(CRAFT_BASKET_STATE.products) || CRAFT_BASKET_STATE.products.length === 0) {
         initDefaultBasketProducts();
     }
-    return CRAFT_BASKET_STATE.products.map(p => ({
-        blueprint_type_id: Number(p.blueprint_type_id || p.type_id || 0),
-        blueprint_name: String(p.blueprint_name || p.name || 'Blueprint'),
-        runs: Math.max(1, Number(p.runs) || 1),
-        product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
-        blueprint_icon_url: p.blueprint_icon_url || (p.blueprint_type_id ? `https://images.evetech.net/types/${p.blueprint_type_id}/bp?size=32` : undefined),
-        product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
-    }));
+    return CRAFT_BASKET_STATE.products.map(p => {
+        const bpId = Number(p.blueprint_type_id || p.type_id || 0);
+        const bpName = String(p.blueprint_name || p.name || 'Blueprint');
+        const prodName = String(p.product_name || bpName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, ''));
+        const prodId = p.product_type_id ? Number(p.product_type_id) : undefined;
+        return {
+            blueprint_type_id: bpId,
+            blueprint_name: bpName,
+            product_name: prodName,
+            runs: Math.max(1, Number(p.runs) || 1),
+            product_type_id: prodId,
+            blueprint_icon_url: p.blueprint_icon_url || (bpId ? `https://images.evetech.net/types/${bpId}/bp?size=32` : undefined),
+            product_icon_url: p.product_icon_url || (prodId ? `https://images.evetech.net/types/${prodId}/icon?size=32` : undefined),
+            unit_cost: p.unit_cost,
+            total_cost: p.total_cost,
+            unit_revenue: p.unit_revenue,
+            total_revenue: p.total_revenue,
+            profit: p.profit,
+            profit_margin: p.profit_margin,
+            output_qty: p.output_qty,
+        };
+    });
 }
 
 function initDefaultBasketProducts() {
     const rawProducts = window.BLUEPRINT_DATA?.products;
     if (Array.isArray(rawProducts) && rawProducts.length > 0) {
-        CRAFT_BASKET_STATE.products = rawProducts.map(p => ({
-            blueprint_type_id: Number(p.blueprint_type_id || p.type_id || 0),
-            blueprint_name: String(p.blueprint_name || p.name || 'Blueprint'),
-            runs: Math.max(1, Number(p.runs) || 1),
-            product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
-            blueprint_icon_url: p.blueprint_icon_url || (p.blueprint_type_id ? `https://images.evetech.net/types/${p.blueprint_type_id}/bp?size=32` : undefined),
-            product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
-        })).filter(p => p.blueprint_type_id > 0);
+        CRAFT_BASKET_STATE.products = rawProducts.map(p => {
+            const bpId = Number(p.blueprint_type_id || p.type_id || 0);
+            const bpName = String(p.blueprint_name || p.name || 'Blueprint');
+            const prodName = String(p.product_name || bpName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, ''));
+            const prodId = p.product_type_id ? Number(p.product_type_id) : undefined;
+            return {
+                blueprint_type_id: bpId,
+                blueprint_name: bpName,
+                product_name: prodName,
+                runs: Math.max(1, Number(p.runs) || 1),
+                product_type_id: prodId,
+                blueprint_icon_url: p.blueprint_icon_url || (bpId ? `https://images.evetech.net/types/${bpId}/bp?size=32` : undefined),
+                product_icon_url: p.product_icon_url || (prodId ? `https://images.evetech.net/types/${prodId}/icon?size=32` : undefined),
+            };
+        }).filter(p => p.blueprint_type_id > 0);
     } else {
         const rootBpId = Number(window.BLUEPRINT_DATA?.bp_type_id || window.BLUEPRINT_DATA?.type_id || 0);
         const rootRuns = Math.max(1, Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 1) || 1);
         const rootName = String(window.BLUEPRINT_DATA?.bp_name || window.BLUEPRINT_DATA?.name || 'Blueprint');
         const rootProductTypeId = window.BLUEPRINT_DATA?.product_type_id ? Number(window.BLUEPRINT_DATA.product_type_id) : undefined;
+        const rootProductName = String(window.BLUEPRINT_DATA?.product_name || rootName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, '')).trim();
         if (rootBpId > 0) {
             CRAFT_BASKET_STATE.products = [{
                 blueprint_type_id: rootBpId,
                 blueprint_name: rootName,
+                product_name: rootProductName,
                 runs: rootRuns,
                 product_type_id: rootProductTypeId,
                 blueprint_icon_url: `https://images.evetech.net/types/${rootBpId}/bp?size=32`,
@@ -200,12 +223,14 @@ function syncBasketFromPayloadProducts(products) {
     CRAFT_BASKET_STATE.products = products.map(p => {
         const bpId = Number(p.blueprint_type_id || p.type_id);
         const existing = currentMap.get(bpId);
+        const bpName = String(p.blueprint_name || existing?.blueprint_name || 'Blueprint');
+        const prodName = String(p.product_name || existing?.product_name || bpName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, ''));
         return {
             blueprint_type_id: bpId,
-            blueprint_name: String(p.blueprint_name || existing?.blueprint_name || 'Blueprint'),
+            blueprint_name: bpName,
             runs: Math.max(1, Number(p.runs || existing?.runs || 1)),
             product_type_id: p.product_type_id ? Number(p.product_type_id) : existing?.product_type_id,
-            product_name: String(p.product_name || existing?.product_name || p.blueprint_name || 'Product'),
+            product_name: prodName,
             blueprint_icon_url: p.blueprint_icon_url || existing?.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`,
             product_icon_url: p.product_icon_url || existing?.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
             unit_cost: p.estimated_unit_cost ?? p.unit_cost,
@@ -222,14 +247,20 @@ function syncBasketFromPayloadProducts(products) {
 
 function setBasketProducts(products, { triggerRefresh = true } = {}) {
     if (!Array.isArray(products) || products.length === 0) return;
-    CRAFT_BASKET_STATE.products = products.map(p => ({
-        blueprint_type_id: Number(p.blueprint_type_id || p.type_id || 0),
-        blueprint_name: String(p.blueprint_name || p.name || 'Blueprint'),
-        runs: Math.max(1, Number(p.runs) || 1),
-        product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
-        blueprint_icon_url: p.blueprint_icon_url || (p.blueprint_type_id ? `https://images.evetech.net/types/${p.blueprint_type_id}/bp?size=32` : undefined),
-        product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
-    })).filter(p => p.blueprint_type_id > 0);
+    CRAFT_BASKET_STATE.products = products.map(p => {
+        const bpId = Number(p.blueprint_type_id || p.type_id || 0);
+        const bpName = String(p.blueprint_name || p.name || 'Blueprint');
+        const prodName = String(p.product_name || bpName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, ''));
+        return {
+            blueprint_type_id: bpId,
+            blueprint_name: bpName,
+            product_name: prodName,
+            runs: Math.max(1, Number(p.runs) || 1),
+            product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
+            blueprint_icon_url: p.blueprint_icon_url || (bpId ? `https://images.evetech.net/types/${bpId}/bp?size=32` : undefined),
+            product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
+        };
+    }).filter(p => p.blueprint_type_id > 0);
 
     renderBasketItems();
     if (triggerRefresh) {
@@ -246,13 +277,22 @@ function addBasketProduct(item) {
         CRAFT_BASKET_STATE.products = [];
     }
 
+    const bpName = String(item.blueprint_name || item.name || 'Blueprint');
+    const prodName = String(item.product_name || bpName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, ''));
     const existingIndex = CRAFT_BASKET_STATE.products.findIndex(p => Number(p.blueprint_type_id) === bpId);
     if (existingIndex >= 0) {
         CRAFT_BASKET_STATE.products[existingIndex].runs = Math.min(1000000, CRAFT_BASKET_STATE.products[existingIndex].runs + (Number(item.runs) || 1));
+        if (item.product_type_id && !CRAFT_BASKET_STATE.products[existingIndex].product_type_id) {
+            CRAFT_BASKET_STATE.products[existingIndex].product_type_id = Number(item.product_type_id);
+        }
+        if (prodName && (!CRAFT_BASKET_STATE.products[existingIndex].product_name || CRAFT_BASKET_STATE.products[existingIndex].product_name === 'Product')) {
+            CRAFT_BASKET_STATE.products[existingIndex].product_name = prodName;
+        }
     } else {
         CRAFT_BASKET_STATE.products.push({
             blueprint_type_id: bpId,
-            blueprint_name: String(item.blueprint_name || item.name || 'Blueprint'),
+            blueprint_name: bpName,
+            product_name: prodName,
             runs: Math.max(1, Number(item.runs) || 1),
             product_type_id: item.product_type_id ? Number(item.product_type_id) : undefined,
             blueprint_icon_url: item.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`,
@@ -493,7 +533,7 @@ function initBasketToolbar() {
                         searchResults.innerHTML = `<div class="dropdown-item text-muted small">${__('No matching craftable blueprints found')}</div>`;
                     } else {
                         searchResults.innerHTML = items.map(item => `
-                            <a href="#" class="dropdown-item d-flex align-items-center gap-2 py-2 basket-search-result-item" data-bp-id="${item.blueprint_type_id}" data-bp-name="${escapeHtml(item.blueprint_name)}" data-prod-id="${item.product_type_id || ''}" data-bp-icon="${item.blueprint_icon_url || ''}" data-prod-icon="${item.product_icon_url || ''}">
+                            <a href="#" class="dropdown-item d-flex align-items-center gap-2 py-2 basket-search-result-item" data-bp-id="${item.blueprint_type_id}" data-bp-name="${escapeHtml(item.blueprint_name)}" data-prod-id="${item.product_type_id || ''}" data-prod-name="${escapeHtml(item.product_name || '')}" data-bp-icon="${item.blueprint_icon_url || ''}" data-prod-icon="${item.product_icon_url || ''}">
                                 <img src="${item.product_icon_url || item.blueprint_icon_url}" class="rounded" style="width:24px;height:24px;" alt="">
                                 <div class="flex-grow-1 text-truncate">
                                     <div class="fw-semibold small text-truncate">${escapeHtml(item.blueprint_name)}</div>
@@ -529,11 +569,13 @@ function initBasketToolbar() {
                 const bpId = Number(itemEl.dataset.bpId);
                 const bpName = itemEl.dataset.bpName;
                 const prodId = Number(itemEl.dataset.prodId) || undefined;
+                const prodName = itemEl.dataset.prodName || bpName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, '');
                 const bpIcon = itemEl.dataset.bpIcon;
                 const prodIcon = itemEl.dataset.prodIcon;
                 addBasketProduct({
                     blueprint_type_id: bpId,
                     blueprint_name: bpName,
+                    product_name: prodName,
                     runs: 1,
                     product_type_id: prodId,
                     blueprint_icon_url: bpIcon,
@@ -9975,7 +10017,8 @@ function syncFinalProductRowsInFinancialTab(tableBody, pricesMap = null) {
             const prodTypeId = Number(p.product_type_id || 0) || bpId;
             const runs = Math.max(1, Number(p.runs) || 1);
             const outputQty = Math.max(1, Number(p.output_qty || p.final_product_qty) || runs);
-            const name = String(p.product_name || p.blueprint_name || `Product #${prodTypeId}`);
+            let name = String(p.product_name || p.blueprint_name || `Product #${prodTypeId}`).trim();
+            name = name.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, '');
             const iconUrl = p.product_icon_url || (prodTypeId ? `https://images.evetech.net/types/${prodTypeId}/icon?size=32` : (p.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`));
             normalizedProducts.push({
                 blueprint_type_id: bpId,
@@ -9991,7 +10034,8 @@ function syncFinalProductRowsInFinancialTab(tableBody, pricesMap = null) {
         const rootProdId = Number(window.BLUEPRINT_DATA?.product_type_id || CRAFT_BP.productTypeId || rootBpId);
         const rootRuns = Math.max(1, Number(window.BLUEPRINT_DATA?.num_runs || 1));
         const rootOutput = Math.max(1, Number(window.BLUEPRINT_DATA?.final_product_qty || rootRuns));
-        const rootName = String(window.BLUEPRINT_DATA?.product_name || window.BLUEPRINT_DATA?.bp_name || window.BLUEPRINT_DATA?.name || 'Product');
+        let rootName = String(window.BLUEPRINT_DATA?.product_name || window.BLUEPRINT_DATA?.bp_name || window.BLUEPRINT_DATA?.name || 'Product').trim();
+        rootName = rootName.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, '');
         normalizedProducts.push({
             blueprint_type_id: rootBpId,
             product_type_id: rootProdId,
@@ -10020,22 +10064,42 @@ function syncFinalProductRowsInFinancialTab(tableBody, pricesMap = null) {
 
         const currentQty = prod.output_qty;
         const runsLabel = `${formatInteger(prod.runs)} ${prod.runs === 1 ? __('run') : __('runs')}`;
-        const nameWithRuns = `${prod.name} (${runsLabel})`;
+
+        let initialSalePrice = 0;
+        let initialFuzzPrice = 0;
+        if (pricesMap && typeof pricesMap.get === 'function') {
+            const p = pricesMap.get(prodTypeId);
+            if (p) {
+                initialSalePrice = p.sale ?? p.real ?? 0;
+                initialFuzzPrice = p.fuzzwork ?? p.fuzzPrice ?? 0;
+            }
+        }
+        if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
+            const s = window.SimulationAPI.getPrice(prodTypeId, 'sale');
+            if (s && typeof s.value === 'number') initialSalePrice = s.value;
+            const f = window.SimulationAPI.getPrice(prodTypeId, 'fuzzwork');
+            if (f && typeof f.value === 'number') initialFuzzPrice = f.value;
+        }
 
         if (row) {
+            row.className = 'table-success fw-semibold final-product-row';
             row.setAttribute('data-type-id', String(prodTypeId));
             row.setAttribute('data-runs', String(prod.runs));
             row.setAttribute('data-row-kind', 'final_product');
-            const img = row.querySelector('.item-icon-cell img');
+            const img = row.querySelector('.eve-type-icon, .item-icon-cell img');
             if (img) {
                 img.src = prod.icon_url;
                 img.alt = prod.name;
             }
-            const nameSpan = row.querySelector('.item-name-cell .fw-semibold');
+            const nameSpan = row.querySelector('.craft-planner-item-name, .item-name-cell .fw-semibold');
             if (nameSpan) {
-                nameSpan.textContent = nameWithRuns;
+                nameSpan.textContent = prod.name;
             }
-            const qtyCell = row.querySelector('[data-qty]');
+            const runBadge = row.querySelector('.final-product-run-badge, #finalProductRunBadge');
+            if (runBadge) {
+                runBadge.textContent = runsLabel;
+            }
+            const qtyCell = row.querySelector('.craft-financial-qty-cell, [data-qty]');
             if (qtyCell) {
                 qtyCell.setAttribute('data-qty', String(currentQty));
                 const badge = qtyCell.querySelector('.badge');
@@ -10056,67 +10120,45 @@ function syncFinalProductRowsInFinancialTab(tableBody, pricesMap = null) {
             tableBody.appendChild(row);
         } else {
             const tr = document.createElement('tr');
-            tr.className = 'final-product-row align-middle';
+            tr.className = 'table-success fw-semibold final-product-row';
             tr.setAttribute('data-type-id', String(prodTypeId));
             tr.setAttribute('data-runs', String(prod.runs));
             tr.setAttribute('data-row-kind', 'final_product');
-            tr.setAttribute('data-market-group', __('Final Products'));
-
-            let initialSalePrice = 0;
-            let initialFuzzPrice = 0;
-            if (pricesMap && typeof pricesMap.get === 'function') {
-                const p = pricesMap.get(prodTypeId);
-                if (p) {
-                    initialSalePrice = p.sale ?? p.real ?? 0;
-                    initialFuzzPrice = p.fuzzwork ?? p.fuzzPrice ?? 0;
-                }
-            }
-            if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
-                const s = window.SimulationAPI.getPrice(prodTypeId, 'sale');
-                if (s && typeof s.value === 'number') initialSalePrice = s.value;
-                const f = window.SimulationAPI.getPrice(prodTypeId, 'fuzzwork');
-                if (f && typeof f.value === 'number') initialFuzzPrice = f.value;
-            }
 
             tr.innerHTML = `
-                <td class="item-icon-cell">
-                    <img src="${prod.icon_url}" class="rounded" style="width:28px;height:28px;" alt="${escapeHtml(prod.name)}">
-                </td>
-                <td class="item-name-cell">
-                    <div class="d-flex align-items-center">
-                        <span class="fw-semibold">${escapeHtml(nameWithRuns)}</span>
-                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-2 craft-row-kind-marker">${escapeHtml(__('Final Product'))}</span>
+                <td data-manual-label="${escapeHtml(__('Manual'))}">
+                    <div class="d-flex align-items-center gap-2 craft-planner-item-flex">
+                        <img src="${prod.icon_url}"
+                             alt="${escapeHtml(prod.name)}"
+                             class="rounded eve-type-icon eve-type-icon--28"
+                             onerror="this.style.display='none';">
+                        <span class="craft-planner-item-name-wrap">
+                            <span class="text-xs fw-bold craft-planner-item-name">${escapeHtml(prod.name)}</span>
+                            <span class="badge bg-primary-subtle text-primary-emphasis ms-2 final-product-run-badge">${escapeHtml(runsLabel)}</span>
+                        </span>
                     </div>
                 </td>
-                <td class="text-end" data-qty="${currentQty}">
-                    <span class="badge bg-secondary text-white">${formatInteger(currentQty)}</span>
+                <td class="text-end text-xs craft-financial-qty-cell" data-qty="${currentQty}">
+                    <span class="badge bg-success text-white">${formatInteger(currentQty)}</span>
                 </td>
-                <td class="text-end text-muted small">—</td>
-                <td class="text-end text-muted small">—</td>
-                <td>
-                    <div class="craft-price-input-wrapper">
-                        <input type="text"
-                               inputmode="decimal"
-                               class="form-control form-control-sm text-end fuzzwork-price"
-                               data-type-id="${prodTypeId}"
-                               value="${formatCraftPriceInputValue(initialFuzzPrice)}"
-                               readonly
-                               tabindex="-1">
-                        <span class="craft-price-input-affix">ISK</span>
-                    </div>
+                <td class="text-end">
+                    <input type="text"
+                           inputmode="decimal"
+                           class="form-control form-control-sm fuzzwork-price text-end bg-light text-xs"
+                           data-type-id="${prodTypeId}"
+                           value="${formatCraftPriceInputValue(initialFuzzPrice)}"
+                           readonly>
                 </td>
-                <td>
-                    <div class="craft-price-input-wrapper">
-                        <input type="text"
-                               inputmode="decimal"
-                               class="form-control form-control-sm text-end sale-price-unit"
-                               data-type-id="${prodTypeId}"
-                               value="${formatCraftPriceInputValue(initialSalePrice || initialFuzzPrice)}">
-                        <span class="craft-price-input-affix">ISK</span>
-                    </div>
+                <td class="text-end">
+                    <input type="text"
+                           inputmode="decimal"
+                           class="form-control form-control-sm sale-price-unit text-end text-xs"
+                           data-type-id="${prodTypeId}"
+                           value="${formatCraftPriceInputValue(initialSalePrice || initialFuzzPrice)}">
                 </td>
-                <td class="text-end total-cost text-muted">—</td>
-                <td class="text-end total-revenue text-success fw-bold">—</td>
+                <td class="text-end text-xs total-revenue fw-semibold">0</td>
+                <td class="text-center text-xs text-muted"
+                    title="${escapeHtml(__('Overall margin is shown in the summary above and in the Net Profit row below.'))}">—</td>
             `;
 
             const saleInput = tr.querySelector('.sale-price-unit');
@@ -10450,41 +10492,25 @@ function updateFinancialTabFromState() {
 
 function getCraftFinalProductLabel() {
     const payload = window.BLUEPRINT_DATA || {};
-    const blueprintLabel = String(
-        payload.bp_name
-        || payload.name
-        || payload.type_name
-        || payload.typeName
-        || payload.product_name
+    let label = String(
+        payload.product_name
         || payload.productName
-        || ''
-    ).trim();
-    const runCount = Math.max(0, Math.ceil(Number(payload.num_runs || payload.numRuns || 0) || 0));
-    if (blueprintLabel) {
-        if (runCount > 0) {
-            return `${blueprintLabel} (${formatInteger(runCount)} ${runCount === 1 ? __('run') : __('runs')})`;
-        }
-        return blueprintLabel;
-    }
-
-    const payloadLabel = String(
-        payload.bp_name
+        || payload.bp_name
         || payload.name
-        || payload.product_name
-        || payload.productName
         || payload.type_name
         || payload.typeName
         || ''
     ).trim();
-    if (payloadLabel) {
-        return payloadLabel;
+    if (label) {
+        label = label.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, '');
+        return label;
     }
 
     const buildTabLabel = document.querySelector('#build-pane .table-primary .small.fw-bold');
     if (buildTabLabel && buildTabLabel.textContent) {
         const text = String(buildTabLabel.textContent).trim();
         if (text) {
-            return text;
+            return text.replace(/\s+Blueprint$/i, '').replace(/\s+Reaction Formula$/i, '');
         }
     }
 
@@ -10502,7 +10528,7 @@ function syncCraftFinalProductLabel() {
         labelEl.textContent = getCraftFinalProductLabel();
     }
 
-    const runBadgeEl = document.getElementById('finalProductRunBadge');
+    const runBadgeEl = document.getElementById('finalProductRunBadge') || finalRow.querySelector('.final-product-run-badge');
     if (runBadgeEl) {
         const payload = window.BLUEPRINT_DATA || {};
         const runCount = Math.max(0, Math.ceil(Number(payload.num_runs || payload.numRuns || 0) || 0));

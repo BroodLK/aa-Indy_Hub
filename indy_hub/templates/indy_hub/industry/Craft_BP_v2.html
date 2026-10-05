@@ -591,7 +591,7 @@
                                                 <span class="text-muted">{% trans "Manual only" %}</span>
                                             </td>
                                         </tr>
-                                        <tr id="finalProductRow" class="table-success fw-semibold" data-type-id="{{ product_type_id|default:0 }}">
+                                        <tr id="finalProductRow" class="table-success fw-semibold final-product-row" data-type-id="{{ product_type_id|default:0 }}" data-row-kind="final_product">
                                             <td data-manual-label="{% trans 'Manual' %}">
                                                 <div class="d-flex align-items-center gap-2 craft-planner-item-flex">
                                                     <img src="https://images.evetech.net/types/{{ product_type_id }}/icon?size=32"
@@ -599,8 +599,8 @@
                                                          class="rounded eve-type-icon eve-type-icon--28"
                                                          onerror="this.style.display='none';">
                                                     <span class="craft-planner-item-name-wrap">
-                                                        <span class="text-xs fw-bold craft-planner-item-name">{{ bp_name|default:"Final product" }}</span>
-                                                        <span class="badge bg-primary-subtle text-primary-emphasis ms-2" id="finalProductRunBadge">{{ num_runs|default:0|intcomma }} {% trans "runs" %}</span>
+                                                        <span class="text-xs fw-bold craft-planner-item-name">{{ product_name|default:bp_name|default:"Final product" }}</span>
+                                                        <span class="badge bg-primary-subtle text-primary-emphasis ms-2 final-product-run-badge" id="finalProductRunBadge">{{ num_runs|default:0|intcomma }} {% trans "runs" %}</span>
                                                     </span>
                                                 </div>
                                             </td>
