@@ -80,6 +80,13 @@ const CRAFT_SELECTION_SCOPE = {
     draftId: '',
 };
 
+const CRAFT_BASKET_STATE = {
+    products: [],
+    initialized: false,
+    searchDebounceTimer: null,
+    isSearching: false,
+};
+
 const __ = (typeof window !== 'undefined' && typeof window.gettext === 'function') ? window.gettext.bind(window) : (msg => msg);
 
 function craftBPIsDebugEnabled() {
@@ -140,6 +147,434 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function getBasketProducts() {
+    if (!Array.isArray(CRAFT_BASKET_STATE.products) || CRAFT_BASKET_STATE.products.length === 0) {
+        initDefaultBasketProducts();
+    }
+    return CRAFT_BASKET_STATE.products.map(p => ({
+        blueprint_type_id: Number(p.blueprint_type_id || p.type_id || 0),
+        blueprint_name: String(p.blueprint_name || p.name || 'Blueprint'),
+        runs: Math.max(1, Number(p.runs) || 1),
+        product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
+        blueprint_icon_url: p.blueprint_icon_url || (p.blueprint_type_id ? `https://images.evetech.net/types/${p.blueprint_type_id}/bp?size=32` : undefined),
+        product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
+    }));
+}
+
+function initDefaultBasketProducts() {
+    const rawProducts = window.BLUEPRINT_DATA?.products;
+    if (Array.isArray(rawProducts) && rawProducts.length > 0) {
+        CRAFT_BASKET_STATE.products = rawProducts.map(p => ({
+            blueprint_type_id: Number(p.blueprint_type_id || p.type_id || 0),
+            blueprint_name: String(p.blueprint_name || p.name || 'Blueprint'),
+            runs: Math.max(1, Number(p.runs) || 1),
+            product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
+            blueprint_icon_url: p.blueprint_icon_url || (p.blueprint_type_id ? `https://images.evetech.net/types/${p.blueprint_type_id}/bp?size=32` : undefined),
+            product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
+        })).filter(p => p.blueprint_type_id > 0);
+    } else {
+        const rootBpId = Number(window.BLUEPRINT_DATA?.bp_type_id || window.BLUEPRINT_DATA?.type_id || 0);
+        const rootRuns = Math.max(1, Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 1) || 1);
+        const rootName = String(window.BLUEPRINT_DATA?.bp_name || window.BLUEPRINT_DATA?.name || 'Blueprint');
+        const rootProductTypeId = window.BLUEPRINT_DATA?.product_type_id ? Number(window.BLUEPRINT_DATA.product_type_id) : undefined;
+        if (rootBpId > 0) {
+            CRAFT_BASKET_STATE.products = [{
+                blueprint_type_id: rootBpId,
+                blueprint_name: rootName,
+                runs: rootRuns,
+                product_type_id: rootProductTypeId,
+                blueprint_icon_url: `https://images.evetech.net/types/${rootBpId}/bp?size=32`,
+                product_icon_url: rootProductTypeId ? `https://images.evetech.net/types/${rootProductTypeId}/icon?size=32` : undefined,
+            }];
+        } else {
+            CRAFT_BASKET_STATE.products = [];
+        }
+    }
+}
+
+function syncBasketFromPayloadProducts(products) {
+    if (!Array.isArray(products) || products.length === 0) return;
+    const currentMap = new Map(CRAFT_BASKET_STATE.products.map(p => [Number(p.blueprint_type_id), p]));
+    CRAFT_BASKET_STATE.products = products.map(p => {
+        const bpId = Number(p.blueprint_type_id || p.type_id);
+        const existing = currentMap.get(bpId);
+        return {
+            blueprint_type_id: bpId,
+            blueprint_name: String(p.blueprint_name || existing?.blueprint_name || 'Blueprint'),
+            runs: Math.max(1, Number(p.runs || existing?.runs || 1)),
+            product_type_id: p.product_type_id ? Number(p.product_type_id) : existing?.product_type_id,
+            blueprint_icon_url: p.blueprint_icon_url || existing?.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`,
+            product_icon_url: p.product_icon_url || existing?.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
+            unit_cost: p.unit_cost,
+            total_cost: p.total_cost,
+            unit_revenue: p.unit_revenue,
+            total_revenue: p.total_revenue,
+            profit: p.profit,
+            profit_margin: p.profit_margin,
+            output_qty: p.output_qty,
+        };
+    });
+    renderBasketItems();
+}
+
+function setBasketProducts(products, { triggerRefresh = true } = {}) {
+    if (!Array.isArray(products) || products.length === 0) return;
+    CRAFT_BASKET_STATE.products = products.map(p => ({
+        blueprint_type_id: Number(p.blueprint_type_id || p.type_id || 0),
+        blueprint_name: String(p.blueprint_name || p.name || 'Blueprint'),
+        runs: Math.max(1, Number(p.runs) || 1),
+        product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
+        blueprint_icon_url: p.blueprint_icon_url || (p.blueprint_type_id ? `https://images.evetech.net/types/${p.blueprint_type_id}/bp?size=32` : undefined),
+        product_icon_url: p.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
+    })).filter(p => p.blueprint_type_id > 0);
+
+    renderBasketItems();
+    if (triggerRefresh) {
+        scheduleLiveCraftPayloadRefresh('change');
+    }
+}
+
+function addBasketProduct(item) {
+    if (!item) return;
+    const bpId = Number(item.blueprint_type_id || item.type_id || 0);
+    if (!bpId) return;
+
+    if (!Array.isArray(CRAFT_BASKET_STATE.products)) {
+        CRAFT_BASKET_STATE.products = [];
+    }
+
+    const existingIndex = CRAFT_BASKET_STATE.products.findIndex(p => Number(p.blueprint_type_id) === bpId);
+    if (existingIndex >= 0) {
+        CRAFT_BASKET_STATE.products[existingIndex].runs = Math.min(1000000, CRAFT_BASKET_STATE.products[existingIndex].runs + (Number(item.runs) || 1));
+    } else {
+        CRAFT_BASKET_STATE.products.push({
+            blueprint_type_id: bpId,
+            blueprint_name: String(item.blueprint_name || item.name || 'Blueprint'),
+            runs: Math.max(1, Number(item.runs) || 1),
+            product_type_id: item.product_type_id ? Number(item.product_type_id) : undefined,
+            blueprint_icon_url: item.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`,
+            product_icon_url: item.product_icon_url || (item.product_type_id ? `https://images.evetech.net/types/${item.product_type_id}/icon?size=32` : undefined),
+        });
+    }
+
+    renderBasketItems();
+    scheduleLiveCraftPayloadRefresh('change');
+}
+
+function removeBasketProduct(index) {
+    if (!Array.isArray(CRAFT_BASKET_STATE.products) || CRAFT_BASKET_STATE.products.length <= 1) {
+        if (window.CraftBP?.pushStatus) {
+            window.CraftBP.pushStatus(__('The basket must contain at least one product.'), 'warning');
+        }
+        return;
+    }
+    if (index >= 0 && index < CRAFT_BASKET_STATE.products.length) {
+        CRAFT_BASKET_STATE.products.splice(index, 1);
+        renderBasketItems();
+        scheduleLiveCraftPayloadRefresh('change');
+    }
+}
+
+function duplicateBasketProduct(index) {
+    if (!Array.isArray(CRAFT_BASKET_STATE.products)) return;
+    if (index >= 0 && index < CRAFT_BASKET_STATE.products.length) {
+        const item = CRAFT_BASKET_STATE.products[index];
+        CRAFT_BASKET_STATE.products.splice(index + 1, 0, { ...item });
+        renderBasketItems();
+        scheduleLiveCraftPayloadRefresh('change');
+    }
+}
+
+function updateBasketProductRuns(index, runs) {
+    if (!Array.isArray(CRAFT_BASKET_STATE.products)) return;
+    if (index >= 0 && index < CRAFT_BASKET_STATE.products.length) {
+        const cleanRuns = Math.max(1, Math.min(1000000, Math.floor(Number(runs) || 1)));
+        if (CRAFT_BASKET_STATE.products[index].runs !== cleanRuns) {
+            CRAFT_BASKET_STATE.products[index].runs = cleanRuns;
+            renderBasketItems();
+            scheduleLiveCraftPayloadRefresh('input');
+        }
+    }
+}
+
+function applyBasketBatchMultiplier(multiplier) {
+    if (!Array.isArray(CRAFT_BASKET_STATE.products) || CRAFT_BASKET_STATE.products.length === 0) return;
+    CRAFT_BASKET_STATE.products.forEach(p => {
+        if (multiplier === 'reset') {
+            p.runs = 1;
+        } else {
+            const mult = Number(multiplier) || 1;
+            p.runs = Math.max(1, Math.min(1000000, Math.round(p.runs * mult)));
+        }
+    });
+    renderBasketItems();
+    scheduleLiveCraftPayloadRefresh('change');
+}
+
+function renderBasketItems() {
+    const container = document.getElementById('basketItemsContainer');
+    const countBadge = document.getElementById('basketCountBadge');
+    const totalRunsBadge = document.getElementById('basketTotalRunsBadge');
+    const products = getBasketProducts();
+
+    const count = products.length;
+    const totalRuns = products.reduce((acc, p) => acc + (Number(p.runs) || 1), 0);
+
+    if (countBadge) {
+        countBadge.textContent = `${count} ${count === 1 ? __('product') : __('products')}`;
+    }
+    if (totalRunsBadge) {
+        totalRunsBadge.textContent = `${totalRuns} ${totalRuns === 1 ? __('run') : __('runs')}`;
+    }
+
+    const runsInput = document.getElementById('runsInput');
+    if (runsInput && count === 1) {
+        runsInput.value = products[0].runs;
+    }
+
+    if (!container) return;
+
+    if (products.length === 0) {
+        container.innerHTML = `<span class="text-muted small">${__('No products in basket. Search blueprints above to add.')}</span>`;
+        return;
+    }
+
+    let html = '';
+    products.forEach((prod, idx) => {
+        const imgUrl = prod.product_icon_url || prod.blueprint_icon_url || `https://images.evetech.net/types/${prod.blueprint_type_id}/bp?size=32`;
+        const name = escapeHtml(prod.blueprint_name || `Blueprint #${prod.blueprint_type_id}`);
+        const runs = Number(prod.runs) || 1;
+
+        html += `
+            <div class="card bg-secondary-subtle border-secondary p-2 d-flex flex-row align-items-center gap-2 basket-item-card shadow-sm" data-index="${idx}" style="min-width: 260px;">
+                <img src="${imgUrl}" class="rounded" style="width:32px;height:32px;object-fit:contain;" alt="${name}" onerror="if(!this.dataset.triedBp){this.dataset.triedBp='1';this.src='${prod.blueprint_icon_url || `https://images.evetech.net/types/${prod.blueprint_type_id}/bp?size=32`}';}">
+                <div class="flex-grow-1 min-w-0">
+                    <div class="fw-semibold text-truncate small" style="max-width: 140px;" title="${name}">${name}</div>
+                    <div class="text-muted text-xs">ID: ${prod.blueprint_type_id}</div>
+                </div>
+                <div class="input-group input-group-sm" style="width: 105px;">
+                    <button class="btn btn-outline-secondary px-2 basket-item-decrement" type="button" data-index="${idx}">-</button>
+                    <input type="number" min="1" max="1000000" class="form-control form-control-sm text-center px-1 basket-item-runs-input" data-index="${idx}" value="${runs}">
+                    <button class="btn btn-outline-secondary px-2 basket-item-increment" type="button" data-index="${idx}">+</button>
+                </div>
+                <button class="btn btn-sm btn-outline-secondary px-2 basket-item-duplicate" type="button" data-index="${idx}" title="${__('Duplicate')}"><i class="fas fa-copy"></i></button>
+                <button class="btn btn-sm btn-outline-danger px-2 basket-item-remove" type="button" data-index="${idx}" title="${__('Remove')}" ${count <= 1 ? 'disabled' : ''}><i class="fas fa-times"></i></button>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+function renderPerProductBreakdown() {
+    const tableBody = document.getElementById('perProductFinancialBody');
+    const countBadge = document.getElementById('perProductCountBadge');
+    if (!tableBody) return;
+
+    const products = getBasketProducts();
+    if (countBadge) {
+        countBadge.textContent = `${products.length} ${products.length === 1 ? __('product') : __('products')}`;
+    }
+
+    if (!products.length) {
+        tableBody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">${__('No products configured.')}</td></tr>`;
+        return;
+    }
+
+    let rowsHtml = '';
+    products.forEach((prod) => {
+        const name = escapeHtml(prod.blueprint_name || `Blueprint #${prod.blueprint_type_id}`);
+        const imgUrl = prod.product_icon_url || prod.blueprint_icon_url || `https://images.evetech.net/types/${prod.blueprint_type_id}/bp?size=32`;
+        const runs = Number(prod.runs) || 1;
+        const outputQty = Number(prod.output_qty) || runs;
+        const unitCost = Number(prod.unit_cost) || 0;
+        const totalCost = Number(prod.total_cost) || 0;
+        const totalRev = Number(prod.total_revenue) || 0;
+        const profit = Number(prod.profit) || (totalRev - totalCost);
+        const margin = totalRev > 0 ? ((profit / totalRev) * 100) : (prod.profit_margin !== undefined ? Number(prod.profit_margin) : 0);
+        const marginClass = margin >= 0 ? 'text-success' : 'text-danger';
+
+        rowsHtml += `
+            <tr>
+                <td>
+                    <div class="d-flex align-items-center gap-2">
+                        <img src="${imgUrl}" class="rounded" style="width:24px;height:24px;" alt="${name}">
+                        <span class="fw-semibold text-truncate small" style="max-width: 200px;">${name}</span>
+                    </div>
+                </td>
+                <td class="text-end small">${formatInteger(runs)}</td>
+                <td class="text-end small">${formatInteger(outputQty)}</td>
+                <td class="text-end small text-muted">${unitCost > 0 ? (formatCraftPriceInputValue(unitCost) + ' ISK') : '—'}</td>
+                <td class="text-end small text-danger">${totalCost > 0 ? (formatCraftPriceInputValue(totalCost) + ' ISK') : '—'}</td>
+                <td class="text-end small text-success">${totalRev > 0 ? (formatCraftPriceInputValue(totalRev) + ' ISK') : '—'}</td>
+                <td class="text-end small fw-bold ${profit >= 0 ? 'text-success' : 'text-danger'}">${(profit >= 0 ? '+' : '') + formatCraftPriceInputValue(profit)} ISK</td>
+                <td class="text-end small fw-semibold ${marginClass}">${margin.toFixed(1)}%</td>
+            </tr>
+        `;
+    });
+
+    tableBody.innerHTML = rowsHtml;
+}
+
+function initBasketToolbar() {
+    if (CRAFT_BASKET_STATE.initialized) {
+        renderBasketItems();
+        return;
+    }
+    CRAFT_BASKET_STATE.initialized = true;
+    initDefaultBasketProducts();
+    renderBasketItems();
+    renderPerProductBreakdown();
+
+    const searchInput = document.getElementById('basketSearchInput');
+    const searchResults = document.getElementById('basketSearchResults');
+    const clearSearchBtn = document.getElementById('basketClearSearchBtn');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const query = String(e.target.value || '').trim();
+            if (clearSearchBtn) {
+                clearSearchBtn.classList.toggle('d-none', !query);
+            }
+            if (CRAFT_BASKET_STATE.searchDebounceTimer) {
+                clearTimeout(CRAFT_BASKET_STATE.searchDebounceTimer);
+            }
+            if (query.length < 2) {
+                if (searchResults) {
+                    searchResults.style.display = 'none';
+                    searchResults.innerHTML = '';
+                }
+                return;
+            }
+            CRAFT_BASKET_STATE.searchDebounceTimer = setTimeout(async () => {
+                const searchUrl = new URL(window.BLUEPRINT_DATA?.urls?.search_blueprints || '/indy_hub/api/search-blueprints/', window.location.origin);
+                searchUrl.searchParams.set('q', query);
+                try {
+                    const res = await fetch(searchUrl.toString(), {
+                        headers: { 'Accept': 'application/json' },
+                        credentials: 'same-origin',
+                    });
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    if (!searchResults) return;
+                    const items = Array.isArray(data.results) ? data.results : [];
+                    if (items.length === 0) {
+                        searchResults.innerHTML = `<div class="dropdown-item text-muted small">${__('No matching craftable blueprints found')}</div>`;
+                    } else {
+                        searchResults.innerHTML = items.map(item => `
+                            <a href="#" class="dropdown-item d-flex align-items-center gap-2 py-2 basket-search-result-item" data-bp-id="${item.blueprint_type_id}" data-bp-name="${escapeHtml(item.blueprint_name)}" data-prod-id="${item.product_type_id || ''}" data-bp-icon="${item.blueprint_icon_url || ''}" data-prod-icon="${item.product_icon_url || ''}">
+                                <img src="${item.product_icon_url || item.blueprint_icon_url}" class="rounded" style="width:24px;height:24px;" alt="">
+                                <div class="flex-grow-1 text-truncate">
+                                    <div class="fw-semibold small text-truncate">${escapeHtml(item.blueprint_name)}</div>
+                                </div>
+                                <span class="badge bg-secondary-subtle text-secondary-emphasis text-xs">+ ${__('Add')}</span>
+                            </a>
+                        `).join('');
+                    }
+                    searchResults.style.display = 'block';
+                } catch (err) {
+                    console.error('[CraftBP] Search blueprints failed', err);
+                }
+            }, 200);
+        });
+
+        if (clearSearchBtn) {
+            clearSearchBtn.addEventListener('click', () => {
+                searchInput.value = '';
+                clearSearchBtn.classList.add('d-none');
+                if (searchResults) {
+                    searchResults.style.display = 'none';
+                    searchResults.innerHTML = '';
+                }
+            });
+        }
+    }
+
+    if (searchResults) {
+        searchResults.addEventListener('click', (e) => {
+            const itemEl = e.target.closest('.basket-search-result-item');
+            if (itemEl) {
+                e.preventDefault();
+                const bpId = Number(itemEl.dataset.bpId);
+                const bpName = itemEl.dataset.bpName;
+                const prodId = Number(itemEl.dataset.prodId) || undefined;
+                const bpIcon = itemEl.dataset.bpIcon;
+                const prodIcon = itemEl.dataset.prodIcon;
+                addBasketProduct({
+                    blueprint_type_id: bpId,
+                    blueprint_name: bpName,
+                    runs: 1,
+                    product_type_id: prodId,
+                    blueprint_icon_url: bpIcon,
+                    product_icon_url: prodIcon,
+                });
+                if (searchInput) searchInput.value = '';
+                if (clearSearchBtn) clearSearchBtn.classList.add('d-none');
+                searchResults.style.display = 'none';
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!searchResults.contains(e.target) && e.target !== searchInput) {
+                searchResults.style.display = 'none';
+            }
+        });
+    }
+
+    // Basket item container delegated events
+    const basketContainer = document.getElementById('basketItemsContainer');
+    if (basketContainer) {
+        basketContainer.addEventListener('click', (e) => {
+            const decBtn = e.target.closest('.basket-item-decrement');
+            if (decBtn) {
+                const idx = Number(decBtn.dataset.index);
+                const prod = CRAFT_BASKET_STATE.products[idx];
+                if (prod) {
+                    updateBasketProductRuns(idx, Math.max(1, prod.runs - 1));
+                }
+                return;
+            }
+            const incBtn = e.target.closest('.basket-item-increment');
+            if (incBtn) {
+                const idx = Number(incBtn.dataset.index);
+                const prod = CRAFT_BASKET_STATE.products[idx];
+                if (prod) {
+                    updateBasketProductRuns(idx, Math.min(1000000, prod.runs + 1));
+                }
+                return;
+            }
+            const dupBtn = e.target.closest('.basket-item-duplicate');
+            if (dupBtn) {
+                const idx = Number(dupBtn.dataset.index);
+                duplicateBasketProduct(idx);
+                return;
+            }
+            const remBtn = e.target.closest('.basket-item-remove');
+            if (remBtn) {
+                const idx = Number(remBtn.dataset.index);
+                removeBasketProduct(idx);
+                return;
+            }
+        });
+
+        basketContainer.addEventListener('change', (e) => {
+            const runsInput = e.target.closest('.basket-item-runs-input');
+            if (runsInput) {
+                const idx = Number(runsInput.dataset.index);
+                updateBasketProductRuns(idx, runsInput.value);
+            }
+        });
+    }
+
+    // Batch multiplier buttons
+    document.querySelectorAll('.basket-multiplier-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mult = btn.dataset.multiplier;
+            applyBasketBatchMultiplier(mult);
+        });
+    });
 }
 
 function formatInteger(value) {
@@ -1646,6 +2081,7 @@ function collectFullUiState() {
         version: CRAFT_FULL_UI_STATE_VERSION,
         blueprintTab: getActiveBlueprintTabId(),
         craftMainTab: getActiveCraftMainTabName(),
+        products: getBasketProducts(),
         staticInputs: collectStaticCraftInputState(),
         configure: (typeof getCurrentMETEConfig === 'function') ? cloneCraftUiJsonValue(getCurrentMETEConfig(), {}) : {},
         buyTypeIds: (typeof getCurrentBuyCraftDecisions === 'function') ? getCurrentBuyCraftDecisions() : [],
@@ -1790,6 +2226,12 @@ function collectCraftShareState() {
         blueprint_type_id: Math.floor(Number(getCurrentBlueprintTypeId()) || 0),
         runs: Math.max(1, Math.min(CRAFT_SHARE_MAX_RUNS, Math.floor(Number(staticInputs.runs || document.getElementById('runsInput')?.value) || 1))),
         tab: CRAFT_SHARE_TABS.includes(full.craftMainTab) ? full.craftMainTab : 'plan',
+        products: Array.isArray(full.products) ? full.products.map(p => ({
+            blueprint_type_id: Math.floor(Number(p.blueprint_type_id || p.type_id) || 0),
+            blueprint_name: String(p.blueprint_name || p.name || '').slice(0, 100),
+            runs: Math.max(1, Math.min(CRAFT_SHARE_MAX_RUNS, Math.floor(Number(p.runs) || 1))),
+            product_type_id: p.product_type_id ? Math.floor(Number(p.product_type_id) || 0) : undefined,
+        })).filter(p => p.blueprint_type_id > 0) : undefined,
         buy: Array.isArray(full.buyTypeIds) ? full.buyTypeIds.map((id) => Math.floor(Number(id))).filter((id) => id > 0) : [],
         me_te: collectShareableMeTe(configure),
         prices: sanitizeSharedPrices(full.customPrices),
@@ -1833,6 +2275,14 @@ function decodeCraftShareState(encoded) {
         // link is normalized, never trusted.
         state.runs = Math.max(1, Math.min(CRAFT_SHARE_MAX_RUNS, Math.floor(Number(state.runs) || 1)));
         state.tab = CRAFT_SHARE_TABS.includes(state.tab) ? state.tab : 'plan';
+        if (Array.isArray(state.products)) {
+            state.products = state.products.map((p) => ({
+                blueprint_type_id: Math.floor(Number(p.blueprint_type_id || p.type_id) || 0),
+                blueprint_name: String(p.blueprint_name || p.name || '').slice(0, 100),
+                runs: Math.max(1, Math.min(CRAFT_SHARE_MAX_RUNS, Math.floor(Number(p.runs) || 1))),
+                product_type_id: p.product_type_id ? Math.floor(Number(p.product_type_id) || 0) : undefined,
+            })).filter((p) => p.blueprint_type_id > 0);
+        }
         state.buy = Array.isArray(state.buy) ? state.buy.filter((id) => Number.isInteger(id) && id > 0).slice(0, 5000) : [];
         state.prices = sanitizeSharedPrices(state.prices);
         state.inputs = sanitizeShareableInputs(state.inputs);
@@ -1953,6 +2403,7 @@ function restoreCraftShareState() {
     // viewer's own, from their preferences and inventory.
     applyFullUiState({
         staticInputs: [{ id: 'runsInput', value: String(state.runs) }, ...state.inputs],
+        products: state.products || undefined,
         buyTypeIds: state.buy,
         craftMainTab: state.tab,
         configure: state.me_te || undefined,
@@ -1977,6 +2428,9 @@ function applyFullUiState(snapshot, options = {}) {
     CRAFT_FULL_UI_STATE.restoreInProgress = true;
 
     try {
+        if (Array.isArray(snapshot.products) && snapshot.products.length > 0) {
+            setBasketProducts(snapshot.products, { triggerRefresh: false });
+        }
         applyStaticCraftInputState(snapshot.staticInputs);
         if (typeof updateBuildScheduleModeControls === 'function') {
             updateBuildScheduleModeControls();
@@ -2312,6 +2766,7 @@ document.addEventListener('DOMContentLoaded', function() {
         updateBuildTabFromState();
     }
     // Financial calculations will be initialized via CraftBP.init()
+    initBasketToolbar();
 });
 
 /**
@@ -6809,7 +7264,12 @@ function collectLiveCraftPayloadMeTeOverrides() {
 }
 
 function buildLiveCraftPayloadRequest() {
-    const endpoint = String(window.BLUEPRINT_DATA?.urls?.craft_bp_payload || '').trim();
+    const isMultiProduct = Array.isArray(CRAFT_BASKET_STATE.products) && CRAFT_BASKET_STATE.products.length > 0;
+    const endpoint = String(
+        (isMultiProduct && window.BLUEPRINT_DATA?.urls?.craft_bp_payload_multi)
+        || window.BLUEPRINT_DATA?.urls?.craft_bp_payload
+        || '/indy_hub/api/craft-bp-payload/'
+    ).trim();
     if (!endpoint) {
         return null;
     }
@@ -6818,10 +7278,18 @@ function buildLiveCraftPayloadRequest() {
     const root = getLiveCraftPayloadRequestRootMeTe();
     const overrides = collectLiveCraftPayloadMeTeOverrides();
     const buildEnvironment = getBuildEnvironmentFromDom();
+    const basketProducts = isMultiProduct ? CRAFT_BASKET_STATE.products.map((p) => ({
+        blueprint_type_id: Number(p.blueprint_type_id || p.type_id),
+        blueprint_name: String(p.blueprint_name || p.name || ''),
+        runs: Math.max(1, Number(p.runs) || 1),
+        product_type_id: p.product_type_id ? Number(p.product_type_id) : undefined,
+    })) : [];
+
     const signature = JSON.stringify({
         runs: runsValue,
         me: root.me,
         te: root.te,
+        products: basketProducts,
         overrides,
         buildEnvironment: {
             structureType: String(buildEnvironment?.structureType || 'none').trim().toLowerCase(),
@@ -6836,6 +7304,9 @@ function buildLiveCraftPayloadRequest() {
     requestUrl.searchParams.set('runs', String(runsValue));
     requestUrl.searchParams.set('me', String(root.me));
     requestUrl.searchParams.set('te', String(root.te));
+    if (basketProducts.length > 0) {
+        requestUrl.searchParams.set('products', JSON.stringify(basketProducts));
+    }
     if (buildEnvironment && typeof buildEnvironment === 'object') {
         const structureType = String(buildEnvironment.structureType || 'none').trim().toLowerCase();
         if (structureType && structureType !== 'none') {
@@ -6894,11 +7365,18 @@ function applyLiveCraftPayload(payload) {
         'final_product_qty',
         'materials_tree',
         'recipe_map',
+        'products',
+        'price_estimates',
     ].forEach((key) => {
         if (Object.prototype.hasOwnProperty.call(payload, key)) {
             target[key] = payload[key];
         }
     });
+
+    if (Array.isArray(payload.products) && payload.products.length > 0) {
+        syncBasketFromPayloadProducts(payload.products);
+    }
+    renderPerProductBreakdown();
 }
 
 async function refreshLiveCraftPayloadFromConfigure({ force = false } = {}) {

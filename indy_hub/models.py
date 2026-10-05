@@ -1997,8 +1997,8 @@ class ProductionSimulation(models.Model):
     """
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
-    blueprint_type_id = models.BigIntegerField()
-    blueprint_name = models.CharField(max_length=255)
+    blueprint_type_id = models.BigIntegerField(null=True, blank=True)
+    blueprint_name = models.CharField(max_length=255, blank=True, default="")
     runs = models.IntegerField(default=1)
     simulation_name = models.CharField(max_length=255, blank=True)
     # NULL (not "") for unnamed simulations: every backend treats NULLs as
@@ -2039,7 +2039,7 @@ class ProductionSimulation(models.Model):
         ]
 
     def __str__(self):
-        name = self.simulation_name or f"{self.blueprint_name} x{self.runs}"
+        name = self.simulation_name or self.display_name
         return f"{self.user.username} - {name}"
 
     @staticmethod
@@ -2067,9 +2067,52 @@ class ProductionSimulation(models.Model):
 
     @property
     def display_name(self):
+        products = list(self.products.all())
+        product_count = len(products)
+        if product_count > 1:
+            total_runs = sum(p.runs for p in products)
+            summary = f"{product_count} products, {total_runs} runs"
+            if self.simulation_name:
+                return f"{self.simulation_name} ({summary})"
+            return f"Multi-product Batch ({summary})"
+        elif product_count == 1:
+            prod = products[0]
+            bp_name = prod.blueprint_name or self.blueprint_name or "Blueprint"
+            r = prod.runs
+            if self.simulation_name:
+                return f"{self.simulation_name} ({bp_name} x{r})"
+            return f"{bp_name} x{r}"
+
+        # Fallback if no ProductionSimulationProduct rows exist (e.g. legacy in-memory)
+        bp_label = self.blueprint_name or (
+            f"Blueprint {self.blueprint_type_id}" if self.blueprint_type_id else "Simulation"
+        )
         if self.simulation_name:
-            return f"{self.simulation_name} ({self.blueprint_name} x{self.runs})"
-        return f"{self.blueprint_name} x{self.runs}"
+            return f"{self.simulation_name} ({bp_label} x{self.runs})"
+        return f"{bp_label} x{self.runs}"
+
+    def get_products(self):
+        """Return every product associated with this simulation in display order."""
+        prods = list(self.products.all())
+        if not prods and self.blueprint_type_id:
+            return [
+                ProductionSimulationProduct(
+                    simulation=self,
+                    blueprint_type_id=self.blueprint_type_id,
+                    blueprint_name=self.blueprint_name or get_type_name(self.blueprint_type_id) or "Blueprint",
+                    runs=self.runs or 1,
+                    sort_order=0,
+                )
+            ]
+        return prods
+
+    @property
+    def total_runs_count(self) -> int:
+        """Return total runs across all products, falling back to simulation.runs."""
+        products = list(self.products.all())
+        if products:
+            return sum(p.runs for p in products)
+        return self.runs or 0
 
     def get_production_configs(self):
         """Return every Prod/Buy/Useless configuration for this simulation."""
@@ -2091,12 +2134,17 @@ class ProductionSimulation(models.Model):
     @property
     def product_type_id(self) -> int | None:
         """Return the likely manufactured item type id for icon display."""
-        product_id = get_blueprint_product_type_id(self.blueprint_type_id)
-        if product_id:
-            return product_id
-        if self.blueprint_type_id:
+        bp_id = self.blueprint_type_id
+        if not bp_id:
+            first_product = self.products.first()
+            if first_product:
+                bp_id = first_product.blueprint_type_id
+        if bp_id:
+            product_id = get_blueprint_product_type_id(bp_id)
+            if product_id:
+                return product_id
             try:
-                return int(self.blueprint_type_id)
+                return int(bp_id)
             except (TypeError, ValueError):
                 return None
         return None
@@ -2112,10 +2160,15 @@ class ProductionSimulation(models.Model):
     @property
     def blueprint_icon_url(self) -> str | None:
         """Return the blueprint icon URL for fallback display."""
-        if not self.blueprint_type_id:
+        bp_id = self.blueprint_type_id
+        if not bp_id:
+            first_product = self.products.first()
+            if first_product:
+                bp_id = first_product.blueprint_type_id
+        if not bp_id:
             return None
         return (
-            f"https://images.evetech.net/types/{int(self.blueprint_type_id)}/bp?size=32"
+            f"https://images.evetech.net/types/{int(bp_id)}/bp?size=32"
         )
 
     @property
@@ -2124,6 +2177,62 @@ class ProductionSimulation(models.Model):
         if self.estimated_revenue > 0:
             return float((self.estimated_profit / self.estimated_revenue) * 100)
         return 0.0
+
+
+class ProductionSimulationProduct(models.Model):
+    """
+    An individual product blueprint with independent runs inside a multi-product simulation.
+    """
+
+    simulation = models.ForeignKey(
+        ProductionSimulation,
+        on_delete=models.CASCADE,
+        related_name="products",
+    )
+    blueprint_type_id = models.BigIntegerField()
+    blueprint_name = models.CharField(max_length=255)
+    runs = models.IntegerField(default=1)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        default_permissions = ()
+        ordering = ["sort_order", "id"]
+        indexes = [
+            models.Index(fields=["simulation", "sort_order"]),
+            models.Index(fields=["blueprint_type_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.blueprint_name} x{self.runs} (Sim #{self.simulation_id})"
+
+    @property
+    def product_type_id(self) -> int | None:
+        """Return the likely manufactured item type id for icon display."""
+        product_id = get_blueprint_product_type_id(self.blueprint_type_id)
+        if product_id:
+            return product_id
+        if self.blueprint_type_id:
+            try:
+                return int(self.blueprint_type_id)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    @property
+    def product_icon_url(self) -> str | None:
+        """Return the product render URL if available."""
+        type_id = self.product_type_id
+        if not type_id:
+            return None
+        return f"https://images.evetech.net/types/{type_id}/render?size=32"
+
+    @property
+    def blueprint_icon_url(self) -> str | None:
+        """Return the blueprint icon URL for fallback display."""
+        if not self.blueprint_type_id:
+            return None
+        return f"https://images.evetech.net/types/{int(self.blueprint_type_id)}/bp?size=32"
 
 
 class ProductionSimulationPreference(models.Model):

@@ -23,6 +23,7 @@ from .views.api import (
     refresh_production_material_sources_status,
     refresh_production_schedule_tracking,
     save_production_config,
+    search_blueprints,
 )
 from .views.hubs import settings_hub, test_darkly_theme
 from .views.industry import (
@@ -320,6 +321,12 @@ urlpatterns = [
     ),
     path(
         "api/craft-bp-payload/<int:type_id>/", craft_bp_payload, name="craft_bp_payload"
+    ),
+    path(
+        "api/craft-bp-payload/", craft_bp_payload, name="craft_bp_payload_multi"
+    ),
+    path(
+        "api/search-blueprints/", search_blueprints, name="search_blueprints"
     ),
     path(
         "api/production-config/save/",

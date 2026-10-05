@@ -35,8 +35,12 @@ from ..models import (
     ProductionConfig,
     ProductionSimulation,
     ProductionSimulationPreference,
+    ProductionSimulationProduct,
 )
-from ..services.craft_materials import calculate_job_material_quantity
+from ..services.craft_materials import (
+    build_multi_product_materials_tree,
+    calculate_job_material_quantity,
+)
 from ..services.everef import (
     EVERefError,
     fetch_industry_cost,
@@ -412,15 +416,25 @@ def menu_badge_count(request):
     return JsonResponse({"count": int(count or 0)})
 
 
-@indy_hub_access_required
-@indy_hub_permission_required("can_access_indy_hub")
-@login_required
-@require_http_methods(["GET"])
-def _collect_payload_type_ids(materials_tree, product_type_id) -> set[int]:
-    """Every type in the tree plus the final product."""
+def _collect_payload_type_ids(materials_tree, product_type_ids=None) -> set[int]:
+    """Every type in the tree plus the final products."""
     collected: set[int] = set()
-    if product_type_id:
-        collected.add(int(product_type_id))
+    if product_type_ids:
+        if isinstance(product_type_ids, (list, set, tuple)):
+            for pt in product_type_ids:
+                try:
+                    pt_int = int(pt)
+                    if pt_int > 0:
+                        collected.add(pt_int)
+                except (TypeError, ValueError):
+                    pass
+        else:
+            try:
+                pt_int = int(product_type_ids)
+                if pt_int > 0:
+                    collected.add(pt_int)
+            except (TypeError, ValueError):
+                pass
 
     def walk(nodes):
         for node in nodes or []:
@@ -439,11 +453,15 @@ def _collect_payload_type_ids(materials_tree, product_type_id) -> set[int]:
     return collected
 
 
-def craft_bp_payload(request, type_id: int):
-    """Return the craft blueprint payload as JSON for a given number of runs.
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET", "POST"])
+def craft_bp_payload(request, type_id: int | None = None):
+    """Return the craft blueprint payload as JSON for a single blueprint or multi-product manifest.
 
-    This is used by the V2 UI to simulate profitability across multiple run counts
-    while allowing buy/prod decisions to change with cycle rounding effects.
+    This is used by the V2 UI to simulate profitability across single or multiple products,
+    pooling intermediate components and calculating shared manufacturing cycles.
     """
     emit_view_analytics_event(view_name="api.craft_bp_payload", request=request)
 
@@ -453,26 +471,39 @@ def craft_bp_payload(request, type_id: int):
         "yes",
     } or str(request.GET.get("debug", "")).strip() in {"1", "true", "yes"}
 
+    # Parse request data (support GET query params and POST JSON bodies)
+    body_data: dict[str, object] = {}
+    if request.method == "POST" and request.body:
+        try:
+            body_data = json.loads(request.body)
+        except json.JSONDecodeError:
+            body_data = {}
+
     try:
-        num_runs = max(1, int(request.GET.get("runs", 1)))
+        num_runs = max(1, int(request.GET.get("runs") or body_data.get("runs") or 1))
     except (TypeError, ValueError):
         num_runs = 1
 
     try:
-        me = int(request.GET.get("me", 0) or 0)
+        me = int(request.GET.get("me") or body_data.get("me") or 0)
     except (TypeError, ValueError):
         me = 0
     try:
-        te = int(request.GET.get("te", 0) or 0)
+        te = int(request.GET.get("te") or body_data.get("te") or 0)
     except (TypeError, ValueError):
         te = 0
 
     structure_bonus_raw = _parse_optional_float(
         request.GET.get("build_structure_material_bonus")
+        or body_data.get("build_structure_material_bonus")
     )
-    rig_bonus_raw = _parse_optional_float(request.GET.get("build_rig_material_bonus"))
+    rig_bonus_raw = _parse_optional_float(
+        request.GET.get("build_rig_material_bonus")
+        or body_data.get("build_rig_material_bonus")
+    )
     effective_bonus_raw = _parse_optional_float(
         request.GET.get("build_effective_material_bonus")
+        or body_data.get("build_effective_material_bonus")
     )
     structure_bonus = max(0.0, min(1.0, float(structure_bonus_raw or 0.0)))
     rig_bonus = max(0.0, min(1.0, float(rig_bonus_raw or 0.0)))
@@ -481,7 +512,7 @@ def craft_bp_payload(request, type_id: int):
     else:
         effective_material_bonus = max(0.0, min(1.0, float(effective_bonus_raw)))
 
-    # Parse per-blueprint ME/TE overrides: me_<bpTypeId>, te_<bpTypeId>
+    # Parse per-blueprint ME/TE overrides: me_<bpTypeId>, te_<bpTypeId>, or blueprint_efficiencies list
     me_te_configs: dict[int, dict[str, int]] = {}
     for key, value in request.GET.items():
         if not value:
@@ -501,233 +532,117 @@ def craft_bp_payload(request, type_id: int):
             except (ValueError, TypeError):
                 continue
 
-    # Final product and output qty per run.
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            SELECT product_eve_type_id, quantity
-            FROM indy_hub_sdeindustryactivityproduct
-            WHERE eve_type_id = %s AND activity_id IN (1, 11)
-            LIMIT 1
-            """,
-            [type_id],
-        )
-        product_row = cursor.fetchone()
-
-    product_type_id = product_row[0] if product_row else None
-    output_qty_per_run = product_row[1] if product_row and len(product_row) > 1 else 1
-    final_product_qty = (output_qty_per_run or 1) * num_runs
-
-    debug_info: dict[str, object] = {}
-    if debug_enabled:
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM indy_hub_sdeindustryactivitymaterial
-                    WHERE eve_type_id = %s AND activity_id IN (1, 11)
-                    """,
-                    [type_id],
+    for eff in (body_data.get("blueprint_efficiencies") or body_data.get("me_te_configs") or []):
+        if isinstance(eff, dict):
+            bp_t_id = int(eff.get("blueprint_type_id") or 0)
+            if bp_t_id > 0:
+                me_te_configs.setdefault(bp_t_id, {})["me"] = int(
+                    eff.get("material_efficiency") or eff.get("me") or 0
                 )
-                mats_count = int(cursor.fetchone()[0])
-            debug_info = {
-                "db_vendor": connection.vendor,
-                "requested_type_id": int(type_id),
-                "num_runs": int(num_runs),
-                "me": int(me),
-                "te": int(te),
-                "me_te_configs_count": int(len(me_te_configs)),
-                "product_row_found": bool(product_row),
-                "product_type_id": int(product_type_id) if product_type_id else None,
-                "output_qty_per_run": int(output_qty_per_run or 1),
-                "top_level_material_rows": mats_count,
-                "build_structure_material_bonus": float(structure_bonus),
-                "build_rig_material_bonus": float(rig_bonus),
-                "build_effective_material_bonus": float(effective_material_bonus),
-            }
-        except Exception as e:
-            debug_info = {
-                "debug_error": f"{type(e).__name__}: {str(e)}",
-            }
+                me_te_configs.setdefault(bp_t_id, {})["te"] = int(
+                    eff.get("time_efficiency") or eff.get("te") or 0
+                )
 
-    # Exact per-cycle recipes for craftable items (keyed by product type_id).
-    # This avoids approximating recipes from tree occurrences in the frontend.
-    recipe_map: dict[int, dict[str, object]] = {}
-    recipe_cache: dict[tuple[int, int], dict[str, object]] = {}
+    # Parse products manifest
+    products_manifest: list[dict] = []
+    raw_products = body_data.get("products")
+    if not raw_products and "products" in request.GET:
+        raw_products_param = request.GET.get("products", "").strip()
+        if raw_products_param:
+            try:
+                raw_products = json.loads(raw_products_param)
+            except json.JSONDecodeError:
+                raw_products = None
 
-    def get_materials_tree(
-        bp_id,
-        runs,
-        blueprint_me=0,
-        depth=0,
-        max_depth=10,
-        seen=None,
-        me_te_map=None,
-    ):
-        if seen is None:
-            seen = set()
-        if me_te_map is None:
-            me_te_map = {}
-        if depth > max_depth or bp_id in seen:
-            return []
-        seen.add(bp_id)
+    if isinstance(raw_products, list) and raw_products:
+        for p in raw_products:
+            if isinstance(p, dict):
+                p_bp_id = int(p.get("blueprint_type_id") or p.get("type_id") or 0)
+                if p_bp_id > 0:
+                    p_runs = max(1, int(p.get("runs", 1) or 1))
+                    p_me = int(
+                        p.get("me")
+                        if p.get("me") is not None
+                        else me_te_configs.get(p_bp_id, {}).get("me", me)
+                    )
+                    p_te = int(
+                        p.get("te")
+                        if p.get("te") is not None
+                        else me_te_configs.get(p_bp_id, {}).get("te", te)
+                    )
+                    products_manifest.append(
+                        {
+                            "blueprint_type_id": p_bp_id,
+                            "blueprint_name": p.get("blueprint_name", ""),
+                            "runs": p_runs,
+                            "me": p_me,
+                            "te": p_te,
+                            "sort_order": int(p.get("sort_order", len(products_manifest))),
+                        }
+                    )
 
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT m.material_eve_type_id, t.name, m.quantity
-                FROM indy_hub_sdeindustryactivitymaterial m
-                JOIN eve_sde_itemtype t ON m.material_eve_type_id = t.id
-                WHERE m.eve_type_id = %s AND m.activity_id IN (1, 11)
-                """,
-                [bp_id],
+    # Fallback to single product from URL / query params
+    if not products_manifest and type_id:
+        p_bp_id = int(type_id)
+        if p_bp_id > 0:
+            products_manifest.append(
+                {
+                    "blueprint_type_id": p_bp_id,
+                    "runs": num_runs,
+                    "me": me,
+                    "te": te,
+                    "sort_order": 0,
+                }
             )
 
-            mats = []
-            for row in cursor.fetchall():
-                base_per_run_qty = int(row[2] or 0)
-                base_total_qty = int(base_per_run_qty) * int(runs)
-                qty = calculate_job_material_quantity(
-                    base_per_run_qty,
-                    runs,
-                    material_efficiency=blueprint_me,
-                    structure_bonus=structure_bonus,
-                    rig_bonus=rig_bonus,
-                )
-                mat = {
-                    "type_id": row[0],
-                    "type_name": get_type_name(row[0]),
-                    "quantity": qty,
-                    "quantity_default": base_total_qty,
-                    "cycles": None,
-                    "produced_per_cycle": None,
-                    "total_produced": None,
-                    "surplus": None,
-                }
+    if not products_manifest:
+        return JsonResponse(
+            {"error": "No valid products or blueprint type_id provided"}, status=400
+        )
 
-                # If craftable, compute cycles + recurse.
-                with connection.cursor() as sub_cursor:
-                    sub_cursor.execute(
-                        """
-                        SELECT eve_type_id
-                        FROM indy_hub_sdeindustryactivityproduct
-                        WHERE product_eve_type_id = %s AND activity_id IN (1, 11)
-                        LIMIT 1
-                        """,
-                        [mat["type_id"]],
-                    )
-                    sub_bp_row = sub_cursor.fetchone()
+    # Set root blueprint ME/TE in me_te_configs if not already present
+    for p in products_manifest:
+        bp_t_id = p["blueprint_type_id"]
+        me_te_configs.setdefault(bp_t_id, {})
+        if "me" not in me_te_configs[bp_t_id]:
+            me_te_configs[bp_t_id]["me"] = p["me"]
+        if "te" not in me_te_configs[bp_t_id]:
+            me_te_configs[bp_t_id]["te"] = p["te"]
 
-                    if sub_bp_row:
-                        sub_bp_id = sub_bp_row[0]
-                        sub_cursor.execute(
-                            """
-                            SELECT quantity
-                            FROM indy_hub_sdeindustryactivityproduct
-                            WHERE eve_type_id = %s AND activity_id IN (1, 11)
-                            LIMIT 1
-                            """,
-                            [sub_bp_id],
-                        )
-                        prod_qty_row = sub_cursor.fetchone()
-                        output_qty = prod_qty_row[0] if prod_qty_row else 1
-                        cycles = ceil(mat["quantity"] / output_qty)
-                        total_produced = cycles * output_qty
-                        surplus = total_produced - mat["quantity"]
-                        mat["cycles"] = cycles
-                        mat["produced_per_cycle"] = output_qty
-                        mat["total_produced"] = total_produced
-                        mat["surplus"] = surplus
-
-                        sub_bp_config = (me_te_map or {}).get(sub_bp_id, {})
-                        sub_bp_me = sub_bp_config.get("me", 0)
-
-                        # Build exact per-cycle recipe for this craftable output (mat["type_id"]).
-                        # Cache by (blueprint_id, blueprint_me) because ME changes the rounded per-cycle quantities.
-                        cache_key = (int(sub_bp_id), int(sub_bp_me))
-                        if cache_key not in recipe_cache:
-                            with connection.cursor() as recipe_cursor:
-                                recipe_cursor.execute(
-                                    """
-                                    SELECT material_eve_type_id, quantity
-                                    FROM indy_hub_sdeindustryactivitymaterial
-                                    WHERE eve_type_id = %s AND activity_id IN (1, 11)
-                                    """,
-                                    [sub_bp_id],
-                                )
-                                inputs = []
-                                for (
-                                    mat_type_id,
-                                    base_qty_per_cycle,
-                                ) in recipe_cursor.fetchall():
-                                    qty_per_cycle = calculate_job_material_quantity(
-                                        base_qty_per_cycle or 0,
-                                        1,
-                                        material_efficiency=sub_bp_me,
-                                        structure_bonus=structure_bonus,
-                                        rig_bonus=rig_bonus,
-                                    )
-                                    if qty_per_cycle <= 0:
-                                        continue
-                                    inputs.append(
-                                        {
-                                            "type_id": int(mat_type_id),
-                                            "quantity": int(qty_per_cycle),
-                                        }
-                                    )
-                            recipe_cache[cache_key] = {
-                                "produced_per_cycle": int(output_qty or 1),
-                                "inputs_per_cycle": inputs,
-                            }
-
-                        # Key recipe map by produced item type_id (not blueprint id)
-                        produced_type_id = int(mat["type_id"])
-                        if produced_type_id not in recipe_map:
-                            recipe_map[produced_type_id] = recipe_cache[cache_key]
-
-                        mat["sub_materials"] = get_materials_tree(
-                            sub_bp_id,
-                            cycles,
-                            sub_bp_me,
-                            depth + 1,
-                            max_depth,
-                            seen.copy(),
-                            me_te_map,
-                        )
-                    else:
-                        mat["sub_materials"] = []
-
-                mats.append(mat)
-            return mats
-
-    materials_tree = get_materials_tree(type_id, num_runs, me, me_te_map=me_te_configs)
-
-    payload = {
-        "type_id": type_id,
-        "bp_type_id": type_id,
-        "num_runs": num_runs,
-        "me": me,
-        "te": te,
-        "product_type_id": product_type_id,
-        "output_qty_per_run": output_qty_per_run,
-        "final_product_qty": final_product_qty,
-        "materials_tree": _to_serializable(materials_tree),
-        "recipe_map": _to_serializable(recipe_map),
-    }
-
-    # Derived fallbacks for items with no usable market price. These sit below
-    # the market estimate in the client's price precedence and never displace a
-    # user-entered real price; provenance travels with them so the Buy tab can
-    # say where the number came from and how old it is.
-    payload["price_estimates"] = capital_estimates_for_types(
-        _collect_payload_type_ids(materials_tree, product_type_id)
+    # Calculate BOM
+    payload = build_multi_product_materials_tree(
+        products_manifest,
+        me_te_map=me_te_configs,
+        structure_bonus=structure_bonus,
+        rig_bonus=rig_bonus,
+        effective_material_bonus=effective_material_bonus,
     )
 
-    if debug_enabled:
-        payload["_debug"] = _to_serializable(debug_info)
+    # Collect all type IDs across tree and products
+    all_product_type_ids = [
+        int(p["product_type_id"])
+        for p in payload.get("products", [])
+        if p.get("product_type_id")
+    ]
+    collected_type_ids = _collect_payload_type_ids(
+        payload.get("materials_tree", []),
+        all_product_type_ids,
+    )
 
-    return JsonResponse(payload)
+    payload["price_estimates"] = capital_estimates_for_types(collected_type_ids)
+
+    if debug_enabled:
+        payload["_debug"] = _to_serializable(
+            {
+                "products_manifest_count": len(products_manifest),
+                "structure_bonus": float(structure_bonus),
+                "rig_bonus": float(rig_bonus),
+                "effective_material_bonus": float(effective_material_bonus),
+                "collected_type_ids_count": len(collected_type_ids),
+            }
+        )
+
+    return JsonResponse(_to_serializable(payload))
 
 
 @indy_hub_access_required
@@ -1256,35 +1171,64 @@ def save_production_config(request):
     """
     Save complete production configuration to database.
 
-    Expected JSON payload:
-    {
-        "blueprint_type_id": 12345,
-        "blueprint_name": "Some Blueprint",
-        "runs": 1,
-        "simulation_name": "My Config",
-        "active_tab": "materials",
-        "items": [
-            {"type_id": 11111, "mode": "prod", "quantity": 100},
-            {"type_id": 22222, "mode": "buy", "quantity": 50}
-        ],
-        "blueprint_efficiencies": [
-            {"blueprint_type_id": 12345, "material_efficiency": 10, "time_efficiency": 20}
-        ],
-        "custom_prices": [
-            {"item_type_id": 11111, "unit_price": 1000.0, "is_sale_price": false},
-            {"item_type_id": 99999, "unit_price": 50000.0, "is_sale_price": true}
-        ],
-        "estimated_cost": 125000.0,
-        "estimated_revenue": 175000.0,
-        "estimated_profit": 50000.0
-    }
+    Supports both single-blueprint configurations and multi-product manifests.
     """
     try:
         data = json.loads(request.body)
+        raw_products = data.get("products")
+        if not raw_products and isinstance(data.get("ui_state"), dict):
+            raw_products = data.get("ui_state", {}).get("products")
+
+        products_to_save: list[dict] = []
+        if isinstance(raw_products, list) and raw_products:
+            for idx, p in enumerate(raw_products):
+                if isinstance(p, dict):
+                    bp_id = int(p.get("blueprint_type_id") or p.get("type_id") or 0)
+                    if bp_id > 0:
+                        p_runs = max(1, int(p.get("runs", 1) or 1))
+                        bp_name = (
+                            p.get("blueprint_name")
+                            or get_type_name(bp_id)
+                            or f"Blueprint {bp_id}"
+                        )
+                        sort_order = int(p.get("sort_order", idx) or idx)
+                        products_to_save.append(
+                            {
+                                "blueprint_type_id": bp_id,
+                                "blueprint_name": bp_name,
+                                "runs": p_runs,
+                                "sort_order": sort_order,
+                            }
+                        )
+
         blueprint_type_id = data.get("blueprint_type_id")
+        if not blueprint_type_id and products_to_save:
+            blueprint_type_id = products_to_save[0]["blueprint_type_id"]
+
+        if not blueprint_type_id and not products_to_save:
+            return JsonResponse({"error": "blueprint_type_id is required"}, status=400)
+
         runs = int(data.get("runs", 1) or 1)
+        if products_to_save and "runs" not in data:
+            runs = sum(p["runs"] for p in products_to_save)
         if runs < 1:
             runs = 1
+
+        if not products_to_save and blueprint_type_id:
+            bp_id = int(blueprint_type_id)
+            bp_name = (
+                data.get("blueprint_name")
+                or get_type_name(bp_id)
+                or f"Blueprint {bp_id}"
+            )
+            products_to_save.append(
+                {
+                    "blueprint_type_id": bp_id,
+                    "blueprint_name": bp_name,
+                    "runs": runs,
+                    "sort_order": 0,
+                }
+            )
 
         simulation_id_raw = data.get("simulation_id")
         simulation_id = None
@@ -1295,9 +1239,6 @@ def save_production_config(request):
                 return JsonResponse(
                     {"error": "simulation_id must be an integer"}, status=400
                 )
-
-        if not blueprint_type_id:
-            return JsonResponse({"error": "blueprint_type_id is required"}, status=400)
 
         simulation_name = " ".join(str(data.get("simulation_name", "")).split())
         with transaction.atomic():
@@ -1316,17 +1257,17 @@ def save_production_config(request):
                 )
                 if simulation is None:
                     return JsonResponse({"error": "simulation not found"}, status=404)
-                if int(simulation.blueprint_type_id) != int(blueprint_type_id):
-                    return JsonResponse(
-                        {"error": "simulation does not match blueprint_type_id"},
-                        status=400,
-                    )
             else:
                 simulation = ProductionSimulation(
                     user=request.user,
                     blueprint_type_id=blueprint_type_id,
                     blueprint_name=data.get(
-                        "blueprint_name", f"Blueprint {blueprint_type_id}"
+                        "blueprint_name",
+                        (
+                            products_to_save[0]["blueprint_name"]
+                            if products_to_save
+                            else f"Blueprint {blueprint_type_id}"
+                        ),
                     ),
                     runs=runs,
                     simulation_name=simulation_name,
@@ -1340,8 +1281,14 @@ def save_production_config(request):
 
             if not created:
                 # Update the existing simulation
+                simulation.blueprint_type_id = blueprint_type_id
                 simulation.blueprint_name = data.get(
-                    "blueprint_name", simulation.blueprint_name
+                    "blueprint_name",
+                    (
+                        products_to_save[0]["blueprint_name"]
+                        if products_to_save
+                        else simulation.blueprint_name
+                    ),
                 )
                 simulation.runs = runs
                 simulation.simulation_name = (
@@ -1358,10 +1305,27 @@ def save_production_config(request):
                 simulation.estimated_profit = data.get(
                     "estimated_profit", simulation.estimated_profit
                 )
+                simulation.save()
             else:
                 simulation.save()
 
-            # 1. Save the Prod/Buy/Useless configurations
+            # 1. Save child ProductionSimulationProduct records
+            ProductionSimulationProduct.objects.filter(simulation=simulation).delete()
+            sim_products = []
+            for p in products_to_save:
+                sim_products.append(
+                    ProductionSimulationProduct(
+                        simulation=simulation,
+                        blueprint_type_id=p["blueprint_type_id"],
+                        blueprint_name=p["blueprint_name"],
+                        runs=p["runs"],
+                        sort_order=p["sort_order"],
+                    )
+                )
+            if sim_products:
+                ProductionSimulationProduct.objects.bulk_create(sim_products)
+
+            # 2. Save the Prod/Buy/Useless configurations
             items = data.get("items", [])
             ProductionConfig.objects.filter(simulation=simulation).delete()
             configs = []
@@ -1369,11 +1333,11 @@ def save_production_config(request):
                 config = ProductionConfig(
                     user=request.user,
                     simulation=simulation,
-                    blueprint_type_id=blueprint_type_id,
+                    blueprint_type_id=item.get("blueprint_type_id") or blueprint_type_id or 0,
                     item_type_id=item["type_id"],
                     production_mode=item["mode"],
                     quantity_needed=item.get("quantity", 0),
-                    runs=runs,
+                    runs=item.get("runs") or runs,
                 )
                 configs.append(config)
             if configs:
@@ -1383,7 +1347,7 @@ def save_production_config(request):
             simulation.total_buy_items = len([i for i in items if i["mode"] == "buy"])
             simulation.total_prod_items = len([i for i in items if i["mode"] == "prod"])
 
-            # 2. Save the blueprint ME/TE efficiencies
+            # 3. Save the blueprint ME/TE efficiencies
             blueprint_efficiencies = data.get("blueprint_efficiencies", [])
             BlueprintEfficiency.objects.filter(simulation=simulation).delete()
             efficiencies = []
@@ -1399,7 +1363,7 @@ def save_production_config(request):
             if efficiencies:
                 BlueprintEfficiency.objects.bulk_create(efficiencies)
 
-            # 3. Save the custom prices
+            # 4. Save the custom prices
             custom_prices = data.get("custom_prices", [])
             CustomPrice.objects.filter(simulation=simulation).delete()
             deduped_prices: dict[tuple[int, bool], dict] = {}
@@ -1433,6 +1397,7 @@ def save_production_config(request):
                 "success": True,
                 "simulation_id": simulation.id,
                 "simulation_created": created,
+                "saved_products": len(sim_products),
                 "saved_items": len(items),
                 "saved_efficiencies": len(blueprint_efficiencies),
                 "saved_prices": len(prices),
@@ -1819,31 +1784,9 @@ def load_production_config(request):
     Load complete production configuration from database.
 
     Parameters:
-    - blueprint_type_id: Required
+    - simulation_id: Optional
+    - blueprint_type_id: Optional (required if simulation_id not provided)
     - runs: Optional (default 1)
-
-    Returns:
-    {
-        "blueprint_type_id": 12345,
-        "blueprint_name": "Some Blueprint",
-        "runs": 1,
-        "simulation_name": "My Config",
-        "active_tab": "materials",
-        "items": [
-            {"type_id": 11111, "mode": "prod", "quantity": 100},
-            {"type_id": 22222, "mode": "buy", "quantity": 50}
-        ],
-        "blueprint_efficiencies": [
-            {"blueprint_type_id": 12345, "material_efficiency": 10, "time_efficiency": 20}
-        ],
-        "custom_prices": [
-            {"item_type_id": 11111, "unit_price": 1000.0, "is_sale_price": false},
-            {"item_type_id": 99999, "unit_price": 50000.0, "is_sale_price": true}
-        ],
-        "estimated_cost": 125000.0,
-        "estimated_revenue": 175000.0,
-        "estimated_profit": 50000.0
-    }
     """
     simulation_id_param = request.GET.get("simulation_id")
     simulation_id = None
@@ -1878,17 +1821,32 @@ def load_production_config(request):
     try:
         simulation = None  # Load the simulation if it exists
         if simulation_id is not None:
-            simulation = ProductionSimulation.objects.filter(
-                user=request.user,
-                id=simulation_id,
-            ).first()
+            simulation = (
+                ProductionSimulation.objects.prefetch_related(
+                    "products",
+                    "production_configs",
+                    "blueprint_efficiencies",
+                    "custom_prices",
+                )
+                .filter(
+                    user=request.user,
+                    id=simulation_id,
+                )
+                .first()
+            )
             if simulation is None:
                 return JsonResponse({"error": "simulation not found"}, status=404)
-            blueprint_type_id = int(simulation.blueprint_type_id)
+            blueprint_type_id = simulation.blueprint_type_id
             runs = int(simulation.runs or runs)
         else:
             simulation = (
-                ProductionSimulation.objects.filter(
+                ProductionSimulation.objects.prefetch_related(
+                    "products",
+                    "production_configs",
+                    "blueprint_efficiencies",
+                    "custom_prices",
+                )
+                .filter(
                     user=request.user,
                     blueprint_type_id=blueprint_type_id,
                     runs=runs,
@@ -1897,9 +1855,27 @@ def load_production_config(request):
                 .first()
             )
 
+        products = []
+        if simulation:
+            for prod in simulation.get_products():
+                products.append(
+                    {
+                        "blueprint_type_id": prod.blueprint_type_id,
+                        "blueprint_name": prod.blueprint_name,
+                        "runs": prod.runs,
+                        "sort_order": prod.sort_order,
+                        "product_type_id": prod.product_type_id,
+                        "product_icon_url": prod.product_icon_url,
+                        "blueprint_icon_url": prod.blueprint_icon_url,
+                    }
+                )
+
+        if not blueprint_type_id and products:
+            blueprint_type_id = products[0]["blueprint_type_id"]
+
         items = []  # Step 1: production/buy/useless configurations
         if simulation:
-            configs = ProductionConfig.objects.filter(simulation=simulation)
+            configs = simulation.production_configs.all()
             for config in configs:
                 items.append(
                     {
@@ -1911,7 +1887,7 @@ def load_production_config(request):
 
         blueprint_efficiencies = []  # Step 2: blueprint ME/TE efficiencies
         if simulation:
-            efficiencies = BlueprintEfficiency.objects.filter(simulation=simulation)
+            efficiencies = simulation.blueprint_efficiencies.all()
             for eff in efficiencies:
                 blueprint_efficiencies.append(
                     {
@@ -1923,7 +1899,7 @@ def load_production_config(request):
 
         custom_prices = []  # Step 3: custom prices
         if simulation:
-            prices = CustomPrice.objects.filter(simulation=simulation)
+            prices = simulation.custom_prices.all()
             for price in prices:
                 custom_prices.append(
                     {
@@ -1934,8 +1910,9 @@ def load_production_config(request):
                 )
 
         response_data = {
-            "blueprint_type_id": int(blueprint_type_id),
+            "blueprint_type_id": int(blueprint_type_id) if blueprint_type_id else None,
             "runs": runs,
+            "products": products,
             "items": items,
             "blueprint_efficiencies": blueprint_efficiencies,
             "custom_prices": custom_prices,
@@ -1948,6 +1925,7 @@ def load_production_config(request):
                     "simulation_id": simulation.id,
                     "blueprint_name": simulation.blueprint_name,
                     "simulation_name": simulation.simulation_name,
+                    "display_name": simulation.display_name,
                     "active_tab": simulation.active_tab,
                     "estimated_cost": float(simulation.estimated_cost),
                     "estimated_revenue": float(simulation.estimated_revenue),
@@ -2348,6 +2326,64 @@ def calculate_build_schedule(request):
         jobs_data = data.get("jobs", [])
         slots_data = data.get("slots", [])
 
+        if not jobs_data and data.get("products"):
+            from ..services.craft_materials import build_multi_product_materials_tree
+
+            products_manifest = data.get("products", [])
+            me_te_map = data.get("me_te_map", {})
+            tree_data = build_multi_product_materials_tree(
+                products_manifest,
+                me_te_map=me_te_map,
+                structure_bonus=float(data.get("structure_time_bonus", 0.0)),
+                rig_bonus=float(data.get("rig_time_bonus", 0.0)),
+            )
+            jobs_data = []
+            for prod in tree_data.get("products", []):
+                prod_type_id = int(prod.get("product_type_id") or 0)
+                bp_type_id = int(prod.get("blueprint_type_id") or 0)
+                runs = int(prod.get("runs") or 1)
+                final_qty = int(prod.get("final_product_qty") or runs)
+                produced_per_run = int(prod.get("produced_per_run") or 1)
+                if prod_type_id > 0 and bp_type_id > 0:
+                    jobs_data.append(
+                        {
+                            "item_type_id": prod_type_id,
+                            "item_name": prod.get("name", f"Product {prod_type_id}"),
+                            "blueprint_type_id": bp_type_id,
+                            "quantity_needed": final_qty,
+                            "quantity_per_run": produced_per_run,
+                            "material_efficiency": int(prod.get("me") or 0),
+                            "time_efficiency": int(prod.get("te") or 0),
+                            "is_final_product": True,
+                        }
+                    )
+            for mat in tree_data.get("consolidated_materials", []):
+                if mat.get("is_craftable"):
+                    mat_type_id = int(mat.get("type_id") or 0)
+                    sub_bp_id = int(mat.get("sub_blueprint_type_id") or 0)
+                    needed_qty = int(mat.get("quantity") or 0)
+                    produced_per_cycle = int(mat.get("produced_per_cycle") or 1)
+                    sub_me = int(me_te_map.get(sub_bp_id, {}).get("me", 0))
+                    sub_te = int(me_te_map.get(sub_bp_id, {}).get("te", 0))
+                    if mat_type_id > 0 and sub_bp_id > 0 and needed_qty > 0:
+                        jobs_data.append(
+                            {
+                                "item_type_id": mat_type_id,
+                                "item_name": mat.get(
+                                    "type_name", f"Item {mat_type_id}"
+                                ),
+                                "blueprint_type_id": sub_bp_id,
+                                "quantity_needed": needed_qty,
+                                "quantity_per_run": produced_per_cycle,
+                                "material_efficiency": sub_me,
+                                "time_efficiency": sub_te,
+                                "is_final_product": False,
+                                "parent_product_type_ids": mat.get(
+                                    "used_by_products", []
+                                ),
+                            }
+                        )
+
         if not jobs_data:
             return JsonResponse({"error": "No jobs provided"}, status=400)
 
@@ -2361,6 +2397,40 @@ def calculate_build_schedule(request):
         skill_advanced_industry = int(data.get("skill_advanced_industry", 5))
         schedule_mode = str(data.get("schedule_mode", "fastest") or "fastest")
         final_product_type_id = int(data.get("final_product_type_id", 0) or 0) or None
+        final_product_type_ids_raw = data.get("final_product_type_ids", [])
+        final_product_type_ids = [
+            int(pid)
+            for pid in (
+                final_product_type_ids_raw
+                if isinstance(final_product_type_ids_raw, list)
+                else []
+            )
+            if int(pid or 0) > 0
+        ]
+        if (
+            final_product_type_id
+            and final_product_type_id not in final_product_type_ids
+        ):
+            final_product_type_ids.insert(0, final_product_type_id)
+
+        final_assembly_priority = str(
+            data.get(
+                "final_assembly_priority",
+                data.get("assembly_mode", "parallel"),
+            )
+            or "parallel"
+        )
+        product_priorities_raw = data.get("product_priorities", [])
+        product_priorities = [
+            int(pid)
+            for pid in (
+                product_priorities_raw
+                if isinstance(product_priorities_raw, list)
+                else []
+            )
+            if int(pid or 0) > 0
+        ]
+
         component_target_days = float(data.get("component_target_days", 0) or 0)
         component_target_time_seconds = (
             max(0, ceil(component_target_days * 86400))
@@ -2435,6 +2505,16 @@ def calculate_build_schedule(request):
                     skill_advanced_industry=skill_advanced_industry,
                 )
 
+                is_final_product = bool(
+                    job_data.get("is_final_product", False)
+                    or (item_type_id in final_product_type_ids)
+                )
+                parent_product_type_ids = [
+                    int(pid)
+                    for pid in job_data.get("parent_product_type_ids", [])
+                    if int(pid or 0) > 0
+                ]
+
                 job = ManufacturingJob(
                     job_id=0,
                     item_type_id=item_type_id,
@@ -2451,6 +2531,8 @@ def calculate_build_schedule(request):
                     time_efficiency=te,
                     dependencies=dependencies.get(item_type_id, []),
                     required_skills=required_skills,
+                    is_final_product=is_final_product,
+                    parent_product_type_ids=parent_product_type_ids,
                 )
 
                 original_jobs.append(job)
@@ -2509,6 +2591,9 @@ def calculate_build_schedule(request):
                 slots,
                 schedule_mode=schedule_mode,
                 final_product_item_type_id=final_product_type_id,
+                final_product_item_type_ids=final_product_type_ids,
+                final_assembly_priority=final_assembly_priority,
+                product_priorities=product_priorities,
                 component_target_time_seconds=component_target_time_seconds,
             )
         except ValueError as exc:
@@ -2525,3 +2610,59 @@ def calculate_build_schedule(request):
     except Exception as e:
         logger.error(f"Error calculating build schedule: {e}", exc_info=True)
         return JsonResponse({"error": str(e)}, status=500)
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def search_blueprints(request):
+    """
+    Search craftable blueprints by name or type_id for autocomplete in the product basket.
+    Query parameter: q, limit
+    """
+    query = request.GET.get("q", "").strip()
+    try:
+        limit = min(max(1, int(request.GET.get("limit", 20))), 50)
+    except (TypeError, ValueError):
+        limit = 20
+
+    if not query or len(query) < 2:
+        return JsonResponse({"results": []})
+
+    sql = """
+        SELECT DISTINCT t.id, t.name, p.product_eve_type_id
+        FROM eve_sde_itemtype t
+        JOIN indy_hub_sdeindustryactivityproduct p ON t.id = p.eve_type_id
+        WHERE t.published = 1 AND p.activity_id IN (1, 9, 11)
+          AND (t.name LIKE %s OR t.id LIKE %s)
+        ORDER BY t.name ASC
+        LIMIT %s
+    """
+    params = [f"%{query}%", f"%{query}%", limit]
+    results = []
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            for row in cursor.fetchall():
+                bp_id = int(row[0])
+                bp_name = str(row[1])
+                prod_id = int(row[2]) if row[2] else bp_id
+                results.append(
+                    {
+                        "blueprint_type_id": bp_id,
+                        "blueprint_name": bp_name,
+                        "product_type_id": prod_id,
+                        "blueprint_icon_url": f"https://images.evetech.net/types/{bp_id}/bp?size=64",
+                        "product_icon_url": (
+                            f"https://images.evetech.net/types/{prod_id}/icon?size=64"
+                            if prod_id
+                            else f"https://images.evetech.net/types/{bp_id}/bp?size=64"
+                        ),
+                    }
+                )
+    except Exception as e:
+        logger.error(f"Error in search_blueprints: {e}")
+        return JsonResponse({"error": "Failed to search blueprints"}, status=500)
+
+    return JsonResponse({"results": results})

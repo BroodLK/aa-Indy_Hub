@@ -54,12 +54,21 @@ class ManufacturingJob:
     start_time_seconds: int = 0
     end_time_seconds: int = 0
 
+    # Multi-product metadata
+    is_final_product: bool = False
+    parent_product_type_ids: list[int] = field(default_factory=list)
+
     def __post_init__(self):
         """Calculate total time after initialization."""
         if self.job_id <= 0:
             self.job_id = self.item_type_id
         if self.total_time_seconds == 0:
             self.total_time_seconds = self.adjusted_time_seconds * self.runs_required
+
+    @property
+    def is_shared(self) -> bool:
+        """Whether this intermediate job supplies multiple final products."""
+        return len(self.parent_product_type_ids) > 1
 
     @property
     def activity_name(self) -> str:
@@ -130,6 +139,8 @@ class BuildSchedule:
     requested_slot_count: int = 0
     used_slot_count: int = 0
     final_product_item_type_id: int | None = None
+    final_product_item_type_ids: list[int] = field(default_factory=list)
+    final_assembly_priority: str = "parallel"
     component_completion_time_seconds: int | None = None
     component_target_time_seconds: int | None = None
 
@@ -144,6 +155,114 @@ class BuildSchedule:
                 if job_id in jobs_by_id
             )
         )
+        critical_path_duration_seconds = sum(
+            jobs_by_id[job_id].total_time_seconds
+            for job_id in critical_path_job_ids
+            if job_id in jobs_by_id
+        )
+
+        total_busy = sum(slot_busy_seconds(slot) for slot in self.slots)
+        total_idle = sum(slot_idle_seconds(slot) for slot in self.slots)
+        total_capacity = len(self.slots) * self.total_parallel_time_seconds
+        overall_utilization_pct = round(
+            (total_busy / max(total_capacity, 1)) * 100, 1
+        )
+
+        all_final_type_ids = set(self.final_product_item_type_ids)
+        if self.final_product_item_type_id:
+            all_final_type_ids.add(self.final_product_item_type_id)
+
+        final_jobs = [
+            job
+            for job in self.jobs
+            if job.is_final_product or job.item_type_id in all_final_type_ids
+        ]
+        final_assembly_start = (
+            min((job.start_time_seconds for job in final_jobs), default=None)
+            if final_jobs
+            else None
+        )
+        final_assembly_end = (
+            max((job.end_time_seconds for job in final_jobs), default=None)
+            if final_jobs
+            else None
+        )
+
+        # Per-product schedule breakdown
+        product_type_ids: list[int] = list(self.final_product_item_type_ids)
+        if (
+            self.final_product_item_type_id
+            and self.final_product_item_type_id not in product_type_ids
+        ):
+            product_type_ids.append(self.final_product_item_type_id)
+        if not product_type_ids:
+            product_type_ids = list(
+                dict.fromkeys(
+                    job.item_type_id for job in self.jobs if job.is_final_product
+                )
+            )
+
+        products_summary: list[dict] = []
+        for pid in product_type_ids:
+            p_final_jobs = [j for j in self.jobs if j.item_type_id == pid]
+            p_all_jobs = [
+                j
+                for j in self.jobs
+                if pid in getattr(j, "parent_product_type_ids", [])
+                or j.item_type_id == pid
+            ]
+            if not p_all_jobs:
+                continue
+
+            p_name = (
+                p_final_jobs[0].item_name
+                if p_final_jobs
+                else p_all_jobs[0].item_name
+            )
+            p_runs = (
+                sum(j.runs_required for j in p_final_jobs)
+                if p_final_jobs
+                else sum(j.runs_required for j in p_all_jobs)
+            )
+            p_start = min(j.start_time_seconds for j in p_all_jobs)
+            p_end = max(
+                (j.end_time_seconds for j in p_final_jobs),
+                default=max(j.end_time_seconds for j in p_all_jobs),
+            )
+            p_seq_time = sum(j.total_time_seconds for j in p_all_jobs)
+
+            p_job_ids = {j.job_id for j in p_all_jobs}
+            p_dep_map = {
+                jid: {d for d in jobs_by_id[jid].dependencies if d in p_job_ids}
+                for jid in p_job_ids
+                if jid in jobs_by_id
+            }
+            p_crit_job_ids = find_critical_path(p_all_jobs, p_dep_map, jobs_by_id)
+            p_crit_items = list(
+                dict.fromkeys(
+                    jobs_by_id[jid].item_type_id
+                    for jid in p_crit_job_ids
+                    if jid in jobs_by_id
+                )
+            )
+
+            products_summary.append(
+                {
+                    "product_type_id": pid,
+                    "product_name": p_name,
+                    "runs_required": p_runs,
+                    "start_time_seconds": p_start,
+                    "start_time_formatted": format_time_duration(p_start),
+                    "completion_time_seconds": p_end,
+                    "completion_time_formatted": format_time_duration(p_end),
+                    "duration_seconds": max(0, p_end - p_start),
+                    "duration_formatted": format_time_duration(max(0, p_end - p_start)),
+                    "sequential_time_seconds": p_seq_time,
+                    "sequential_time_formatted": format_time_duration(p_seq_time),
+                    "critical_path": p_crit_items,
+                    "critical_path_job_ids": p_crit_job_ids,
+                }
+            )
 
         return {
             "total_sequential_time_seconds": self.total_sequential_time_seconds,
@@ -194,6 +313,9 @@ class BuildSchedule:
                     "required_skills": job.required_skills,
                     "activity_id": job.activity_id,
                     "activity_name": job.activity_name,
+                    "is_final_product": job.is_final_product,
+                    "parent_product_type_ids": list(job.parent_product_type_ids),
+                    "is_shared": job.is_shared,
                 }
                 for job in self.jobs
             ],
@@ -205,12 +327,6 @@ class BuildSchedule:
                     "slot_name": slot.slot_name or slot.character_name,
                     "jobs_count": len(slot.jobs),
                     "runs_assigned": sum(job.runs_required for job in slot.jobs),
-                    # available_at_seconds is a completion timestamp, not
-                    # accumulated busy time (add_job assigns rather than adds),
-                    # so the old "utilization" always over-reported and the lane
-                    # defining the makespan was tautologically 100%. Report both
-                    # numbers under honest names: their difference is the time
-                    # the lane spends idle waiting on dependencies.
                     "utilization_percent": round(
                         (
                             slot_busy_seconds(slot)
@@ -242,13 +358,41 @@ class BuildSchedule:
                 }
                 for slot in self.slots
             ],
+            "slot_metrics": {
+                "total_slots": len(self.slots),
+                "total_busy_time_seconds": total_busy,
+                "total_busy_time_formatted": format_time_duration(total_busy),
+                "total_idle_time_seconds": total_idle,
+                "total_idle_time_formatted": format_time_duration(total_idle),
+                "total_capacity_seconds": total_capacity,
+                "overall_utilization_percent": overall_utilization_pct,
+            },
+            "products": products_summary,
             "critical_path": critical_path_item_ids,
             "critical_path_job_ids": critical_path_job_ids,
+            "critical_path_duration_seconds": critical_path_duration_seconds,
+            "critical_path_duration_formatted": format_time_duration(
+                critical_path_duration_seconds
+            ),
             "recommendations": self.recommendations,
             "schedule_mode": self.schedule_mode,
             "requested_slot_count": self.requested_slot_count,
             "used_slot_count": self.used_slot_count or len(self.slots),
             "final_product_item_type_id": self.final_product_item_type_id,
+            "final_product_item_type_ids": self.final_product_item_type_ids,
+            "final_assembly_priority": self.final_assembly_priority,
+            "final_assembly_start_time_seconds": final_assembly_start,
+            "final_assembly_start_time_formatted": (
+                format_time_duration(final_assembly_start)
+                if final_assembly_start is not None
+                else None
+            ),
+            "final_assembly_completion_time_seconds": final_assembly_end,
+            "final_assembly_completion_time_formatted": (
+                format_time_duration(final_assembly_end)
+                if final_assembly_end is not None
+                else None
+            ),
             "component_completion_time_seconds": self.component_completion_time_seconds,
             "component_completion_time_formatted": (
                 format_time_duration(self.component_completion_time_seconds)
@@ -484,6 +628,13 @@ def build_dependency_tree(jobs_data: list[dict]) -> dict[int, list[int]]:
 
     for job in jobs_data:
         item_type_id = job["item_type_id"]
+        # If job already specified dependencies explicitly
+        if "dependencies" in job and job["dependencies"] is not None:
+            dependencies[item_type_id] = [
+                dep for dep in job["dependencies"] if dep in producing_items
+            ]
+            continue
+
         blueprint_type_id = job.get("blueprint_type_id")
 
         if not blueprint_type_id:
@@ -567,6 +718,8 @@ def split_jobs_evenly_across_slots(
                 required_skills=list(job.required_skills or []),
                 chunk_index=chunk_index,
                 chunk_count=chunk_count,
+                is_final_product=job.is_final_product,
+                parent_product_type_ids=list(job.parent_product_type_ids or []),
             )
             next_job_id += 1
             split_jobs.append(split_job)
@@ -603,16 +756,30 @@ def clone_slot(slot: IndustrySlot) -> IndustrySlot:
 def component_completion_time_seconds(
     jobs: list[ManufacturingJob],
     final_product_item_type_id: int | None = None,
+    final_product_item_type_ids: list[int] | None = None,
 ) -> int:
     """Return when all non-final-product jobs have completed."""
     if not jobs:
         return 0
 
-    if not final_product_item_type_id:
+    all_final_type_ids = set()
+    if final_product_item_type_ids:
+        all_final_type_ids.update(final_product_item_type_ids)
+    if final_product_item_type_id:
+        all_final_type_ids.add(final_product_item_type_id)
+
+    if not all_final_type_ids:
+        all_final_type_ids = {
+            job.item_type_id for job in jobs if job.is_final_product
+        }
+
+    if not all_final_type_ids:
         return max((job.end_time_seconds for job in jobs), default=0)
 
     component_jobs = [
-        job for job in jobs if job.item_type_id != final_product_item_type_id
+        job
+        for job in jobs
+        if job.item_type_id not in all_final_type_ids and not job.is_final_product
     ]
     if not component_jobs:
         return 0
@@ -669,6 +836,9 @@ def _build_schedule_with_slot_limit(
     *,
     schedule_mode: str,
     final_product_item_type_id: int | None = None,
+    final_product_item_type_ids: list[int] | None = None,
+    final_assembly_priority: str = "parallel",
+    product_priorities: list[int] | None = None,
     component_target_time_seconds: int | None = None,
 ) -> BuildSchedule:
     """Build a schedule variant for a specific number of active slots."""
@@ -678,14 +848,24 @@ def _build_schedule_with_slot_limit(
         split_jobs,
         selected_slots,
         preferred_item_type_id=final_product_item_type_id,
+        preferred_item_type_ids=final_product_item_type_ids,
+        final_product_item_type_ids=final_product_item_type_ids,
+        final_assembly_priority=final_assembly_priority,
+        product_priorities=product_priorities,
     )
     schedule.schedule_mode = schedule_mode
     schedule.requested_slot_count = len(available_slots)
     schedule.used_slot_count = len(selected_slots)
     schedule.final_product_item_type_id = final_product_item_type_id
+    schedule.final_product_item_type_ids = (
+        final_product_item_type_ids
+        or ([final_product_item_type_id] if final_product_item_type_id else [])
+    )
+    schedule.final_assembly_priority = final_assembly_priority
     schedule.component_completion_time_seconds = component_completion_time_seconds(
         schedule.jobs,
         final_product_item_type_id=final_product_item_type_id,
+        final_product_item_type_ids=schedule.final_product_item_type_ids,
     )
     schedule.component_target_time_seconds = component_target_time_seconds
     return schedule
@@ -697,6 +877,9 @@ def calculate_schedule_for_mode(
     *,
     schedule_mode: str = "fastest",
     final_product_item_type_id: int | None = None,
+    final_product_item_type_ids: list[int] | None = None,
+    final_assembly_priority: str = "parallel",
+    product_priorities: list[int] | None = None,
     component_target_time_seconds: int | None = None,
 ) -> BuildSchedule:
     """Calculate a schedule using the requested optimization mode."""
@@ -713,6 +896,9 @@ def calculate_schedule_for_mode(
                     candidate_slot_count,
                     schedule_mode=normalized_mode,
                     final_product_item_type_id=final_product_item_type_id,
+                    final_product_item_type_ids=final_product_item_type_ids,
+                    final_assembly_priority=final_assembly_priority,
+                    product_priorities=product_priorities,
                 )
             except ValueError as exc:
                 last_error = exc
@@ -734,6 +920,9 @@ def calculate_schedule_for_mode(
                     candidate_slot_count,
                     schedule_mode=normalized_mode,
                     final_product_item_type_id=final_product_item_type_id,
+                    final_product_item_type_ids=final_product_item_type_ids,
+                    final_assembly_priority=final_assembly_priority,
+                    product_priorities=product_priorities,
                     component_target_time_seconds=component_target_time_seconds,
                 )
             except ValueError as exc:
@@ -796,6 +985,9 @@ def calculate_schedule_for_mode(
         slot_count,
         schedule_mode="fastest",
         final_product_item_type_id=final_product_item_type_id,
+        final_product_item_type_ids=final_product_item_type_ids,
+        final_assembly_priority=final_assembly_priority,
+        product_priorities=product_priorities,
     )
 
 
@@ -804,9 +996,13 @@ def schedule_jobs_critical_path(
     slots: list[IndustrySlot],
     *,
     preferred_item_type_id: int | None = None,
+    preferred_item_type_ids: list[int] | None = None,
+    final_product_item_type_ids: list[int] | None = None,
+    final_assembly_priority: str = "parallel",
+    product_priorities: list[int] | None = None,
 ) -> BuildSchedule:
     """
-    Schedule jobs using a dependency-aware critical-path approach.
+    Schedule jobs using a dependency-aware critical-path approach for single or multi-root DAGs.
     """
     if not jobs or not slots:
         return BuildSchedule(
@@ -814,6 +1010,9 @@ def schedule_jobs_critical_path(
             slots=slots,
             total_sequential_time_seconds=0,
             total_parallel_time_seconds=0,
+            final_product_item_type_id=preferred_item_type_id,
+            final_product_item_type_ids=final_product_item_type_ids or [],
+            final_assembly_priority=final_assembly_priority,
         )
 
     dep_map: dict[int, set[int]] = {job.job_id: set(job.dependencies) for job in jobs}
@@ -824,12 +1023,59 @@ def schedule_jobs_critical_path(
             if dep_id in reverse_dep_map:
                 reverse_dep_map[dep_id].add(job.job_id)
 
-    preferred_job_ids = {
-        job.job_id for job in jobs if job.item_type_id == preferred_item_type_id
+    # Determine final product IDs in priority order
+    final_ids: list[int] = []
+    if product_priorities:
+        final_ids = [int(pid) for pid in product_priorities if int(pid or 0) > 0]
+    elif preferred_item_type_ids:
+        final_ids = [int(pid) for pid in preferred_item_type_ids if int(pid or 0) > 0]
+    elif final_product_item_type_ids:
+        final_ids = [int(pid) for pid in final_product_item_type_ids if int(pid or 0) > 0]
+    elif preferred_item_type_id:
+        final_ids = [int(preferred_item_type_id)]
+
+    all_dep_target_ids = {dep_id for deps in dep_map.values() for dep_id in deps}
+    if not final_ids:
+        final_ids = list(
+            dict.fromkeys(
+                job.item_type_id
+                for job in jobs
+                if job.is_final_product or job.job_id not in all_dep_target_ids
+            )
+        )
+
+    # Calculate reaching products for each job
+    product_job_ids: dict[int, set[int]] = {
+        pid: {job.job_id for job in jobs if job.item_type_id == pid}
+        for pid in final_ids
     }
+
+    reaches_cache: dict[tuple[int, int], bool] = {}
+
+    def job_reaches_product(job_id: int, product_type_id: int) -> bool:
+        key = (job_id, product_type_id)
+        if key in reaches_cache:
+            return reaches_cache[key]
+        if job_id in product_job_ids.get(product_type_id, set()):
+            reaches_cache[key] = True
+            return True
+        reaches = any(
+            job_reaches_product(child_id, product_type_id)
+            for child_id in reverse_dep_map.get(job_id, set())
+        )
+        reaches_cache[key] = reaches
+        return reaches
+
+    # Tag jobs with parent_product_type_ids and is_final_product
+    for job in jobs:
+        reached = [pid for pid in final_ids if job_reaches_product(job.job_id, pid)]
+        if reached:
+            job.parent_product_type_ids = reached
+        if job.item_type_id in final_ids:
+            job.is_final_product = True
+
     generic_tail_cache: dict[int, int] = {}
-    preferred_tail_cache: dict[int, int] = {}
-    reaches_preferred_cache: dict[int, bool] = {}
+    product_tail_cache: dict[tuple[int, int], int] = {}
 
     def calc_generic_tail(job_id: int) -> int:
         if job_id in generic_tail_cache:
@@ -842,43 +1088,27 @@ def schedule_jobs_critical_path(
         generic_tail_cache[job_id] = tail_seconds
         return tail_seconds
 
-    def reaches_preferred(job_id: int) -> bool:
-        if job_id in reaches_preferred_cache:
-            return reaches_preferred_cache[job_id]
+    def calc_product_tail(job_id: int, product_type_id: int) -> int:
+        key = (job_id, product_type_id)
+        if key in product_tail_cache:
+            return product_tail_cache[key]
 
-        if job_id in preferred_job_ids:
-            reaches_preferred_cache[job_id] = True
-            return True
-
-        reaches = any(
-            reaches_preferred(child_id)
-            for child_id in reverse_dep_map.get(job_id, set())
-        )
-        reaches_preferred_cache[job_id] = reaches
-        return reaches
-
-    def calc_preferred_tail(job_id: int) -> int:
-        if job_id in preferred_tail_cache:
-            return preferred_tail_cache[job_id]
-
-        if not reaches_preferred(job_id):
-            preferred_tail_cache[job_id] = 0
+        if not job_reaches_product(job_id, product_type_id):
+            product_tail_cache[key] = 0
             return 0
 
         child_tails = [
-            calc_preferred_tail(child_id)
+            calc_product_tail(child_id, product_type_id)
             for child_id in reverse_dep_map.get(job_id, set())
-            if reaches_preferred(child_id)
+            if job_reaches_product(child_id, product_type_id)
         ]
         tail_seconds = job_map[job_id].total_time_seconds
         if child_tails:
             tail_seconds += max(child_tails)
-        preferred_tail_cache[job_id] = tail_seconds
+        product_tail_cache[key] = tail_seconds
         return tail_seconds
 
-    preferred_priority = {job.job_id: calc_preferred_tail(job.job_id) for job in jobs}
-    generic_priority = {job.job_id: calc_generic_tail(job.job_id) for job in jobs}
-
+    # Scheduling state
     scheduled_jobs: list[ManufacturingJob] = []
     completed_job_times: dict[int, int] = {}
 
@@ -887,6 +1117,11 @@ def schedule_jobs_critical_path(
         slot.available_at_seconds = 0
 
     unscheduled_job_ids: set[int] = {job.job_id for job in jobs}
+
+    is_prioritized = (
+        str(final_assembly_priority).strip().lower() in ("prioritized", "sequential")
+        or (preferred_item_type_id is not None and not final_product_item_type_ids)
+    )
 
     while unscheduled_job_ids:
         best_choice_key: tuple[int, int, int, int, int, int, int] | None = None
@@ -939,11 +1174,29 @@ def schedule_jobs_critical_path(
                 ),
             )
             candidate_start = max(best_slot.available_at_seconds, release_time)
+
+            if is_prioritized and final_ids:
+                matching_indices = [
+                    idx
+                    for idx, pid in enumerate(final_ids)
+                    if job_reaches_product(job_id, pid)
+                ]
+                if matching_indices:
+                    best_product_idx = min(matching_indices)
+                    priority_rank = best_product_idx
+                    product_tail = calc_product_tail(job_id, final_ids[best_product_idx])
+                else:
+                    priority_rank = 999999
+                    product_tail = 0
+            else:
+                priority_rank = 0
+                product_tail = 0
+
             candidate_sort = (
                 candidate_start,
-                0 if preferred_priority.get(job_id, 0) > 0 else 1,
-                -preferred_priority.get(job_id, 0),
-                -generic_priority.get(job_id, 0),
+                priority_rank,
+                -product_tail,
+                -calc_generic_tail(job_id),
                 -job.total_time_seconds,
                 best_slot.slot_id,
                 job_id,
@@ -990,6 +1243,18 @@ def schedule_jobs_critical_path(
         job_map,
     )
 
+    primary_final_id = (
+        final_ids[0]
+        if final_ids
+        else (preferred_item_type_id or None)
+    )
+
+    comp_time = component_completion_time_seconds(
+        scheduled_jobs,
+        final_product_item_type_id=primary_final_id,
+        final_product_item_type_ids=final_ids,
+    )
+
     return BuildSchedule(
         jobs=scheduled_jobs,
         slots=slots,
@@ -997,6 +1262,10 @@ def schedule_jobs_critical_path(
         total_parallel_time_seconds=total_parallel,
         critical_path=critical_path,
         recommendations=recommendations,
+        final_product_item_type_id=primary_final_id,
+        final_product_item_type_ids=final_ids,
+        final_assembly_priority=final_assembly_priority,
+        component_completion_time_seconds=comp_time,
     )
 
 

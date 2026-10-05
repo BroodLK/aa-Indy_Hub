@@ -4005,6 +4005,8 @@ def craft_bp(request, type_id):
                 "craft_bp_payload": reverse(
                     "indy_hub:craft_bp_payload", args=[type_id]
                 ),
+                "craft_bp_payload_multi": reverse("indy_hub:craft_bp_payload_multi"),
+                "search_blueprints": reverse("indy_hub:search_blueprints"),
                 "schedule_tracking_refresh": reverse(
                     "indy_hub:refresh_production_schedule_tracking"
                 ),
@@ -6669,7 +6671,7 @@ def production_simulations_list(request):
     simulations = (
         ProductionSimulation.objects.filter(user=request.user)
         .order_by("-updated_at")
-        .prefetch_related("production_configs")
+        .prefetch_related("production_configs", "products")
     )
 
     # Return JSON when the API payload is requested

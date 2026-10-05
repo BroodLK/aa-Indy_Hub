@@ -8,7 +8,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
-STATE_SCHEMA_VERSION = 3
+STATE_SCHEMA_VERSION = 4
 
 # A simulation snapshot is a whole workspace, so it is legitimately large, but
 # nothing bounded it before: Django's 2.5 MB body cap was the only limit and a
@@ -55,6 +55,46 @@ def _encoded_size(value: Any) -> int:
         return 0
 
 
+def _clean_product_entry(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    try:
+        blueprint_type_id = int(
+            entry.get("blueprint_type_id") or entry.get("type_id") or 0
+        )
+    except (TypeError, ValueError):
+        return None
+    if blueprint_type_id <= 0:
+        return None
+
+    try:
+        runs = int(entry.get("runs") or 1)
+    except (TypeError, ValueError):
+        runs = 1
+    runs = max(1, min(1_000_000, runs))
+
+    blueprint_name = str(
+        entry.get("blueprint_name") or entry.get("name") or ""
+    ).strip()[:255]
+
+    return {
+        "blueprint_type_id": blueprint_type_id,
+        "blueprint_name": blueprint_name,
+        "runs": runs,
+    }
+
+
+def _clean_products_list(products_raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(products_raw, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for item in products_raw[:100]:
+        prod = _clean_product_entry(item)
+        if prod is not None:
+            cleaned.append(prod)
+    return cleaned
+
+
 def migrate_ui_state(
     value: Any, *, max_bytes: int = MAX_UI_STATE_BYTES
 ) -> dict[str, Any]:
@@ -88,6 +128,10 @@ def migrate_ui_state(
     # Plan instead of pointing showCraftMainTab() at a pane that is gone.
     if version < 3:
         state.pop("runOptimized", None)
+    # Version 4 adds support for multi-product simulations.
+    if "products" in state:
+        state["products"] = _clean_products_list(state["products"])
+
     craft_main_tab = state.get("craftMainTab")
     if craft_main_tab is not None and craft_main_tab not in CRAFT_MAIN_TABS:
         state["craftMainTab"] = "plan"
@@ -338,7 +382,10 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
     while tree_open_list and not tree_open_list[-1]:
         tree_open_list.pop()
 
-    return {
+    products_raw = value.get("products")
+    products = _clean_products_list(products_raw) if isinstance(products_raw, list) else None
+
+    result: dict[str, Any] = {
         "v": SHARE_SCHEMA_VERSION,
         "blueprint_type_id": blueprint_type_id,
         "runs": max(1, min(MAX_SHARE_RUNS, int(runs))),
@@ -369,6 +416,9 @@ def normalize_share_state(value: Any) -> dict[str, Any]:
             ][:100],
         },
     }
+    if products is not None:
+        result["products"] = products
+    return result
 
 
 def decode_share_param(encoded: Any) -> dict[str, Any]:

@@ -198,3 +198,62 @@ class BuildTabRendererTests(SimpleTestCase):
 
     def test_axis_uses_the_clamped_max_time(self):
         self.assertIn("calculateTimeMarkers(safeMaxTime)", self.script)
+
+    def test_build_template_contains_assembly_priority_controls(self):
+        self.assertIn('id="buildFinalAssemblyPriority"', self.template)
+        self.assertIn("Assembly Priority", self.template)
+        self.assertIn("Parallel assembly", self.template)
+        self.assertIn("Prioritized by basket order", self.template)
+
+
+class MultiProductScheduleUXTests(SimpleTestCase):
+    def test_multi_product_schedule_serialization(self):
+        job1 = make_job(1, item_type_id=101, name="Hull A", runs=2, duration=1000)
+        job1.parent_product_type_ids = [101]
+        job1.is_final_product = True
+
+        job2 = make_job(2, item_type_id=102, name="Hull B", runs=3, duration=1500)
+        job2.parent_product_type_ids = [102]
+        job2.is_final_product = True
+
+        shared_comp = make_job(3, item_type_id=201, name="Shared Part", runs=5, duration=500)
+        shared_comp.parent_product_type_ids = [101, 102]
+
+        lane = IndustrySlot(slot_id=0, character_id=1, character_name="Alice")
+        lane.add_job(shared_comp, 0)
+        lane.add_job(job1, 500)
+        lane.add_job(job2, 1500)
+
+        products = [
+            {"product_type_id": 101, "product_name": "Hull A", "runs": 2},
+            {"product_type_id": 102, "product_name": "Hull B", "runs": 3},
+        ]
+
+        schedule = BuildSchedule(
+            jobs=[shared_comp, job1, job2],
+            slots=[lane],
+            total_sequential_time_seconds=3000,
+            total_parallel_time_seconds=3000,
+            critical_path=[3, 1, 2],
+            final_product_item_type_ids=[101, 102],
+            final_assembly_priority="prioritized",
+        )
+
+        d = schedule.to_dict()
+        self.assertEqual(d["final_assembly_priority"], "prioritized")
+        self.assertEqual(len(d["products"]), 2)
+        self.assertEqual(d["products"][0]["product_name"], "Hull A")
+
+        # Slot metrics
+        self.assertIn("slot_metrics", d)
+        self.assertEqual(d["slot_metrics"]["total_slots"], 1)
+        self.assertEqual(d["slot_metrics"]["overall_utilization_percent"], 100.0)
+        self.assertEqual(d["slot_metrics"]["total_busy_time_seconds"], 3000)
+        self.assertEqual(d["slot_metrics"]["total_idle_time_seconds"], 0)
+
+        # Job metadata tags
+        serialized_jobs = {j["job_id"]: j for j in d["jobs"]}
+        self.assertTrue(serialized_jobs[3]["is_shared"])
+        self.assertEqual(serialized_jobs[3]["parent_product_type_ids"], [101, 102])
+        self.assertTrue(serialized_jobs[1]["is_final_product"])
+        self.assertTrue(serialized_jobs[2]["is_final_product"])

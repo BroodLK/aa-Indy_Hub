@@ -476,7 +476,7 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
 
     def test_owned_bpcs_are_checked_by_default_in_config_tab(self) -> None:
         self.assertIn(
-            "{% if bc.user_owns and bc.is_copy %}checked{% endif %}",
+            "{% if bc.user_owns %}checked{% endif %}",
             self.template,
         )
         self.assertIn(
@@ -492,7 +492,7 @@ class OwnedBpcPreselectionTests(SimpleTestCase):
         self,
     ) -> None:
         self.assertIn("syncConfigureVisibilityWithPlan", self.script)
-        self.assertIn("isOwnedCopy", self.script)
+        self.assertIn("isOwned", self.script)
         self.assertIn("isPlannedForProduction", self.script)
         self.assertIn("useInput.checked = true", self.script)
         self.assertIn("syncConfigureVisibilityWithPlan", self.inline_script)
@@ -526,3 +526,52 @@ class CompressedOreConversionModalUITests(SimpleTestCase):
         self.assertIn("volumeSaved", self.script)
         self.assertIn("oresGrossCost", self.script)
         self.assertIn("netEffectiveCost", self.script)
+
+
+class ProductBasketUITests(SimpleTestCase):
+    """Verify that multi-product basket UI controls, scripts, and list templates are present."""
+
+    def setUp(self) -> None:
+        self.template = CRAFT_TEMPLATE.read_text(encoding="utf-8")
+        self.script = CRAFT_JS.read_text(encoding="utf-8")
+        self.list_template = (
+            Path(__file__).resolve().parent.parent
+            / "templates"
+            / "indy_hub"
+            / "industry"
+            / "production_simulations_list.html"
+        ).read_text(encoding="utf-8")
+
+    def test_basket_toolbar_dom_elements_present(self) -> None:
+        self.assertIn('id="productBasketCard"', self.template)
+        self.assertIn('id="basketSearchInput"', self.template)
+        self.assertIn('id="basketSearchResults"', self.template)
+        self.assertIn('id="basketItemsContainer"', self.template)
+        self.assertIn('class="btn btn-outline-secondary basket-multiplier-btn"', self.template)
+        self.assertIn('id="basketCountBadge"', self.template)
+        self.assertIn('id="basketTotalRunsBadge"', self.template)
+
+    def test_per_product_financial_breakdown_dom_elements_present(self) -> None:
+        self.assertIn('id="perProductFinancialCard"', self.template)
+        self.assertIn('id="perProductFinancialTable"', self.template)
+        self.assertIn("Per-Product Profitability Breakdown", self.template)
+
+    def test_craft_js_basket_methods_and_bootstrap_present(self) -> None:
+        self.assertIn("function initBasketToolbar", self.script)
+        self.assertIn("function getBasketProducts", self.script)
+        self.assertIn("function setBasketProducts", self.script)
+        self.assertIn("function addBasketProduct", self.script)
+        self.assertIn("function removeBasketProduct", self.script)
+        self.assertIn("function duplicateBasketProduct", self.script)
+        self.assertIn("function updateBasketProductRuns", self.script)
+        self.assertIn("function applyBasketBatchMultiplier", self.script)
+        self.assertIn("function renderBasketItems", self.script)
+        self.assertIn("function renderPerProductBreakdown", self.script)
+
+        # Ensure initBasketToolbar is invoked on DOMContentLoaded startup
+        self.assertIn("initBasketToolbar();", self.script)
+
+    def test_production_simulations_list_renders_multiproduct_badges(self) -> None:
+        self.assertIn("products", self.list_template)
+        self.assertIn("total_runs_count", self.list_template)
+        self.assertIn("?sim=", self.list_template)

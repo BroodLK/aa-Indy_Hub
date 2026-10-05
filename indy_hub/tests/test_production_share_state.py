@@ -130,6 +130,39 @@ class ShareStateAllowlistTests(SimpleTestCase):
         state = decode_share_param(_encode(_base_payload(future_field={"x": 1})))
         self.assertNotIn("future_field", state)
 
+    def test_round_trip_preserves_multi_product_manifest(self) -> None:
+        products = [
+            {"blueprint_type_id": 23758, "blueprint_name": "Tengu Blueprint", "runs": 5},
+            {"blueprint_type_id": 12005, "blueprint_name": "Raven Blueprint", "runs": 10},
+        ]
+        payload = _base_payload(products=products)
+        state = decode_share_param(_encode(payload))
+
+        self.assertIn("products", state)
+        self.assertEqual(len(state["products"]), 2)
+        self.assertEqual(state["products"][0]["blueprint_type_id"], 23758)
+        self.assertEqual(state["products"][0]["blueprint_name"], "Tengu Blueprint")
+        self.assertEqual(state["products"][0]["runs"], 5)
+        self.assertEqual(state["products"][1]["blueprint_type_id"], 12005)
+        self.assertEqual(state["products"][1]["runs"], 10)
+
+    def test_multi_product_manifest_sanitization_and_bounds(self) -> None:
+        raw_products = [
+            {"blueprint_type_id": 23758, "blueprint_name": "Tengu Blueprint", "runs": 10**9},
+            {"blueprint_type_id": 0, "blueprint_name": "Invalid Zero", "runs": 5},
+            {"blueprint_type_id": -10, "blueprint_name": "Invalid Negative", "runs": 2},
+            {"blueprint_type_id": 12005, "blueprint_name": "Raven Blueprint", "runs": 0},
+            "invalid_string_entry",
+        ]
+        state = normalize_share_state(_base_payload(products=raw_products))
+        self.assertIn("products", state)
+        self.assertEqual(len(state["products"]), 2)
+        # Clamped runs:
+        self.assertEqual(state["products"][0]["blueprint_type_id"], 23758)
+        self.assertEqual(state["products"][0]["runs"], 1_000_000)
+        self.assertEqual(state["products"][1]["blueprint_type_id"], 12005)
+        self.assertEqual(state["products"][1]["runs"], 1)  # clamped from 0 to 1
+
 
 class ShareStateErrorTests(SimpleTestCase):
     def test_malformed_input_is_a_recoverable_error(self) -> None:

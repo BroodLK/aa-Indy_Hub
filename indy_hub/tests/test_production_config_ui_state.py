@@ -20,16 +20,19 @@ from indy_hub.models import (
     IndustryJob,
     ProductionSimulation,
     ProductionSimulationPreference,
+    ProductionSimulationProduct,
 )
 from indy_hub.services.production_simulation_state import (
     MAX_PREFERENCE_BYTES,
     MAX_UI_STATE_BYTES,
     STATE_SCHEMA_VERSION,
+    migrate_ui_state,
     normalize_preference_state,
 )
 from indy_hub.tasks.material_exchange import me_sell_assets_esi_cooldown_key
 from indy_hub.views.api import (
     _production_asset_progress_key,
+    craft_bp_payload,
     load_production_config,
     production_bpc_sources,
     production_material_source_assets,
@@ -39,6 +42,7 @@ from indy_hub.views.api import (
     refresh_production_material_sources_status,
     refresh_production_schedule_tracking,
     save_production_config,
+    search_blueprints,
 )
 
 # Minimal schedule in BuildSchedule.to_dict() shape. Tracking now refuses an
@@ -1777,3 +1781,446 @@ class MaterialSourceRefreshGuardTests(TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(body["running"])
         self.assertTrue(body["finished"])
+
+
+class ProductionSimulationProductModelTests(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user("sim-prod-test", password="secret123")
+
+    def test_product_creation_and_ordering(self) -> None:
+        simulation = ProductionSimulation.objects.create(
+            user=self.user,
+            simulation_name="Fleet Batch",
+        )
+        p2 = ProductionSimulationProduct.objects.create(
+            simulation=simulation,
+            blueprint_type_id=12002,
+            blueprint_name="Raven",
+            runs=10,
+            sort_order=2,
+        )
+        p1 = ProductionSimulationProduct.objects.create(
+            simulation=simulation,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=5,
+            sort_order=1,
+        )
+        p0 = ProductionSimulationProduct.objects.create(
+            simulation=simulation,
+            blueprint_type_id=12000,
+            blueprint_name="Drake",
+            runs=20,
+            sort_order=0,
+        )
+
+        products = list(simulation.get_products())
+        self.assertEqual(products, [p0, p1, p2])
+        self.assertEqual(simulation.total_runs_count, 35)
+
+    def test_display_name_variations(self) -> None:
+        # 1. Single product with simulation name
+        sim1 = ProductionSimulation.objects.create(
+            user=self.user,
+            simulation_name="Solo Tengu",
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim1,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=5,
+        )
+        self.assertEqual(sim1.display_name, "Solo Tengu (Tengu x5)")
+
+        # 2. Single product without simulation name
+        sim2 = ProductionSimulation.objects.create(
+            user=self.user,
+            simulation_name="",
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim2,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=3,
+        )
+        self.assertEqual(sim2.display_name, "Tengu x3")
+
+        # 3. Multi-product with simulation name
+        sim3 = ProductionSimulation.objects.create(
+            user=self.user,
+            simulation_name="Capital Fleet",
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim3,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=5,
+            sort_order=0,
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim3,
+            blueprint_type_id=12002,
+            blueprint_name="Raven",
+            runs=10,
+            sort_order=1,
+        )
+        self.assertEqual(sim3.display_name, "Capital Fleet (2 products, 15 runs)")
+
+        # 4. Multi-product without simulation name
+        sim4 = ProductionSimulation.objects.create(
+            user=self.user,
+            simulation_name="",
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim4,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=2,
+            sort_order=0,
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim4,
+            blueprint_type_id=12002,
+            blueprint_name="Raven",
+            runs=8,
+            sort_order=1,
+        )
+        self.assertEqual(sim4.display_name, "Multi-product Batch (2 products, 10 runs)")
+
+        # 5. Fallback legacy without child products
+        sim5 = ProductionSimulation.objects.create(
+            user=self.user,
+            blueprint_type_id=645,
+            blueprint_name="Dominix",
+            runs=4,
+            simulation_name="Heavy Armor",
+        )
+        self.assertEqual(sim5.display_name, "Heavy Armor (Dominix x4)")
+        self.assertEqual(sim5.total_runs_count, 4)
+
+    def test_product_helper_properties(self) -> None:
+        sim = ProductionSimulation.objects.create(
+            user=self.user,
+            simulation_name="Icon Test",
+        )
+        product = ProductionSimulationProduct.objects.create(
+            simulation=sim,
+            blueprint_type_id=645,
+            blueprint_name="Dominix",
+            runs=2,
+        )
+        self.assertIn("Dominix x2", str(product))
+        self.assertEqual(product.blueprint_icon_url, "https://images.evetech.net/types/645/bp?size=32")
+        self.assertIsNotNone(product.product_type_id)
+        self.assertIsNotNone(product.product_icon_url)
+
+        # Simulation with nullable blueprint_type_id uses first product for icon fallback
+        self.assertIsNone(sim.blueprint_type_id)
+        self.assertEqual(sim.blueprint_icon_url, "https://images.evetech.net/types/645/bp?size=32")
+        self.assertEqual(sim.product_type_id, product.product_type_id)
+
+
+class MultiProductUiStateMigrationTests(TestCase):
+    def test_migrate_ui_state_sanitizes_products_list(self) -> None:
+        raw_state = {
+            "schemaVersion": 3,
+            "craftMainTab": "plan",
+            "products": [
+                {
+                    "blueprint_type_id": 12001,
+                    "blueprint_name": "Tengu",
+                    "runs": 5,
+                },
+                {
+                    "type_id": "12002",
+                    "name": "Raven",
+                    "runs": "10",
+                },
+                {
+                    "blueprint_type_id": -1,  # Invalid type_id, should be dropped
+                    "runs": 2,
+                },
+                "not a dict",  # Invalid entry, should be dropped
+                {
+                    "blueprint_type_id": 12003,
+                    "blueprint_name": "Scorpion",
+                    "runs": -5,  # Out of range, clamped to 1
+                },
+            ],
+        }
+        migrated = migrate_ui_state(raw_state)
+        self.assertEqual(migrated["schemaVersion"], STATE_SCHEMA_VERSION)
+        self.assertEqual(len(migrated["products"]), 3)
+        self.assertEqual(
+            migrated["products"][0],
+            {"blueprint_type_id": 12001, "blueprint_name": "Tengu", "runs": 5},
+        )
+        self.assertEqual(
+            migrated["products"][1],
+            {"blueprint_type_id": 12002, "blueprint_name": "Raven", "runs": 10},
+        )
+        self.assertEqual(
+            migrated["products"][2],
+            {"blueprint_type_id": 12003, "blueprint_name": "Scorpion", "runs": 1},
+        )
+
+    def test_migration_backfill_function(self) -> None:
+        import importlib
+        from django.apps import apps
+
+        migration_module = importlib.import_module(
+            "indy_hub.migrations.0134_alter_productionsimulation_blueprint_name_and_more"
+        )
+        populate_simulation_products = (
+            migration_module.populate_simulation_products
+        )
+
+        user = User.objects.create_user("backfill-test", password="secret123")
+        sim1 = ProductionSimulation.objects.create(
+            user=user,
+            blueprint_type_id=1111,
+            blueprint_name="Backfill Test BP",
+            runs=3,
+        )
+        # Ensure no child products exist initially
+        ProductionSimulationProduct.objects.filter(simulation=sim1).delete()
+        self.assertEqual(sim1.products.count(), 0)
+
+        populate_simulation_products(apps, None)
+        self.assertEqual(sim1.products.count(), 1)
+        prod = sim1.products.first()
+        self.assertEqual(prod.blueprint_type_id, 1111)
+        self.assertEqual(prod.blueprint_name, "Backfill Test BP")
+        self.assertEqual(prod.runs, 3)
+        self.assertEqual(prod.sort_order, 0)
+
+
+class MultiProductSimulationPersistenceTests(TestCase):
+    def setUp(self) -> None:
+        self.user = User.objects.create_user("multi-sim-user", password="secret123")
+        grant_indy_permissions(self.user)
+        self.factory = RequestFactory()
+        self.save_url = reverse("indy_hub:save_production_config")
+        self.load_url = reverse("indy_hub:load_production_config")
+
+    @staticmethod
+    def _unwrap_view(view_func):
+        unwrapped = view_func
+        while hasattr(unwrapped, "__wrapped__"):
+            unwrapped = unwrapped.__wrapped__
+        return unwrapped
+
+    def test_save_and_load_multi_product_simulation(self) -> None:
+        manifest = [
+            {"blueprint_type_id": 12001, "blueprint_name": "Tengu Blueprint", "runs": 5, "sort_order": 0},
+            {"blueprint_type_id": 12002, "blueprint_name": "Raven Blueprint", "runs": 10, "sort_order": 1},
+        ]
+        payload = {
+            "products": manifest,
+            "simulation_name": "Multi-ship Fleet Batch",
+            "active_tab": "plan",
+            "items": [
+                {"type_id": 34, "mode": "buy", "quantity": 500000},
+                {"type_id": 11530, "mode": "prod", "quantity": 100},
+            ],
+            "blueprint_efficiencies": [
+                {"blueprint_type_id": 12001, "material_efficiency": 10, "time_efficiency": 20},
+                {"blueprint_type_id": 12002, "material_efficiency": 9, "time_efficiency": 18},
+            ],
+            "custom_prices": [
+                {"item_type_id": 34, "unit_price": 5.5, "is_sale_price": False},
+                {"item_type_id": 29984, "unit_price": 250000000.0, "is_sale_price": True},
+            ],
+            "estimated_cost": 150000000.0,
+            "estimated_revenue": 300000000.0,
+            "estimated_profit": 150000000.0,
+            "ui_state": {"craftMainTab": "plan", "products": manifest},
+        }
+
+        # 1. Save
+        request = self.factory.post(
+            self.save_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        request.user = self.user
+        save_response = self._unwrap_view(save_production_config)(request)
+        self.assertEqual(save_response.status_code, 200)
+
+        save_body = json.loads(save_response.content)
+        self.assertTrue(save_body["success"])
+        self.assertEqual(save_body["saved_products"], 2)
+        sim_id = save_body["simulation_id"]
+
+        sim = ProductionSimulation.objects.get(id=sim_id)
+        self.assertEqual(sim.runs, 15)  # 5 + 10
+        self.assertEqual(sim.blueprint_type_id, 12001)
+        self.assertEqual(sim.products.count(), 2)
+
+        products = list(sim.get_products())
+        self.assertEqual(products[0].blueprint_type_id, 12001)
+        self.assertEqual(products[0].runs, 5)
+        self.assertEqual(products[1].blueprint_type_id, 12002)
+        self.assertEqual(products[1].runs, 10)
+
+        # 2. Load
+        load_request = self.factory.get(self.load_url, {"simulation_id": sim_id})
+        load_request.user = self.user
+        load_response = self._unwrap_view(load_production_config)(load_request)
+        self.assertEqual(load_response.status_code, 200)
+
+        load_body = json.loads(load_response.content)
+        self.assertEqual(load_body["simulation_id"], sim_id)
+        self.assertEqual(load_body["runs"], 15)
+        self.assertEqual(len(load_body["products"]), 2)
+        self.assertEqual(load_body["products"][0]["blueprint_type_id"], 12001)
+        self.assertEqual(load_body["products"][0]["runs"], 5)
+        self.assertEqual(load_body["products"][1]["blueprint_type_id"], 12002)
+        self.assertEqual(load_body["products"][1]["runs"], 10)
+        self.assertEqual(len(load_body["items"]), 2)
+        self.assertEqual(len(load_body["blueprint_efficiencies"]), 2)
+        self.assertEqual(len(load_body["custom_prices"]), 2)
+
+    def test_resave_multi_product_simulation_updates_products(self) -> None:
+        sim = ProductionSimulation.objects.create(
+            user=self.user,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=5,
+            simulation_name="Initial Batch",
+        )
+        ProductionSimulationProduct.objects.create(
+            simulation=sim,
+            blueprint_type_id=12001,
+            blueprint_name="Tengu",
+            runs=5,
+            sort_order=0,
+        )
+
+        updated_manifest = [
+            {"blueprint_type_id": 12001, "blueprint_name": "Tengu", "runs": 3, "sort_order": 0},
+            {"blueprint_type_id": 12002, "blueprint_name": "Raven", "runs": 7, "sort_order": 1},
+            {"blueprint_type_id": 12003, "blueprint_name": "Scorpion", "runs": 2, "sort_order": 2},
+        ]
+        payload = {
+            "simulation_id": sim.id,
+            "products": updated_manifest,
+            "simulation_name": "Updated Batch",
+            "items": [],
+        }
+
+        request = self.factory.post(
+            self.save_url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        request.user = self.user
+        response = self._unwrap_view(save_production_config)(request)
+        self.assertEqual(response.status_code, 200)
+
+        sim.refresh_from_db()
+        self.assertEqual(sim.runs, 12)  # 3 + 7 + 2
+        self.assertEqual(sim.products.count(), 3)
+        self.assertEqual(
+            list(sim.products.values_list("blueprint_type_id", "runs")),
+            [(12001, 3), (12002, 7), (12003, 2)],
+        )
+
+    def test_craft_bp_payload_endpoints(self) -> None:
+        # 1. GET with type_id in URL
+        url_single = reverse("indy_hub:craft_bp_payload", args=[12001])
+        req_single = self.factory.get(url_single, {"runs": 3, "me": 10, "te": 20})
+        req_single.user = self.user
+        resp_single = self._unwrap_view(craft_bp_payload)(req_single, type_id=12001)
+        self.assertEqual(resp_single.status_code, 200)
+        data_single = json.loads(resp_single.content)
+        self.assertEqual(data_single["type_id"], 12001)
+        self.assertEqual(data_single["num_runs"], 3)
+        self.assertEqual(len(data_single["products"]), 1)
+
+        # 2. GET with products JSON query param
+        products_query = json.dumps([
+            {"blueprint_type_id": 12001, "runs": 2, "me": 10},
+            {"blueprint_type_id": 12002, "runs": 4, "me": 5},
+        ])
+        url_multi = reverse("indy_hub:craft_bp_payload_multi")
+        req_multi_get = self.factory.get(url_multi, {"products": products_query})
+        req_multi_get.user = self.user
+        resp_multi_get = self._unwrap_view(craft_bp_payload)(req_multi_get)
+        self.assertEqual(resp_multi_get.status_code, 200)
+        data_multi_get = json.loads(resp_multi_get.content)
+        self.assertEqual(data_multi_get["summary"]["total_products"], 2)
+        self.assertEqual(data_multi_get["summary"]["total_runs"], 6)
+
+        # 3. POST with products JSON body
+        post_body = {
+            "products": [
+                {"blueprint_type_id": 12001, "runs": 1, "me": 10},
+                {"blueprint_type_id": 12002, "runs": 2, "me": 8},
+            ]
+        }
+        req_multi_post = self.factory.post(
+            url_multi,
+            data=json.dumps(post_body),
+            content_type="application/json",
+        )
+        req_multi_post.user = self.user
+        resp_multi_post = self._unwrap_view(craft_bp_payload)(req_multi_post)
+        self.assertEqual(resp_multi_post.status_code, 200)
+        data_multi_post = json.loads(resp_multi_post.content)
+        self.assertEqual(data_multi_post["summary"]["total_products"], 2)
+        self.assertEqual(data_multi_post["summary"]["total_runs"], 3)
+        self.assertIn("consolidated_materials", data_multi_post)
+        self.assertIn("per_product_breakdown", data_multi_post)
+
+    def test_search_blueprints_endpoint(self) -> None:
+        url = reverse("indy_hub:search_blueprints")
+
+        # 1. Short query returns empty list
+        req_short = self.factory.get(url, {"q": "a"})
+        req_short.user = self.user
+        resp_short = self._unwrap_view(search_blueprints)(req_short)
+        self.assertEqual(resp_short.status_code, 200)
+        data_short = json.loads(resp_short.content)
+        self.assertEqual(data_short["results"], [])
+
+        # 2. Search query matching blueprint in fixture
+        req = self.factory.get(url, {"q": "Raven", "limit": 5})
+        req.user = self.user
+        resp = self._unwrap_view(search_blueprints)(req)
+        self.assertEqual(resp.status_code, 200)
+        data = json.loads(resp.content)
+        self.assertIn("results", data)
+        # Results have expected keys if any matched
+        for result in data["results"]:
+            self.assertIn("blueprint_type_id", result)
+            self.assertIn("blueprint_name", result)
+            self.assertIn("product_type_id", result)
+            self.assertIn("blueprint_icon_url", result)
+            self.assertIn("product_icon_url", result)
+
+    def test_legacy_simulation_load_compatibility(self) -> None:
+        """
+        Simulate an existing legacy simulation that has no ProductionSimulationProduct rows yet.
+        load_production_config should still synthesize the single product entry properly.
+        """
+        legacy_sim = ProductionSimulation.objects.create(
+            user=self.user,
+            blueprint_type_id=12001,
+            blueprint_name="Legacy Tengu",
+            runs=4,
+            simulation_name="Legacy Single Product",
+        )
+        self.assertEqual(legacy_sim.products.count(), 0)
+
+        load_request = self.factory.get(self.load_url, {"simulation_id": legacy_sim.id})
+        load_request.user = self.user
+        load_response = self._unwrap_view(load_production_config)(load_request)
+        self.assertEqual(load_response.status_code, 200)
+
+        load_body = json.loads(load_response.content)
+        self.assertEqual(load_body["simulation_id"], legacy_sim.id)
+        self.assertEqual(load_body["runs"], 4)
+        self.assertEqual(len(load_body["products"]), 1)
+        self.assertEqual(load_body["products"][0]["blueprint_type_id"], 12001)
+        self.assertEqual(load_body["products"][0]["runs"], 4)
