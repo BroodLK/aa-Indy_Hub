@@ -205,15 +205,16 @@ function syncBasketFromPayloadProducts(products) {
             blueprint_name: String(p.blueprint_name || existing?.blueprint_name || 'Blueprint'),
             runs: Math.max(1, Number(p.runs || existing?.runs || 1)),
             product_type_id: p.product_type_id ? Number(p.product_type_id) : existing?.product_type_id,
+            product_name: String(p.product_name || existing?.product_name || p.blueprint_name || 'Product'),
             blueprint_icon_url: p.blueprint_icon_url || existing?.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`,
             product_icon_url: p.product_icon_url || existing?.product_icon_url || (p.product_type_id ? `https://images.evetech.net/types/${p.product_type_id}/icon?size=32` : undefined),
-            unit_cost: p.unit_cost,
-            total_cost: p.total_cost,
-            unit_revenue: p.unit_revenue,
-            total_revenue: p.total_revenue,
-            profit: p.profit,
-            profit_margin: p.profit_margin,
-            output_qty: p.output_qty,
+            unit_cost: p.estimated_unit_cost ?? p.unit_cost,
+            total_cost: p.estimated_cost ?? p.total_cost,
+            unit_revenue: p.estimated_unit_revenue ?? p.unit_revenue,
+            total_revenue: p.estimated_revenue ?? p.total_revenue,
+            profit: p.estimated_profit ?? p.profit,
+            profit_margin: p.profit_margin_pct ?? p.profit_margin,
+            output_qty: p.final_product_qty ?? p.output_qty,
         };
     });
     renderBasketItems();
@@ -385,13 +386,27 @@ function renderPerProductBreakdown() {
 
     let rowsHtml = '';
     products.forEach((prod) => {
-        const name = escapeHtml(prod.blueprint_name || `Blueprint #${prod.blueprint_type_id}`);
+        const name = escapeHtml(prod.product_name || prod.blueprint_name || `Blueprint #${prod.blueprint_type_id}`);
         const imgUrl = prod.product_icon_url || prod.blueprint_icon_url || `https://images.evetech.net/types/${prod.blueprint_type_id}/bp?size=32`;
         const runs = Number(prod.runs) || 1;
-        const outputQty = Number(prod.output_qty) || runs;
+        const outputQty = Number(prod.output_qty || prod.final_product_qty) || runs;
         const unitCost = Number(prod.unit_cost) || 0;
         const totalCost = Number(prod.total_cost) || 0;
-        const totalRev = Number(prod.total_revenue) || 0;
+
+        let saleUnitPrice = 0;
+        const prodTypeId = Number(prod.product_type_id || prod.type_id || 0);
+        if (prodTypeId > 0) {
+            const saleInput = document.querySelector(`.sale-price-unit[data-type-id="${prodTypeId}"]`);
+            if (saleInput) {
+                saleUnitPrice = getCraftPriceInputValue(saleInput);
+            }
+            if (saleUnitPrice <= 0 && window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
+                const p = window.SimulationAPI.getPrice(prodTypeId, 'sale');
+                if (p && typeof p.value === 'number') saleUnitPrice = p.value;
+            }
+        }
+
+        const totalRev = saleUnitPrice > 0 ? (outputQty * saleUnitPrice) : (Number(prod.total_revenue) || 0);
         const profit = Number(prod.profit) || (totalRev - totalCost);
         const margin = totalRev > 0 ? ((profit / totalRev) * 100) : (prod.profit_margin !== undefined ? Number(prod.profit_margin) : 0);
         const marginClass = margin >= 0 ? 'text-success' : 'text-danger';
@@ -1333,6 +1348,8 @@ function rebuildCanonicalBpcCoverageState({ force = false } = {}) {
     const rows = [];
     const byBlueprintType = new Map();
 
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+
     blueprintConfigs.forEach((bp) => {
         const blueprintTypeId = Number(bp?.type_id || bp?.typeId) || 0;
         if (!blueprintTypeId) {
@@ -1354,7 +1371,10 @@ function rebuildCanonicalBpcCoverageState({ force = false } = {}) {
         // so it needs zero BPC runs. Anything the simulation cannot resolve
         // (notably the final product itself) falls back to the server summary.
         let requiredRuns = null;
-        if (liveRequiredRuns.has(productTypeId)) {
+        const basketMatch = basketProducts.find(p => Number(p.blueprint_type_id || p.type_id) === blueprintTypeId || (p.product_type_id && Number(p.product_type_id) === productTypeId));
+        if (basketMatch) {
+            requiredRuns = Math.max(1, Number(basketMatch.runs) || 1);
+        } else if (liveRequiredRuns.has(productTypeId)) {
             requiredRuns = liveRequiredRuns.get(productTypeId);
         } else if (grossProdCraftables.has(productTypeId)) {
             requiredRuns = 0;
@@ -3531,16 +3551,26 @@ async function optimizeProfitabilityConfig() {
         let revenueTotal = 0;
 
         try {
-            const finalRow = document.getElementById('finalProductRow');
-            const finalQtyEl = finalRow ? finalRow.querySelector('[data-qty]') : null;
-            const rawFinalQty = finalQtyEl ? (finalQtyEl.getAttribute('data-qty') || finalQtyEl.dataset?.qty) : null;
-            const finalQty = Math.max(0, Math.ceil(Number(rawFinalQty))) || 0;
-
-            if (productTypeIdLocal && finalQty > 0) {
+            const finalRows = document.querySelectorAll('#financialItemsBody tr.final-product-row, #financialItemsBody tr#finalProductRow, #financialItemsBody tr[data-row-kind="final_product"]');
+            if (finalRows.length > 0) {
+                finalRows.forEach(finalRow => {
+                    const finalQtyEl = finalRow ? finalRow.querySelector('[data-qty]') : null;
+                    const rawFinalQty = finalQtyEl ? (finalQtyEl.getAttribute('data-qty') || finalQtyEl.dataset?.qty) : null;
+                    const finalQty = Math.max(0, Math.ceil(Number(rawFinalQty))) || 0;
+                    const rowTypeId = Number(finalRow.getAttribute('data-type-id')) || 0;
+                    if (rowTypeId && finalQty > 0) {
+                        const unit = api.getPrice(rowTypeId, 'sale');
+                        const unitPrice = unit && typeof unit.value === 'number' ? unit.value : 0;
+                        if (unitPrice > 0) {
+                            revenueTotal += unitPrice * finalQty;
+                        }
+                    }
+                });
+            } else if (productTypeIdLocal) {
                 const unit = api.getPrice(productTypeIdLocal, 'sale');
                 const unitPrice = unit && typeof unit.value === 'number' ? unit.value : 0;
                 if (unitPrice > 0) {
-                    revenueTotal += unitPrice * finalQty;
+                    revenueTotal += unitPrice;
                 }
             }
         } catch (e) {
@@ -3964,9 +3994,17 @@ function initializeFinancialCalculations() {
         // ignore
     }
 
-    // Include the final product type_id
-    if (CRAFT_BP.productTypeId && !typeIds.includes(CRAFT_BP.productTypeId)) {
-        typeIds.push(CRAFT_BP.productTypeId);
+    // Include all basket product type_ids
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    basketProducts.forEach(p => {
+        const pid = String(Number(p.product_type_id || p.type_id || 0) || '').trim();
+        if (pid && pid !== '0' && !typeIds.includes(pid)) {
+            typeIds.push(pid);
+        }
+    });
+
+    if (CRAFT_BP.productTypeId && !typeIds.includes(String(CRAFT_BP.productTypeId))) {
+        typeIds.push(String(CRAFT_BP.productTypeId));
     }
     typeIds = [...new Set([...typeIds, ...treeTypeIds])];
 
@@ -6522,6 +6560,9 @@ function recalcFinancials() {
 
     renderIndustryFeeBreakdown(industryFeeContext);
     syncIndustryFeeManualControls();
+    if (typeof renderPerProductBreakdown === 'function') {
+        renderPerProductBreakdown();
+    }
 }
 
 /**
@@ -6708,16 +6749,26 @@ function populatePrices(allInputs, prices) {
         }
     });
 
-    // Override final product sale price using its true type_id
+    // Override final product sale prices using their true type_ids
+    const allBasketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    const basketTypeIds = new Set();
+    allBasketProducts.forEach(prod => {
+        const prodTypeId = Number(prod.product_type_id || prod.type_id || 0);
+        if (prodTypeId > 0) basketTypeIds.add(prodTypeId);
+    });
     if (CRAFT_BP.productTypeId) {
-        const finalKey = String(CRAFT_BP.productTypeId);
+        basketTypeIds.add(Number(CRAFT_BP.productTypeId));
+    }
+
+    basketTypeIds.forEach(prodTypeId => {
+        const finalKey = String(prodTypeId);
         const rawFinal = prices[finalKey] ?? prices[String(parseInt(finalKey, 10))];
         let finalPrice = rawFinal != null ? parseFloat(rawFinal) : NaN;
         if (isNaN(finalPrice)) finalPrice = 0;
 
         const saleSelector = `.sale-price-unit[data-type-id="${finalKey}"]`;
-        const saleInput = document.querySelector(saleSelector);
-        if (saleInput) {
+        const saleInputs = document.querySelectorAll(saleSelector);
+        saleInputs.forEach(saleInput => {
             if (saleInput.dataset.userModified !== 'true') {
                 setCraftPriceInputValue(saleInput, finalPrice);
                 updatePriceInputManualState(saleInput, false);
@@ -6729,15 +6780,30 @@ function populatePrices(allInputs, prices) {
                 saleInput.classList.remove('bg-warning', 'border-warning');
                 saleInput.removeAttribute('title');
             }
-        }
+        });
+
+        const fuzzSelector = `.fuzzwork-price[data-type-id="${finalKey}"]`;
+        const fuzzInputs = document.querySelectorAll(fuzzSelector);
+        fuzzInputs.forEach(fuzzInput => {
+            setCraftPriceInputValue(fuzzInput, finalPrice);
+            if (finalPrice <= 0) {
+                fuzzInput.classList.add('bg-warning', 'border-warning');
+                fuzzInput.setAttribute('title', __('Price not available (Fuzzwork)'));
+            } else {
+                fuzzInput.classList.remove('bg-warning', 'border-warning');
+                fuzzInput.removeAttribute('title');
+            }
+        });
 
         if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
-            const salePriceForState = (saleInput && saleInput.dataset.userModified === 'true')
-                ? getCraftPriceInputValue(saleInput)
+            const firstSaleInput = document.querySelector(saleSelector);
+            const salePriceForState = (firstSaleInput && firstSaleInput.dataset.userModified === 'true')
+                ? getCraftPriceInputValue(firstSaleInput)
                 : finalPrice;
-            window.SimulationAPI.setPrice(CRAFT_BP.productTypeId, 'sale', salePriceForState);
+            window.SimulationAPI.setPrice(prodTypeId, 'sale', salePriceForState);
+            window.SimulationAPI.setPrice(prodTypeId, 'fuzzwork', finalPrice);
         }
-    }
+    });
 }
 
 /**
@@ -7200,6 +7266,35 @@ function buildBlueprintUsageContextByProductType() {
         }
     });
 
+    // Ensure all basket products are recognized
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    basketProducts.forEach(prod => {
+        const prodTypeId = Number(prod.product_type_id || prod.type_id || 0);
+        const bpId = Number(prod.blueprint_type_id || prod.type_id || 0);
+        if (prodTypeId > 0 && bpId > 0 && (!byProductType.has(prodTypeId) || !byProductType.get(prodTypeId).active)) {
+            const bpName = blueprintNames.get(bpId) || prod.blueprint_name || `Blueprint ${bpId}`;
+            byProductType.set(prodTypeId, {
+                blueprintTypeId: bpId,
+                productTypeId: prodTypeId,
+                blueprintName: String(bpName).trim(),
+                active: true,
+                selected: true,
+                available: true,
+                owned: true,
+                isCopy: true,
+                me: 0,
+                te: 0,
+                defaultMe: 0,
+                defaultTe: 0,
+                boughtContractCount: 0,
+                boughtRuns: 0,
+                ownedRunsSelected: 0,
+                requiredRuns: Math.max(1, Number(prod.runs) || 1),
+                remainingRuns: 0,
+            });
+        }
+    });
+
     // Fallback: include main blueprint if not present in configs
     const mainProductTypeId = Number(payload.product_type_id || payload.productTypeId || 0) || 0;
     const mainBlueprintTypeId = Number(payload.bp_type_id || payload.type_id || 0) || 0;
@@ -7395,22 +7490,40 @@ function renderMaterialsTreeFromPayload(materialsTree) {
         }
     });
 
-    function buildNodeHtml(mat, level) {
+    const priorOpenTypeIds = new Set();
+    const priorOpenPaths = new Set();
+    treeContainer.querySelectorAll('details').forEach((det) => {
+        if (det.open) {
+            const summary = det.querySelector(':scope > summary[data-type-id]');
+            const typeId = Number(summary?.getAttribute('data-type-id') || 0);
+            if (typeId > 0) {
+                priorOpenTypeIds.add(typeId);
+            }
+            const pathKey = det.getAttribute('data-tree-path');
+            if (pathKey) {
+                priorOpenPaths.add(pathKey);
+            }
+        }
+    });
+
+    function buildNodeHtml(mat, level, pathPrefix = '') {
         const typeId = Number(mat.type_id || mat.typeId || 0);
         const typeName = String(mat.type_name || mat.typeName || '');
         const qty = Number(mat.quantity || mat.qty || 0);
         const qtyDefault = Number(mat.quantity_default || mat.quantityDefault || qty);
         const subMaterials = Array.isArray(mat.sub_materials) ? mat.sub_materials : [];
         const hasSub = subMaterials.length > 0;
+        const currentPath = pathPrefix ? `${pathPrefix}-${typeId}` : String(typeId);
 
         const isChecked = priorSwitchStates.has(typeId) ? priorSwitchStates.get(typeId) : true;
+        const isOpen = priorOpenTypeIds.has(typeId) || priorOpenPaths.has(currentPath);
         const modeLabel = isChecked ? __('Prod') : __('Buy');
         const modeBadgeClass = isChecked ? 'bg-success text-white' : 'bg-primary text-white';
 
         let subHtml = '';
         if (hasSub) {
             subHtml = `<ul class="list-unstyled ms-3">
-                ${subMaterials.map((sub) => `<li>${buildNodeHtml(sub, level + 1)}</li>`).join('')}
+                ${subMaterials.map((sub, idx) => `<li>${buildNodeHtml(sub, level + 1, `${currentPath}_${idx}`)}</li>`).join('')}
             </ul>`;
         }
 
@@ -7435,11 +7548,11 @@ function renderMaterialsTreeFromPayload(materialsTree) {
         ` : '';
 
         const iconHtml = hasSub
-            ? `<span class="summary-icon"><i class="fas fa-caret-right"></i></span>`
+            ? `<span class="summary-icon"><i class="fas fa-caret-${isOpen ? 'down' : 'right'}"></i></span>`
             : `<span class="me-2" style="width:2.5rem;display:inline-block;"></span>`;
 
         return `
-            <details class="mb-2">
+            <details class="mb-2" data-tree-path="${currentPath}" ${isOpen ? 'open' : ''}>
                 <summary class="d-flex align-items-center gap-2 py-1"
                          data-type-id="${typeId}"
                          data-type-name="${escapeHtml(typeName)}"
@@ -7473,7 +7586,7 @@ function renderMaterialsTreeFromPayload(materialsTree) {
     }
 
     treeContainer.innerHTML = `<ul class="list-unstyled ms-1">
-        ${materialsTree.map((mat) => `<li>${buildNodeHtml(mat, 0)}</li>`).join('')}
+        ${materialsTree.map((mat, idx) => `<li>${buildNodeHtml(mat, 0, `root_${idx}`)}</li>`).join('')}
     </ul>`;
 
     if (typeof refreshTreeQuantityLabels === 'function') {
@@ -7484,6 +7597,9 @@ function renderMaterialsTreeFromPayload(materialsTree) {
     }
     if (typeof refreshTreeSwitchHierarchy === 'function') {
         refreshTreeSwitchHierarchy();
+    }
+    if (typeof refreshTreeSummaryIcons === 'function') {
+        refreshTreeSummaryIcons();
     }
 }
 
@@ -7962,13 +8078,38 @@ function refreshTreeOwnedBadges() {
 
 function getBlueprintConfigsForFinancialPlanner() {
     const payload = window.BLUEPRINT_DATA || {};
+    let configs = [];
     if (Array.isArray(payload.blueprint_configs)) {
-        return payload.blueprint_configs;
+        configs = [...payload.blueprint_configs];
+    } else if (Array.isArray(payload.blueprintConfigs)) {
+        configs = [...payload.blueprintConfigs];
     }
-    if (Array.isArray(payload.blueprintConfigs)) {
-        return payload.blueprintConfigs;
-    }
-    return [];
+
+    const existingTypeIds = new Set(configs.map(c => Number(c?.type_id || c?.typeId || 0)));
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    basketProducts.forEach(prod => {
+        const bpId = Number(prod.blueprint_type_id || prod.type_id || 0);
+        if (bpId > 0 && !existingTypeIds.has(bpId)) {
+            existingTypeIds.add(bpId);
+            configs.push({
+                type_id: bpId,
+                product_type_id: Number(prod.product_type_id || 0) || bpId,
+                type_name: prod.blueprint_name || `Blueprint #${bpId}`,
+                product_name: prod.product_name || prod.blueprint_name || 'Product',
+                level: 0,
+                is_owned: false,
+                user_owns: false,
+                is_copy: true,
+                runs_available: null,
+                material_efficiency: 0,
+                time_efficiency: 0,
+                me: 0,
+                te: 0,
+            });
+        }
+    });
+
+    return configs;
 }
 
 function getCraftCyclesSummaryForFinancialPlanner() {
@@ -8223,7 +8364,27 @@ function collectBuildPlannerItems() {
         aggregated.set(numericTypeId, existing);
     };
 
-    if (finalProductTypeId && finalProductQty > 0) {
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    if (basketProducts.length > 0) {
+        basketProducts.forEach((prod) => {
+            const prodTypeId = Number(prod.product_type_id || prod.type_id || 0);
+            const runs = Math.max(1, Number(prod.runs) || 1);
+            const outputQty = Math.max(1, Number(prod.output_qty || prod.final_product_qty) || runs);
+            const perRunQty = Math.max(1, Math.round(outputQty / runs) || 1);
+            const name = prod.product_name || prod.blueprint_name || `Product #${prodTypeId}`;
+            const runsLabel = `${formatInteger(runs)} ${runs === 1 ? __('run') : __('runs')}`;
+            const fullName = `${name} (${runsLabel})`;
+            if (prodTypeId > 0 && outputQty > 0) {
+                addItem({
+                    typeId: prodTypeId,
+                    typeName: fullName,
+                    totalNeeded: outputQty,
+                    producedPerRun: perRunQty,
+                    depth: 0,
+                });
+            }
+        });
+    } else if (finalProductTypeId && finalProductQty > 0) {
         addItem({
             typeId: finalProductTypeId,
             typeName: finalProductName,
@@ -8617,8 +8778,100 @@ function isProductPlannedForProduction(productTypeId) {
     if (!numericProductTypeId) {
         return false;
     }
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    if (basketProducts.some(p => Number(p.product_type_id || p.type_id) === numericProductTypeId || Number(p.blueprint_type_id) === numericProductTypeId)) {
+        return true;
+    }
     const mode = getTreeSwitchModeForType(numericProductTypeId);
     return mode === 'prod';
+}
+
+function ensureConfigureCardsForBasketProducts(configurePane) {
+    if (!configurePane) return;
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    if (basketProducts.length <= 1) return;
+
+    let targetGrid = configurePane.querySelector('.craft-config-level .craft-config-items-grid');
+    if (!targetGrid) return;
+
+    basketProducts.forEach((prod) => {
+        const bpId = Number(prod.blueprint_type_id || prod.type_id || 0);
+        const prodTypeId = Number(prod.product_type_id || 0) || bpId;
+        if (!bpId) return;
+
+        let existingCard = configurePane.querySelector(`.craft-bp-card[data-blueprint-type-id="${bpId}"]`);
+        if (!existingCard) {
+            const card = document.createElement('div');
+            card.className = 'craft-bp-card card h-100';
+            card.setAttribute('data-blueprint-type-id', String(bpId));
+            card.setAttribute('data-product-type-id', String(prodTypeId));
+            card.setAttribute('data-blueprint-owned', 'false');
+            card.setAttribute('data-blueprint-not-owned', 'true');
+            const name = escapeHtml(prod.blueprint_name || `Blueprint #${bpId}`);
+            card.innerHTML = `
+                <div class="card-header text-center py-1 bg-warning bg-opacity-10">
+                    <img src="https://images.evetech.net/types/${bpId}/bp?size=128"
+                         alt="${name}"
+                         class="craft-bp-icon mx-auto d-block mb-1"
+                         onerror="this.style.display='none';">
+                    <span class="badge bg-secondary w-100 mb-1" style="font-size: 0.75rem;">
+                        <i class="fas fa-layer-group me-1"></i>${__('Basket Item')}
+                    </span>
+                </div>
+                <div class="card-body p-2">
+                    <h6 class="card-title text-center fw-bold mb-2" style="min-height: 2rem; font-size: 0.95rem;">${name}</h6>
+                    <div class="craft-efficiency-controls mb-2">
+                        <div class="d-flex gap-1" style="align-items: flex-start;">
+                            <div style="flex: 1; min-width: 0;">
+                                <label class="form-label small fw-bold text-uppercase text-muted" style="font-size: 0.65rem; margin-bottom: 0.25rem;">
+                                    <i class="fas fa-cubes me-1"></i>ME
+                                </label>
+                                <input type="number"
+                                       name="me_${bpId}"
+                                       value="0"
+                                       min="0"
+                                       max="10"
+                                       class="form-control form-control-sm text-center fw-bold bp-me-input"
+                                       style="font-size: 0.9rem; padding: 0.3rem">
+                            </div>
+                            <div style="flex: 1; min-width: 0;">
+                                <label class="form-label small fw-bold text-uppercase text-muted" style="font-size: 0.65rem; margin-bottom: 0.25rem;">
+                                    <i class="fas fa-clock me-1"></i>TE
+                                </label>
+                                <input type="number"
+                                       name="te_${bpId}"
+                                       value="0"
+                                       min="0"
+                                       max="20"
+                                       class="form-control form-control-sm text-center fw-bold bp-te-input"
+                                       style="font-size: 0.9rem; padding: 0.3rem">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-check form-switch mt-2 mb-2">
+                        <input class="form-check-input bp-use-input"
+                               type="checkbox"
+                               role="switch"
+                               id="bpUse${bpId}"
+                               name="usebp_${bpId}"
+                               data-blueprint-type-id="${bpId}"
+                               data-product-type-id="${prodTypeId}"
+                               checked>
+                        <label class="form-check-label small fw-semibold" for="bpUse${bpId}">${__('Use this BP')}</label>
+                    </div>
+                </div>
+            `;
+            targetGrid.appendChild(card);
+            const meInput = card.querySelector('.bp-me-input');
+            const teInput = card.querySelector('.bp-te-input');
+            const useInput = card.querySelector('.bp-use-input');
+            [meInput, teInput, useInput].forEach(inp => {
+                if (inp) {
+                    inp.addEventListener('change', () => scheduleLiveCraftPayloadRefresh('change'));
+                }
+            });
+        }
+    });
 }
 
 function syncConfigureCardFromSelectedContracts(blueprintTypeId) {
@@ -8666,7 +8919,11 @@ function syncConfigureVisibilityWithPlan() {
         return;
     }
 
+    ensureConfigureCardsForBasketProducts(configurePane);
+
     const configs = getBlueprintConfigsForFinancialPlanner();
+    const basketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    let anyUseChanged = false;
 
     configurePane.querySelectorAll('.craft-bp-card[data-blueprint-type-id]').forEach((card) => {
         const blueprintTypeId = Number(card.getAttribute('data-blueprint-type-id')) || 0;
@@ -8685,24 +8942,29 @@ function syncConfigureVisibilityWithPlan() {
                 return Boolean(bp && (bp.is_owned || bp.user_owns || bp.isOwned));
             })();
         const hasSelectedContracts = getSelectedContractOffersForBlueprint(blueprintTypeId).length > 0;
-        const keepVisible = isPlannedForProduction && isOwned;
+        const isBasketProduct = basketProducts.some(p => Number(p.blueprint_type_id || p.type_id) === blueprintTypeId || (p.product_type_id && Number(p.product_type_id) === productTypeId));
+        const keepVisible = (isPlannedForProduction && isOwned) || isBasketProduct;
         card.classList.toggle('d-none', !keepVisible);
         const useInput = card.querySelector('input.bp-use-input[data-blueprint-type-id]');
         if (useInput) {
-            if (useInput.checked && !isPlannedForProduction) {
+            if (useInput.checked && !isPlannedForProduction && !isBasketProduct) {
                 useInput.checked = false;
                 useInput.dataset.contractDriven = 'false';
-                useInput.dispatchEvent(new Event('change', { bubbles: true }));
-            } else if (useInput.checked && !isOwned && !hasSelectedContracts) {
+                anyUseChanged = true;
+            } else if (useInput.checked && !isOwned && !hasSelectedContracts && !isBasketProduct) {
                 useInput.checked = false;
                 useInput.dataset.contractDriven = 'false';
-                useInput.dispatchEvent(new Event('change', { bubbles: true }));
-            } else if (!useInput.checked && isPlannedForProduction && isOwned && !useInput.disabled && useInput.dataset.userExplicitlyUnchecked !== 'true') {
+                anyUseChanged = true;
+            } else if (!useInput.checked && isPlannedForProduction && (isOwned || isBasketProduct) && !useInput.disabled && useInput.dataset.userExplicitlyUnchecked !== 'true') {
                 useInput.checked = true;
-                useInput.dispatchEvent(new Event('change', { bubbles: true }));
+                anyUseChanged = true;
             }
         }
     });
+
+    if (anyUseChanged && typeof saveMETEToLocalStorage === 'function') {
+        saveMETEToLocalStorage();
+    }
 
     configurePane.querySelectorAll('.craft-config-items-grid').forEach((grid) => {
         const visibleCards = grid.querySelectorAll('.craft-bp-card:not(.d-none)');
@@ -9702,6 +9964,195 @@ function initializeBuyBpcsTab() {
     }
 }
 
+function syncFinalProductRowsInFinancialTab(tableBody, pricesMap = null) {
+    if (!tableBody) return;
+
+    const products = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    const normalizedProducts = [];
+    if (products.length > 0) {
+        products.forEach(p => {
+            const bpId = Number(p.blueprint_type_id || p.type_id || 0);
+            const prodTypeId = Number(p.product_type_id || 0) || bpId;
+            const runs = Math.max(1, Number(p.runs) || 1);
+            const outputQty = Math.max(1, Number(p.output_qty || p.final_product_qty) || runs);
+            const name = String(p.product_name || p.blueprint_name || `Product #${prodTypeId}`);
+            const iconUrl = p.product_icon_url || (prodTypeId ? `https://images.evetech.net/types/${prodTypeId}/icon?size=32` : (p.blueprint_icon_url || `https://images.evetech.net/types/${bpId}/bp?size=32`));
+            normalizedProducts.push({
+                blueprint_type_id: bpId,
+                product_type_id: prodTypeId,
+                runs,
+                output_qty: outputQty,
+                name,
+                icon_url: iconUrl,
+            });
+        });
+    } else {
+        const rootBpId = Number(window.BLUEPRINT_DATA?.bp_type_id || window.BLUEPRINT_DATA?.type_id || 0);
+        const rootProdId = Number(window.BLUEPRINT_DATA?.product_type_id || CRAFT_BP.productTypeId || rootBpId);
+        const rootRuns = Math.max(1, Number(window.BLUEPRINT_DATA?.num_runs || 1));
+        const rootOutput = Math.max(1, Number(window.BLUEPRINT_DATA?.final_product_qty || rootRuns));
+        const rootName = String(window.BLUEPRINT_DATA?.product_name || window.BLUEPRINT_DATA?.bp_name || window.BLUEPRINT_DATA?.name || 'Product');
+        normalizedProducts.push({
+            blueprint_type_id: rootBpId,
+            product_type_id: rootProdId,
+            runs: rootRuns,
+            output_qty: rootOutput,
+            name: rootName,
+            icon_url: `https://images.evetech.net/types/${rootProdId}/icon?size=32`,
+        });
+    }
+
+    const existingFinalRows = new Map();
+    tableBody.querySelectorAll('tr.final-product-row, tr#finalProductRow, tr[data-row-kind="final_product"]').forEach(r => {
+        const tid = Number(r.getAttribute('data-type-id') || 0);
+        if (tid > 0) {
+            existingFinalRows.set(tid, r);
+        }
+    });
+
+    const activeTypeIds = new Set();
+    const missingPriceTypeIds = [];
+
+    normalizedProducts.forEach((prod) => {
+        const prodTypeId = prod.product_type_id;
+        activeTypeIds.add(prodTypeId);
+        let row = existingFinalRows.get(prodTypeId);
+
+        const currentQty = prod.output_qty;
+        const runsLabel = `${formatInteger(prod.runs)} ${prod.runs === 1 ? __('run') : __('runs')}`;
+        const nameWithRuns = `${prod.name} (${runsLabel})`;
+
+        if (row) {
+            row.setAttribute('data-type-id', String(prodTypeId));
+            row.setAttribute('data-runs', String(prod.runs));
+            row.setAttribute('data-row-kind', 'final_product');
+            const img = row.querySelector('.item-icon-cell img');
+            if (img) {
+                img.src = prod.icon_url;
+                img.alt = prod.name;
+            }
+            const nameSpan = row.querySelector('.item-name-cell .fw-semibold');
+            if (nameSpan) {
+                nameSpan.textContent = nameWithRuns;
+            }
+            const qtyCell = row.querySelector('[data-qty]');
+            if (qtyCell) {
+                qtyCell.setAttribute('data-qty', String(currentQty));
+                const badge = qtyCell.querySelector('.badge');
+                if (badge) {
+                    badge.textContent = formatInteger(currentQty);
+                } else {
+                    qtyCell.textContent = formatInteger(currentQty);
+                }
+            }
+            const saleInput = row.querySelector('.sale-price-unit');
+            if (saleInput) {
+                saleInput.setAttribute('data-type-id', String(prodTypeId));
+            }
+            const fuzzInput = row.querySelector('.fuzzwork-price');
+            if (fuzzInput) {
+                fuzzInput.setAttribute('data-type-id', String(prodTypeId));
+            }
+            tableBody.appendChild(row);
+        } else {
+            const tr = document.createElement('tr');
+            tr.className = 'final-product-row align-middle';
+            tr.setAttribute('data-type-id', String(prodTypeId));
+            tr.setAttribute('data-runs', String(prod.runs));
+            tr.setAttribute('data-row-kind', 'final_product');
+            tr.setAttribute('data-market-group', __('Final Products'));
+
+            let initialSalePrice = 0;
+            let initialFuzzPrice = 0;
+            if (pricesMap && typeof pricesMap.get === 'function') {
+                const p = pricesMap.get(prodTypeId);
+                if (p) {
+                    initialSalePrice = p.sale ?? p.real ?? 0;
+                    initialFuzzPrice = p.fuzzwork ?? p.fuzzPrice ?? 0;
+                }
+            }
+            if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
+                const s = window.SimulationAPI.getPrice(prodTypeId, 'sale');
+                if (s && typeof s.value === 'number') initialSalePrice = s.value;
+                const f = window.SimulationAPI.getPrice(prodTypeId, 'fuzzwork');
+                if (f && typeof f.value === 'number') initialFuzzPrice = f.value;
+            }
+
+            tr.innerHTML = `
+                <td class="item-icon-cell">
+                    <img src="${prod.icon_url}" class="rounded" style="width:28px;height:28px;" alt="${escapeHtml(prod.name)}">
+                </td>
+                <td class="item-name-cell">
+                    <div class="d-flex align-items-center">
+                        <span class="fw-semibold">${escapeHtml(nameWithRuns)}</span>
+                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle ms-2 craft-row-kind-marker">${escapeHtml(__('Final Product'))}</span>
+                    </div>
+                </td>
+                <td class="text-end" data-qty="${currentQty}">
+                    <span class="badge bg-secondary text-white">${formatInteger(currentQty)}</span>
+                </td>
+                <td class="text-end text-muted small">—</td>
+                <td class="text-end text-muted small">—</td>
+                <td>
+                    <div class="craft-price-input-wrapper">
+                        <input type="text"
+                               inputmode="decimal"
+                               class="form-control form-control-sm text-end fuzzwork-price"
+                               data-type-id="${prodTypeId}"
+                               value="${formatCraftPriceInputValue(initialFuzzPrice)}"
+                               readonly
+                               tabindex="-1">
+                        <span class="craft-price-input-affix">ISK</span>
+                    </div>
+                </td>
+                <td>
+                    <div class="craft-price-input-wrapper">
+                        <input type="text"
+                               inputmode="decimal"
+                               class="form-control form-control-sm text-end sale-price-unit"
+                               data-type-id="${prodTypeId}"
+                               value="${formatCraftPriceInputValue(initialSalePrice || initialFuzzPrice)}">
+                        <span class="craft-price-input-affix">ISK</span>
+                    </div>
+                </td>
+                <td class="text-end total-cost text-muted">—</td>
+                <td class="text-end total-revenue text-success fw-bold">—</td>
+            `;
+
+            const saleInput = tr.querySelector('.sale-price-unit');
+            const fuzzInput = tr.querySelector('.fuzzwork-price');
+            attachPriceInputListener(saleInput);
+            bindCraftPriceInputFormatting(saleInput);
+            bindCraftPriceInputFormatting(fuzzInput);
+
+            tableBody.appendChild(tr);
+
+            if (initialFuzzPrice <= 0) {
+                missingPriceTypeIds.push(String(prodTypeId));
+            }
+        }
+    });
+
+    existingFinalRows.forEach((row, typeId) => {
+        if (!activeTypeIds.has(typeId)) {
+            row.remove();
+        }
+    });
+
+    if (missingPriceTypeIds.length > 0 && typeof fetchAllPrices === 'function') {
+        fetchAllPrices(missingPriceTypeIds).then(prices => {
+            const inputs = Array.from(tableBody.querySelectorAll('input.sale-price-unit, input.fuzzwork-price'))
+                .filter(inp => missingPriceTypeIds.includes(inp.getAttribute('data-type-id')));
+            if (typeof populatePrices === 'function') {
+                populatePrices(inputs, prices);
+            }
+            if (typeof recalcFinancials === 'function') {
+                recalcFinancials();
+            }
+        });
+    }
+}
+
 function updateFinancialTabFromState() {
     const tableBody = document.getElementById('financialItemsBody');
     if (!tableBody || !window.SimulationAPI || typeof window.SimulationAPI.getFinancialItems !== 'function') {
@@ -9728,12 +10179,22 @@ function updateFinancialTabFromState() {
     const productTypeId = getProductTypeIdValue();
     const pricesMap = getSimulationPricesMap();
 
+    const allBasketProducts = typeof getBasketProducts === 'function' ? getBasketProducts() : [];
+    const allBasketProductTypeIds = new Set();
+    allBasketProducts.forEach(p => {
+        const tid = Number(p.product_type_id || p.type_id || 0);
+        if (tid > 0) allBasketProductTypeIds.add(tid);
+    });
+    if (productTypeId) {
+        allBasketProductTypeIds.add(productTypeId);
+    }
+
     const aggregated = new Map();
     const items = window.SimulationAPI.getFinancialItems() || [];
 
     items.forEach(item => {
         const typeId = Number(item.typeId ?? item.type_id);
-        if (!typeId || (productTypeId && typeId === productTypeId) || CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.has(typeId)) {
+        if (!typeId || allBasketProductTypeIds.has(typeId) || CRAFT_MANUAL_FINANCIAL_STATE.excludedTypeIds.has(typeId)) {
             return;
         }
         const quantity = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0)) || 0);
@@ -9902,6 +10363,9 @@ function updateFinancialTabFromState() {
         if (finalRow && row === finalRow) {
             return;
         }
+        if (row.classList.contains('final-product-row') || row.getAttribute('data-row-kind') === 'final_product') {
+            return;
+        }
         const typeId = Number(row.getAttribute('data-type-id')) || 0;
         if (!typeId) {
             return;
@@ -9934,9 +10398,7 @@ function updateFinancialTabFromState() {
 
     existingRows.forEach(row => row.remove());
 
-    if (finalRow && finalRow.parentElement !== tableBody) {
-        tableBody.appendChild(finalRow);
-    }
+    syncFinalProductRowsInFinancialTab(tableBody, pricesMap);
 
     if (newRows.length > 0) {
         const pricedRows = newRows.filter((entry) => !entry.isBpc && !entry.isManualFinancial);
@@ -10465,7 +10927,7 @@ function getPurchasePlannerItemsFromDom() {
 
     const items = [];
     Array.from(financialBody.querySelectorAll('tr[data-type-id]')).forEach((row, index) => {
-        if (row.id === 'finalProductRow') {
+        if (row.id === 'finalProductRow' || row.classList.contains('final-product-row') || row.getAttribute('data-row-kind') === 'final_product') {
             return;
         }
 
@@ -13685,7 +14147,7 @@ async function calculateImportFees() {
 
     const rows = tbody.querySelectorAll('tr[data-type-id]');
     rows.forEach(row => {
-        if (row.id === 'finalProductRow') {
+        if (row.id === 'finalProductRow' || row.classList.contains('final-product-row') || row.getAttribute('data-row-kind') === 'final_product') {
             return;
         }
         const qtyCell = row.querySelector('.craft-financial-qty-cell') || row.querySelector('[data-qty]');
