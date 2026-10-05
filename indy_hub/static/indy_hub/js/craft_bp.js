@@ -418,15 +418,29 @@ function renderPerProductBreakdown() {
     tableBody.innerHTML = rowsHtml;
 }
 
+function syncBasketVisibilityWithActiveTab(tabName = null) {
+    const activeTab = tabName || (typeof getActiveCraftMainTabName === 'function' ? getActiveCraftMainTabName() : 'plan');
+    const basketCard = document.getElementById('productBasketCard');
+    if (basketCard) {
+        if (activeTab === 'plan') {
+            basketCard.classList.remove('d-none');
+        } else {
+            basketCard.classList.add('d-none');
+        }
+    }
+}
+
 function initBasketToolbar() {
     if (CRAFT_BASKET_STATE.initialized) {
         renderBasketItems();
+        syncBasketVisibilityWithActiveTab();
         return;
     }
     CRAFT_BASKET_STATE.initialized = true;
     initDefaultBasketProducts();
     renderBasketItems();
     renderPerProductBreakdown();
+    syncBasketVisibilityWithActiveTab();
 
     const searchInput = document.getElementById('basketSearchInput');
     const searchResults = document.getElementById('basketSearchResults');
@@ -4259,6 +4273,8 @@ function initializeMETEHandlers() {
             const targetTab = event.target.getAttribute('data-tab-name');
             craftBPDebugLog(`Tab switched to: ${targetTab}`);
 
+            syncBasketVisibilityWithActiveTab(targetTab);
+
             if (targetTab === 'schedule' && buildScheduleData && typeof renderGanttChart === 'function') {
                 renderGanttChart(buildScheduleData);
             }
@@ -7471,6 +7487,51 @@ function renderMaterialsTreeFromPayload(materialsTree) {
     }
 }
 
+function setSimulationLoadingState(isLoading, message = '') {
+    const statusBadge = document.getElementById('simulationStatus');
+    const basketSpinner = document.getElementById('basketLoadingSpinner');
+    const treeTab = document.getElementById('tab-tree');
+    const materialsContainer = document.getElementById('materialsGroupsContainer');
+
+    if (isLoading) {
+        if (statusBadge) {
+            statusBadge.className = 'badge bg-primary text-white d-inline-flex align-items-center gap-1';
+            statusBadge.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span>${message || __('Updating simulation...')}</span>`;
+            statusBadge.classList.remove('d-none');
+        }
+        if (basketSpinner) {
+            basketSpinner.classList.remove('d-none');
+        }
+        if (treeTab) {
+            treeTab.style.transition = 'opacity 0.2s';
+            treeTab.style.opacity = '0.6';
+        }
+        if (materialsContainer) {
+            materialsContainer.style.transition = 'opacity 0.2s';
+            materialsContainer.style.opacity = '0.6';
+        }
+    } else {
+        if (statusBadge) {
+            statusBadge.className = 'badge bg-success text-white d-inline-flex align-items-center gap-1';
+            statusBadge.innerHTML = `<i class="fas fa-check"></i> <span>${__('Simulation updated')}</span>`;
+            setTimeout(() => {
+                if (!CRAFT_LIVE_PAYLOAD_STATE.loading && statusBadge) {
+                    statusBadge.classList.add('d-none');
+                }
+            }, 1200);
+        }
+        if (basketSpinner) {
+            basketSpinner.classList.add('d-none');
+        }
+        if (treeTab) {
+            treeTab.style.opacity = '1';
+        }
+        if (materialsContainer) {
+            materialsContainer.style.opacity = '1';
+        }
+    }
+}
+
 function applyLiveCraftPayload(payload) {
     if (!payload || typeof payload !== 'object') {
         return;
@@ -7491,6 +7552,8 @@ function applyLiveCraftPayload(payload) {
         'output_qty_per_run',
         'final_product_qty',
         'materials_tree',
+        'consolidated_materials',
+        'summary',
         'recipe_map',
         'products',
         'price_estimates',
@@ -7526,6 +7589,27 @@ function applyLiveCraftPayload(payload) {
     if (kpiMe && payload.me !== undefined) kpiMe.textContent = String(payload.me);
     if (kpiTe && payload.te !== undefined) kpiTe.textContent = String(payload.te);
 
+    const bpCountEl = document.getElementById('totalBlueprintsCount');
+    const matCountEl = document.getElementById('totalMaterialsCount');
+    const profitEl = document.getElementById('quickProfit');
+    const marginEl = document.getElementById('quickMargin');
+
+    if (bpCountEl && payload.summary?.total_products !== undefined) {
+        bpCountEl.textContent = formatInteger(payload.summary.total_products);
+    }
+    if (matCountEl && payload.summary?.total_items !== undefined) {
+        matCountEl.textContent = formatInteger(payload.summary.total_items);
+    }
+    if (profitEl && payload.summary?.total_profit !== undefined) {
+        const profit = Number(payload.summary.total_profit) || 0;
+        profitEl.textContent = (profit >= 0 ? '+' : '') + formatCraftPriceInputValue(profit) + ' ISK';
+        profitEl.className = `craft-stat-value ${profit >= 0 ? 'text-success' : 'text-danger'}`;
+    }
+    if (marginEl && payload.summary?.margin !== undefined) {
+        const margin = Number(payload.summary.margin) || 0;
+        marginEl.textContent = `${margin.toFixed(1)}%`;
+    }
+
     const hiddenRuns = document.getElementById('runsInput');
     if (hiddenRuns) {
         hiddenRuns.value = String(totalRuns);
@@ -7548,6 +7632,7 @@ async function refreshLiveCraftPayloadFromConfigure({ force = false } = {}) {
     CRAFT_LIVE_PAYLOAD_STATE.lastSignature = request.signature;
     const requestSeq = ++CRAFT_LIVE_PAYLOAD_STATE.requestSeq;
     CRAFT_LIVE_PAYLOAD_STATE.loading = true;
+    setSimulationLoadingState(true, __('Updating simulation...'));
 
     try {
         const response = await fetch(request.url, {
@@ -7577,6 +7662,7 @@ async function refreshLiveCraftPayloadFromConfigure({ force = false } = {}) {
     } finally {
         if (requestSeq === CRAFT_LIVE_PAYLOAD_STATE.requestSeq) {
             CRAFT_LIVE_PAYLOAD_STATE.loading = false;
+            setSimulationLoadingState(false);
             if (CRAFT_LIVE_PAYLOAD_STATE.queued) {
                 CRAFT_LIVE_PAYLOAD_STATE.queued = false;
                 refreshLiveCraftPayloadFromConfigure({ force: true });

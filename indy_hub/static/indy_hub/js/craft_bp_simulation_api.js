@@ -370,6 +370,10 @@
             treeMap.clear();
             ingestTree(currentPayload.materials_tree);
         }
+        if (Array.isArray(currentPayload.consolidated_materials) && currentPayload.consolidated_materials.length > 0) {
+            materialsMap.clear();
+            ingestFlatMaterials(currentPayload.consolidated_materials);
+        }
 
         const treeTab = document.getElementById('tab-tree');
         if (treeTab) {

@@ -48,54 +48,6 @@
             </div>
         </div>
 
-        <!-- MULTI-PRODUCT BASKET TOOLBAR -->
-        <div id="productBasketCard" class="card shadow-sm border-0 mb-4 bg-dark text-light rounded-3 overflow-hidden">
-            <div class="card-header bg-dark-subtle border-bottom border-secondary d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 px-3">
-                <div class="d-flex align-items-center gap-2">
-                    <i class="fas fa-layer-group text-primary"></i>
-                    <span class="fw-bold">{% trans "Product Basket" %}</span>
-                    <span id="basketCountBadge" class="badge bg-primary rounded-pill">1 product</span>
-                    <span id="basketTotalRunsBadge" class="badge bg-secondary rounded-pill">1 run</span>
-                </div>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="text-muted small me-1">{% trans "Batch Multiplier:" %}</span>
-                    <div class="btn-group btn-group-sm" role="group" aria-label="{% trans 'Batch multipliers' %}">
-                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="2">x2</button>
-                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="5">x5</button>
-                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="10">x10</button>
-                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="0.5">÷2</button>
-                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="reset">{% trans "Reset 1" %}</button>
-                    </div>
-                </div>
-            </div>
-            <div class="card-body p-3">
-                <div class="row g-2 align-items-center mb-3">
-                    <div class="col-12 col-md-6 col-lg-5 position-relative">
-                        <div class="input-group input-group-sm">
-                            <span class="input-group-text bg-dark border-secondary text-muted"><i class="fas fa-search"></i></span>
-                            <input type="text"
-                                   id="basketSearchInput"
-                                   class="form-control form-control-sm bg-dark text-light border-secondary"
-                                   placeholder="{% trans 'Search and add blueprints to basket...' %}"
-                                   autocomplete="off">
-                            <button id="basketClearSearchBtn" class="btn btn-outline-secondary d-none" type="button"><i class="fas fa-times"></i></button>
-                        </div>
-                        <div id="basketSearchResults"
-                             class="dropdown-menu dropdown-menu-dark shadow w-100 position-absolute"
-                             style="max-height: 280px; overflow-y: auto; z-index: 1050; display: none;">
-                        </div>
-                    </div>
-                    <div class="col-12 col-md-6 col-lg-7 text-md-end text-muted small">
-                        <span id="basketStatusText">{% trans "Combined multi-product simulation with pooled intermediate jobs." %}</span>
-                    </div>
-                </div>
-
-                <div id="basketItemsContainer" class="d-flex flex-wrap gap-2 align-items-center">
-                    <!-- Populated dynamically by craft_bp.js / renderBasketItems() -->
-                </div>
-            </div>
-        </div>
-
         {% with current_tab=active_tab|default:'materials' %}
 
             <!-- HIDDEN TAB SYSTEM FOR JS COMPATIBILITY -->
@@ -240,6 +192,57 @@
                 <div class="tab-content craft-tab-content" id="craftMainTabsContent">
                     <!-- ========== PLAN TAB (V2) ========== -->
                     <div class="tab-pane fade show active" id="plan-pane" role="tabpanel" aria-labelledby="plan-tab-btn">
+                        <!-- MULTI-PRODUCT BASKET TOOLBAR (PLAN TAB) -->
+                        <div id="productBasketCard" class="card shadow-sm border-0 mb-4 bg-dark text-light rounded-3 overflow-hidden">
+                            <div class="card-header bg-dark-subtle border-bottom border-secondary d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 px-3">
+                                <div class="d-flex align-items-center gap-2">
+                                    <i class="fas fa-layer-group text-primary"></i>
+                                    <span class="fw-bold">{% trans "Product Basket" %}</span>
+                                    <span id="basketCountBadge" class="badge bg-primary rounded-pill">1 product</span>
+                                    <span id="basketTotalRunsBadge" class="badge bg-secondary rounded-pill">1 run</span>
+                                    <span id="basketLoadingSpinner" class="spinner-border spinner-border-sm text-primary d-none ms-1" role="status" aria-hidden="true">
+                                        <span class="visually-hidden">{% trans "Loading..." %}</span>
+                                    </span>
+                                </div>
+                                <div class="d-flex align-items-center gap-2">
+                                    <span class="text-muted small me-1">{% trans "Batch Multiplier:" %}</span>
+                                    <div class="btn-group btn-group-sm" role="group" aria-label="{% trans 'Batch multipliers' %}">
+                                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="2">x2</button>
+                                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="5">x5</button>
+                                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="10">x10</button>
+                                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="0.5">÷2</button>
+                                        <button type="button" class="btn btn-outline-secondary basket-multiplier-btn" data-multiplier="reset">{% trans "Reset 1" %}</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-body p-3">
+                                <div class="row g-2 align-items-center mb-3">
+                                    <div class="col-12 col-md-6 col-lg-5 position-relative">
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text bg-dark border-secondary text-muted"><i class="fas fa-search"></i></span>
+                                            <input type="text"
+                                                   id="basketSearchInput"
+                                                   class="form-control form-control-sm bg-dark text-light border-secondary"
+                                                   placeholder="{% trans 'Search and add blueprints to basket...' %}"
+                                                   autocomplete="off">
+                                            <button id="basketClearSearchBtn" class="btn btn-outline-secondary d-none" type="button"><i class="fas fa-times"></i></button>
+                                        </div>
+                                        <div id="basketSearchResults"
+                                             class="dropdown-menu dropdown-menu-dark shadow w-100 position-absolute"
+                                             style="max-height: 280px; overflow-y: auto; z-index: 1050; display: none;">
+                                        </div>
+                                    </div>
+                                    <div class="col-12 col-md-6 col-lg-7 text-md-end text-muted small">
+                                        <span id="basketStatusText">{% trans "Combined multi-product simulation with pooled intermediate jobs." %}</span>
+                                    </div>
+                                </div>
+
+                                <div id="basketItemsContainer" class="d-flex flex-wrap gap-2 align-items-center">
+                                    <!-- Populated dynamically by craft_bp.js / renderBasketItems() -->
+                                </div>
+                            </div>
+                        </div>
+
                         <p class="craft-tab-subtitle small text-muted mb-3">{% trans "Decide what to Produce and what to Buy for this blueprint tree, and see the margin that choice gives." %}</p>
                         <div class="craft-quick-stats mb-4">
                             <div class="craft-stat-card">

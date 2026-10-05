@@ -562,14 +562,72 @@ def build_multi_product_materials_tree(
     total_runs_count = sum(p["runs"] for p in normalized_products)
 
     # For materials_tree in payload:
-    # If single product: return that product's materials tree (legacy parity)
-    # If multi product: return combined roots
-    if len(normalized_products) == 1:
+    # Build a consolidated unified tree merging shared component demands across all basket products
+    def build_consolidated_tree_nodes(
+        direct_demands: dict[int, int],
+        depth: int = 0,
+        seen: set[int] | None = None,
+    ) -> list[dict]:
+        if seen is None:
+            seen = set()
+        if depth > max_depth:
+            return []
+
+        tree_nodes = []
+        for mat_type_id, qty in direct_demands.items():
+            if qty <= 0:
+                continue
+            mat_name = get_type_name(mat_type_id)
+            mat: dict[str, object] = {
+                "type_id": mat_type_id,
+                "type_name": mat_name,
+                "quantity": qty,
+                "quantity_default": qty,
+                "cycles": None,
+                "produced_per_cycle": None,
+                "total_produced": None,
+                "surplus": None,
+                "sub_materials": [],
+            }
+            sub_bp_id, output_qty = cached_get_product_blueprint(mat_type_id)
+            if sub_bp_id and mat_type_id not in seen:
+                seen_current = seen.copy()
+                seen_current.add(mat_type_id)
+                cycles = ceil(qty / output_qty)
+                total_produced = cycles * output_qty
+                surplus = total_produced - qty
+                mat["cycles"] = cycles
+                mat["produced_per_cycle"] = output_qty
+                mat["total_produced"] = total_produced
+                mat["surplus"] = surplus
+
+                sub_bp_config = (me_te_map or {}).get(sub_bp_id, {})
+                sub_bp_me = sub_bp_config.get("me", 0)
+
+                sub_inputs_raw = cached_get_blueprint_materials(sub_bp_id)
+                sub_demands: dict[int, int] = {}
+                for s_mat_type_id, _, s_base_qty in sub_inputs_raw:
+                    s_req = calculate_job_material_quantity(
+                        s_base_qty,
+                        cycles,
+                        material_efficiency=sub_bp_me,
+                        structure_bonus=structure_bonus,
+                        rig_bonus=rig_bonus,
+                    )
+                    sub_demands[s_mat_type_id] = sub_demands.get(s_mat_type_id, 0) + s_req
+
+                mat["sub_materials"] = build_consolidated_tree_nodes(
+                    sub_demands,
+                    depth + 1,
+                    seen_current,
+                )
+            tree_nodes.append(mat)
+        return tree_nodes
+
+    if len(normalized_products) == 1 and normalized_products[0].get("materials_tree"):
         payload_tree = normalized_products[0]["materials_tree"]
     else:
-        payload_tree = [
-            node for p in normalized_products for node in p.get("materials_tree", [])
-        ]
+        payload_tree = build_consolidated_tree_nodes(pooled_direct_demands)
 
     return {
         "products": normalized_products,
