@@ -745,7 +745,7 @@ class ContractValidationTaskTest(TestCase):
     @patch("indy_hub.tasks.material_exchange_contracts._get_user_character_ids")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_user")
     @patch("indy_hub.tasks.material_exchange_contracts.notify_multi")
-    def test_validate_sell_orders_outstanding_without_items_validates(
+    def test_validate_sell_orders_outstanding_refreshes_items_and_validates(
         self,
         mock_notify_multi,
         mock_notify_user,
@@ -753,7 +753,7 @@ class ContractValidationTaskTest(TestCase):
         mock_client,
         mock_get_char,
     ):
-        """Outstanding sell contracts should not be flagged as mismatch solely due to missing item rows."""
+        """Outstanding sell contracts refresh missing item rows on demand and validate."""
         # AA Example App
         from indy_hub.models import ESIContract
 
@@ -777,7 +777,14 @@ class ContractValidationTaskTest(TestCase):
             date_issued=timezone.now(),
             date_expired=timezone.now() + timedelta(days=30),
         )
-        mock_client.fetch_corporation_contract_items.return_value = []
+        mock_client.fetch_corporation_contract_items.return_value = [
+            {
+                "record_id": 1,
+                "type_id": self.sell_item.type_id,
+                "quantity": self.sell_item.quantity,
+                "is_included": True,
+            }
+        ]
 
         validate_material_exchange_sell_orders()
 

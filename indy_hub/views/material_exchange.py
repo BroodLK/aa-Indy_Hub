@@ -611,8 +611,8 @@ def _get_type_ids_for_market_group_branches(expanded_group_ids: set[int]) -> set
 
     parent_map = _get_market_group_parent_map()
     allowed_type_ids: set[int] = set()
-    rows = ItemType.objects.exclude(market_group_id__isnull=True).values_list(
-        "id", "market_group_id"
+    rows = ItemType.objects.exclude(market_group_id_raw__isnull=True).values_list(
+        "id", "market_group_id_raw"
     )
     for raw_type_id, raw_market_group_id in rows:
         try:
@@ -3054,8 +3054,10 @@ def _get_type_market_group_path_map(
 
     parent_map = _get_market_group_parent_map()
     path_map: dict[int, list[int]] = {}
-    rows = ItemType.objects.filter(id__in=cleaned_type_ids).values_list(
-        "id", "market_group_id"
+    rows = (
+        ItemType.objects.filter(id__in=cleaned_type_ids)
+        .exclude(market_group_id_raw__isnull=True)
+        .values_list("id", "market_group_id_raw")
     )
     for raw_type_id, raw_market_group_id in rows:
         try:

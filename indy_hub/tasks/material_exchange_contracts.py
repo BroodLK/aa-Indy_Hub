@@ -4682,14 +4682,6 @@ def _contract_items_match_order_db(contract, order):
             quantity__gt=0,
         )
         if not contract_items.exists():
-            contract_status = str(getattr(contract, "status", "") or "").strip().lower()
-            if contract_status == "outstanding":
-                logger.info(
-                    "Contract %s has no expected item rows yet while outstanding; "
-                    "allowing match without items",
-                    getattr(contract, "contract_id", None),
-                )
-                return True
             logger.warning(
                 "Contract %s has no expected item rows available for validation; refusing item-match fallback",
                 getattr(contract, "contract_id", None),
@@ -4903,13 +4895,19 @@ def _get_items_mismatch_breakdown(
     # Mirror _contract_items_match_order_db: the traded items are the items
     # offered in the contract (is_included=True) in either direction.
     items_are_included = True
-    included_items = list(
-        contract.items.filter(
+    contract_items = contract.items.filter(
+        is_included=items_are_included,
+        type_id__gt=0,
+        quantity__gt=0,
+    )
+    if not contract_items.exists():
+        _refresh_contract_items_for_validation(contract)
+        contract_items = contract.items.filter(
             is_included=items_are_included,
             type_id__gt=0,
             quantity__gt=0,
         )
-    )
+    included_items = list(contract_items)
 
     if not order_items and not included_items:
         return {}, {}, {}

@@ -3933,7 +3933,7 @@ class MaterialExchangeContractValidationHeuristicsTests(TestCase):
             corporation_id=1234,
         )
 
-    def test_contract_items_match_order_allows_outstanding_without_items(self) -> None:
+    def test_contract_items_match_order_rejects_outstanding_without_items(self) -> None:
         order = MaterialExchangeSellOrder.objects.create(
             config=self.config,
             seller=self.seller,
@@ -3954,7 +3954,7 @@ class MaterialExchangeContractValidationHeuristicsTests(TestCase):
             _contract_items_match_order_db,
         )
 
-        self.assertTrue(_contract_items_match_order_db(contract, order))
+        self.assertFalse(_contract_items_match_order_db(contract, order))
 
     def test_contract_items_match_order_rejects_empty_items_for_unknown_status(
         self,
