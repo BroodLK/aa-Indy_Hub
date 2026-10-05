@@ -51,12 +51,9 @@ html:has(#craftMainTabs) {
 }
 
 /* Ensure craft page doesn't create additional scroll contexts */
-.craft-bp-surface,
-.craft-bp-surface * {
-    overflow-y: visible !important;
-    overflow-x: visible !important;
-    max-height: none !important;
-    height: auto !important;
+.craft-bp-surface {
+    overflow-y: visible;
+    overflow-x: visible;
 }
 
 /* Hide inactive tab panes completely to avoid taking up space */

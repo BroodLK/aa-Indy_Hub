@@ -421,38 +421,67 @@ function renderBasketItems() {
     container.innerHTML = html;
 }
 
-function getLiveUnitPriceForMaterial(typeId) {
-    if (!typeId) return 0;
-    const row = document.querySelector(`tr[data-type-id="${typeId}"]:not(.final-product-row)`);
-    if (row) {
+function getLiveMaterialPricesMap() {
+    const map = new Map();
+
+    const estimates = window.BLUEPRINT_DATA?.price_estimates;
+    if (estimates && typeof estimates === 'object') {
+        Object.keys(estimates).forEach(tid => {
+            const est = estimates[tid];
+            const val = typeof est === 'object' ? Number(est.price || est.estimated_price || 0) : Number(est || 0);
+            if (val > 0) map.set(Number(tid), val);
+        });
+    }
+
+    if (window.SimulationAPI && typeof window.SimulationAPI.getState === 'function') {
+        const state = window.SimulationAPI.getState();
+        if (state && state.prices) {
+            const pMap = mapLikeToMap(state.prices);
+            pMap.forEach((p, tidStr) => {
+                const tid = Number(tidStr);
+                const val = (p && typeof p === 'object') ? Number(p.real ?? p.buy ?? p.fuzzwork ?? 0) : Number(p || 0);
+                if (val > 0) map.set(tid, val);
+            });
+        }
+    }
+
+    const rows = document.querySelectorAll('#financialItemsBody tr[data-type-id]:not(.final-product-row)');
+    rows.forEach(row => {
+        const typeId = Number(row.getAttribute('data-type-id'));
+        if (!typeId) return;
         const costInput = row.querySelector('.real-price, .cost-price-unit');
         if (costInput) {
             const val = getCraftPriceInputValue(costInput);
-            if (val > 0) return val;
+            if (val > 0) {
+                map.set(typeId, val);
+                return;
+            }
         }
         const fuzzInput = row.querySelector('.fuzzwork-price');
         if (fuzzInput) {
             const val = getCraftPriceInputValue(fuzzInput);
-            if (val > 0) return val;
+            if (val > 0 && !map.has(typeId)) {
+                map.set(typeId, val);
+            }
         }
-    }
-    if (window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
-        const info = window.SimulationAPI.getPrice(typeId, 'buy');
-        if (info && typeof info.value === 'number' && info.value > 0) return info.value;
-        const fuzz = window.SimulationAPI.getPrice(typeId, 'fuzzwork');
-        if (fuzz && typeof fuzz.value === 'number' && fuzz.value > 0) return fuzz.value;
-    }
-    const estimates = window.BLUEPRINT_DATA?.price_estimates;
-    if (estimates && estimates[typeId]) {
-        const est = estimates[typeId];
-        const val = typeof est === 'object' ? Number(est.price || est.estimated_price || 0) : Number(est || 0);
-        if (val > 0) return val;
-    }
-    return 0;
+    });
+
+    return map;
 }
 
-function calculateTreeLeafCostClient(nodes) {
+function getLiveUnitPriceForMaterial(typeId, pricesMap = null) {
+    if (!typeId) return 0;
+    if (pricesMap && typeof pricesMap.get === 'function') {
+        const cached = pricesMap.get(typeId);
+        if (cached !== undefined) return cached;
+    }
+    const map = getLiveMaterialPricesMap();
+    return map.get(typeId) || 0;
+}
+
+function calculateTreeLeafCostClient(nodes, pricesMap = null) {
     if (!Array.isArray(nodes) || nodes.length === 0) return 0;
+    const prices = pricesMap || getLiveMaterialPricesMap();
     let total = 0;
     nodes.forEach(node => {
         const typeId = Number(node.type_id || node.typeId || 0);
@@ -463,10 +492,10 @@ function calculateTreeLeafCostClient(nodes) {
             if (state && state.mode === 'buy') isBuy = true;
         }
         if (sub && Array.isArray(sub) && sub.length > 0 && !isBuy) {
-            total += calculateTreeLeafCostClient(sub);
+            total += calculateTreeLeafCostClient(sub, prices);
         } else {
             const qty = Number(node.quantity || node.qty || 0);
-            const unitPrice = getLiveUnitPriceForMaterial(typeId);
+            const unitPrice = prices.get(typeId) || 0;
             total += qty * unitPrice;
         }
     });
@@ -488,6 +517,16 @@ function renderPerProductBreakdown() {
         return;
     }
 
+    const materialPricesMap = getLiveMaterialPricesMap();
+
+    const salePricesMap = new Map();
+    document.querySelectorAll('#financialItemsBody .sale-price-unit[data-type-id]').forEach(input => {
+        const tid = Number(input.getAttribute('data-type-id'));
+        if (tid > 0) {
+            salePricesMap.set(tid, getCraftPriceInputValue(input));
+        }
+    });
+
     let rowsHtml = '';
     products.forEach((prod) => {
         const name = escapeHtml(prod.product_name || prod.blueprint_name || `Blueprint #${prod.blueprint_type_id}`);
@@ -502,7 +541,7 @@ function renderPerProductBreakdown() {
 
         let totalCost = 0;
         if (Array.isArray(treeToCalc) && treeToCalc.length > 0) {
-            totalCost = calculateTreeLeafCostClient(treeToCalc);
+            totalCost = calculateTreeLeafCostClient(treeToCalc, materialPricesMap);
         }
         if (totalCost <= 0) {
             totalCost = Number(prod.total_cost) || Number(prod.estimated_cost) || 0;
@@ -512,9 +551,8 @@ function renderPerProductBreakdown() {
         let saleUnitPrice = 0;
         const prodTypeId = Number(prod.product_type_id || prod.type_id || 0);
         if (prodTypeId > 0) {
-            const saleInput = document.querySelector(`.sale-price-unit[data-type-id="${prodTypeId}"]`);
-            if (saleInput) {
-                saleUnitPrice = getCraftPriceInputValue(saleInput);
+            if (salePricesMap.has(prodTypeId) && salePricesMap.get(prodTypeId) > 0) {
+                saleUnitPrice = salePricesMap.get(prodTypeId);
             }
             if (saleUnitPrice <= 0 && window.SimulationAPI && typeof window.SimulationAPI.getPrice === 'function') {
                 const p = window.SimulationAPI.getPrice(prodTypeId, 'sale');
@@ -2737,7 +2775,7 @@ function loadCraftUiStateFromStorage() {
     }
 }
 
-function scheduleCraftUiStateSave(delayMs = 150) {
+function scheduleCraftUiStateSave(delayMs = 400) {
     if (CRAFT_FULL_UI_STATE.restoreInProgress) {
         return;
     }
@@ -2774,7 +2812,8 @@ function initializeCraftUiStatePersistence() {
         if (!eventTargetIsCraftPersistable(event.target)) {
             return;
         }
-        scheduleCraftUiStateSave();
+        const delay = (event.type === 'input') ? 800 : 300;
+        scheduleCraftUiStateSave(delay);
     };
 
     document.addEventListener('input', handleEvent, true);
@@ -6694,8 +6733,6 @@ function recalcFinancials() {
         heroUpdatedEl.setAttribute('title', now.toLocaleString());
     }
 
-    renderIndustryFeeBreakdown(industryFeeContext);
-    syncIndustryFeeManualControls();
     if (typeof renderPerProductBreakdown === 'function') {
         renderPerProductBreakdown();
     }
