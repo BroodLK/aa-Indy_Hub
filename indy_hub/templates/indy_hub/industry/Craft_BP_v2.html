@@ -289,19 +289,19 @@
                         <div class="craft-kpi-row mb-3">
                             <div class="craft-kpi craft-kpi-sm">
                                 <span class="craft-kpi-label">{% trans "Runs" %}</span>
-                                <span class="craft-kpi-value">{{ num_runs|default:1|intcomma }}</span>
+                                <span class="craft-kpi-value" id="kpiRunsDisplay">{{ num_runs|default:1|intcomma }}</span>
                             </div>
                             <div class="craft-kpi craft-kpi-sm">
                                 <span class="craft-kpi-label">{% trans "Output" %}</span>
-                                <span class="craft-kpi-value text-success">{{ final_product_qty|default:num_runs|intcomma }}</span>
+                                <span class="craft-kpi-value text-success" id="kpiOutputDisplay">{{ final_product_qty|default:num_runs|intcomma }}</span>
                             </div>
                             <div class="craft-kpi craft-kpi-sm">
                                 <span class="craft-kpi-label">ME</span>
-                                <span class="craft-kpi-value">{{ me|default:0 }}</span>
+                                <span class="craft-kpi-value" id="kpiMeDisplay">{{ me|default:0 }}</span>
                             </div>
                             <div class="craft-kpi craft-kpi-sm">
                                 <span class="craft-kpi-label">TE</span>
-                                <span class="craft-kpi-value">{{ te|default:0 }}</span>
+                                <span class="craft-kpi-value" id="kpiTeDisplay">{{ te|default:0 }}</span>
                             </div>
                         </div>
 

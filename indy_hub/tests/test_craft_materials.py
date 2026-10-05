@@ -64,6 +64,20 @@ class CraftMaterialQuantityTests(SimpleTestCase):
 
 class MultiProductBOMCalculationTests(TestCase):
     @classmethod
+    def setUpClass(cls) -> None:
+        from django.db import connection
+        with connection.cursor() as cursor:
+            for model_cls in [ItemCategory, ItemGroup, ItemType]:
+                table = model_cls._meta.db_table
+                for field in model_cls._meta.fields:
+                    col = field.column
+                    try:
+                        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} varchar(255);")
+                    except Exception:
+                        pass
+        super().setUpClass()
+
+    @classmethod
     def setUpTestData(cls) -> None:
         category, _ = ItemCategory.objects.get_or_create(id=9901, defaults={"name": "Ship"})
         group, _ = ItemGroup.objects.get_or_create(

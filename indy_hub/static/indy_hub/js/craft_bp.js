@@ -5581,10 +5581,21 @@ function collectIndustryFeeJobs() {
         );
     };
 
-    // Main product manufacturing job.
-    const mainProductTypeId = getProductTypeIdValue();
-    const mainRuns = Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 0) || 0;
-    addJob(mainProductTypeId, mainRuns);
+    // Main / Multi-product manufacturing jobs from basket or fallback.
+    const basketProducts = (typeof getBasketProducts === 'function') ? getBasketProducts() : [];
+    if (Array.isArray(basketProducts) && basketProducts.length > 0) {
+        basketProducts.forEach((p) => {
+            const pTypeId = Number(p.product_type_id || p.productTypeId || 0);
+            const pRuns = Number(p.runs || 0) || 0;
+            if (pTypeId > 0 && pRuns > 0) {
+                addJob(pTypeId, pRuns);
+            }
+        });
+    } else {
+        const mainProductTypeId = getProductTypeIdValue();
+        const mainRuns = Number(document.getElementById('runsInput')?.value || window.BLUEPRINT_DATA?.num_runs || 0) || 0;
+        addJob(mainProductTypeId, mainRuns);
+    }
 
     // Produced sub-components based on current Buy/Prod switches.
     const cycles = (window.SimulationAPI && typeof window.SimulationAPI.getProductionCycles === 'function')
@@ -5646,6 +5657,16 @@ function getIndustryFeeProductNameMap() {
         }
         map.set(numericTypeId, name);
     };
+
+    const basketProducts = (typeof getBasketProducts === 'function') ? getBasketProducts() : [];
+    if (Array.isArray(basketProducts) && basketProducts.length > 0) {
+        basketProducts.forEach((p) => {
+            addName(
+                p.product_type_id || p.productTypeId || 0,
+                p.product_name || p.productName || p.blueprint_name || p.name || ''
+            );
+        });
+    }
 
     addName(
         payload.product_type_id || payload.productTypeId || 0,
@@ -7344,6 +7365,112 @@ function buildLiveCraftPayloadRequest() {
     };
 }
 
+function renderMaterialsTreeFromPayload(materialsTree) {
+    const treeContainer = document.getElementById('tab-tree');
+    if (!treeContainer || !Array.isArray(materialsTree)) {
+        return;
+    }
+
+    const priorSwitchStates = new Map();
+    treeContainer.querySelectorAll('input.mat-switch[data-type-id]').forEach((sw) => {
+        const typeId = Number(sw.getAttribute('data-type-id'));
+        if (typeId) {
+            priorSwitchStates.set(typeId, sw.checked);
+        }
+    });
+
+    function buildNodeHtml(mat, level) {
+        const typeId = Number(mat.type_id || mat.typeId || 0);
+        const typeName = String(mat.type_name || mat.typeName || '');
+        const qty = Number(mat.quantity || mat.qty || 0);
+        const qtyDefault = Number(mat.quantity_default || mat.quantityDefault || qty);
+        const subMaterials = Array.isArray(mat.sub_materials) ? mat.sub_materials : [];
+        const hasSub = subMaterials.length > 0;
+
+        const isChecked = priorSwitchStates.has(typeId) ? priorSwitchStates.get(typeId) : true;
+        const modeLabel = isChecked ? __('Prod') : __('Buy');
+        const modeBadgeClass = isChecked ? 'bg-success text-white' : 'bg-primary text-white';
+
+        let subHtml = '';
+        if (hasSub) {
+            subHtml = `<ul class="list-unstyled ms-3">
+                ${subMaterials.map((sub) => `<li>${buildNodeHtml(sub, level + 1)}</li>`).join('')}
+            </ul>`;
+        }
+
+        const defaultQtySpan = (qtyDefault && qtyDefault !== qty)
+            ? `<span class="ms-1 tree-qty-default-wrap">(<span class="text-decoration-line-through tree-qty-default">x${formatInteger(qtyDefault)}</span>)</span>`
+            : '';
+
+        const switchHtml = hasSub ? `
+            <span class="ms-auto"></span>
+            <div class="mat-switch-group d-flex align-items-center gap-2">
+                <div class="form-switch">
+                    <input class="form-check-input mat-switch"
+                           type="checkbox"
+                           id="mat-switch-${typeId}"
+                           data-type-id="${typeId}"
+                           ${isChecked ? 'checked' : ''}
+                           style="cursor:pointer; accent-color: #0d6efd">
+                    <label class="form-check-label visually-hidden" for="mat-switch-${typeId}">${__('Mode prod/buy')}</label>
+                </div>
+                <span class="mode-label badge px-2 py-1 fw-bold ${modeBadgeClass}" style="font-size:0.85em;">${modeLabel}</span>
+            </div>
+        ` : '';
+
+        const iconHtml = hasSub
+            ? `<span class="summary-icon"><i class="fas fa-caret-right"></i></span>`
+            : `<span class="me-2" style="width:2.5rem;display:inline-block;"></span>`;
+
+        return `
+            <details class="mb-2">
+                <summary class="d-flex align-items-center gap-2 py-1"
+                         data-type-id="${typeId}"
+                         data-type-name="${escapeHtml(typeName)}"
+                         data-qty="${qty}"
+                         data-qty-default="${qtyDefault}"
+                         data-tree-id="${typeId}">
+                    ${iconHtml}
+                    <span class="blueprint-icon" style="width:28px;height:28px;">
+                        <img src="https://images.evetech.net/types/${typeId}/icon?size=32"
+                             alt="${escapeHtml(typeName)}"
+                             style="width:28px;height:28px;object-fit:cover;border-radius:6px;background:#f3f4f6"
+                             onerror="this.style.display='none';if(this.nextElementSibling)this.nextElementSibling.style.display='flex';">
+                        <span class="fallback" style="display:none;"><i class="fas fa-cube"></i></span>
+                    </span>
+                    <span class="fw-bold">${escapeHtml(typeName)}</span>
+                    <span class="text-muted tree-qty-wrap">
+                        <span class="tree-qty-current">x${formatInteger(qty)}</span>
+                        ${defaultQtySpan}
+                    </span>
+                    ${hasSub ? '<span class="small text-body-secondary opacity-75 tree-bp-context d-none"></span>' : ''}
+                    ${switchHtml}
+                </summary>
+                ${subHtml}
+            </details>
+        `;
+    }
+
+    if (materialsTree.length === 0) {
+        treeContainer.innerHTML = `<div class="alert alert-info mb-0">${__('No sub-productions detected for this blueprint.')}</div>`;
+        return;
+    }
+
+    treeContainer.innerHTML = `<ul class="list-unstyled ms-1">
+        ${materialsTree.map((mat) => `<li>${buildNodeHtml(mat, 0)}</li>`).join('')}
+    </ul>`;
+
+    if (typeof refreshTreeQuantityLabels === 'function') {
+        refreshTreeQuantityLabels();
+    }
+    if (typeof refreshTreeOwnedBadges === 'function') {
+        refreshTreeOwnedBadges();
+    }
+    if (typeof refreshTreeSwitchHierarchy === 'function') {
+        refreshTreeSwitchHierarchy();
+    }
+}
+
 function applyLiveCraftPayload(payload) {
     if (!payload || typeof payload !== 'object') {
         return;
@@ -7377,6 +7504,36 @@ function applyLiveCraftPayload(payload) {
         syncBasketFromPayloadProducts(payload.products);
     }
     renderPerProductBreakdown();
+
+    if (Array.isArray(payload.materials_tree)) {
+        renderMaterialsTreeFromPayload(payload.materials_tree);
+    }
+
+    const kpiRuns = document.getElementById('kpiRunsDisplay');
+    const kpiOutput = document.getElementById('kpiOutputDisplay');
+    const kpiMe = document.getElementById('kpiMeDisplay');
+    const kpiTe = document.getElementById('kpiTeDisplay');
+
+    const totalRuns = Array.isArray(payload.products) && payload.products.length > 0
+        ? payload.products.reduce((acc, p) => acc + (Number(p.runs) || 1), 0)
+        : (Number(payload.num_runs) || 1);
+    const totalOutput = Array.isArray(payload.products) && payload.products.length > 0
+        ? payload.products.reduce((acc, p) => acc + (Number(p.final_product_qty || p.output_qty || (p.runs * (p.output_qty_per_run || 1))) || 0), 0)
+        : (Number(payload.final_product_qty || payload.num_runs) || 1);
+
+    if (kpiRuns) kpiRuns.textContent = formatInteger(totalRuns);
+    if (kpiOutput) kpiOutput.textContent = formatInteger(totalOutput);
+    if (kpiMe && payload.me !== undefined) kpiMe.textContent = String(payload.me);
+    if (kpiTe && payload.te !== undefined) kpiTe.textContent = String(payload.te);
+
+    const hiddenRuns = document.getElementById('runsInput');
+    if (hiddenRuns) {
+        hiddenRuns.value = String(totalRuns);
+    }
+
+    if (typeof syncCraftFinalProductLabel === 'function') {
+        syncCraftFinalProductLabel();
+    }
 }
 
 async function refreshLiveCraftPayloadFromConfigure({ force = false } = {}) {

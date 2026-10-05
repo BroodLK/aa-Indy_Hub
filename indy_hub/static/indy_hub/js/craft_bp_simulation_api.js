@@ -365,6 +365,12 @@
     }
 
     function deriveStateFromDom() {
+        const currentPayload = resolveBlueprintPayload();
+        if (Array.isArray(currentPayload.materials_tree)) {
+            treeMap.clear();
+            ingestTree(currentPayload.materials_tree);
+        }
+
         const treeTab = document.getElementById('tab-tree');
         if (treeTab) {
             // Aggregate switch states per type so repeated nodes stay consistent.

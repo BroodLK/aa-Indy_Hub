@@ -4039,11 +4039,7 @@ def craft_bp(request, type_id):
 
         craft_controls_html = (
             '<form id="blueprint-control-form" class="d-flex flex-wrap align-items-center gap-2" method="get" action="">'
-            '<div class="input-group input-group-sm" style="min-width: 260px;">'
-            '<span class="input-group-text fw-semibold"><i class="fas fa-cube me-1"></i>Runs</span>'
-            f'<input type="number" min="1" name="runs" id="runsInput" value="{num_runs}" class="form-control">'
-            '<button class="btn btn-primary" type="submit">Update</button>'
-            "</div>"
+            f'<input type="hidden" name="runs" id="runsInput" value="{num_runs}">'
             f'<input type="hidden" name="me" value="{me}">'
             f'<input type="hidden" name="te" value="{te}">'
             f'<input type="hidden" name="buy" value="{request.GET.get("buy", "")}">'
