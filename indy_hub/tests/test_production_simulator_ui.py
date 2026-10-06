@@ -434,7 +434,9 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
     def test_craft_js_renders_ore_suggestions_on_mineral_rows(self) -> None:
         self.assertIn("craft-buyback-ore-option", self.script)
         self.assertIn("oreSuggestions", self.script)
+        self.assertIn("!isFullStock && oreSuggestions.length > 0", self.script)
         self.assertIn("Stock available", self.script)
+        self.assertIn("yields", self.script)
         self.assertIn("Add ore to order", self.script)
         self.assertIn("data-target-mineral-id", self.script)
 
