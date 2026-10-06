@@ -1534,7 +1534,7 @@ div[id="bpTabs"] {
     text-align: left;
 }
 
-.craft-financial-table input {
+.craft-financial-table input:not([type="checkbox"]):not([type="radio"]) {
     font-size: 0.75rem;
     padding: 0.25rem 0.375rem;
     height: 1.875rem;
@@ -1559,11 +1559,11 @@ div[id="bpTabs"] {
     font-size: 0.9rem; /* 0.75 * 1.2 */
 }
 
-.craft-financial-table.craft-table-text-120 input {
+.craft-financial-table.craft-table-text-120 input:not([type="checkbox"]):not([type="radio"]) {
     font-size: 0.9rem; /* 0.75 * 1.2 */
 }
 
-.craft-financial-table input {
+.craft-financial-table input:not([type="checkbox"]):not([type="radio"]) {
     max-width: 100%;
 }
 
@@ -2340,31 +2340,91 @@ html[data-theme="darkly"] .craft-header-icon {
     flex-direction: column;
     gap: 0.375rem;
     text-align: left;
+    width: 100%;
 }
 
 .craft-buyback-option {
-    background-color: var(--bs-body-bg);
-    border: 1px solid var(--bs-border-color);
+    background-color: var(--bs-body-bg, #22252a);
+    border: 1px solid var(--bs-border-color, rgba(255, 255, 255, 0.15));
     border-radius: 0.375rem;
     padding: 0.375rem 0.5rem;
     font-size: 0.75rem;
     line-height: 1.35;
     font-weight: normal;
+    transition: border-color 0.15s ease-in-out, background-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
 }
 
-.craft-buyback-option .form-check {
-    margin-bottom: 0;
-    min-height: auto;
+.craft-buyback-option:hover {
+    border-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.5);
 }
 
-.craft-buyback-option .form-check-input {
+.craft-buyback-option.is-selected {
+    border-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.85);
+    background-color: rgba(var(--bs-primary-rgb, 13, 110, 253), 0.12);
+    box-shadow: 0 0 0 1px rgba(var(--bs-primary-rgb, 13, 110, 253), 0.35);
+}
+
+.craft-buyback-option.craft-buyback-ore-option {
+    border-style: dashed;
+    border-color: rgba(var(--bs-info-rgb, 13, 202, 240), 0.45);
+    background-color: rgba(var(--bs-info-rgb, 13, 202, 240), 0.08);
+}
+
+.craft-buyback-option.craft-buyback-ore-option:hover {
+    border-color: rgba(var(--bs-info-rgb, 13, 202, 240), 0.75);
+    background-color: rgba(var(--bs-info-rgb, 13, 202, 240), 0.14);
+}
+
+.craft-buyback-option.craft-buyback-ore-option.is-selected {
+    border-color: rgba(var(--bs-info-rgb, 13, 202, 240), 0.85);
+    background-color: rgba(var(--bs-info-rgb, 13, 202, 240), 0.2);
+    box-shadow: 0 0 0 1px rgba(var(--bs-info-rgb, 13, 202, 240), 0.35);
+}
+
+.craft-buyback-desc {
+    color: var(--bs-body-color);
+    font-size: 0.725rem;
+    line-height: 1.3;
+    margin-bottom: 0.35rem;
+    word-break: break-word;
+}
+
+.craft-buyback-check-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin: 0;
     cursor: pointer;
-    margin-top: 0.15rem;
-}
-
-.craft-buyback-option .form-check-label {
-    cursor: pointer;
+    user-select: none;
+    font-size: 0.725rem;
     font-weight: 500;
+    color: var(--bs-body-color);
+}
+
+.craft-financial-table input[type="checkbox"],
+.craft-needed-table input[type="checkbox"],
+.craft-buyback-option input[type="checkbox"],
+.craft-buyback-order-check {
+    appearance: auto !important;
+    -webkit-appearance: checkbox !important;
+    -moz-appearance: checkbox !important;
+    width: 1.1rem !important;
+    height: 1.1rem !important;
+    min-width: 1.1rem !important;
+    min-height: 1.1rem !important;
+    max-width: 1.1rem !important;
+    max-height: 1.1rem !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    cursor: pointer !important;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.craft-buyback-check-label {
+    cursor: pointer;
+    user-select: none;
+    line-height: 1.25;
 }
 
 .craft-financial-table .craft-buyback-owned-dash {

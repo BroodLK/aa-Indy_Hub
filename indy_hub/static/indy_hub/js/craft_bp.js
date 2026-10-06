@@ -11657,7 +11657,11 @@ function getRowNeededQuantity(tr) {
 function handleCreateBuybackOrder(button) {
     const table = button ? button.closest('table') : null;
     const container = table || document;
-    const checkedBoxes = Array.from(container.querySelectorAll('.craft-buyback-order-check:checked'));
+    let checkedBoxes = Array.from(container.querySelectorAll('.craft-buyback-order-check:checked'));
+
+    if (checkedBoxes.length === 0) {
+        checkedBoxes = Array.from(document.querySelectorAll('.craft-buyback-order-check:checked'));
+    }
 
     if (checkedBoxes.length === 0) {
         if (typeof showToast === 'function') {
@@ -11668,17 +11672,26 @@ function handleCreateBuybackOrder(button) {
         return;
     }
 
-    const itemsToPrefill = checkedBoxes.map((chk) => {
+    const itemsMap = new Map();
+    checkedBoxes.forEach((chk) => {
         const typeId = Number(chk.dataset.typeId) || 0;
         const typeName = String(chk.dataset.typeName || `Type ${typeId}`);
         const quantity = Math.max(1, Math.floor(Number(chk.dataset.quantity) || 1));
-        return {
-            type_id: typeId,
-            type_name: typeName,
-            quantity: quantity,
-        };
-    }).filter((item) => item.type_id > 0 && item.quantity > 0);
+        if (typeId > 0 && quantity > 0) {
+            if (!itemsMap.has(typeId)) {
+                itemsMap.set(typeId, {
+                    type_id: typeId,
+                    type_name: typeName,
+                    quantity: quantity,
+                });
+            } else {
+                const existing = itemsMap.get(typeId);
+                existing.quantity = Math.max(existing.quantity, quantity);
+            }
+        }
+    });
 
+    const itemsToPrefill = Array.from(itemsMap.values());
     if (itemsToPrefill.length === 0) {
         if (typeof showToast === 'function') {
             showToast(__('Please check at least one buyback item to add to your order.'), false);
@@ -11716,6 +11729,8 @@ function initializeBuybackOrderButtons() {
     });
 }
 
+let buybackUniqueCounter = 0;
+
 async function decorateNeededRowsWithBuyback(rows) {
     const tbody = document.querySelector('#needed-table tbody');
     const financialBody = document.getElementById('financialItemsBody');
@@ -11738,6 +11753,14 @@ async function decorateNeededRowsWithBuyback(rows) {
     const items = payload.items && typeof payload.items === 'object' ? payload.items : {};
     const oreSuggestionsMap = payload.ore_suggestions && typeof payload.ore_suggestions === 'object' ? payload.ore_suggestions : {};
     const targetBodies = [tbody, financialBody].filter(Boolean);
+
+    const currentlyCheckedKeys = new Set();
+    document.querySelectorAll('.craft-buyback-order-check:checked').forEach((input) => {
+        const typeId = input.dataset.typeId || '0';
+        const targetMineralId = input.dataset.targetMineralId || '';
+        currentlyCheckedKeys.add(`${typeId}_${targetMineralId}`);
+    });
+
     targetBodies.forEach((body) => {
         body.querySelectorAll('tr[data-type-id]').forEach((tr) => {
             const typeId = Number(tr.dataset.typeId) || 0;
@@ -11768,18 +11791,21 @@ async function decorateNeededRowsWithBuyback(rows) {
                     const X = neededQty > 0 ? neededQty : stockQty;
                     const Y = Math.min(X, stockQty);
                     const orderQty = Math.max(1, Math.min(stockQty, X));
-                    const checkId = `buybackCheck_${typeId}_${tableId}`;
+                    buybackUniqueCounter++;
+                    const checkId = `buybackCheck_${typeId}_${tableId}_${buybackUniqueCounter}`;
+                    const key = `${typeId}_`;
+                    const isChecked = currentlyCheckedKeys.has(key);
                     parts.push(`
-                        <div class="craft-buyback-option mb-1">
-                            <div class="text-body mb-1">
+                        <div class="craft-buyback-option mb-1${isChecked ? ' is-selected' : ''}">
+                            <div class="craft-buyback-desc">
                                 ${escapeHtml(__('you need'))} <strong>${formatInteger(X)}</strong>, ${escapeHtml(__('we have'))} <strong>${formatInteger(Y)}</strong> ${escapeHtml(__('of your'))} <strong>${formatInteger(X)}</strong> ${escapeHtml(__('for this item'))}
                             </div>
-                            <div class="form-check">
-                                <input class="form-check-input craft-buyback-order-check" type="checkbox" id="${checkId}" data-type-id="${typeId}" data-type-name="${escapeHtml(item.type_name || '')}" data-quantity="${orderQty}" data-location-id="${item.location_id || ''}" data-location-label="${escapeHtml(item.location_label || '')}">
-                                <label class="form-check-label text-xs cursor-pointer" for="${checkId}">
+                            <label class="craft-buyback-check-row" for="${checkId}">
+                                <input class="form-check-input craft-buyback-order-check" type="checkbox" id="${checkId}" data-type-id="${typeId}" data-type-name="${escapeHtml(item.type_name || '')}" data-quantity="${orderQty}" data-location-id="${item.location_id || ''}" data-location-label="${escapeHtml(item.location_label || '')}"${isChecked ? ' checked' : ''}>
+                                <span class="craft-buyback-check-label">
                                     ${escapeHtml(__('Check this box to add them to order'))}
-                                </label>
-                            </div>
+                                </span>
+                            </label>
                         </div>
                     `);
                 }
@@ -11796,18 +11822,21 @@ async function decorateNeededRowsWithBuyback(rows) {
                         const Z = ore.available_quantity;
                         const AA = ore.type_name;
                         const AB = ore.estimated_mineral_in_stock;
-                        const checkId = `buybackOreCheck_${ore.type_id}_${typeId}_${tableId}_${idx}`;
+                        buybackUniqueCounter++;
+                        const checkId = `buybackOreCheck_${ore.type_id}_${typeId}_${tableId}_${buybackUniqueCounter}_${idx}`;
+                        const oreKey = `${ore.type_id}_${typeId}`;
+                        const isChecked = currentlyCheckedKeys.has(oreKey);
                         parts.push(`
-                            <div class="craft-buyback-option craft-buyback-ore-option mb-1">
-                                <div class="text-body mb-1">
+                            <div class="craft-buyback-option craft-buyback-ore-option mb-1${isChecked ? ' is-selected' : ''}">
+                                <div class="craft-buyback-desc">
                                     ${escapeHtml(__('you need'))} <strong>${formatInteger(X)}</strong> ${escapeHtml(__('of'))} <strong>${escapeHtml(mineralName)}</strong>, ${escapeHtml(__('we have'))} <strong>${formatInteger(Z)}</strong> ${escapeHtml(__('of'))} <strong>${escapeHtml(AA)}</strong> ${escapeHtml(__('that will give you'))} <strong>${formatInteger(AB)}</strong> ${escapeHtml(__('of'))} <strong>${escapeHtml(mineralName)}</strong>
                                 </div>
-                                <div class="form-check">
-                                    <input class="form-check-input craft-buyback-order-check craft-buyback-ore-check" type="checkbox" id="${checkId}" data-type-id="${ore.type_id}" data-type-name="${escapeHtml(ore.type_name || '')}" data-quantity="${oreUnitsToOrder}" data-target-mineral-id="${typeId}" data-location-id="${ore.location_id || ''}" data-location-label="${escapeHtml(ore.location_label || '')}">
-                                    <label class="form-check-label text-xs cursor-pointer" for="${checkId}">
+                                <label class="craft-buyback-check-row" for="${checkId}">
+                                    <input class="form-check-input craft-buyback-order-check craft-buyback-ore-check" type="checkbox" id="${checkId}" data-type-id="${ore.type_id}" data-type-name="${escapeHtml(ore.type_name || '')}" data-quantity="${oreUnitsToOrder}" data-target-mineral-id="${typeId}" data-location-id="${ore.location_id || ''}" data-location-label="${escapeHtml(ore.location_label || '')}"${isChecked ? ' checked' : ''}>
+                                    <span class="craft-buyback-check-label">
                                         ${escapeHtml(__('Check this box to add ore to order'))} (${formatInteger(oreUnitsToOrder)} ${escapeHtml(__('units'))})
-                                    </label>
-                                </div>
+                                    </span>
+                                </label>
                             </div>
                         `);
                     });
@@ -11817,6 +11846,14 @@ async function decorateNeededRowsWithBuyback(rows) {
             if (parts.length > 0) {
                 slot.innerHTML = parts.join('');
                 slot.removeAttribute('title');
+                slot.querySelectorAll('.craft-buyback-order-check').forEach((chk) => {
+                    chk.addEventListener('change', function() {
+                        const opt = this.closest('.craft-buyback-option');
+                        if (opt) {
+                            opt.classList.toggle('is-selected', this.checked);
+                        }
+                    });
+                });
             } else if (slot.closest('.craft-buyback-cell')) {
                 slot.innerHTML = `<span class="text-muted" title="${escapeHtml(__('Not currently stocked in Material Exchange'))}">—</span>`;
                 slot.removeAttribute('title');
