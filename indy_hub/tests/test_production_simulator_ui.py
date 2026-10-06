@@ -421,7 +421,8 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
     def test_craft_js_decorates_buyback_column_with_text_and_checkboxes(self) -> None:
         self.assertIn("craft-buyback-order-check", self.script)
         self.assertIn("decorateNeededRowsWithBuyback", self.script)
-        self.assertIn("Check this box to add them to order", self.script)
+        self.assertIn("Stock available", self.script)
+        self.assertIn("Add to order", self.script)
 
     def test_craft_js_hides_buyback_button_and_shows_em_dash_when_owned_enough(
         self,
@@ -433,7 +434,8 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
     def test_craft_js_renders_ore_suggestions_on_mineral_rows(self) -> None:
         self.assertIn("craft-buyback-ore-option", self.script)
         self.assertIn("oreSuggestions", self.script)
-        self.assertIn("that will give you", self.script)
+        self.assertIn("Stock available", self.script)
+        self.assertIn("Add ore to order", self.script)
         self.assertIn("data-target-mineral-id", self.script)
 
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(

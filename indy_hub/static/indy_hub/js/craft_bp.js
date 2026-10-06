@@ -11788,22 +11788,22 @@ async function decorateNeededRowsWithBuyback(rows) {
             } else {
                 if (item && Number(item.available_quantity) > 0) {
                     const stockQty = Number(item.available_quantity) || 0;
-                    const X = neededQty > 0 ? neededQty : stockQty;
-                    const Y = Math.min(X, stockQty);
-                    const orderQty = Math.max(1, Math.min(stockQty, X));
+                    const targetNeeded = neededQty > 0 ? neededQty : stockQty;
+                    const orderQty = Math.max(1, Math.min(stockQty, targetNeeded));
+                    const isFullStock = stockQty >= targetNeeded;
                     buybackUniqueCounter++;
                     const checkId = `buybackCheck_${typeId}_${tableId}_${buybackUniqueCounter}`;
                     const key = `${typeId}_`;
                     const isChecked = currentlyCheckedKeys.has(key);
                     parts.push(`
-                        <div class="craft-buyback-option mb-1${isChecked ? ' is-selected' : ''}">
-                            <div class="craft-buyback-desc">
-                                ${escapeHtml(__('you need'))} <strong>${formatInteger(X)}</strong>, ${escapeHtml(__('we have'))} <strong>${formatInteger(Y)}</strong> ${escapeHtml(__('of your'))} <strong>${formatInteger(X)}</strong> ${escapeHtml(__('for this item'))}
+                        <div class="craft-buyback-option mb-1${isChecked ? ' is-selected' : ''}${isFullStock ? ' is-full-stock' : ' is-partial-stock'}">
+                            <div class="craft-buyback-desc ${isFullStock ? 'text-success' : 'text-danger'}">
+                                <i class="fas ${isFullStock ? 'fa-check-circle' : 'fa-exclamation-circle'} me-1" aria-hidden="true"></i>${escapeHtml(__('Stock available'))}: <strong>${formatInteger(stockQty)} / ${formatInteger(targetNeeded)}</strong>
                             </div>
                             <label class="craft-buyback-check-row" for="${checkId}">
                                 <input class="form-check-input craft-buyback-order-check" type="checkbox" id="${checkId}" data-type-id="${typeId}" data-type-name="${escapeHtml(item.type_name || '')}" data-quantity="${orderQty}" data-location-id="${item.location_id || ''}" data-location-label="${escapeHtml(item.location_label || '')}"${isChecked ? ' checked' : ''}>
                                 <span class="craft-buyback-check-label">
-                                    ${escapeHtml(__('Check this box to add them to order'))}
+                                    ${escapeHtml(__('Add to order'))} (${formatInteger(orderQty)} ${escapeHtml(__('units'))})
                                 </span>
                             </label>
                         </div>
@@ -11815,26 +11815,28 @@ async function decorateNeededRowsWithBuyback(rows) {
                     oreSuggestions.forEach((ore, idx) => {
                         const portionSize = ore.portion_size || 100;
                         const yieldPerPortion = ore.yield_per_portion || 1;
-                        const X = neededQty > 0 ? neededQty : ore.estimated_mineral_in_stock;
-                        const portionsNeeded = Math.ceil(X / yieldPerPortion);
+                        const neededMineralQty = neededQty > 0 ? neededQty : ore.estimated_mineral_in_stock;
+                        const portionsNeeded = Math.ceil(neededMineralQty / yieldPerPortion);
                         const unitsNeeded = portionsNeeded * portionSize;
                         const oreUnitsToOrder = Math.max(portionSize, Math.min(ore.available_quantity, unitsNeeded));
-                        const Z = ore.available_quantity;
-                        const AA = ore.type_name;
-                        const AB = ore.estimated_mineral_in_stock;
+                        const oreStockQty = ore.available_quantity;
+                        const oreTypeName = ore.type_name;
+                        const mineralYieldQty = ore.estimated_mineral_in_stock;
+                        const isOreFullStock = mineralYieldQty >= neededMineralQty;
                         buybackUniqueCounter++;
                         const checkId = `buybackOreCheck_${ore.type_id}_${typeId}_${tableId}_${buybackUniqueCounter}_${idx}`;
                         const oreKey = `${ore.type_id}_${typeId}`;
                         const isChecked = currentlyCheckedKeys.has(oreKey);
                         parts.push(`
-                            <div class="craft-buyback-option craft-buyback-ore-option mb-1${isChecked ? ' is-selected' : ''}">
-                                <div class="craft-buyback-desc">
-                                    ${escapeHtml(__('you need'))} <strong>${formatInteger(X)}</strong> ${escapeHtml(__('of'))} <strong>${escapeHtml(mineralName)}</strong>, ${escapeHtml(__('we have'))} <strong>${formatInteger(Z)}</strong> ${escapeHtml(__('of'))} <strong>${escapeHtml(AA)}</strong> ${escapeHtml(__('that will give you'))} <strong>${formatInteger(AB)}</strong> ${escapeHtml(__('of'))} <strong>${escapeHtml(mineralName)}</strong>
+                            <div class="craft-buyback-option craft-buyback-ore-option mb-1${isChecked ? ' is-selected' : ''}${isOreFullStock ? ' is-full-stock' : ' is-partial-stock'}">
+                                <div class="craft-buyback-desc ${isOreFullStock ? 'text-success' : 'text-danger'}">
+                                    <i class="fas ${isOreFullStock ? 'fa-check-circle' : 'fa-exclamation-circle'} me-1" aria-hidden="true"></i>${escapeHtml(__('Stock available'))}: <strong>${formatInteger(mineralYieldQty)} / ${formatInteger(neededMineralQty)}</strong>
+                                    <div class="small text-muted font-monospace mt-1">${escapeHtml(oreTypeName)}: ${formatInteger(oreStockQty)} ${escapeHtml(__('in stock'))}</div>
                                 </div>
                                 <label class="craft-buyback-check-row" for="${checkId}">
                                     <input class="form-check-input craft-buyback-order-check craft-buyback-ore-check" type="checkbox" id="${checkId}" data-type-id="${ore.type_id}" data-type-name="${escapeHtml(ore.type_name || '')}" data-quantity="${oreUnitsToOrder}" data-target-mineral-id="${typeId}" data-location-id="${ore.location_id || ''}" data-location-label="${escapeHtml(ore.location_label || '')}"${isChecked ? ' checked' : ''}>
                                     <span class="craft-buyback-check-label">
-                                        ${escapeHtml(__('Check this box to add ore to order'))} (${formatInteger(oreUnitsToOrder)} ${escapeHtml(__('units'))})
+                                        ${escapeHtml(__('Add ore to order'))} (${formatInteger(oreUnitsToOrder)} ${escapeHtml(__('units'))})
                                     </span>
                                 </label>
                             </div>
