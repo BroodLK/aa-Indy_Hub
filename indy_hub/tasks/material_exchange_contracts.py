@@ -4663,10 +4663,7 @@ def _matches_buy_order_criteria_db(
 
 
 def _contract_items_match_order_db(contract, order):
-    """Check if the contract's exchanged items match order quantities by type.
-
-    Containers are excluded from the comparison.
-    """
+    """Check if the contract's exchanged items match order quantities by type."""
     # ESI marks items offered in an item-exchange contract as included.  Both
     # directions use the included side for the traded item: the hub offers
     # items for buy orders, while the member offers items for sell orders.
@@ -4701,23 +4698,6 @@ def _contract_items_match_order_db(contract, order):
     actual_by_type: dict[int, int] = {}
     for contract_item in contract_items:
         type_id = int(contract_item.type_id)
-
-        # Skip containers - they shouldn't affect item matching
-        if _is_container_type(type_id):
-            logger.debug(
-                "Excluding container type_id %s from contract item matching", type_id
-            )
-            continue
-
-        # Skip items that are inside containers (raw_quantity < 0)
-        if _is_item_inside_container(contract_item):
-            logger.debug(
-                "Excluding type_id %s from matching because it's inside a container (raw_quantity=%s)",
-                type_id,
-                getattr(contract_item, "raw_quantity", None),
-            )
-            continue
-
         actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
             contract_item.quantity
         )
@@ -4889,10 +4869,7 @@ def _is_container_type(type_id: int) -> bool:
 def _get_items_mismatch_breakdown(
     contract, order
 ) -> tuple[dict[int, int], dict[int, int], dict[int, str]]:
-    """Return (missing_by_type, surplus_by_type, type_names) for order vs contract items.
-
-    Containers and their contents are excluded from surplus calculations.
-    """
+    """Return (missing_by_type, surplus_by_type, type_names) for order vs contract items."""
     order_items = list(order.items.all())
     # Mirror _contract_items_match_order_db: the traded items are the items
     # offered in the contract (is_included=True) in either direction.
@@ -4938,23 +4915,6 @@ def _get_items_mismatch_breakdown(
 
     for contract_item in included_items:
         type_id = int(contract_item.type_id)
-
-        # Skip containers - they shouldn't be counted as surplus
-        if _is_container_type(type_id):
-            logger.debug(
-                "Excluding container type_id %s from contract item comparison", type_id
-            )
-            continue
-
-        # Skip items that are inside containers (raw_quantity < 0)
-        if _is_item_inside_container(contract_item):
-            logger.debug(
-                "Excluding type_id %s from surplus/missing because it's inside a container (raw_quantity=%s)",
-                type_id,
-                getattr(contract_item, "raw_quantity", None),
-            )
-            continue
-
         actual_by_type[type_id] = actual_by_type.get(type_id, 0) + int(
             contract_item.quantity
         )

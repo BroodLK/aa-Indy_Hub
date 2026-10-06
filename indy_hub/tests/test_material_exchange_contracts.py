@@ -53,6 +53,27 @@ VERIFIED_AFTER_COMPLETION_NOTE = "verified and no issues were found"
 class ContractValidationTestCase(TestCase):
     """Tests for contract matching and validation logic"""
 
+    @classmethod
+    def setUpClass(cls) -> None:
+        try:
+            from django.db import connection
+            from eve_sde.models import ItemCategory, ItemGroup, ItemType
+
+            with connection.cursor() as cursor:
+                for model_cls in [ItemCategory, ItemGroup, ItemType]:
+                    table = model_cls._meta.db_table
+                    for field in model_cls._meta.fields:
+                        col = field.column
+                        try:
+                            cursor.execute(
+                                f"ALTER TABLE {table} ADD COLUMN {col} varchar(255);"
+                            )
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        super().setUpClass()
+
     def setUp(self):
         """Set up test data"""
         self.config = MaterialExchangeConfig.objects.create(
@@ -285,6 +306,138 @@ class ContractValidationTestCase(TestCase):
         self.assertTrue(_contract_items_match_order_db(contract, order))
         missing, surplus, _names = _get_items_mismatch_breakdown(contract, order)
         self.assertEqual(missing, {})
+        self.assertEqual(surplus, {})
+
+    def test_contract_items_match_order_validates_containers_correctly(self):
+        """Contracts with containers (e.g. Giant Secure Containers) match sell orders for containers."""
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemCategory, ItemGroup, ItemType
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        category, _ = ItemCategory.objects.get_or_create(
+            id=6,
+            defaults={"name": "Ship and Module Modifications"},
+        )
+        container_group, _ = ItemGroup.objects.get_or_create(
+            id=649,
+            defaults={"name": "Secure Cargo Container", "category": category},
+        )
+        container_type_id = 11488
+        ItemType.objects.update_or_create(
+            id=container_type_id,
+            defaults={"name": "Giant Secure Container", "group": container_group},
+        )
+
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+            order_reference="INDY-1604324799",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=container_type_id,
+            type_name="Giant Secure Container",
+            quantity=6,
+            unit_price=2000000,
+            total_price=12000000,
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=236427888,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=self.seller.id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            status="outstanding",
+            title="INDY-1604324799",
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+            price=12000000,
+            reward=0,
+            collateral=0,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1,
+            type_id=container_type_id,
+            quantity=6,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        self.assertTrue(_contract_items_match_order_db(contract, order))
+        missing, surplus, _names = _get_items_mismatch_breakdown(contract, order)
+        self.assertEqual(missing, {})
+        self.assertEqual(surplus, {})
+
+    def test_contract_items_mismatch_detects_missing_container_quantities(self):
+        """Missing quantities of containers are correctly reported when contract has fewer than ordered."""
+        # Alliance Auth (External Libs)
+        from eve_sde.models import ItemCategory, ItemGroup, ItemType
+
+        # AA Example App
+        from indy_hub.models import ESIContract, ESIContractItem
+
+        category, _ = ItemCategory.objects.get_or_create(
+            id=6,
+            defaults={"name": "Ship and Module Modifications"},
+        )
+        container_group, _ = ItemGroup.objects.get_or_create(
+            id=649,
+            defaults={"name": "Secure Cargo Container", "category": category},
+        )
+        container_type_id = 11488
+        ItemType.objects.update_or_create(
+            id=container_type_id,
+            defaults={"name": "Giant Secure Container", "group": container_group},
+        )
+
+        order = MaterialExchangeSellOrder.objects.create(
+            config=self.config,
+            seller=self.seller,
+            status=MaterialExchangeSellOrder.Status.DRAFT,
+            order_reference="INDY-1604324800",
+        )
+        MaterialExchangeSellOrderItem.objects.create(
+            order=order,
+            type_id=container_type_id,
+            type_name="Giant Secure Container",
+            quantity=6,
+            unit_price=2000000,
+            total_price=12000000,
+        )
+
+        contract = ESIContract.objects.create(
+            contract_id=236427889,
+            corporation_id=self.config.corporation_id,
+            contract_type="item_exchange",
+            issuer_id=self.seller.id,
+            issuer_corporation_id=self.config.corporation_id,
+            assignee_id=self.config.corporation_id,
+            status="outstanding",
+            title="INDY-1604324800",
+            date_issued=timezone.now(),
+            date_expired=timezone.now() + timedelta(days=30),
+            price=12000000,
+            reward=0,
+            collateral=0,
+        )
+        ESIContractItem.objects.create(
+            contract=contract,
+            record_id=1,
+            type_id=container_type_id,
+            quantity=4,
+            is_included=True,
+            is_singleton=False,
+        )
+
+        self.assertFalse(_contract_items_match_order_db(contract, order))
+        missing, surplus, _names = _get_items_mismatch_breakdown(contract, order)
+        self.assertEqual(missing, {container_type_id: 2})
         self.assertEqual(surplus, {})
 
 
