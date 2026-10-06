@@ -4075,7 +4075,7 @@ def _get_location_match_mode(config: MaterialExchangeConfig) -> str:
 
 
 def _get_type_market_group_id(type_id: int) -> int | None:
-    """Return ItemType.market_group_id_raw for the given type ID."""
+    """Return ItemType market group ID for the given type ID."""
     type_id_int = int(type_id)
     if type_id_int in _type_market_group_cache:
         return _type_market_group_cache[type_id_int]
@@ -4083,10 +4083,12 @@ def _get_type_market_group_id(type_id: int) -> int | None:
     try:
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
+        from ..utils.eve import get_itemtype_market_group_field_name
 
+        field = get_itemtype_market_group_field_name()
         market_group_id = (
             ItemType.objects.filter(id=type_id_int)
-            .values_list("market_group_id_raw", flat=True)
+            .values_list(field, flat=True)
             .first()
         )
         market_group_value = int(market_group_id) if market_group_id else None

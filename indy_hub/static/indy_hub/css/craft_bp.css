@@ -1484,9 +1484,12 @@ div[id="bpTabs"] {
     width: clamp(125px, 11vw, 170px);
 }
 
-.craft-financial-table .col-margin,
-.craft-financial-table .col-buyback {
+.craft-financial-table .col-margin {
     width: clamp(100px, 9vw, 140px);
+}
+
+.craft-financial-table .col-buyback {
+    width: clamp(260px, 28vw, 420px);
 }
 
 .craft-financial-table th,
@@ -2323,7 +2326,45 @@ html[data-theme="darkly"] .craft-header-icon {
  */
 .craft-financial-table .item-margin,
 .craft-financial-table .craft-buyback-cell {
-    font-weight: 600;
+    font-weight: 500;
+}
+
+.craft-financial-table td.craft-buyback-cell {
+    white-space: normal;
+    overflow: visible;
+    text-align: left !important;
+}
+
+.craft-buyback-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    text-align: left;
+}
+
+.craft-buyback-option {
+    background-color: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    font-weight: normal;
+}
+
+.craft-buyback-option .form-check {
+    margin-bottom: 0;
+    min-height: auto;
+}
+
+.craft-buyback-option .form-check-input {
+    cursor: pointer;
+    margin-top: 0.15rem;
+}
+
+.craft-buyback-option .form-check-label {
+    cursor: pointer;
+    font-weight: 500;
 }
 
 .craft-financial-table .craft-buyback-owned-dash {

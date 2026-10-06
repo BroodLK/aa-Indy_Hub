@@ -2911,7 +2911,11 @@ def craft_bp(request, type_id):
                 .lower()
             )
             market_path = _get_market_group_path_names(
-                getattr(item_type, "market_group_id_raw", None)
+                getattr(
+                    item_type,
+                    "market_group_id",
+                    getattr(item_type, "market_group_id_raw", None),
+                )
             )
             path_text = " > ".join(
                 [str(segment or "").strip().lower() for segment in market_path]
@@ -3838,9 +3842,20 @@ def craft_bp(request, type_id):
             )
             try:
                 market_group_ids = {
-                    int(et.market_group_id_raw)
+                    int(
+                        getattr(
+                            et,
+                            "market_group_id",
+                            getattr(et, "market_group_id_raw", None),
+                        )
+                    )
                     for et in eve_types
-                    if getattr(et, "market_group_id_raw", None)
+                    if getattr(
+                        et,
+                        "market_group_id",
+                        getattr(et, "market_group_id_raw", None),
+                    )
+                    is not None
                 }
                 if market_group_ids:
                     market_groups = SdeMarketGroup.objects.filter(
@@ -3875,7 +3890,9 @@ def craft_bp(request, type_id):
         def _market_group_label(it):
             if it is None:
                 return "Other"
-            market_group_id = getattr(it, "market_group_id_raw", None)
+            market_group_id = getattr(
+                it, "market_group_id", getattr(it, "market_group_id_raw", None)
+            )
             if market_group_id and market_group_lookup:
                 group = market_group_lookup.get(int(market_group_id))
                 if group:
@@ -3894,8 +3911,17 @@ def craft_bp(request, type_id):
         group_ids_used = set()
         for item_type_id in all_type_ids:
             item_type = next((it for it in eve_types if it.id == item_type_id), None)
-            if item_type and getattr(item_type, "market_group_id_raw", None):
-                group_ids_used.add(int(item_type.market_group_id_raw))
+            mg_id = (
+                getattr(
+                    item_type,
+                    "market_group_id",
+                    getattr(item_type, "market_group_id_raw", None),
+                )
+                if item_type
+                else None
+            )
+            if item_type and mg_id is not None:
+                group_ids_used.add(int(mg_id))
             elif item_type and getattr(item_type, "group", None):
                 group_ids_used.add(item_type.group_id)
             elif item_type:
@@ -3905,9 +3931,14 @@ def craft_bp(request, type_id):
         type_volume_map: dict[int, float] = {}
         if ItemType is not None:
             for item_type in eve_types:
+                mg_id = getattr(
+                    item_type,
+                    "market_group_id",
+                    getattr(item_type, "market_group_id_raw", None),
+                )
                 group_id = (
-                    int(item_type.market_group_id_raw)
-                    if getattr(item_type, "market_group_id_raw", None)
+                    int(mg_id)
+                    if mg_id is not None
                     else (
                         item_type.group_id
                         if getattr(item_type, "group", None)
@@ -3930,9 +3961,18 @@ def craft_bp(request, type_id):
         materials_by_group = {}
         for mat in materials_list:
             item_type = next((it for it in eve_types if it.id == mat["type_id"]), None)
+            mg_id = (
+                getattr(
+                    item_type,
+                    "market_group_id",
+                    getattr(item_type, "market_group_id_raw", None),
+                )
+                if item_type
+                else None
+            )
             group_id = (
-                int(item_type.market_group_id_raw)
-                if item_type and getattr(item_type, "market_group_id_raw", None)
+                int(mg_id)
+                if mg_id is not None
                 else (
                     item_type.group_id
                     if item_type and getattr(item_type, "group", None)

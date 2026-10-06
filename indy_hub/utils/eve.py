@@ -63,6 +63,20 @@ _FORBIDDEN_STRUCTURE_CHARACTERS: set[int] = set()
 _STRUCTURE_LOOKUP_PAUSE_UNTIL: float = 0.0
 
 
+def get_itemtype_market_group_field_name() -> str:
+    """Return the field name on ItemType for market group ID."""
+    if ItemType is not None:
+        try:
+            field_names = {f.name for f in ItemType._meta.get_fields()}
+            if "market_group_id" in field_names or "market_group" in field_names:
+                return "market_group_id"
+            if "market_group_id_raw" in field_names:
+                return "market_group_id_raw"
+        except Exception:
+            pass
+    return "market_group_id"
+
+
 def _schedule_structure_rate_limit_pause(duration: float | None) -> None:
     """Record a future time when structure lookups may resume."""
 

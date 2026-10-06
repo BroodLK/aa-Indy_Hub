@@ -628,6 +628,14 @@
                                         </tr>
                                     </tbody>
                                     <tfoot class="table-light">
+                                        <tr id="buybackActionRow">
+                                            <th colspan="5" class="text-end text-xs align-middle">{% trans "Buyback Order" %}</th>
+                                            <th class="text-center text-xs align-middle p-2">
+                                                <button type="button" id="createBuybackOrderBtn" class="btn btn-sm btn-success w-100 fw-semibold" title="{% trans 'Open Material Exchange buy order in a new tab with selected items' %}">
+                                                    <i class="fas fa-shopping-cart me-1"></i>{% trans "Create Buy Order" %}
+                                                </button>
+                                            </th>
+                                        </tr>
                                         <tr>
                                             <th colspan="4" class="text-end text-xs">{% trans "Industry Fees (EVERef)" %}</th>
                                             <th class="text-end text-xs grand-total-industry-fee fw-semibold text-warning" colspan="2">0</th>
@@ -873,6 +881,7 @@
                                             <th class="text-end">{% trans "Surplus" %}</th>
                                             <th class="text-end">{% trans "Unit Price" %}</th>
                                             <th class="text-end">{% trans "Total" %}</th>
+                                            <th class="text-center col-buyback">{% trans "Buyback" %}</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -881,6 +890,15 @@
                                         <tr>
                                             <th colspan="6" class="text-end text-xs">{% trans "Total Shopping Cost" %}</th>
                                             <th class="text-end text-xs purchase-total fw-semibold">0</th>
+                                            <th></th>
+                                        </tr>
+                                        <tr id="neededBuybackActionRow">
+                                            <th colspan="7" class="text-end text-xs align-middle">{% trans "Buyback Order" %}</th>
+                                            <th class="text-center text-xs align-middle p-2">
+                                                <button type="button" id="createNeededBuybackOrderBtn" class="btn btn-sm btn-success w-100 fw-semibold" title="{% trans 'Open Material Exchange buy order in a new tab with selected items' %}">
+                                                    <i class="fas fa-shopping-cart me-1"></i>{% trans "Create Buy Order" %}
+                                                </button>
+                                            </th>
                                         </tr>
                                     </tfoot>
                                 </table>

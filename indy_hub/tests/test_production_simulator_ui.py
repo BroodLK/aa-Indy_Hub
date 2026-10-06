@@ -418,10 +418,10 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("Not currently stocked in Material Exchange", self.template)
         self.assertIn("Not currently stocked in Material Exchange", self.script)
 
-    def test_craft_js_decorates_buyback_badge_with_quantity(self) -> None:
-        self.assertIn("craft-buyback-badge", self.script)
+    def test_craft_js_decorates_buyback_column_with_text_and_checkboxes(self) -> None:
+        self.assertIn("craft-buyback-order-check", self.script)
         self.assertIn("decorateNeededRowsWithBuyback", self.script)
-        self.assertIn("describeBuybackItem", self.script)
+        self.assertIn("Check this box to add them to order", self.script)
 
     def test_craft_js_hides_buyback_button_and_shows_em_dash_when_owned_enough(
         self,
@@ -429,24 +429,12 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("isCraftRowCoveredByOwned", self.script)
         self.assertIn("craft-buyback-owned-dash", self.script)
         self.assertIn("Available in buyback, but you already own enough", self.script)
-        self.assertIn("You already own enough of this item for this build", self.script)
 
     def test_craft_js_renders_ore_suggestions_on_mineral_rows(self) -> None:
-        self.assertIn("craft-buyback-ore-badge", self.script)
-        self.assertIn("craft-ore-suggestions-popover", self.script)
+        self.assertIn("craft-buyback-ore-option", self.script)
         self.assertIn("oreSuggestions", self.script)
-        self.assertIn("Ore in Buyback", self.script)
-        self.assertIn("Buyback ores that refine into", self.script)
-        self.assertIn("refine rate", self.script)
-        self.assertIn("Refines into", self.script)
-        self.assertIn("Order Ore", self.script)
-        self.assertIn("data-target-mineral-type-id", self.script)
-        self.assertNotIn(
-            "Open Ore Converter",
-            self.script.split("craft-ore-suggestions-popover")[1].split(
-                "bootstrap.Popover.getOrCreateInstance"
-            )[0],
-        )
+        self.assertIn("that will give you", self.script)
+        self.assertIn("data-target-mineral-id", self.script)
 
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(
         self,

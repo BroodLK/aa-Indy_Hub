@@ -2046,16 +2046,17 @@ document.addEventListener('DOMContentLoaded', function() {
     applySortMode();
 
     try {
-        const rawPrefill = sessionStorage.getItem('indyHubMaterialExchangeBuyPrefill');
+        const rawPrefill = sessionStorage.getItem('indyHubMaterialExchangeBuyPrefill') || localStorage.getItem('indyHubMaterialExchangeBuyPrefill');
         if (rawPrefill) {
             sessionStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
+            localStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
             const parsed = JSON.parse(rawPrefill);
             if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
                 applyPrefillItems(parsed.items);
             }
         }
     } catch (e) {
-        console.error('Failed to parse prefill items from sessionStorage', e);
+        console.error('Failed to parse prefill items from storage', e);
     }
 
     // Live stock refresh progress

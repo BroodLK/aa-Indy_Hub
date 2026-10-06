@@ -1939,12 +1939,14 @@ def _get_industry_market_group_ids() -> set[int]:
     try:
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
+        from ..utils.eve import get_itemtype_market_group_field_name
 
+        field = get_itemtype_market_group_field_name()
         ids = {
             int(group_id)
             for group_id in ItemType.objects.exclude(
-                market_group_id_raw__isnull=True
-            ).values_list("market_group_id_raw", flat=True)
+                **{f"{field}__isnull": True}
+            ).values_list(field, flat=True)
             if group_id is not None
         }
     except Exception:
@@ -1968,9 +1970,11 @@ def _get_itemtype_market_group_name_rows():
     try:
         # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
+        from ..utils.eve import get_itemtype_market_group_field_name
 
-        return ItemType.objects.exclude(market_group_id_raw__isnull=True).values_list(
-            "market_group_id_raw",
+        field = get_itemtype_market_group_field_name()
+        return ItemType.objects.exclude(**{f"{field}__isnull": True}).values_list(
+            field,
             "name",
         )
     except Exception:
