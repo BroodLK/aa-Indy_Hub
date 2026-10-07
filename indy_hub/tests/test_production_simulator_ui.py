@@ -423,6 +423,13 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("decorateNeededRowsWithBuyback", self.script)
         self.assertIn("Stock available", self.script)
         self.assertIn("Add to order", self.script)
+        self.assertIn("craft-buyback-tally", self.script)
+        self.assertIn("updateBuybackRunningTallies", self.script)
+        self.assertIn("Order tally", self.script)
+
+    def test_craft_template_disables_buyback_buttons_by_default(self) -> None:
+        self.assertIn('id="createBuybackOrderBtn" class="btn btn-sm btn-success w-100 fw-semibold disabled" disabled', self.template)
+        self.assertIn('id="createNeededBuybackOrderBtn" class="btn btn-sm btn-success w-100 fw-semibold disabled" disabled', self.template)
 
     def test_craft_js_hides_buyback_button_and_shows_em_dash_when_owned_enough(
         self,
@@ -439,16 +446,22 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("yields", self.script)
         self.assertIn("Add ore to order", self.script)
         self.assertIn("data-target-mineral-id", self.script)
+        self.assertIn("data-mineral-yields", self.script)
 
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(
         self,
     ) -> None:
         self.assertIn("applyPrefillItems", self.buy_template)
         self.assertIn("indyHubMaterialExchangeBuyPrefill", self.buy_template)
+        self.assertIn("persistCurrentCartToStorage", self.buy_template)
         self.assertIn("pre-selected", self.buy_template)
         self.assertIn("getAvailableLocationsForType", self.buy_template)
         self.assertIn("data-location-label", self.buy_template)
         self.assertIn("available at", self.buy_template)
+        self.assertIn("stock-refresh-overlay", self.buy_template)
+        self.assertIn("invoice-qty-control", self.buy_template)
+        self.assertIn("invoice-qty-input", self.buy_template)
+        self.assertIn("cartStockWarning", self.buy_template)
 
     def test_purchase_planner_csv_export_includes_inputs_and_headers(self) -> None:
         self.assertIn('id="purchasePlannerTable"', self.template)

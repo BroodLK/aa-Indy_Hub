@@ -328,6 +328,7 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
         for s in suggestions:
             self.assertEqual(s["refine_rate_percent"], 84.2)
             self.assertEqual(s["yield_per_portion"], 349)
+            self.assertEqual(s["mineral_yields"], {str(TRITANIUM): 349})
             if s["type_id"] == compressed_veldspar:
                 # 5000 units = 50 portions => 50 * 349 = 17450
                 self.assertEqual(s["estimated_mineral_in_stock"], 17450)

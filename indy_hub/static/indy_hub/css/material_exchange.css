@@ -763,6 +763,69 @@ html[data-theme="darkly"] .me-instruction-chip {
     border-bottom: none;
 }
 
+.invoice-item .invoice-qty-control {
+    background: rgba(var(--bs-body-bg-rgb), 0.35);
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid rgba(var(--bs-border-color-rgb), 0.3);
+}
+
+.invoice-item .invoice-qty-input {
+    max-width: 90px;
+    font-size: 0.825rem;
+    padding: 0.2rem 0.4rem;
+}
+
+.invoice-item .invoice-qty-btn {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1.2;
+}
+
+.invoice-item .invoice-remove-btn {
+    text-decoration: none;
+    transition: color 0.15s ease-in-out;
+}
+
+.invoice-item .invoice-remove-btn:hover {
+    color: var(--bs-danger, #dc3545) !important;
+}
+
+/* Stock Refresh Overlay */
+.stock-refresh-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: all;
+    user-select: none;
+}
+
+.stock-refresh-modal {
+    max-width: 460px;
+    width: 90%;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(30, 41, 59, 0.95);
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.stock-refreshing-content {
+    pointer-events: none;
+    user-select: none;
+    opacity: 0.55;
+    filter: blur(1px);
+    transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
 .stock-table tbody tr.location-locked {
     opacity: 0.45;
 }

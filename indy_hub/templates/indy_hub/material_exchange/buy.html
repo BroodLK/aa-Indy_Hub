@@ -52,21 +52,26 @@
         </div>
 
         {% if stock_refreshing %}
-            <div class="d-flex flex-column align-items-center justify-content-center py-5">
-                <svg width="56" height="56" viewBox="0 0 24 24" aria-hidden="true" class="text-info">
-                    <g stroke="currentColor" fill="none" stroke-width="1" stroke-linecap="round">
-                    <circle cx="12" cy="12" r="10">
-                    <animate attributeName="stroke-dasharray" dur="1.5s" calcMode="spline" values="0 150;42 150;42 150;42 150" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
-                    <animate attributeName="stroke-dashoffset" dur="1.5s" calcMode="spline" values="0;-16;-59;-59" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
-                    </circle>
-                    <animateTransform attributeName="transform" type="rotate" dur="2s" values="0 12 12;360 12 12" repeatCount="indefinite" />
-                    </g>
-                </svg>
-                <div class="mt-3 text-muted">{% trans "Refreshing via ESI (assets + prices)." %}</div>
+            <div class="stock-refresh-overlay" id="stockRefreshOverlay" role="dialog" aria-modal="true" aria-label="{% trans 'Stock Refresh In Progress' %}">
+                <div class="stock-refresh-modal glass-panel p-4 text-center shadow-lg">
+                    <div class="mb-3">
+                        <svg width="56" height="56" viewBox="0 0 24 24" aria-hidden="true" class="text-info">
+                            <g stroke="currentColor" fill="none" stroke-width="1.5" stroke-linecap="round">
+                            <circle cx="12" cy="12" r="10">
+                            <animate attributeName="stroke-dasharray" dur="1.5s" calcMode="spline" values="0 150;42 150;42 150;42 150" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
+                            <animate attributeName="stroke-dashoffset" dur="1.5s" calcMode="spline" values="0;-16;-59;-59" keyTimes="0;0.475;0.95;1" keySplines="0.42,0,0.58,1;0.42,0,0.58,1;0.42,0,0.58,1" repeatCount="indefinite" />
+                            </circle>
+                            <animateTransform attributeName="transform" type="rotate" dur="2s" values="0 12 12;360 12 12" repeatCount="indefinite" />
+                            </g>
+                        </svg>
+                    </div>
+                    <h5 class="fw-bold mb-2">{% trans "Updating Stock & Market Prices" %}</h5>
+                    <p class="text-muted small mb-0">{% trans "Refreshing via ESI (assets + prices). Please wait while stock data synchronizes..." %}</p>
+                </div>
             </div>
         {% endif %}
 
-        <div class="{% if stock_refreshing %}d-none{% endif %}">
+        <div class="{% if stock_refreshing %}stock-refreshing-content{% endif %}">
             <div id="buyMultibuyTopAlert" class="alert alert-warning py-2 px-3 small mb-3 d-none" role="status" aria-live="polite">
             </div>
 
@@ -397,6 +402,9 @@
                             </div>
                             <div id="invoiceItems" class="d-none">
                                 <div id="itemsList"></div>
+                                <div id="cartStockWarning" class="alert alert-danger py-2 px-3 small mt-3 mb-0 d-none" role="alert">
+                                    <i class="fas fa-exclamation-circle me-1"></i>{% trans "One or more items exceed available stock. Adjust quantities to continue." %}
+                                </div>
                                 <div class="invoice-total">
                                     <div class="d-flex justify-content-between align-items-center mb-2">
                                         <span class="fw-bold">{% trans "Total Amount" %}</span>
@@ -1739,39 +1747,53 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const selectedItems = [];
         let totalCents = 0;
+        let hasOverStockItem = false;
         const clearItemLabel = '{% trans "Clear item selection" %}';
 
         qtyInputs.forEach(input => {
-            const qty = parseInt(input.value) || 0;
+            const rawVal = (input.value || '').trim();
+            const qty = parseInt(rawVal, 10) || 0;
             const row = input.closest('tr');
             if (!row) {
                 return;
             }
 
             if (qty > 0) {
-                const typeName = row.dataset.typeName;
-                const unitPrice = parseFloat(row.dataset.unitPrice);
-                const max = parseInt(input.dataset.max);
+                const typeName = row.dataset.typeName || '';
+                const unitPrice = parseFloat(row.dataset.unitPrice) || 0;
+                const max = parseInt(input.dataset.max, 10) || 0;
+                const isOverStock = qty > max;
+                if (isOverStock) {
+                    hasOverStockItem = true;
+                }
 
-                // Use actual qty or max, whichever is lower for calculation
-                const effectiveQty = Math.min(qty, max);
+                // Subtotal calculation
                 const unitPriceCents = toCents(row.dataset.unitPrice);
-                const subtotalCents = unitPriceCents * effectiveQty;
+                const subtotalCents = unitPriceCents * qty;
                 const subtotal = subtotalCents / 100;
 
                 selectedItems.push({
                     rowIndex: row.dataset.rowIndex || '',
                     name: typeName,
-                    qty: effectiveQty,
+                    qty: qty,
+                    max: max,
+                    isOverStock: isOverStock,
                     unitPrice: unitPrice,
                     subtotal: subtotal,
+                    isContainerChild: Boolean(row.dataset.containerPath),
                     refinedBreakdown: parseRefinedBreakdown(row.dataset.refinedBreakdown),
                 });
 
                 totalCents += subtotalCents;
                 row.classList.add('selected');
+                if (isOverStock) {
+                    row.classList.add('is-invalid');
+                } else {
+                    row.classList.remove('is-invalid');
+                }
             } else {
                 row.classList.remove('selected');
+                row.classList.remove('is-invalid');
             }
         });
 
@@ -1784,6 +1806,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const invoiceItems = document.getElementById('invoiceItems');
         const itemsList = document.getElementById('itemsList');
         const totalAmount = document.getElementById('totalAmount');
+        const cartStockWarning = document.getElementById('cartStockWarning');
+        const confirmPurchaseBtn = document.getElementById('confirmPurchaseBtn');
 
         // Guard against missing invoice elements when stock is empty
         if (!emptyInvoice || !invoiceItems) {
@@ -1800,20 +1824,55 @@ document.addEventListener('DOMContentLoaded', function() {
             let itemsHTML = '';
             selectedItems.forEach(item => {
                 const breakdownHtml = renderRefinedBreakdownHtml(item.refinedBreakdown, item.qty);
+                const isChild = item.isContainerChild;
+                const isOver = item.isOverStock;
+
                 itemsHTML += `
-                    <div class="invoice-item">
-                        <div class="d-flex justify-content-between mb-1">
-                            <strong class="me-2">${item.name}</strong>
-                            <div class="d-flex align-items-center gap-2">
-                                <span class="text-primary fw-semibold">${formatNumber(item.subtotal)} ISK</span>
+                    <div class="invoice-item" data-row-index="${item.rowIndex}">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div class="pe-2 text-truncate" style="max-width: 200px;">
+                                <strong class="d-block text-truncate" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>
+                                <span class="small text-muted font-monospace">${formatNumber(item.unitPrice)} ISK / unit</span>
+                            </div>
+                            <div class="text-end flex-shrink-0">
+                                <span class="text-primary fw-bold font-monospace d-block">${formatNumber(item.subtotal)} ISK</span>
                                 <button type="button" class="btn btn-link btn-sm p-0 text-muted invoice-remove-btn" data-row-index="${item.rowIndex}" title="${clearItemLabel}" aria-label="${clearItemLabel}">
-                                    <i class="fas fa-times" aria-hidden="true"></i>
+                                    <i class="fas fa-trash-alt me-1"></i><span class="small">${escapeHtml(__('Remove'))}</span>
                                 </button>
                             </div>
                         </div>
-                        <div class="d-flex justify-content-between small text-muted">
-                            <span>${item.qty.toLocaleString()} x ${formatNumber(item.unitPrice)} ISK</span>
-                        </div>
+                        ${isChild ? `
+                            <div class="small text-muted mb-1 d-flex justify-content-between align-items-center">
+                                <span><i class="fas fa-level-up-alt fa-rotate-90 me-1"></i>${escapeHtml(__('In container:'))}</span>
+                                <span class="font-monospace fw-semibold">${item.qty.toLocaleString()}</span>
+                            </div>
+                        ` : `
+                            <div class="invoice-qty-control mb-1">
+                                <div class="input-group input-group-sm">
+                                    <button type="button" class="btn btn-outline-secondary invoice-qty-btn" data-action="dec" data-row-index="${item.rowIndex}" title="${escapeHtml(__('Decrease quantity'))}" ${item.qty <= 1 ? 'disabled' : ''}>
+                                        <i class="fas fa-minus"></i>
+                                    </button>
+                                    <input type="number"
+                                           class="form-control text-center font-monospace invoice-qty-input${isOver ? ' is-invalid' : ''}"
+                                           value="${item.qty}"
+                                           min="1"
+                                           max="${item.max}"
+                                           data-row-index="${item.rowIndex}"
+                                           data-max="${item.max}"
+                                           aria-label="${escapeHtml(item.name)} quantity">
+                                    <button type="button" class="btn btn-outline-secondary invoice-qty-btn" data-action="inc" data-row-index="${item.rowIndex}" title="${escapeHtml(__('Increase quantity'))}" ${item.qty >= item.max ? 'disabled' : ''}>
+                                        <i class="fas fa-plus"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-outline-primary invoice-qty-btn" data-action="max" data-row-index="${item.rowIndex}" title="${escapeHtml(__('Set to max available stock'))}">
+                                        ${escapeHtml(__('Max'))}
+                                    </button>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mt-1">
+                                    <span class="small text-muted">${escapeHtml(__('Stock:'))} <strong class="font-monospace">${item.max.toLocaleString()}</strong></span>
+                                    ${isOver ? `<span class="badge bg-danger">${escapeHtml(__('Exceeds stock!'))}</span>` : ''}
+                                </div>
+                            </div>
+                        `}
                         ${breakdownHtml}
                     </div>
                 `;
@@ -1825,39 +1884,125 @@ document.addEventListener('DOMContentLoaded', function() {
             if (totalAmount) {
                 totalAmount.textContent = formatWholeISK(total) + ' ISK';
             }
+            if (cartStockWarning) {
+                cartStockWarning.classList.toggle('d-none', !hasOverStockItem);
+            }
+            if (confirmPurchaseBtn) {
+                confirmPurchaseBtn.disabled = hasOverStockItem;
+                confirmPurchaseBtn.classList.toggle('disabled', hasOverStockItem);
+            }
         }
     }
 
     if (invoiceItemsList) {
         invoiceItemsList.addEventListener('click', function(event) {
             const clearBtn = event.target.closest('.invoice-remove-btn');
-            if (!clearBtn) {
+            if (clearBtn) {
+                const rowIndex = (clearBtn.dataset.rowIndex || '').trim();
+                if (!rowIndex) {
+                    return;
+                }
+                const input = document.getElementById(`qty-${rowIndex}`);
+                if (!input || input.disabled) {
+                    return;
+                }
+                input.value = 0;
+                checkQuantityLimit(input);
+                updateInvoice();
                 return;
             }
-            const rowIndex = (clearBtn.dataset.rowIndex || '').trim();
+
+            const qtyBtn = event.target.closest('.invoice-qty-btn');
+            if (qtyBtn) {
+                const rowIndex = (qtyBtn.dataset.rowIndex || '').trim();
+                const action = qtyBtn.dataset.action;
+                if (!rowIndex || !action) {
+                    return;
+                }
+                const input = document.getElementById(`qty-${rowIndex}`);
+                if (!input || input.disabled) {
+                    return;
+                }
+                const max = parseInt(input.dataset.max, 10) || 0;
+                let currentVal = parseInt(input.value, 10) || 0;
+                if (action === 'dec') {
+                    currentVal = Math.max(1, currentVal - 1);
+                } else if (action === 'inc') {
+                    currentVal = Math.min(max, currentVal + 1);
+                } else if (action === 'max') {
+                    currentVal = max;
+                }
+                input.value = currentVal;
+                checkQuantityLimit(input);
+                updateInvoice();
+                return;
+            }
+        });
+
+        invoiceItemsList.addEventListener('input', function(event) {
+            const qtyInput = event.target.closest('.invoice-qty-input');
+            if (!qtyInput) {
+                return;
+            }
+            const rowIndex = (qtyInput.dataset.rowIndex || '').trim();
             if (!rowIndex) {
                 return;
             }
-            const input = document.getElementById(`qty-${rowIndex}`);
-            if (!input || input.disabled) {
+            const tableInput = document.getElementById(`qty-${rowIndex}`);
+            if (!tableInput || tableInput.disabled) {
                 return;
             }
-            input.value = 0;
+
+            let val = parseInt(qtyInput.value, 10);
+            if (isNaN(val) || val < 0) {
+                val = 0;
+            }
+            tableInput.value = val;
+            checkQuantityLimit(tableInput);
+            updateInvoice();
+        });
+
+        invoiceItemsList.addEventListener('change', function(event) {
+            const qtyInput = event.target.closest('.invoice-qty-input');
+            if (!qtyInput) {
+                return;
+            }
+            const rowIndex = (qtyInput.dataset.rowIndex || '').trim();
+            if (!rowIndex) {
+                return;
+            }
+            const tableInput = document.getElementById(`qty-${rowIndex}`);
+            if (!tableInput || tableInput.disabled) {
+                return;
+            }
+
+            let val = parseInt(qtyInput.value, 10) || 0;
+            const max = parseInt(qtyInput.dataset.max, 10) || 0;
+            if (val > max) {
+                val = max;
+            } else if (val < 1) {
+                val = 1;
+            }
+            qtyInput.value = val;
+            tableInput.value = val;
+            checkQuantityLimit(tableInput);
             updateInvoice();
         });
     }
 
     qtyInputs.forEach(input => {
         input.addEventListener('input', function() {
+            checkQuantityLimit(this);
             updateInvoice();
         });
 
         input.addEventListener('blur', function() {
             // Auto-correct on blur
-            const qty = parseInt(this.value) || 0;
-            const max = parseInt(this.dataset.max);
+            const qty = parseInt(this.value, 10) || 0;
+            const max = parseInt(this.dataset.max, 10) || 0;
             if (qty > max) {
                 this.value = max;
+                checkQuantityLimit(this);
                 updateInvoice();
             }
         });
@@ -1872,6 +2017,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
 
+            try {
+                sessionStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
+                localStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
+            } catch (err) {
+                // Ignore
+            }
+
             // Generate order reference and add to form before submitting
             const orderRef = generateOrderReference();
             const hiddenOrderReference = document.getElementById('hidden_order_reference');
@@ -1881,18 +2033,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
             let hasError = false;
             qtyInputs.forEach(input => {
-                const qty = parseInt(input.value) || 0;
-                const max = parseInt(input.dataset.max);
+                const qty = parseInt(input.value, 10) || 0;
+                const max = parseInt(input.dataset.max, 10) || 0;
                 if (qty > max) {
                     hasError = true;
                     input.value = max; // Auto-correct
+                    checkQuantityLimit(input);
                 }
             });
 
             if (hasError) {
                 e.preventDefault();
-                alert('{% trans "Some quantities exceeded available stock and have been adjusted." %}');
                 updateInvoice();
+                alert('{% trans "Some item quantities exceeded available stock and have been adjusted to maximum available stock. Please review and confirm your purchase." %}');
                 return false;
             }
 
@@ -2039,18 +2192,56 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function getSelectedCartItemsForPersistence() {
+        const items = [];
+        const selectedRows = getSelectedItemRows();
+        selectedRows.forEach(row => {
+            const input = getImportRowInput(row);
+            const qty = parseInt(input?.value, 10) || 0;
+            const typeId = parseInt(row.dataset.typeId, 10) || 0;
+            const typeName = row.dataset.typeName || row.querySelector('.item-name')?.textContent?.trim() || `Type ${typeId}`;
+            if (typeId > 0 && qty > 0) {
+                items.push({
+                    type_id: typeId,
+                    type_name: typeName,
+                    quantity: qty,
+                });
+            }
+        });
+        return items;
+    }
+
+    function persistCurrentCartToStorage() {
+        if (purchaseSubmissionInProgress) {
+            return;
+        }
+        try {
+            const items = getSelectedCartItemsForPersistence();
+            if (items.length > 0) {
+                const payload = JSON.stringify({ items: items });
+                sessionStorage.setItem('indyHubMaterialExchangeBuyPrefill', payload);
+                localStorage.setItem('indyHubMaterialExchangeBuyPrefill', payload);
+            }
+        } catch (e) {
+            console.error('Failed to persist cart to storage', e);
+        }
+    }
+
     // Initial update
     setPurchaseSubmitting(false);
     updateInvoice();
     populateMarketGroupFilterOptions();
     applySortMode();
 
+    const isCurrentlyStockRefreshing = {{ stock_refreshing|yesno:"true,false" }};
     try {
         const rawPrefill = sessionStorage.getItem('indyHubMaterialExchangeBuyPrefill') || localStorage.getItem('indyHubMaterialExchangeBuyPrefill');
         if (rawPrefill) {
-            sessionStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
-            localStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
             const parsed = JSON.parse(rawPrefill);
+            if (!isCurrentlyStockRefreshing) {
+                sessionStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
+                localStorage.removeItem('indyHubMaterialExchangeBuyPrefill');
+            }
             if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
                 applyPrefillItems(parsed.items);
             }
@@ -2082,6 +2273,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // When finished successfully, reload to show updated stock
             if (data.finished && !data.error) {
                 console.log('Stock refresh finished successfully! Reloading page with refreshed=1');
+                persistCurrentCartToStorage();
                 const url = new URL(window.location.href);
                 if (url.searchParams.get('refreshed') !== '1') {
                     url.searchParams.set('refreshed', '1');

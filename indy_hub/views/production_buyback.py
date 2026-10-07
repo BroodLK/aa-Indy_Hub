@@ -263,6 +263,14 @@ def production_buyback_availability(request):
                 if unit_price <= 0:
                     continue
 
+                # Precompute all refined mineral yields per portion for this ore
+                all_mineral_yields: dict[str, int] = {}
+                for m_id, b_yield in outputs.items():
+                    if b_yield > 0:
+                        r_yield = int(math.floor(Decimal(str(b_yield)) * refine_ratio))
+                        if r_yield > 0:
+                            all_mineral_yields[str(m_id)] = r_yield
+
                 # Make sure the ore item is in items map so simulator modals can order it
                 if str(stock_type_id) not in items:
                     items[str(stock_type_id)] = {
@@ -278,6 +286,8 @@ def production_buyback_availability(request):
                             else "buyback_market"
                         ),
                         "location_label": str(row.get("buy_location_label") or ""),
+                        "portion_size": portion_size,
+                        "mineral_yields": all_mineral_yields,
                     }
 
                 for mineral_type_id, base_yield_per_portion in outputs.items():
@@ -312,6 +322,7 @@ def production_buyback_availability(request):
                         "yield_per_portion": int(refined_yield_per_portion),
                         "portions_in_stock": int(portions_in_stock),
                         "estimated_mineral_in_stock": int(est_mineral_in_stock),
+                        "mineral_yields": all_mineral_yields,
                     }
                     ore_suggestions.setdefault(str(mineral_type_id), []).append(
                         suggestion

@@ -11686,7 +11686,7 @@ function handleCreateBuybackOrder(button) {
                 });
             } else {
                 const existing = itemsMap.get(typeId);
-                existing.quantity = Math.max(existing.quantity, quantity);
+                existing.quantity = existing.quantity + quantity;
             }
         }
     });
@@ -11716,6 +11716,119 @@ function handleCreateBuybackOrder(button) {
     window.open(buyUrl, '_blank');
 }
 
+function updateBuybackRunningTallies() {
+    const directMineralTotals = new Map();
+    const oreTotalsByType = new Map();
+    const checkedInputs = Array.from(document.querySelectorAll('.craft-buyback-order-check:checked'));
+
+    checkedInputs.forEach((input) => {
+        const typeId = Number(input.dataset.typeId) || 0;
+        const qty = Math.max(1, Math.floor(Number(input.dataset.quantity) || 1));
+        const isOre = input.classList.contains('craft-buyback-ore-check') || Boolean(input.dataset.targetMineralId);
+
+        if (isOre) {
+            let mineralYields = {};
+            try {
+                if (input.dataset.mineralYields) {
+                    mineralYields = JSON.parse(input.dataset.mineralYields);
+                }
+            } catch (e) {
+                mineralYields = {};
+            }
+            const portionSize = Number(input.dataset.portionSize) || 100;
+            const targetMineralId = Number(input.dataset.targetMineralId) || 0;
+            if (Object.keys(mineralYields).length === 0 && targetMineralId > 0) {
+                mineralYields[String(targetMineralId)] = Number(input.dataset.yieldPerPortion) || 1;
+            }
+
+            if (!oreTotalsByType.has(typeId)) {
+                oreTotalsByType.set(typeId, {
+                    quantity: qty,
+                    portionSize: portionSize,
+                    mineralYields: mineralYields,
+                });
+            } else {
+                const existing = oreTotalsByType.get(typeId);
+                existing.quantity += qty;
+                if (Object.keys(existing.mineralYields).length === 0) {
+                    existing.mineralYields = mineralYields;
+                }
+            }
+        } else {
+            directMineralTotals.set(typeId, (directMineralTotals.get(typeId) || 0) + qty);
+        }
+    });
+
+    const mineralTotals = new Map();
+    directMineralTotals.forEach((qty, minId) => {
+        mineralTotals.set(minId, (mineralTotals.get(minId) || 0) + qty);
+    });
+
+    oreTotalsByType.forEach((oreData) => {
+        const portions = Math.floor(oreData.quantity / (oreData.portionSize || 100));
+        if (portions > 0 && oreData.mineralYields) {
+            Object.entries(oreData.mineralYields).forEach(([mIdStr, yieldPerPortion]) => {
+                const mId = Number(mIdStr) || 0;
+                const yieldQty = portions * (Number(yieldPerPortion) || 0);
+                if (mId > 0 && yieldQty > 0) {
+                    mineralTotals.set(mId, (mineralTotals.get(mId) || 0) + yieldQty);
+                }
+            });
+        }
+    });
+
+    document.querySelectorAll('.craft-buyback-tally').forEach((tallyEl) => {
+        const mineralId = Number(tallyEl.dataset.tallyMineralId) || 0;
+        const neededQty = Number(tallyEl.dataset.neededQty) || 0;
+        const provided = mineralTotals.get(mineralId) || 0;
+
+        if (neededQty > 0) {
+            const isFull = provided >= neededQty;
+            const pct = Math.min(100, Math.round((provided / neededQty) * 100));
+            if (provided > 0) {
+                tallyEl.className = `craft-buyback-tally mt-1 ${isFull ? 'is-covered' : 'is-partial'}`;
+                tallyEl.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center gap-1">
+                        <span><i class="fas ${isFull ? 'fa-check-circle text-success' : 'fa-hourglass-half text-warning'} me-1"></i><strong>${escapeHtml(__('Order tally'))}:</strong></span>
+                        <span class="font-monospace fw-bold">${formatInteger(provided)} / ${formatInteger(neededQty)} (${pct}%)</span>
+                    </div>
+                `;
+                tallyEl.classList.remove('d-none');
+            } else {
+                tallyEl.className = 'craft-buyback-tally mt-1 text-muted';
+                tallyEl.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-center gap-1">
+                        <span><i class="fas fa-calculator me-1"></i><strong>${escapeHtml(__('Order tally'))}:</strong></span>
+                        <span class="font-monospace">0 / ${formatInteger(neededQty)}</span>
+                    </div>
+                `;
+                tallyEl.classList.remove('d-none');
+            }
+        } else if (provided > 0) {
+            tallyEl.className = 'craft-buyback-tally mt-1 is-covered';
+            tallyEl.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center gap-1">
+                    <span><i class="fas fa-check-circle text-success me-1"></i><strong>${escapeHtml(__('Order tally'))}:</strong></span>
+                    <span class="font-monospace fw-bold">${formatInteger(provided)}</span>
+                </div>
+            `;
+            tallyEl.classList.remove('d-none');
+        } else {
+            tallyEl.innerHTML = '';
+            tallyEl.className = 'craft-buyback-tally mt-1 d-none';
+        }
+    });
+
+    const totalCheckedCount = checkedInputs.length;
+    ['createBuybackOrderBtn', 'createNeededBuybackOrderBtn'].forEach((btnId) => {
+        const btn = document.getElementById(btnId);
+        if (btn) {
+            btn.disabled = totalCheckedCount === 0;
+            btn.classList.toggle('disabled', totalCheckedCount === 0);
+        }
+    });
+}
+
 function initializeBuybackOrderButtons() {
     ['createBuybackOrderBtn', 'createNeededBuybackOrderBtn'].forEach((btnId) => {
         const btn = document.getElementById(btnId);
@@ -11727,6 +11840,7 @@ function initializeBuybackOrderButtons() {
             });
         }
     });
+    updateBuybackRunningTallies();
 }
 
 let buybackUniqueCounter = 0;
@@ -11829,6 +11943,7 @@ async function decorateNeededRowsWithBuyback(rows) {
                         const checkId = `buybackOreCheck_${ore.type_id}_${typeId}_${tableId}_${buybackUniqueCounter}_${idx}`;
                         const oreKey = `${ore.type_id}_${typeId}`;
                         const isChecked = currentlyCheckedKeys.has(oreKey);
+                        const mineralYieldsJson = JSON.stringify(ore.mineral_yields || { [typeId]: yieldPerPortion });
                         parts.push(`
                             <div class="craft-buyback-option craft-buyback-ore-option mb-1${isChecked ? ' is-selected' : ''}${isOreFullStock ? ' is-full-stock' : ' is-partial-stock'}">
                                 <div class="craft-buyback-desc ${isOreFullStock ? 'text-success' : 'text-danger'}">
@@ -11836,7 +11951,7 @@ async function decorateNeededRowsWithBuyback(rows) {
                                     <div class="small text-muted font-monospace mt-1">${escapeHtml(oreTypeName)}: ${formatInteger(oreStockQty)} ${escapeHtml(__('in stock'))} &rarr; ${escapeHtml(__('yields'))} ${formatInteger(mineralYieldQty)} ${escapeHtml(mineralName)}</div>
                                 </div>
                                 <label class="craft-buyback-check-row" for="${checkId}">
-                                    <input class="form-check-input craft-buyback-order-check craft-buyback-ore-check" type="checkbox" id="${checkId}" data-type-id="${ore.type_id}" data-type-name="${escapeHtml(ore.type_name || '')}" data-quantity="${oreUnitsToOrder}" data-target-mineral-id="${typeId}" data-location-id="${ore.location_id || ''}" data-location-label="${escapeHtml(ore.location_label || '')}"${isChecked ? ' checked' : ''}>
+                                    <input class="form-check-input craft-buyback-order-check craft-buyback-ore-check" type="checkbox" id="${checkId}" data-type-id="${ore.type_id}" data-type-name="${escapeHtml(ore.type_name || '')}" data-quantity="${oreUnitsToOrder}" data-portion-size="${portionSize}" data-yield-per-portion="${yieldPerPortion}" data-mineral-yields="${escapeHtml(mineralYieldsJson)}" data-target-mineral-id="${typeId}" data-location-id="${ore.location_id || ''}" data-location-label="${escapeHtml(ore.location_label || '')}"${isChecked ? ' checked' : ''}>
                                     <span class="craft-buyback-check-label">
                                         ${escapeHtml(__('Add ore to order'))} (${formatInteger(oreUnitsToOrder)} ${escapeHtml(__('units'))} &rarr; ${formatInteger(estimatedYieldFromOrder)} ${escapeHtml(mineralName)})
                                     </span>
@@ -11848,6 +11963,7 @@ async function decorateNeededRowsWithBuyback(rows) {
             }
 
             if (parts.length > 0) {
+                parts.push(`<div class="craft-buyback-tally mt-1 d-none" data-tally-mineral-id="${typeId}" data-needed-qty="${neededQty}"></div>`);
                 slot.innerHTML = parts.join('');
                 slot.removeAttribute('title');
                 slot.querySelectorAll('.craft-buyback-order-check').forEach((chk) => {
@@ -11856,6 +11972,7 @@ async function decorateNeededRowsWithBuyback(rows) {
                         if (opt) {
                             opt.classList.toggle('is-selected', this.checked);
                         }
+                        updateBuybackRunningTallies();
                     });
                 });
             } else if (slot.closest('.craft-buyback-cell')) {
