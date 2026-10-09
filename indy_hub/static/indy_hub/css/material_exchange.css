@@ -513,10 +513,11 @@ html[data-theme="darkly"] .status-pending {
 }
 
 .item-icon {
-    width: 48px;
-    height: 48px;
+    width: 64px;
+    height: 64px;
     border-radius: 6px;
-    padding: 4px;
+    padding: 0;
+    object-fit: contain;
 }
 
 .me-tree-fallback-icon {
@@ -1952,7 +1953,7 @@ html[data-theme="darkly"] .admin-panel-toggle-count {
 
 /* Stock table fixed column widths */
 .stock-col-icon {
-    width: 60px;
+    width: 76px;
 }
 
 .stock-col-qty {

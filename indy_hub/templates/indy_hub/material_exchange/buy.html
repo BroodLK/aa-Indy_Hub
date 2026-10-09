@@ -485,6 +485,9 @@
 
     <script>
 document.addEventListener('DOMContentLoaded', function() {
+    const __ = (typeof window !== 'undefined' && typeof window.gettext === 'function')
+        ? window.gettext.bind(window)
+        : (msg => msg);
     const cleanUrl = new URL(window.location.href);
     if (cleanUrl.searchParams.get('refreshed') === '1') {
         cleanUrl.searchParams.delete('refreshed');
