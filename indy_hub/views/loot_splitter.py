@@ -27,7 +27,7 @@ logger = get_extension_logger(__name__)
 
 
 @login_required
-@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_access_loot_splitter")
 def loot_splitter_view(request):
     """Render the Fleet Loot Splitter & Reimbursement Wizard page."""
     context = {
@@ -37,7 +37,7 @@ def loot_splitter_view(request):
 
 
 @login_required
-@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_access_loot_splitter")
 @require_http_methods(["POST"])
 def loot_splitter_resolve_pilots_api(request):
     """API endpoint to parse pilot names and resolve alts to mains."""
@@ -59,7 +59,7 @@ def loot_splitter_resolve_pilots_api(request):
 
 
 @login_required
-@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_access_loot_splitter")
 @require_http_methods(["POST"])
 def loot_splitter_parse_loot_api(request):
     """API endpoint to parse loot items and fetch market/buyback valuations."""
@@ -90,7 +90,7 @@ def loot_splitter_parse_loot_api(request):
 
 
 @login_required
-@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_access_loot_splitter")
 @require_http_methods(["POST"])
 def loot_splitter_resolve_killmail_api(request):
     """API endpoint to resolve zKillboard killmail link or ID."""
@@ -112,7 +112,7 @@ def loot_splitter_resolve_killmail_api(request):
 
 
 @login_required
-@indy_hub_permission_required("can_access_indy_hub")
+@indy_hub_permission_required("can_access_loot_splitter")
 @require_http_methods(["POST"])
 def loot_splitter_calculate_api(request):
     """API endpoint to run settlement calculation given current wizard state."""
@@ -125,6 +125,7 @@ def loot_splitter_calculate_api(request):
     loot_items = data.get("loot_items") or []
     killmails = data.get("killmails") or []
     valuation_mode = str(data.get("valuation_mode") or "buyback").strip().lower()
+    bag_man_pilot_id = data.get("bag_man_pilot_id")
 
     if not pilots:
         return JsonResponse({"ok": False, "error": "At least one pilot is required."}, status=400)
@@ -135,6 +136,7 @@ def loot_splitter_calculate_api(request):
             loot_items=loot_items,
             killmails=killmails,
             valuation_mode=valuation_mode,
+            bag_man_pilot_id=bag_man_pilot_id,
         )
         return JsonResponse({"ok": True, **result})
     except Exception as exc:

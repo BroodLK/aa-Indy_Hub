@@ -219,9 +219,11 @@ def indy_hub_permission_required(permission_codename):
                 if request.headers.get("x-requested-with") == "XMLHttpRequest":
                     return JsonResponse({"error": "Permission denied."}, status=403)
                 messages.error(
-                    request, "You do not have the required Indy Hub permission."
+                    request, "You do not have the required permission."
                 )
-                return redirect("indy_hub:index")
+                if request.user.has_perm("indy_hub.can_access_indy_hub"):
+                    return redirect("indy_hub:index")
+                return redirect("authentication:dashboard")
             return view_func(request, *args, **kwargs)
 
         return _wrapped_view

@@ -47,16 +47,63 @@
             color: #fff !important;
         }
         .pilot-avatar {
-            width: 36px;
-            height: 36px;
+            width: 64px;
+            height: 64px;
+            min-width: 64px;
+            min-height: 64px;
+            object-fit: cover;
             border-radius: 50%;
-            border: 1px solid rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.2);
+            flex-shrink: 0;
+            display: inline-block;
         }
         .item-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 4px;
-            border: 1px solid rgba(255,255,255,0.1);
+            width: 64px;
+            height: 64px;
+            min-width: 64px;
+            min-height: 64px;
+            object-fit: contain;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.15);
+            flex-shrink: 0;
+            background-color: rgba(0,0,0,0.25);
+            display: inline-block;
+        }
+        .val-mode-btn-group .btn-outline-primary {
+            background-color: var(--bs-card-bg, #2b3035);
+            color: var(--bs-body-color, #dee2e6);
+            border: 1px solid var(--bs-border-color, #6c757d);
+            font-weight: 600;
+            padding: 0.35rem 0.85rem;
+        }
+        .val-mode-btn-group .btn-check:checked + .btn-outline-primary {
+            background-color: #0d6efd !important;
+            border-color: #0d6efd !important;
+            color: #ffffff !important;
+            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+        }
+        .val-mode-btn-group .btn-outline-primary:hover {
+            background-color: rgba(13, 110, 253, 0.15);
+            color: #0d6efd;
+            border-color: #0d6efd;
+        }
+        .bagman-badge {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: #fff;
+            font-weight: 600;
+        }
+        .copy-inline-btn {
+            text-decoration: none;
+            opacity: 0.65;
+            transition: opacity 0.15s ease-in-out, transform 0.15s ease-in-out;
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            vertical-align: middle;
+        }
+        .copy-inline-btn:hover {
+            opacity: 1;
+            transform: scale(1.15);
         }
         .kpi-card {
             border-left: 4px solid var(--bs-primary);
@@ -219,7 +266,7 @@
         <div class="card shadow-sm mb-3">
             <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
                 <span class="fw-bold"><i class="fas fa-tags text-primary me-2"></i>{% trans "Step 3: Valuation Basis (Market vs Buyback)" %}</span>
-                <div class="btn-group btn-group-sm" role="group">
+                <div class="btn-group btn-group-sm val-mode-btn-group" role="group">
                     <input type="radio" class="btn-check" name="valModeRadio" id="valModeBuyback" value="buyback" checked onchange="setValuationMode('buyback')">
                     <label class="btn btn-outline-primary" for="valModeBuyback"><i class="fas fa-store me-1"></i>{% trans "Buyback Value" %}</label>
                     <input type="radio" class="btn-check" name="valModeRadio" id="valModeMarket" value="market" onchange="setValuationMode('market')">
@@ -241,12 +288,12 @@
                     <table class="table table-hover table-sm align-middle mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th style="width: 40px;"></th>
+                                <th style="width: 80px;" class="text-center"></th>
                                 <th>{% trans "Item Name" %}</th>
                                 <th class="text-center" style="width: 100px;">{% trans "Qty" %}</th>
                                 <th class="text-end" style="width: 140px;">{% trans "Market Unit Price" %}</th>
                                 <th class="text-end" style="width: 140px;">{% trans "Buyback Unit Price" %}</th>
-                                <th class="text-end" style="width: 160px;">{% trans "Applied Unit Price" %}</th>
+                                <th class="text-end" style="width: 170px;">{% trans "Applied Unit Price" %}</th>
                                 <th class="text-end" style="width: 150px;">{% trans "Line Total" %}</th>
                             </tr>
                         </thead>
@@ -301,7 +348,7 @@
                     <table class="table table-hover table-sm align-middle mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th style="width: 40px;"></th>
+                                <th style="width: 80px;" class="text-center"></th>
                                 <th>{% trans "Ship Lost" %}</th>
                                 <th>{% trans "Victim Pilot (Assigned Reimbursement)" %}</th>
                                 <th class="text-end" style="width: 180px;">{% trans "Reimbursement ISK" %}</th>
@@ -375,7 +422,7 @@
                     <table class="table table-hover table-sm align-middle mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th style="width: 40px;"></th>
+                                <th style="width: 80px;" class="text-center"></th>
                                 <th>{% trans "Item Name" %}</th>
                                 <th class="text-center" style="width: 80px;">{% trans "Total Qty" %}</th>
                                 <th class="text-end" style="width: 130px;">{% trans "Unit Value" %}</th>
@@ -405,6 +452,21 @@
 
     <!-- STEP 7: Final Settlement & Export -->
     <div class="wizard-step-pane d-none" id="stepPane-7">
+        <!-- Bag Man Configuration Card -->
+        <div class="card shadow-sm mb-3 border-warning bg-body-tertiary">
+            <div class="card-body py-2 px-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <div class="d-flex align-items-center">
+                    <span class="badge bagman-badge me-2 px-2 py-1 fs-6"><i class="fas fa-coins me-1"></i>{% trans "Bag Man (Liquidator)" %}</span>
+                    <span class="text-muted small">{% trans "Designated pilot who liquidates fleet loot into ISK and executes member payouts." %}</span>
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <label class="form-label mb-0 small fw-bold text-nowrap">{% trans "Assigned Bag Man:" %}</label>
+                    <select class="form-select form-select-sm" id="step7BagManSelect" style="min-width: 200px;" onchange="setBagMan(this.value)">
+                    </select>
+                </div>
+            </div>
+        </div>
+
         <!-- KPI Row -->
         <div class="row g-3 mb-3">
             <div class="col-md-3 col-sm-6">
@@ -451,9 +513,9 @@
                     <table class="table table-hover align-middle mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th style="width: 40px;"></th>
+                                <th style="width: 80px;" class="text-center"></th>
                                 <th>{% trans "Pilot (Main Character)" %}</th>
-                                <th class="text-center" style="width: 130px;">{% trans "Status" %}</th>
+                                <th class="text-center" style="width: 140px;">{% trans "Status" %}</th>
                                 <th class="text-end" style="width: 140px;">{% trans "Base Share" %}</th>
                                 <th class="text-end" style="width: 150px;">{% trans "+ Reimbursement" %}</th>
                                 <th class="text-end" style="width: 150px;">{% trans "- Kept Items" %}</th>
@@ -473,7 +535,7 @@
         <!-- Transfers ("Who pays Whom") -->
         <div class="card shadow-sm mb-3" id="transfersCard">
             <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
-                <span class="fw-bold"><i class="fas fa-exchange-alt text-warning me-2"></i>{% trans "Direct Settlement Transfers (Who Pays Whom)" %}</span>
+                <span class="fw-bold"><i class="fas fa-exchange-alt text-warning me-2"></i><span id="transfersCardTitle">{% trans "Settlement Transfers & Payout Execution" %}</span></span>
             </div>
             <div class="card-body">
                 <div id="transfersListContainer">
@@ -561,6 +623,7 @@
     const state = {
         currentStep: 1,
         valuationMode: 'buyback',
+        bagManPilotId: null,
         pilots: [],
         lootItems: [],
         killmails: [],
@@ -625,7 +688,37 @@
         if (stepNum === 4) renderKillmailsTable();
         if (stepNum === 5) renderDeclinedPilots();
         if (stepNum === 6) renderKeptItemsTable();
-        if (stepNum === 7) runCalculation();
+        if (stepNum === 7) {
+            updateBagManDropdown();
+            runCalculation();
+        }
+    }
+
+    function setBagMan(pilotId) {
+        state.bagManPilotId = pilotId || null;
+        state.pilots.forEach(p => {
+            p.is_bag_man = (p.id === state.bagManPilotId);
+        });
+        const select = document.getElementById('step7BagManSelect');
+        if (select) select.value = state.bagManPilotId || '';
+        if (state.currentStep === 1) {
+            renderPilotsList();
+        } else if (state.currentStep === 7) {
+            runCalculation();
+        }
+    }
+
+    function updateBagManDropdown() {
+        const select = document.getElementById('step7BagManSelect');
+        if (!select) return;
+        select.innerHTML = '<option value="">{% trans "None / Direct Peer Transfer" %}</option>';
+        state.pilots.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.name + (p.id === state.bagManPilotId ? ' ★ ({% trans "Bag Man" %})' : '');
+            if (p.id === state.bagManPilotId) opt.selected = true;
+            select.appendChild(opt);
+        });
     }
 
     // Step 1: Resolve Pilots
@@ -652,6 +745,12 @@
             const data = await resp.json();
             if (data.ok) {
                 state.pilots = data.pilots;
+                if (!state.bagManPilotId && state.pilots.length > 0) {
+                    state.bagManPilotId = state.pilots[0].id;
+                }
+                state.pilots.forEach(p => {
+                    p.is_bag_man = (p.id === state.bagManPilotId);
+                });
                 renderPilotsList();
             } else {
                 alert(data.error || '{% trans "Failed to resolve pilots." %}');
@@ -693,17 +792,27 @@
                 ? '<span class="badge bg-success-subtle text-success ms-2"><i class="fas fa-check-circle me-1"></i>{% trans "Auth" %}</span>' 
                 : '<span class="badge bg-secondary-subtle text-secondary ms-2">{% trans "External" %}</span>';
 
+            const isBm = (p.id === state.bagManPilotId);
+            const bagManBadge = isBm 
+                ? '<span class="badge bagman-badge ms-2"><i class="fas fa-coins me-1"></i>{% trans "Bag Man" %}</span>'
+                : '';
+
             item.innerHTML = `
                 <div class="d-flex align-items-center">
-                    <img src="${p.portrait_url}" class="pilot-avatar me-2" alt="${p.name}">
+                    <img src="${p.portrait_url}" class="pilot-avatar me-3" alt="${p.name}">
                     <div>
-                        <div class="fw-bold">${p.name} ${registeredBadge}</div>
+                        <div class="fw-bold fs-6">${p.name} ${registeredBadge} ${bagManBadge}</div>
                         ${altsBadge}
                     </div>
                 </div>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removePilot(${index})">
-                    <i class="fas fa-trash"></i>
-                </button>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm ${isBm ? 'btn-warning text-dark' : 'btn-outline-warning'}" onclick="setBagMan('${p.id}')" title="{% trans 'Assign as Bag Man (Liquidates loot & distributes payouts)' %}">
+                        <i class="fas fa-coins me-1"></i>${isBm ? '{% trans "Bag Man" %}' : '{% trans "Make Bag Man" %}'}
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="removePilot(${index})">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
             `;
             container.appendChild(item);
         });
@@ -712,22 +821,30 @@
     }
 
     function removePilot(index) {
-        state.pilots.splice(index, 1);
+        const removed = state.pilots.splice(index, 1)[0];
+        if (removed && removed.id === state.bagManPilotId) {
+            state.bagManPilotId = state.pilots.length > 0 ? state.pilots[0].id : null;
+        }
         renderPilotsList();
     }
 
     function addCustomPilot() {
         const name = prompt('{% trans "Enter character name:" %}');
         if (name && name.trim()) {
+            const newId = `ext_${Date.now()}`;
             state.pilots.push({
-                id: `ext_${Date.now()}`,
+                id: newId,
                 name: name.trim(),
                 character_id: null,
                 portrait_url: 'https://images.evetech.net/characters/1/portrait?size=64',
                 is_registered: false,
                 alts: [],
-                declined: false
+                declined: false,
+                is_bag_man: false
             });
+            if (!state.bagManPilotId) {
+                state.bagManPilotId = newId;
+            }
             renderPilotsList();
         }
     }
@@ -795,9 +912,9 @@
             row.className = 'list-group-item d-flex align-items-center justify-content-between p-2';
             row.innerHTML = `
                 <div class="d-flex align-items-center">
-                    <img src="${item.icon_url}" class="item-icon me-2" alt="${item.name}">
+                    <img src="${item.icon_url}" class="item-icon me-3" alt="${item.name}">
                     <div>
-                        <div class="fw-bold">${item.name} <span class="badge bg-secondary ms-1">x${item.quantity.toLocaleString()}</span></div>
+                        <div class="fw-bold fs-6">${item.name} <span class="badge bg-secondary ms-1">x${item.quantity.toLocaleString()}</span></div>
                         <div class="small text-muted">
                             {% trans "Unit:" %} ${formatIsk(item.chosen_unit_price)} | 
                             {% trans "Total:" %} <span class="text-success">${formatIsk(item.total_value)}</span>
@@ -825,7 +942,7 @@
         const qtyStr = prompt('{% trans "Quantity:" %}', '1');
         const qty = parseInt(qtyStr) || 1;
         const priceStr = prompt('{% trans "Unit Price (ISK):" %}', '1000000');
-        const price = parseFloat(priceStr) || 0;
+        const price = parseIskString(priceStr) || 0;
 
         state.lootItems.push({
             id: `manual_item_${Date.now()}`,
@@ -874,14 +991,15 @@
         state.lootItems.forEach((item, index) => {
             totalGross += item.total_value;
             const tr = document.createElement('tr');
+            const formattedUnitPrice = Number(item.chosen_unit_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             tr.innerHTML = `
-                <td><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
+                <td class="text-center"><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
                 <td class="fw-bold">${item.name}</td>
                 <td class="text-center">${item.quantity.toLocaleString()}</td>
                 <td class="text-end text-muted">${formatIsk(item.market_unit_price)}</td>
                 <td class="text-end text-muted">${formatIsk(item.buyback_unit_price)}</td>
                 <td class="text-end">
-                    <input type="number" step="any" class="form-control form-control-sm text-end" value="${item.chosen_unit_price}" onchange="updateItemCustomPrice(${index}, this.value)">
+                    <input type="text" class="form-control form-control-sm text-end fw-semibold" value="${formattedUnitPrice}" onfocus="this.select()" onblur="updateItemCustomPrice(${index}, this.value)" onkeydown="if(event.key==='Enter') this.blur();">
                 </td>
                 <td class="text-end fw-bold text-success">${formatIsk(item.total_value)}</td>
             `;
@@ -974,6 +1092,11 @@
         renderKillmailsTable();
     }
 
+    function updateKillmailLossAmount(index, val) {
+        state.killmails[index].loss_value = parseIskString(val);
+        renderKillmailsTable();
+    }
+
     function renderKillmailsTable() {
         const tbody = document.getElementById('killmailsTableBody');
         tbody.innerHTML = '';
@@ -993,8 +1116,10 @@
                 `<option value="${p.id}" ${p.id === km.assigned_pilot_id ? 'selected' : ''}>${p.name}</option>`
             ).join('');
 
+            const formattedLoss = Number(km.loss_value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
             tr.innerHTML = `
-                <td><img src="${km.ship_icon_url || 'https://images.evetech.net/types/0/render?size=64'}" class="item-icon" alt="${km.ship_name}"></td>
+                <td class="text-center"><img src="${km.ship_icon_url || 'https://images.evetech.net/types/0/render?size=64'}" class="item-icon" alt="${km.ship_name}"></td>
                 <td>
                     <span class="fw-bold">${km.ship_name}</span>
                     ${km.killmail_id ? `<a href="${km.url}" target="_blank" class="ms-1 small text-muted"><i class="fas fa-external-link-alt"></i></a>` : ''}
@@ -1005,7 +1130,7 @@
                     </select>
                 </td>
                 <td class="text-end">
-                    <input type="number" step="any" class="form-control form-control-sm text-end" value="${km.loss_value}" onchange="state.killmails[${index}].loss_value = parseFloat(this.value) || 0; renderKillmailsTable();">
+                    <input type="text" class="form-control form-control-sm text-end fw-semibold" value="${formattedLoss}" onfocus="this.select()" onblur="updateKillmailLossAmount(${index}, this.value)" onkeydown="if(event.key==='Enter') this.blur();">
                 </td>
                 <td class="text-center">
                     <button type="button" class="btn btn-sm btn-outline-danger" onclick="state.killmails.splice(${index}, 1); renderKillmailsTable();">
@@ -1033,13 +1158,15 @@
         state.pilots.forEach((p, index) => {
             const col = document.createElement('div');
             col.className = 'col-md-6 col-lg-4 mb-3';
+            const isBm = (p.id === state.bagManPilotId);
+            const bmBadge = isBm ? '<span class="badge bagman-badge ms-2"><i class="fas fa-coins me-1"></i>{% trans "Bag Man" %}</span>' : '';
             col.innerHTML = `
                 <div class="card h-100 ${p.declined ? 'border-warning bg-warning-subtle' : 'border-secondary'}">
                     <div class="card-body d-flex align-items-center justify-content-between p-3">
                         <div class="d-flex align-items-center">
-                            <img src="${p.portrait_url}" class="pilot-avatar me-2" alt="${p.name}">
+                            <img src="${p.portrait_url}" class="pilot-avatar me-3" alt="${p.name}">
                             <div>
-                                <span class="fw-bold">${p.name}</span>
+                                <span class="fw-bold">${p.name} ${bmBadge}</span>
                                 <div class="small text-muted">${p.declined ? '{% trans "Opted Out" %}' : '{% trans "Active Participant" %}'}</div>
                             </div>
                         </div>
@@ -1068,7 +1195,7 @@
         state.lootItems.forEach((item, index) => {
             const tr = document.createElement('tr');
             
-            let pilotOptions = '<option value="">{% trans "None (Distribute ISK)" %}</option>';
+            let pilotOptions = '<option value="">{% trans "None (Liquidate / Distribute ISK)" %}</option>';
             state.pilots.forEach(p => {
                 pilotOptions += `<option value="${p.id}" ${p.id === item.kept_by_pilot_id ? 'selected' : ''}>${p.name}</option>`;
             });
@@ -1076,7 +1203,7 @@
             const keptVal = (item.kept_quantity || 0) * (item.chosen_unit_price || 0);
 
             tr.innerHTML = `
-                <td><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
+                <td class="text-center"><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
                 <td class="fw-bold">${item.name}</td>
                 <td class="text-center">${item.quantity.toLocaleString()}</td>
                 <td class="text-end text-muted">${formatIsk(item.chosen_unit_price)}</td>
@@ -1132,7 +1259,8 @@
                     pilots: state.pilots,
                     loot_items: state.lootItems,
                     killmails: state.killmails,
-                    valuation_mode: state.valuationMode
+                    valuation_mode: state.valuationMode,
+                    bag_man_pilot_id: state.bagManPilotId
                 })
             });
             const data = await resp.json();
@@ -1148,6 +1276,9 @@
     }
 
     function renderCalculationResults(data) {
+        // Update Bag Man dropdown
+        updateBagManDropdown();
+
         // KPI Cards
         document.getElementById('kpiGrossLoot').textContent = formatIsk(data.summary.gross_loot_value);
         document.getElementById('kpiLossReimbursement').textContent = formatIsk(data.summary.total_loss_reimbursements);
@@ -1169,21 +1300,44 @@
                 balanceHtml = '<span class="text-muted">0.00 ISK</span>';
             } else if (p.net_balance > 0) {
                 statusBadge = '<span class="badge bg-success"><i class="fas fa-arrow-down me-1"></i>{% trans "Receives Payout" %}</span>';
-                balanceHtml = `<span class="fw-bold text-success">+${formatIsk(p.payout_received)}</span>`;
+                const payoutCopyVal = (p.payout_received % 1 === 0) ? p.payout_received : Number(p.payout_received).toFixed(2);
+                balanceHtml = `
+                    <div class="d-inline-flex align-items-center justify-content-end gap-1">
+                        <span class="fw-bold text-success">+${formatIsk(p.payout_received)}</span>
+                        <button type="button" class="btn btn-sm copy-inline-btn text-success" title="{% trans "Copy Payout Amount" %}" data-copy="${payoutCopyVal}" onclick="copyElementData(this)">
+                            <i class="far fa-copy"></i>
+                        </button>
+                    </div>`;
             } else if (p.net_balance < 0) {
                 statusBadge = '<span class="badge bg-danger"><i class="fas fa-arrow-up me-1"></i>{% trans "Owes Balance" %}</span>';
-                balanceHtml = `<span class="fw-bold text-danger">-${formatIsk(p.amount_owed)}</span>`;
+                const owedCopyVal = (p.amount_owed % 1 === 0) ? p.amount_owed : Number(p.amount_owed).toFixed(2);
+                balanceHtml = `
+                    <div class="d-inline-flex align-items-center justify-content-end gap-1">
+                        <span class="fw-bold text-danger">-${formatIsk(p.amount_owed)}</span>
+                        <button type="button" class="btn btn-sm copy-inline-btn text-danger" title="{% trans "Copy Amount Owed" %}" data-copy="${owedCopyVal}" onclick="copyElementData(this)">
+                            <i class="far fa-copy"></i>
+                        </button>
+                    </div>`;
             } else {
                 statusBadge = '<span class="badge bg-secondary">{% trans "Even" %}</span>';
                 balanceHtml = '<span class="text-muted">0.00 ISK</span>';
             }
 
-            const altsText = p.alts && p.alts.length > 0 ? `<div class="small text-muted"><i class="fas fa-link me-1"></i>${p.alts.join(', ')}</div>` : '';
+            const altsText = p.alts && p.alts.length > 0 ? `<div class="small text-muted"><i class="fas fa-link me-1"></i>${p.alts.map(escapeHtml).join(', ')}</div>` : '';
+            const bagManTag = p.is_bag_man 
+                ? '<span class="badge bagman-badge ms-2"><i class="fas fa-coins me-1"></i>{% trans "Bag Man" %}</span>' 
+                : '';
 
             tr.innerHTML = `
-                <td><img src="${p.portrait_url}" class="pilot-avatar" alt="${p.name}"></td>
+                <td class="text-center"><img src="${p.portrait_url}" class="pilot-avatar" alt="${escapeHtml(p.name)}"></td>
                 <td>
-                    <span class="fw-bold">${p.name}</span>
+                    <div class="d-flex align-items-center flex-wrap gap-1">
+                        <span class="fw-bold fs-6">${escapeHtml(p.name)}</span>
+                        <button type="button" class="btn btn-sm copy-inline-btn text-body-secondary" title="{% trans "Copy Pilot Name" %}" data-copy="${escapeHtml(p.name)}" onclick="copyElementData(this)">
+                            <i class="far fa-copy"></i>
+                        </button>
+                        ${bagManTag}
+                    </div>
                     ${altsText}
                 </td>
                 <td class="text-center">${statusBadge}</td>
@@ -1195,33 +1349,108 @@
             tbody.appendChild(tr);
         });
 
-        // Direct Transfers List
+        // Transfers List
         const transfersContainer = document.getElementById('transfersListContainer');
+        const transfersTitle = document.getElementById('transfersCardTitle');
         transfersContainer.innerHTML = '';
+
+        if (data.summary.bag_man_name) {
+            transfersTitle.textContent = `{% trans "Settlement Transfers (Bag Man Distribution via " %}${data.summary.bag_man_name})`;
+        } else {
+            transfersTitle.textContent = `{% trans "Direct Settlement Transfers (Who Pays Whom)" %}`;
+        }
+
         if (data.transfers && data.transfers.length > 0) {
             const list = document.createElement('ul');
             list.className = 'list-group list-group-flush';
             data.transfers.forEach(t => {
                 const li = document.createElement('li');
-                li.className = 'list-group-item d-flex justify-content-between align-items-center px-0';
+                li.className = 'list-group-item d-flex justify-content-between align-items-center px-0 py-2 flex-wrap gap-2';
+                const typeBadge = t.type === 'debt_collection' 
+                    ? '<span class="badge bg-warning text-dark me-2">{% trans "Debt Collection" %}</span>' 
+                    : '<span class="badge bg-danger me-2">{% trans "Pay" %}</span>';
+
+                const amtCopyVal = (t.amount % 1 === 0) ? t.amount : Number(t.amount).toFixed(2);
+
                 li.innerHTML = `
-                    <div>
-                        <span class="badge bg-danger me-2">{% trans "Pay" %}</span>
-                        <strong>${t.from_pilot}</strong> ➔ <i class="fas fa-arrow-right text-muted mx-2"></i> <strong>${t.to_pilot}</strong>
+                    <div class="d-flex align-items-center flex-wrap gap-1">
+                        ${typeBadge}
+                        <strong class="fs-6">${escapeHtml(t.from_pilot)}</strong>
+                        <i class="fas fa-arrow-right text-muted mx-2"></i>
+                        <strong class="fs-6 text-primary">${escapeHtml(t.to_pilot)}</strong>
+                        <button type="button" class="btn btn-sm copy-inline-btn text-body-secondary" title="{% trans "Copy Recipient Name" %}" data-copy="${escapeHtml(t.to_pilot)}" onclick="copyElementData(this)">
+                            <i class="far fa-copy"></i>
+                        </button>
                     </div>
-                    <span class="badge bg-primary fs-6">${t.formatted_amount}</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="badge bg-primary fs-6">${t.formatted_amount}</span>
+                        <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" title="{% trans "Copy Transfer Amount" %}" data-copy="${amtCopyVal}" onclick="copyElementData(this)">
+                            <i class="far fa-copy me-1"></i>{% trans "Copy Amount" %}
+                        </button>
+                    </div>
                 `;
                 list.appendChild(li);
             });
             transfersContainer.appendChild(list);
         } else {
-            transfersContainer.innerHTML = '<p class="text-muted mb-0">{% trans "No direct peer transfers required (all payouts distributed evenly from pool)." %}</p>';
+            transfersContainer.innerHTML = '<p class="text-muted mb-0">{% trans "No transfers required." %}</p>';
         }
 
         // Export Boxes
         document.getElementById('discordExportBox').textContent = data.exports.discord || '';
         document.getElementById('ingameExportBox').textContent = data.exports.ingame || '';
         document.getElementById('stepBtn-7').classList.add('completed');
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    function copyElementData(btn) {
+        if (!btn || !btn.dataset.copy) return;
+        copyRawText(btn.dataset.copy, btn);
+    }
+
+    function copyRawText(text, btn) {
+        if (!text) return;
+        const origHtml = btn ? btn.innerHTML : '';
+        const doSuccess = () => {
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-check text-success"></i>';
+                setTimeout(() => {
+                    btn.innerHTML = origHtml;
+                }, 1500);
+            }
+        };
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(doSuccess).catch(() => {
+                fallbackCopyText(text);
+                doSuccess();
+            });
+        } else {
+            fallbackCopyText(text);
+            doSuccess();
+        }
+    }
+
+    function fallbackCopyText(text) {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            document.execCommand('copy');
+        } catch (err) {
+            console.error('Fallback copy failed', err);
+        }
+        document.body.removeChild(textArea);
     }
 
     function copyToClipboard(elementId, btnId) {
@@ -1248,6 +1477,7 @@
             state.pilots = [];
             state.lootItems = [];
             state.killmails = [];
+            state.bagManPilotId = null;
             document.getElementById('pilotInputText').value = '';
             document.getElementById('lootInputText').value = '';
             renderPilotsList();

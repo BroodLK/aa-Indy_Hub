@@ -294,6 +294,89 @@ class FleetLootSplitterServiceTests(TestCase):
         self.assertEqual(result["summary"]["net_distributable_pot"], 0.0)
         self.assertEqual(result["summary"]["base_share_per_pilot"], 0.0)
 
+    def test_calculate_fleet_loot_split_with_bag_man(self):
+        """Test calculation when a Bag Man is designated to liquidate loot and execute payouts."""
+        pilots = [
+            {"id": "p1", "name": "Pilot Alpha (Bag Man)"},
+            {"id": "p2", "name": "Pilot Beta"},
+            {"id": "p3", "name": "Pilot Gamma"},
+        ]
+        # 300M total loot, none kept -> 100M split each
+        loot_items = [
+            {"id": "i1", "quantity": 1, "chosen_unit_price": 300000000.0, "kept_by_pilot_id": None, "kept_quantity": 0}
+        ]
+        killmails = []
+
+        result = calculate_fleet_loot_split(
+            pilots=pilots,
+            loot_items=loot_items,
+            killmails=killmails,
+            bag_man_pilot_id="p1",
+        )
+
+        summary = result["summary"]
+        self.assertEqual(summary["bag_man_pilot_id"], "p1")
+        self.assertEqual(summary["bag_man_name"], "Pilot Alpha (Bag Man)")
+        self.assertEqual(summary["liquidated_loot_value"], 300000000.0)
+        self.assertEqual(summary["base_share_per_pilot"], 100000000.0)
+
+        # Bag Man should pay Pilot Beta 100M and Pilot Gamma 100M
+        transfers = result["transfers"]
+        self.assertEqual(len(transfers), 2)
+        self.assertEqual(transfers[0]["from_pilot"], "Pilot Alpha (Bag Man)")
+        self.assertEqual(transfers[0]["to_pilot"], "Pilot Beta")
+        self.assertEqual(transfers[0]["amount"], 100000000.0)
+        self.assertEqual(transfers[0]["type"], "payout")
+
+        self.assertEqual(transfers[1]["from_pilot"], "Pilot Alpha (Bag Man)")
+        self.assertEqual(transfers[1]["to_pilot"], "Pilot Gamma")
+        self.assertEqual(transfers[1]["amount"], 100000000.0)
+        self.assertEqual(transfers[1]["type"], "payout")
+
+        # Discord summary includes Bag Man
+        self.assertIn("Bag Man (Liquidator)", result["exports"]["discord"])
+        self.assertIn("Pilot Alpha (Bag Man)", result["exports"]["discord"])
+        self.assertIn("Bag Man (Liquidator)", result["exports"]["ingame"])
+
+    def test_calculate_fleet_loot_split_bag_man_with_debtor(self):
+        """Test calculation where another pilot kept an item exceeding their share and pays Bag Man."""
+        pilots = [
+            {"id": "p1", "name": "Pilot 1 (Bag Man)"},
+            {"id": "p2", "name": "Pilot 2 (Survivor)"},
+            {"id": "p3", "name": "Pilot 3 (Kept Item)"},
+        ]
+        # Item 1: 150M kept by Pilot 3. Item 2: 150M unkept (liquidated by Bag Man). Total 300M gross pot -> 100M each.
+        loot_items = [
+            {"id": "i1", "quantity": 1, "chosen_unit_price": 150000000.0, "kept_by_pilot_id": "p3", "kept_quantity": 1},
+            {"id": "i2", "quantity": 1, "chosen_unit_price": 150000000.0, "kept_by_pilot_id": None, "kept_quantity": 0},
+        ]
+        killmails = []
+
+        result = calculate_fleet_loot_split(
+            pilots=pilots,
+            loot_items=loot_items,
+            killmails=killmails,
+            bag_man_pilot_id="p1",
+        )
+
+        p_map = {p["id"]: p for p in result["pilots"]}
+        self.assertEqual(p_map["p1"]["payout_received"], 100000000.0)
+        self.assertEqual(p_map["p2"]["payout_received"], 100000000.0)
+        self.assertEqual(p_map["p3"]["amount_owed"], 50000000.0)
+
+        # Transfers: Bag Man pays P2 100M, and P3 pays Bag Man 50M
+        transfers = result["transfers"]
+        self.assertEqual(len(transfers), 2)
+        p2_transfer = next(t for t in transfers if t["to_pilot"] == "Pilot 2 (Survivor)")
+        self.assertEqual(p2_transfer["from_pilot"], "Pilot 1 (Bag Man)")
+        self.assertEqual(p2_transfer["amount"], 100000000.0)
+        self.assertEqual(p2_transfer["type"], "payout")
+
+        p3_transfer = next(t for t in transfers if t["from_pilot"] == "Pilot 3 (Kept Item)")
+        self.assertEqual(p3_transfer["to_pilot"], "Pilot 1 (Bag Man)")
+        self.assertEqual(p3_transfer["amount"], 50000000.0)
+        self.assertEqual(p3_transfer["type"], "debt_collection")
+
 
 class FleetLootSplitterViewTests(TestCase):
     def setUp(self):
@@ -307,7 +390,7 @@ class FleetLootSplitterViewTests(TestCase):
         profile.main_character = char
         profile.save()
 
-        perm = Permission.objects.get(codename="can_access_indy_hub")
+        perm = Permission.objects.get(codename="can_access_loot_splitter")
         self.user.user_permissions.add(perm)
         self.client.force_login(self.user)
 
@@ -317,6 +400,19 @@ class FleetLootSplitterViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Fleet Loot Splitter")
         self.assertContains(response, "Step 1: Fleet Pilots")
+        self.assertContains(response, "copy-inline-btn")
+
+    def test_loot_split_page_denied_without_permission(self):
+        user_no_perm = User.objects.create_user(username="nopermuser", password="password123")
+        # Give only can_access_indy_hub, NOT can_access_loot_splitter
+        indy_perm = Permission.objects.get(codename="can_access_indy_hub")
+        user_no_perm.user_permissions.add(indy_perm)
+        self.client.force_login(user_no_perm)
+
+        url = reverse("indy_hub:loot_split")
+        response = self.client.get(url)
+        # Should redirect to index with permission denied
+        self.assertEqual(response.status_code, 302)
 
     def test_resolve_pilots_api(self):
         url = reverse("indy_hub:loot_split_resolve_pilots_api")
@@ -349,7 +445,7 @@ class FleetLootSplitMenuTests(TestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.user = User.objects.create_user(username="menuuser", password="password123")
-        self.perm = Permission.objects.get(codename="can_access_indy_hub")
+        self.perm = Permission.objects.get(codename="can_access_loot_splitter")
 
     def test_menu_renders_for_authorized_user(self):
         self.user.user_permissions.add(self.perm)
@@ -362,6 +458,10 @@ class FleetLootSplitMenuTests(TestCase):
         self.assertIn("Loot Split", rendered)
 
     def test_menu_hidden_for_unauthorized_user(self):
+        # Give only can_access_indy_hub, NOT can_access_loot_splitter
+        indy_perm = Permission.objects.get(codename="can_access_indy_hub")
+        self.user.user_permissions.add(indy_perm)
+
         request = self.factory.get("/")
         request.user = self.user
 

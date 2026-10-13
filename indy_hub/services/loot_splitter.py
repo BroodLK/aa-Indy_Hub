@@ -375,6 +375,7 @@ def calculate_fleet_loot_split(
     loot_items: list[dict[str, Any]],
     killmails: list[dict[str, Any]],
     valuation_mode: str = "buyback",
+    bag_man_pilot_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Calculate the net settlement distribution for fleet loot and loss reimbursements.
@@ -391,6 +392,10 @@ def calculate_fleet_loot_split(
         Kept Items Value = sum(items kept by this pilot)
         Base Share = Base Share (if eligible) else 0
         Net Balance = Base Share + Reimbursement - Kept Items Value
+
+      Bag Man (Liquidator):
+        If a Bag Man is designated, they liquidate the unkept loot and handle all
+        outgoing payouts to creditors and receive balances owed from debtors.
     """
     # 1. Calculate Gross Loot Value
     gross_loot_value = Decimal("0.00")
@@ -423,6 +428,8 @@ def calculate_fleet_loot_split(
             pilot_kept_values[str(kept_by)] = pilot_kept_values.get(str(kept_by), Decimal("0.00")) + val
             total_kept_value += val
 
+    liquidated_loot_value = max(Decimal("0.00"), gross_loot_value - total_kept_value)
+
     # 4. Calculate Net Distributable Pot
     net_distributable_pot = max(Decimal("0.00"), gross_loot_value - total_loss_reimbursements)
 
@@ -437,15 +444,27 @@ def calculate_fleet_loot_split(
     else:
         base_share_per_pilot = Decimal("0.00")
 
-    # 6. Build Breakdown per Pilot
+    # 6. Resolve Bag Man
+    if not bag_man_pilot_id:
+        for p in pilots:
+            if p.get("is_bag_man"):
+                bag_man_pilot_id = str(p.get("id"))
+                break
+
+    # 7. Build Breakdown per Pilot
     pilot_settlements: list[dict[str, Any]] = []
     debtors: list[dict[str, Any]] = []   # owe money (net_balance < 0)
     creditors: list[dict[str, Any]] = [] # receive money (net_balance > 0)
+
+    bag_man_name: str | None = None
 
     for pilot in pilots:
         p_id = str(pilot.get("id"))
         p_name = pilot.get("name", "Unknown Pilot")
         is_declined = bool(pilot.get("declined", False))
+        is_bm = bool(bag_man_pilot_id and str(bag_man_pilot_id) == p_id)
+        if is_bm:
+            bag_man_name = p_name
 
         pilot_base = Decimal("0.00") if is_declined else base_share_per_pilot
         pilot_reimb = pilot_reimbursements.get(p_id, Decimal("0.00"))
@@ -463,6 +482,7 @@ def calculate_fleet_loot_split(
             "portrait_url": pilot.get("portrait_url"),
             "alts": pilot.get("alts", []),
             "declined": is_declined,
+            "is_bag_man": is_bm,
             "base_share": float(pilot_base),
             "reimbursement": float(pilot_reimb),
             "kept_value": float(pilot_kept),
@@ -478,40 +498,68 @@ def calculate_fleet_loot_split(
         elif net_balance > 0:
             creditors.append({"id": p_id, "name": p_name, "amount": net_balance})
 
-    # 7. Calculate direct Settlement Transfers (who pays whom)
+    # 8. Calculate Settlement Transfers
     transfers: list[dict[str, Any]] = []
-    # Work on copies with Decimals
-    d_list = [{"id": d["id"], "name": d["name"], "amount": d["amount"]} for d in debtors]
-    c_list = [{"id": c["id"], "name": c["name"], "amount": c["amount"]} for c in creditors]
 
-    d_idx = 0
-    c_idx = 0
-    while d_idx < len(d_list) and c_idx < len(c_list):
-        debtor = d_list[d_idx]
-        creditor = c_list[c_idx]
+    if bag_man_pilot_id and bag_man_name:
+        # Bag Man handles all payouts and collects debts directly
+        for p in pilot_settlements:
+            if p["id"] == str(bag_man_pilot_id):
+                continue
+            if p["payout_received"] > 0:
+                payout_dec = Decimal(str(p["payout_received"]))
+                transfers.append({
+                    "from_pilot": bag_man_name,
+                    "to_pilot": p["name"],
+                    "amount": float(payout_dec),
+                    "formatted_amount": f"{payout_dec:,.2f} ISK",
+                    "type": "payout",
+                })
+            elif p["amount_owed"] > 0:
+                owed_dec = Decimal(str(p["amount_owed"]))
+                transfers.append({
+                    "from_pilot": p["name"],
+                    "to_pilot": bag_man_name,
+                    "amount": float(owed_dec),
+                    "formatted_amount": f"{owed_dec:,.2f} ISK",
+                    "type": "debt_collection",
+                })
+    else:
+        # Direct peer-to-peer transfer matching algorithm
+        d_list = [{"id": d["id"], "name": d["name"], "amount": d["amount"]} for d in debtors]
+        c_list = [{"id": c["id"], "name": c["name"], "amount": c["amount"]} for c in creditors]
 
-        transfer_amount = min(debtor["amount"], creditor["amount"])
-        if transfer_amount > Decimal("0.00"):
-            transfers.append({
-                "from_pilot": debtor["name"],
-                "to_pilot": creditor["name"],
-                "amount": float(transfer_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
-                "formatted_amount": f"{transfer_amount:,.2f} ISK",
-            })
-            debtor["amount"] -= transfer_amount
-            creditor["amount"] -= transfer_amount
+        d_idx = 0
+        c_idx = 0
+        while d_idx < len(d_list) and c_idx < len(c_list):
+            debtor = d_list[d_idx]
+            creditor = c_list[c_idx]
 
-        if debtor["amount"] <= Decimal("0.01"):
-            d_idx += 1
-        if creditor["amount"] <= Decimal("0.01"):
-            c_idx += 1
+            transfer_amount = min(debtor["amount"], creditor["amount"])
+            if transfer_amount > Decimal("0.00"):
+                transfers.append({
+                    "from_pilot": debtor["name"],
+                    "to_pilot": creditor["name"],
+                    "amount": float(transfer_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+                    "formatted_amount": f"{transfer_amount:,.2f} ISK",
+                    "type": "p2p",
+                })
+                debtor["amount"] -= transfer_amount
+                creditor["amount"] -= transfer_amount
 
-    # 8. Generate Discord and In-game Text Summaries
+            if debtor["amount"] <= Decimal("0.01"):
+                d_idx += 1
+            if creditor["amount"] <= Decimal("0.01"):
+                c_idx += 1
+
+    # 9. Generate Discord and In-game Text Summaries
     discord_summary = _generate_discord_summary(
         gross_loot_value=gross_loot_value,
         total_loss_reimbursements=total_loss_reimbursements,
         net_distributable_pot=net_distributable_pot,
         base_share_per_pilot=base_share_per_pilot,
+        liquidated_loot_value=liquidated_loot_value,
+        bag_man_name=bag_man_name,
         pilot_settlements=pilot_settlements,
         transfers=transfers,
     )
@@ -521,6 +569,8 @@ def calculate_fleet_loot_split(
         total_loss_reimbursements=total_loss_reimbursements,
         net_distributable_pot=net_distributable_pot,
         base_share_per_pilot=base_share_per_pilot,
+        liquidated_loot_value=liquidated_loot_value,
+        bag_man_name=bag_man_name,
         pilot_settlements=pilot_settlements,
         transfers=transfers,
     )
@@ -530,11 +580,14 @@ def calculate_fleet_loot_split(
             "gross_loot_value": float(gross_loot_value),
             "total_loss_reimbursements": float(total_loss_reimbursements),
             "total_kept_value": float(total_kept_value),
+            "liquidated_loot_value": float(liquidated_loot_value),
             "net_distributable_pot": float(net_distributable_pot),
             "total_pilots_count": len(pilots),
             "eligible_pilots_count": eligible_count,
             "base_share_per_pilot": float(base_share_per_pilot),
             "valuation_mode": valuation_mode,
+            "bag_man_pilot_id": bag_man_pilot_id,
+            "bag_man_name": bag_man_name,
         },
         "pilots": pilot_settlements,
         "transfers": transfers,
@@ -550,6 +603,8 @@ def _generate_discord_summary(
     total_loss_reimbursements: Decimal,
     net_distributable_pot: Decimal,
     base_share_per_pilot: Decimal,
+    liquidated_loot_value: Decimal,
+    bag_man_name: str | None,
     pilot_settlements: list[dict[str, Any]],
     transfers: list[dict[str, Any]],
 ) -> str:
@@ -560,25 +615,33 @@ def _generate_discord_summary(
         f"**Ship Losses Reimbursed:** `{total_loss_reimbursements:,.2f} ISK`",
         f"**Net Distributable Pot:** `{net_distributable_pot:,.2f} ISK`",
         f"**Base Share Per Pilot:** `{base_share_per_pilot:,.2f} ISK`",
-        "",
-        "**__PILOT PAYOUTS__**",
     ]
+
+    if bag_man_name:
+        lines.append(f"**Bag Man (Liquidator):** `{bag_man_name}` *(Liquidating `{liquidated_loot_value:,.2f} ISK`)*")
+
+    lines.append("")
+    lines.append("**__PILOT PAYOUTS__**")
 
     for p in pilot_settlements:
         name = p["name"]
         alts_str = f" *(Alts: {', '.join(p['alts'])})*" if p.get("alts") else ""
+        bm_tag = " *(Bag Man)*" if p.get("is_bag_man") else ""
         if p["declined"]:
-            lines.append(f"• **{name}**{alts_str}: `Declined Share` (0.00 ISK)")
+            lines.append(f"• **{name}**{bm_tag}{alts_str}: `Declined Share` (0.00 ISK)")
         elif p["net_balance"] > 0:
-            lines.append(f"• **{name}**{alts_str}: **Receives `{p['payout_received']:,.2f} ISK`**")
+            lines.append(f"• **{name}**{bm_tag}{alts_str}: **Receives `{p['payout_received']:,.2f} ISK`**")
         elif p["net_balance"] < 0:
-            lines.append(f"• **{name}**{alts_str}: **Kept Item(s) — Owes `{p['amount_owed']:,.2f} ISK`**")
+            lines.append(f"• **{name}**{bm_tag}{alts_str}: **Kept Item(s) — Owes `{p['amount_owed']:,.2f} ISK`**")
         else:
-            lines.append(f"• **{name}**{alts_str}: `Even` (0.00 ISK)")
+            lines.append(f"• **{name}**{bm_tag}{alts_str}: `Even` (0.00 ISK)")
 
     if transfers:
         lines.append("")
-        lines.append("**__SETTLEMENT TRANSFERS (WHO PAYS WHOM)__**")
+        if bag_man_name:
+            lines.append("**__SETTLEMENT TRANSFERS (BAG MAN DISTRIBUTION)__**")
+        else:
+            lines.append("**__SETTLEMENT TRANSFERS (WHO PAYS WHOM)__**")
         for t in transfers:
             lines.append(f"• **{t['from_pilot']}** ➔ Pay `{t['formatted_amount']}` to **{t['to_pilot']}**")
 
@@ -590,6 +653,8 @@ def _generate_ingame_summary(
     total_loss_reimbursements: Decimal,
     net_distributable_pot: Decimal,
     base_share_per_pilot: Decimal,
+    liquidated_loot_value: Decimal,
+    bag_man_name: str | None,
     pilot_settlements: list[dict[str, Any]],
     transfers: list[dict[str, Any]],
 ) -> str:
@@ -600,24 +665,32 @@ def _generate_ingame_summary(
         f"Ship Loss Reimbursements: {total_loss_reimbursements:,.2f} ISK",
         f"Net Pot: {net_distributable_pot:,.2f} ISK",
         f"Base Share: {base_share_per_pilot:,.2f} ISK",
-        "",
-        "--- PAYOUTS ---",
     ]
+
+    if bag_man_name:
+        lines.append(f"Bag Man (Liquidator): {bag_man_name} (Liquidating {liquidated_loot_value:,.2f} ISK)")
+
+    lines.append("")
+    lines.append("--- PAYOUTS ---")
 
     for p in pilot_settlements:
         name = p["name"]
+        bm_tag = " [Bag Man]" if p.get("is_bag_man") else ""
         if p["declined"]:
-            lines.append(f"{name}: [Declined Share]")
+            lines.append(f"{name}{bm_tag}: [Declined Share]")
         elif p["net_balance"] > 0:
-            lines.append(f"{name}: Receives {p['payout_received']:,.2f} ISK")
+            lines.append(f"{name}{bm_tag}: Receives {p['payout_received']:,.2f} ISK")
         elif p["net_balance"] < 0:
-            lines.append(f"{name}: Kept Items -> Owes {p['amount_owed']:,.2f} ISK")
+            lines.append(f"{name}{bm_tag}: Kept Items -> Owes {p['amount_owed']:,.2f} ISK")
         else:
-            lines.append(f"{name}: Even (0.00 ISK)")
+            lines.append(f"{name}{bm_tag}: Even (0.00 ISK)")
 
     if transfers:
         lines.append("")
-        lines.append("--- DIRECT TRANSFERS ---")
+        if bag_man_name:
+            lines.append("--- TRANSFERS (BAG MAN DISTRIBUTION) ---")
+        else:
+            lines.append("--- DIRECT TRANSFERS ---")
         for t in transfers:
             lines.append(f"Transfer {t['formatted_amount']} from {t['from_pilot']} to {t['to_pilot']}")
 

@@ -75,7 +75,7 @@ class FleetLootSplitMenu(MenuItemHook):
     def render(self, request):
         if not request.user.is_authenticated:
             return ""
-        if not request.user.has_perm("indy_hub.can_access_indy_hub"):
+        if not request.user.has_perm("indy_hub.can_access_loot_splitter"):
             return ""
         return super().render(request)
 

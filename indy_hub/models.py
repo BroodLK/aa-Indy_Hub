@@ -122,6 +122,10 @@ class Blueprint(models.Model):
                 "can_build_capital_orders",
                 "can build CapitalOrders",
             ),
+            (
+                "can_access_loot_splitter",
+                "can access Loot Splitter",
+            ),
         ]
         default_permissions = ()  # Disable Django's add/change/delete/view permissions
 
