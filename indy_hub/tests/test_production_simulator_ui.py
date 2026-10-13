@@ -484,6 +484,16 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("exportTableToCSV('#purchasePlannerTable'", self.template)
         self.assertIn("cell.querySelector('input, select, textarea')", self.template)
 
+    def test_designated_bay_materials_source_and_container_preservation(self) -> None:
+        self.assertIn("preferredCharacter", self.template)
+        self.assertIn("preferredLocation", self.template)
+        self.assertIn("preferredContainer", self.template)
+        self.assertIn("applyPreferredLocationSelection", self.template)
+        self.assertIn("renderContainerOptions", self.template)
+        self.assertIn("materialsSourceCharacterId", self.script)
+        self.assertIn("materialsSourceContainerId", self.script)
+        self.assertIn("sourceLoaded", self.script)
+
 
 class OwnedBpcPreselectionTests(SimpleTestCase):
     """Verify that owned BPCs are pre-selected on simulation load and preset activation."""

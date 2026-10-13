@@ -2990,8 +2990,13 @@
                     targetOption = options.find((opt) => String(opt.value) === String(prefLoc));
                 }
                 if (targetOption) {
-                    targetOption.selected = true;
-                    locationSelect.value = targetOption.value;
+                    options.forEach((opt) => {
+                        opt.selected = (opt === targetOption);
+                    });
+                    const idx = options.indexOf(targetOption);
+                    if (idx >= 0) {
+                        locationSelect.selectedIndex = idx;
+                    }
                 }
             };
             const renderContainerOptions = (source) => {
@@ -3000,8 +3005,14 @@
                 containerSelect.innerHTML = [`<option value="">{% trans "Whole location (all containers)" %}</option>`]
                     .concat(containers.map((c) => `<option value="${esc(c.item_id)}">${esc(c.name)}</option>`))
                     .join('');
-                if (containerSelect.dataset.preferredContainer) {
-                    containerSelect.value = containerSelect.dataset.preferredContainer;
+                const prefContainer = containerSelect.dataset.preferredContainer;
+                if (prefContainer !== undefined && prefContainer !== null) {
+                    const match = Array.from(containerSelect.options).find((opt) => String(opt.value) === String(prefContainer));
+                    if (match) {
+                        containerSelect.value = match.value;
+                    } else if (!prefContainer) {
+                        containerSelect.value = '';
+                    }
                 }
                 containerSelect.parentElement?.classList.toggle('d-none', containers.length === 0);
             };
@@ -3131,7 +3142,7 @@
             });
             locationSelect?.addEventListener('change', () => {
                 const selectedOption = locationSelect.selectedOptions?.[0];
-                locationSelect.dataset.preferredLocation = locationSelect.value;
+                locationSelect.dataset.preferredLocation = selectedOption ? selectedOption.value : (locationSelect.value || '');
                 locationSelect.dataset.preferredCharacter = selectedOption?.dataset?.characterId || '';
                 syncSelectedSource();
                 const el = ownedMaterialsInput();
@@ -3139,13 +3150,14 @@
                 revalidateDesignatedBay();
                 if (!window.CraftBP?.isRestoreInProgress?.()) {
                     savePreference({
-                        materialsSourceLocationId: locationSelect.value,
+                        materialsSourceLocationId: locationSelect.dataset.preferredLocation,
                         materialsSourceCharacterId: locationSelect.dataset.preferredCharacter,
+                        materialsSourceContainerId: containerSelect?.value || '',
                     });
                 }
             });
             containerSelect?.addEventListener('change', () => {
-                containerSelect.dataset.preferredContainer = containerSelect.value;
+                containerSelect.dataset.preferredContainer = containerSelect.value || '';
                 const el = ownedMaterialsInput();
                 if (el) el.dataset.sourceLoaded = '';
                 revalidateDesignatedBay();
@@ -3474,7 +3486,8 @@
             }
 
             const loadCachedQuantities = async ({ silent = false } = {}) => {
-                const locationId = locationSelect?.value;
+                const selectedOption = locationSelect?.selectedOptions?.[0];
+                const locationId = selectedOption?.value || locationSelect?.dataset?.preferredLocation || locationSelect?.value;
                 const ownedInput = ownedMaterialsInput();
                 if (!locationId || !ownedInput) return false;
                 const seen = new Set();
@@ -3487,13 +3500,23 @@
                     nodes.forEach((node) => {
                         const tid = Number(node.type_id || node.typeId || 0);
                         if (tid > 0) seen.add(tid);
+                        if (Array.isArray(node.sub_materials)) walkTree(node.sub_materials);
+                        if (Array.isArray(node.subMaterials)) walkTree(node.subMaterials);
                         if (Array.isArray(node.materials)) walkTree(node.materials);
                     });
                 };
                 walkTree(window.BLUEPRINT_DATA?.materials_tree);
+                if (window.CraftBP?.getBasketProducts) {
+                    const basket = window.CraftBP.getBasketProducts();
+                    if (Array.isArray(basket)) {
+                        basket.forEach((p) => {
+                            const bpid = Number(p.blueprint_type_id || p.type_id || 0);
+                            if (bpid > 0) seen.add(bpid);
+                        });
+                    }
+                }
                 const typeIds = Array.from(seen).slice(0, 500);
                 const params = new URLSearchParams({ location_id: String(locationId), type_ids: typeIds.join(',') });
-                const selectedOption = locationSelect?.selectedOptions?.[0];
                 const charId = selectedOption?.dataset?.characterId || locationSelect?.dataset?.preferredCharacter;
                 if (charId) params.set('character_id', charId);
                 if (containerSelect?.value) params.set('container_item_id', containerSelect.value);
