@@ -33,19 +33,25 @@
 
             links.forEach(function (link) {
                 var href = link.getAttribute('href') || '';
-                if (href === '/indy_hub/' || href === '/indy_hub') {
+                var isIndyRoot = (href === '/indy_hub/' || href === '/indy_hub');
+                var isLootSplit = href.startsWith('/indy_hub/loot-split');
+
+                if (isIndyRoot) {
                     link.dataset.indyHubRoot = 'true';
                 }
 
-                if (path === '/indy_hub/' || path === '/indy_hub') {
-                    if (href === '/indy_hub/' || href === '/indy_hub') {
+                if (path.startsWith('/indy_hub/loot-split')) {
+                    if (isLootSplit) {
                         link.classList.add('active');
+                    } else if (isIndyRoot) {
+                        link.classList.remove('active');
                     }
-                    return;
-                }
-
-                if (path.startsWith('/indy_hub/') && href.startsWith('/indy_hub/')) {
-                    link.classList.add('active');
+                } else if (path.startsWith('/indy_hub')) {
+                    if (isIndyRoot) {
+                        link.classList.add('active');
+                    } else if (isLootSplit) {
+                        link.classList.remove('active');
+                    }
                 }
             });
         });

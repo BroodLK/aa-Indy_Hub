@@ -9,13 +9,13 @@ from unittest.mock import MagicMock, patch
 # Django
 from django.contrib.auth.models import Permission, User
 from django.test import RequestFactory, TestCase
-from django.urls import reverse
+from django.urls import resolve, reverse
 
 # Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
-from indy_hub.auth_hooks import FleetLootSplitMenu
+from indy_hub.auth_hooks import FleetLootSplitMenu, IndyHubMenu
 from indy_hub.services.loot_splitter import (
     calculate_fleet_loot_split,
     fetch_zkillboard_killmail,
@@ -468,3 +468,33 @@ class FleetLootSplitMenuTests(TestCase):
         menu = FleetLootSplitMenu()
         rendered = menu.render(request)
         self.assertEqual(rendered, "")
+
+    def test_menu_active_isolation_between_indy_hub_and_loot_split(self):
+        self.user.user_permissions.add(self.perm)
+        indy_perm = Permission.objects.get(codename="can_access_indy_hub")
+        self.user.user_permissions.add(indy_perm)
+
+        loot_path = reverse("indy_hub:loot_split")
+        req_loot = self.factory.get(loot_path)
+        req_loot.user = self.user
+        req_loot.resolver_match = resolve(loot_path)
+
+        indy_path = reverse("indy_hub:index")
+        req_indy = self.factory.get(indy_path)
+        req_indy.user = self.user
+        req_indy.resolver_match = resolve(indy_path)
+
+        indy_menu = IndyHubMenu()
+        loot_menu = FleetLootSplitMenu()
+
+        # On loot_split page: Loot Split should be active, Indy Hub should NOT be active
+        loot_rendered_on_loot = loot_menu.render(req_loot)
+        indy_rendered_on_loot = indy_menu.render(req_loot)
+        self.assertIn('class="active"', loot_rendered_on_loot)
+        self.assertNotIn('class="active"', indy_rendered_on_loot)
+
+        # On indy_hub index page: Indy Hub should be active, Loot Split should NOT be active
+        loot_rendered_on_indy = loot_menu.render(req_indy)
+        indy_rendered_on_indy = indy_menu.render(req_indy)
+        self.assertNotIn('class="active"', loot_rendered_on_indy)
+        self.assertIn('class="active"', indy_rendered_on_indy)

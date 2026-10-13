@@ -1,8 +1,9 @@
 {% load i18n %}
 {% load navactive %}
 
+{% with url_name=request.resolver_match.url_name|default:'' %}
 <li>
-    <a class="{% navactive request item.navactive|join:' ' %}"
+    <a class="{% if 'loot_split' not in url_name and '/indy_hub/loot-split' not in request.path %}{% navactive request item.navactive|join:' ' %}{% endif %}"
        href="{% url item.url_name %}"
        data-indy-hub-menu="1"
        data-indy-hub-badge-url="{% url 'indy_hub:menu_badge_count' %}">
@@ -11,6 +12,7 @@
         {% if item.count != None %}<span class="badge" data-indy-hub-badge="1">{{ item.count }}</span>{% endif %}
     </a>
 </li>
+{% endwith %}
 <script>
 (function () {
     if (window.__indyHubMenuBadgeLiveInitialized) {
