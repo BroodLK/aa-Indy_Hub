@@ -58,6 +58,13 @@ from .views.industry import (
     personnal_job_list,
     production_simulations_list,
 )
+from .views.loot_splitter import (
+    loot_splitter_calculate_api,
+    loot_splitter_parse_loot_api,
+    loot_splitter_resolve_killmail_api,
+    loot_splitter_resolve_pilots_api,
+    loot_splitter_view,
+)
 from .views.production_buyback import (
     production_buyback_availability,
     submit_production_buyback_order,
@@ -903,5 +910,31 @@ urlpatterns = [
         "reprocessing-services/requests/<int:request_id>/dispute/",
         reprocessing_request_dispute,
         name="reprocessing_request_dispute",
+    ),
+    # Fleet Loot Splitter
+    path(
+        "loot-split/",
+        loot_splitter_view,
+        name="loot_split",
+    ),
+    path(
+        "loot-split/api/resolve-pilots/",
+        loot_splitter_resolve_pilots_api,
+        name="loot_split_resolve_pilots_api",
+    ),
+    path(
+        "loot-split/api/parse-loot/",
+        loot_splitter_parse_loot_api,
+        name="loot_split_parse_loot_api",
+    ),
+    path(
+        "loot-split/api/resolve-killmail/",
+        loot_splitter_resolve_killmail_api,
+        name="loot_split_resolve_killmail_api",
+    ),
+    path(
+        "loot-split/api/calculate/",
+        loot_splitter_calculate_api,
+        name="loot_split_calculate_api",
     ),
 ]

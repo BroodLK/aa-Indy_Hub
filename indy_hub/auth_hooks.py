@@ -56,6 +56,38 @@ def register_menu():
     return IndyHubMenu()
 
 
+class FleetLootSplitMenu(MenuItemHook):
+    """
+    Adds a menu item for Fleet Loot Splitter in Alliance Auth navigation.
+    """
+
+    def __init__(self):
+        super().__init__(
+            "Loot Split",
+            "fas fa-coins fa-fw",
+            "indy_hub:loot_split",
+            1105,
+            navactive=[
+                "indy_hub:loot_split",
+            ],
+        )
+
+    def render(self, request):
+        if not request.user.is_authenticated:
+            return ""
+        if not request.user.has_perm("indy_hub.can_access_indy_hub"):
+            return ""
+        return super().render(request)
+
+
+@hooks.register("menu_item_hook")
+def register_loot_split_menu():
+    """
+    Register the Fleet Loot Split menu item.
+    """
+    return FleetLootSplitMenu()
+
+
 @hooks.register("url_hook")
 def register_urls():
     """

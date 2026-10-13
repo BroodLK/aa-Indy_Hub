@@ -1,0 +1,1259 @@
+{% extends "allianceauth/base-bs5.html" %}
+{% load i18n %}
+{% load static %}
+
+{% block page_title %}
+    {% trans "Fleet Loot Splitter" %}
+{% endblock page_title %}
+
+{% block extra_css %}
+    <link rel="stylesheet" href="{% static 'indy_hub/css/dark-mode-adaptive.css' %}">
+    <style>
+        .wizard-step-nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+        .wizard-step-btn {
+            flex: 1 1 auto;
+            text-align: center;
+            padding: 0.6rem 0.8rem;
+            border-radius: 0.375rem;
+            background: var(--bs-card-bg, #2a2a2a);
+            border: 1px solid var(--bs-border-color, #444);
+            color: var(--bs-body-color, #ccc);
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        .wizard-step-btn:hover {
+            border-color: var(--bs-primary, #0d6efd);
+            color: var(--bs-primary, #0d6efd);
+        }
+        .wizard-step-btn.active {
+            background: var(--bs-primary, #0d6efd);
+            border-color: var(--bs-primary, #0d6efd);
+            color: #fff !important;
+        }
+        .wizard-step-btn.completed {
+            border-color: var(--bs-success, #198754);
+        }
+        .wizard-step-btn.completed i {
+            color: var(--bs-success, #198754);
+        }
+        .wizard-step-btn.active i {
+            color: #fff !important;
+        }
+        .pilot-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+        .item-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .kpi-card {
+            border-left: 4px solid var(--bs-primary);
+        }
+        .kpi-card.success { border-left-color: var(--bs-success); }
+        .kpi-card.warning { border-left-color: var(--bs-warning); }
+        .kpi-card.info { border-left-color: var(--bs-info); }
+        .kpi-card.danger { border-left-color: var(--bs-danger); }
+        .export-box {
+            background: var(--bs-dark, #1a1a1a);
+            color: #a3e635;
+            font-family: monospace;
+            font-size: 0.85rem;
+            padding: 1rem;
+            border-radius: 0.375rem;
+            white-space: pre-wrap;
+            max-height: 250px;
+            overflow-y: auto;
+            border: 1px solid var(--bs-border-color, #333);
+        }
+    </style>
+{% endblock extra_css %}
+
+{% block content %}
+<div class="container-fluid py-3" id="lootSplitterApp">
+    <!-- Page Header -->
+    <div class="d-flex align-items-center justify-content-between mb-3 border-bottom pb-3">
+        <div>
+            <h2 class="h3 mb-1"><i class="fas fa-coins text-warning me-2"></i>{% trans "Fleet Loot Splitter & Loss Reimbursement" %}</h2>
+            <p class="text-muted mb-0 small">{% trans "Calculate fair loot distributions, resolve alts to mains, offset ship losses, and compute net settlement transfers." %}</p>
+        </div>
+        <div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="resetWizard()">
+                <i class="fas fa-redo me-1"></i>{% trans "Reset Wizard" %}
+            </button>
+        </div>
+    </div>
+
+    <!-- Step Navigation Pills -->
+    <div class="wizard-step-nav">
+        <div class="wizard-step-btn active" id="stepBtn-1" onclick="goToStep(1)">
+            <i class="fas fa-users me-1"></i> 1. {% trans "Pilots" %}
+        </div>
+        <div class="wizard-step-btn" id="stepBtn-2" onclick="goToStep(2)">
+            <i class="fas fa-boxes me-1"></i> 2. {% trans "Loot Items" %}
+        </div>
+        <div class="wizard-step-btn" id="stepBtn-3" onclick="goToStep(3)">
+            <i class="fas fa-tags me-1"></i> 3. {% trans "Valuation" %}
+        </div>
+        <div class="wizard-step-btn" id="stepBtn-4" onclick="goToStep(4)">
+            <i class="fas fa-skull-crossbones me-1"></i> 4. {% trans "Loss Reimbursements" %}
+        </div>
+        <div class="wizard-step-btn" id="stepBtn-5" onclick="goToStep(5)">
+            <i class="fas fa-user-times me-1"></i> 5. {% trans "Declined Repayment" %}
+        </div>
+        <div class="wizard-step-btn" id="stepBtn-6" onclick="goToStep(6)">
+            <i class="fas fa-hand-holding-heart me-1"></i> 6. {% trans "Kept Items" %}
+        </div>
+        <div class="wizard-step-btn" id="stepBtn-7" onclick="goToStep(7)">
+            <i class="fas fa-calculator me-1"></i> 7. {% trans "Settlement & Payouts" %}
+        </div>
+    </div>
+
+    <!-- STEP 1: Pilots Input -->
+    <div class="wizard-step-pane" id="stepPane-1">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-users text-primary me-2"></i>{% trans "Step 1: Fleet Pilots (Alts to Mains Resolution)" %}</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    {% trans "Paste pilot names from local chat, fleet composition, or d-scan (one name per line). Alts registered in Alliance Auth will automatically be mapped to their main character." %}
+                </p>
+                <div class="row">
+                    <div class="col-lg-5 mb-3">
+                        <label class="form-label fw-semibold">{% trans "Paste Pilot Names (One per line):" %}</label>
+                        <textarea class="form-control" id="pilotInputText" rows="10" placeholder="Pilot Alpha&#10;Pilot Beta (Alt)&#10;Pilot Gamma"></textarea>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-primary" id="btnResolvePilots" onclick="resolvePilots()">
+                                <i class="fas fa-search me-1"></i>{% trans "Resolve Fleet Pilots" %}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-lg-7">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-semibold">{% trans "Resolved Participants" %} (<span id="resolvedPilotsCount">0</span>)</span>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addCustomPilot()">
+                                <i class="fas fa-plus me-1"></i>{% trans "Add Manual Pilot" %}
+                            </button>
+                        </div>
+                        <div class="border rounded p-2 bg-body-tertiary" style="min-height: 250px; max-height: 380px; overflow-y: auto;" id="pilotsListContainer">
+                            <div class="text-center text-muted py-5" id="pilotsEmptyMsg">
+                                <i class="fas fa-user-friends fa-2x mb-2 text-secondary"></i>
+                                <p class="mb-0">{% trans "Paste pilot names on the left and click 'Resolve Fleet Pilots'." %}</p>
+                            </div>
+                            <div class="list-group list-group-flush d-none" id="pilotsList"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent d-flex justify-content-end">
+                <button type="button" class="btn btn-primary" onclick="goToStep(2)">
+                    {% trans "Next: Loot Items" %} <i class="fas fa-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 2: Loot Items Input -->
+    <div class="wizard-step-pane d-none" id="stepPane-2">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-boxes text-primary me-2"></i>{% trans "Step 2: Fleet Loot Inventory" %}</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    {% trans "Paste inventory items directly from your EVE Online cargo/fleet hangar/loot window (tab or space separated lines). Pricing from Buyback and Market will be resolved." %}
+                </p>
+                <div class="row">
+                    <div class="col-lg-5 mb-3">
+                        <label class="form-label fw-semibold">{% trans "Paste Loot Items (EVE Format):" %}</label>
+                        <textarea class="form-control" id="lootInputText" rows="10" placeholder="Tritanium&#9;500000&#10;Pyerite&#9;100000&#10;Squall&#9;1"></textarea>
+                        <div class="mt-2 d-flex gap-2">
+                            <button type="button" class="btn btn-primary" id="btnParseLoot" onclick="parseLoot()">
+                                <i class="fas fa-calculator me-1"></i>{% trans "Parse & Price Loot" %}
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="addManualLootItem()">
+                                <i class="fas fa-plus me-1"></i>{% trans "Add Item Manually" %}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-lg-7">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-semibold">{% trans "Parsed Loot Items" %} (<span id="parsedItemsCount">0</span>)</span>
+                            <span class="badge bg-secondary" id="invalidLinesBadge" style="display: none;"></span>
+                        </div>
+                        <div class="border rounded p-2 bg-body-tertiary" style="min-height: 250px; max-height: 380px; overflow-y: auto;" id="lootItemsListContainer">
+                            <div class="text-center text-muted py-5" id="lootEmptyMsg">
+                                <i class="fas fa-box-open fa-2x mb-2 text-secondary"></i>
+                                <p class="mb-0">{% trans "Paste loot items on the left and click 'Parse & Price Loot'." %}</p>
+                            </div>
+                            <div class="list-group list-group-flush d-none" id="lootItemsList"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" onclick="goToStep(1)">
+                    <i class="fas fa-arrow-left me-1"></i> {% trans "Back: Pilots" %}
+                </button>
+                <button type="button" class="btn btn-primary" onclick="goToStep(3)">
+                    {% trans "Next: Valuation" %} <i class="fas fa-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 3: Valuation Selection -->
+    <div class="wizard-step-pane d-none" id="stepPane-3">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-tags text-primary me-2"></i>{% trans "Step 3: Valuation Basis (Market vs Buyback)" %}</span>
+                <div class="btn-group btn-group-sm" role="group">
+                    <input type="radio" class="btn-check" name="valModeRadio" id="valModeBuyback" value="buyback" checked onchange="setValuationMode('buyback')">
+                    <label class="btn btn-outline-primary" for="valModeBuyback"><i class="fas fa-store me-1"></i>{% trans "Buyback Value" %}</label>
+                    <input type="radio" class="btn-check" name="valModeRadio" id="valModeMarket" value="market" onchange="setValuationMode('market')">
+                    <label class="btn btn-outline-primary" for="valModeMarket"><i class="fas fa-chart-line me-1"></i>{% trans "Market Value" %}</label>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <p class="text-muted small mb-0">
+                        {% trans "Review item valuations. You can toggle global valuation between Buyback and Market prices, or override prices per item." %}
+                    </p>
+                    <div class="text-end">
+                        <span class="text-muted small">{% trans "Gross Loot Value:" %}</span>
+                        <span class="h5 ms-2 text-success fw-bold" id="step3TotalGross">0.00 ISK</span>
+                    </div>
+                </div>
+
+                <div class="table-responsive border rounded">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;"></th>
+                                <th>{% trans "Item Name" %}</th>
+                                <th class="text-center" style="width: 100px;">{% trans "Qty" %}</th>
+                                <th class="text-end" style="width: 140px;">{% trans "Market Unit Price" %}</th>
+                                <th class="text-end" style="width: 140px;">{% trans "Buyback Unit Price" %}</th>
+                                <th class="text-end" style="width: 160px;">{% trans "Applied Unit Price" %}</th>
+                                <th class="text-end" style="width: 150px;">{% trans "Line Total" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="valuationTableBody">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted py-4">{% trans "No loot items added yet." %}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" onclick="goToStep(2)">
+                    <i class="fas fa-arrow-left me-1"></i> {% trans "Back: Loot Items" %}
+                </button>
+                <button type="button" class="btn btn-primary" onclick="goToStep(4)">
+                    {% trans "Next: Loss Reimbursements" %} <i class="fas fa-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 4: Killmail Reimbursements -->
+    <div class="wizard-step-pane d-none" id="stepPane-4">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-skull-crossbones text-danger me-2"></i>{% trans "Step 4: Ship Loss Reimbursements (Loss Offsets)" %}</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    {% trans "If any pilots lost ships during the operation that are to be reimbursed from the fleet loot pool, add the zKillboard links or enter manual loss amounts here. Reimbursements are deducted from the gross pool before splitting." %}
+                </p>
+
+                <div class="row mb-3">
+                    <div class="col-md-6 mb-2">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-link"></i></span>
+                            <input type="text" class="form-control" id="killmailUrlInput" placeholder="https://zkillboard.com/kill/12345678/ or Killmail ID">
+                            <button type="button" class="btn btn-outline-danger" id="btnFetchKm" onclick="addKillmailByUrl()">
+                                <i class="fas fa-download me-1"></i>{% trans "Fetch zKill" %}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-2 text-md-end">
+                        <button type="button" class="btn btn-outline-secondary" onclick="addManualLossModal()">
+                            <i class="fas fa-plus me-1"></i>{% trans "Add Manual Loss ISK" %}
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive border rounded">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;"></th>
+                                <th>{% trans "Ship Lost" %}</th>
+                                <th>{% trans "Victim Pilot (Assigned Reimbursement)" %}</th>
+                                <th class="text-end" style="width: 180px;">{% trans "Reimbursement ISK" %}</th>
+                                <th class="text-center" style="width: 80px;">{% trans "Action" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="killmailsTableBody">
+                            <tr id="kmEmptyRow">
+                                <td colspan="5" class="text-center text-muted py-4">{% trans "No ship losses or reimbursements recorded." %}</td>
+                            </tr>
+                        </tbody>
+                        <tfoot class="table-light">
+                            <tr>
+                                <th colspan="3" class="text-end">{% trans "Total Losses Reimbursed:" %}</th>
+                                <th class="text-end text-danger fw-bold" id="totalLossesAmount">0.00 ISK</th>
+                                <th></th>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" onclick="goToStep(3)">
+                    <i class="fas fa-arrow-left me-1"></i> {% trans "Back: Valuation" %}
+                </button>
+                <button type="button" class="btn btn-primary" onclick="goToStep(5)">
+                    {% trans "Next: Declined Repayment" %} <i class="fas fa-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 5: Declined Repayment -->
+    <div class="wizard-step-pane d-none" id="stepPane-5">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-user-times text-warning me-2"></i>{% trans "Step 5: Declined Repayment & Opt-outs" %}</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    {% trans "Select any pilots who have elected to decline their share of the payout (e.g. donating share to corp or FC tip). The distributable pool will be split equally among the remaining active pilots." %}
+                </p>
+
+                <div class="row" id="declinedPilotsContainer">
+                    <div class="col-12 text-center text-muted py-4">{% trans "No pilots resolved yet." %}</div>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" onclick="goToStep(4)">
+                    <i class="fas fa-arrow-left me-1"></i> {% trans "Back: Loss Reimbursements" %}
+                </button>
+                <button type="button" class="btn btn-primary" onclick="goToStep(6)">
+                    {% trans "Next: Kept Items" %} <i class="fas fa-arrow-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 6: Kept Items -->
+    <div class="wizard-step-pane d-none" id="stepPane-6">
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-hand-holding-heart text-info me-2"></i>{% trans "Step 6: Kept Items & Pilot Assignments" %}</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small">
+                    {% trans "If any pilots are receiving / keeping physical loot items instead of ISK, assign the items here. The value of kept items is deducted from that pilot's share; if item value exceeds their share, they will owe the remaining balance to the other pilots." %}
+                </p>
+
+                <div class="table-responsive border rounded">
+                    <table class="table table-hover table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;"></th>
+                                <th>{% trans "Item Name" %}</th>
+                                <th class="text-center" style="width: 80px;">{% trans "Total Qty" %}</th>
+                                <th class="text-end" style="width: 130px;">{% trans "Unit Value" %}</th>
+                                <th style="width: 250px;">{% trans "Kept By Pilot" %}</th>
+                                <th class="text-center" style="width: 100px;">{% trans "Kept Qty" %}</th>
+                                <th class="text-end" style="width: 140px;">{% trans "Kept Value" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="keptItemsTableBody">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted py-4">{% trans "No loot items added yet." %}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" onclick="goToStep(5)">
+                    <i class="fas fa-arrow-left me-1"></i> {% trans "Back: Declined Repayment" %}
+                </button>
+                <button type="button" class="btn btn-success" onclick="goToStep(7)">
+                    <i class="fas fa-check-circle me-1"></i> {% trans "Calculate Final Settlement" %}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 7: Final Settlement & Export -->
+    <div class="wizard-step-pane d-none" id="stepPane-7">
+        <!-- KPI Row -->
+        <div class="row g-3 mb-3">
+            <div class="col-md-3 col-sm-6">
+                <div class="card shadow-sm kpi-card">
+                    <div class="card-body py-2">
+                        <span class="text-muted small">{% trans "Gross Loot Value" %}</span>
+                        <h4 class="mb-0 text-primary" id="kpiGrossLoot">0.00 ISK</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card shadow-sm kpi-card danger">
+                    <div class="card-body py-2">
+                        <span class="text-muted small">{% trans "Ship Loss Reimbursements" %}</span>
+                        <h4 class="mb-0 text-danger" id="kpiLossReimbursement">0.00 ISK</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card shadow-sm kpi-card success">
+                    <div class="card-body py-2">
+                        <span class="text-muted small">{% trans "Net Distributable Pot" %}</span>
+                        <h4 class="mb-0 text-success" id="kpiNetPot">0.00 ISK</h4>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-sm-6">
+                <div class="card shadow-sm kpi-card info">
+                    <div class="card-body py-2">
+                        <span class="text-muted small">{% trans "Base Share / Active Pilot" %}</span>
+                        <h4 class="mb-0 text-info" id="kpiBaseShare">0.00 ISK</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pilot Payout Breakdown Table -->
+        <div class="card shadow-sm mb-3">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-list-check text-primary me-2"></i>{% trans "Pilot Settlement Breakdown" %}</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;"></th>
+                                <th>{% trans "Pilot (Main Character)" %}</th>
+                                <th class="text-center" style="width: 130px;">{% trans "Status" %}</th>
+                                <th class="text-end" style="width: 140px;">{% trans "Base Share" %}</th>
+                                <th class="text-end" style="width: 150px;">{% trans "+ Reimbursement" %}</th>
+                                <th class="text-end" style="width: 150px;">{% trans "- Kept Items" %}</th>
+                                <th class="text-end" style="width: 180px;">{% trans "Net Payout / Balance" %}</th>
+                            </tr>
+                        </thead>
+                        <tbody id="settlementTableBody">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted py-4">{% trans "Calculating..." %}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transfers ("Who pays Whom") -->
+        <div class="card shadow-sm mb-3" id="transfersCard">
+            <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="fas fa-exchange-alt text-warning me-2"></i>{% trans "Direct Settlement Transfers (Who Pays Whom)" %}</span>
+            </div>
+            <div class="card-body">
+                <div id="transfersListContainer">
+                    <p class="text-muted mb-0">{% trans "No direct transfers required." %}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Export Text Box -->
+        <div class="row">
+            <div class="col-lg-6 mb-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                        <span class="fw-bold"><i class="fab fa-discord text-primary me-2"></i>{% trans "Discord Export" %}</span>
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="btnCopyDiscord" onclick="copyToClipboard('discordExportBox', 'btnCopyDiscord')">
+                            <i class="fas fa-copy me-1"></i>{% trans "Copy" %}
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <pre class="export-box" id="discordExportBox"></pre>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6 mb-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-transparent d-flex justify-content-between align-items-center">
+                        <span class="fw-bold"><i class="fas fa-envelope text-info me-2"></i>{% trans "EVE In-Game Mail / Fleet Chat Export" %}</span>
+                        <button type="button" class="btn btn-sm btn-outline-info" id="btnCopyIngame" onclick="copyToClipboard('ingameExportBox', 'btnCopyIngame')">
+                            <i class="fas fa-copy me-1"></i>{% trans "Copy" %}
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <pre class="export-box" id="ingameExportBox"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card-footer bg-transparent d-flex justify-content-between px-0">
+            <button type="button" class="btn btn-outline-secondary" onclick="goToStep(6)">
+                <i class="fas fa-arrow-left me-1"></i> {% trans "Back: Kept Items" %}
+            </button>
+            <button type="button" class="btn btn-primary" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
+                <i class="fas fa-arrow-up me-1"></i> {% trans "Back to Top" %}
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Add Manual Loss -->
+<div class="modal fade" id="manualLossModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-skull text-danger me-2"></i>{% trans "Add Manual Ship Loss" %}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">{% trans "Victim / Pilot" %}</label>
+                    <select class="form-select" id="manualLossPilotSelect"></select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{% trans "Ship Name (Optional)" %}</label>
+                    <input type="text" class="form-control" id="manualLossShipName" placeholder="e.g. Squall, Hurricane">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">{% trans "Loss ISK Amount" %}</label>
+                    <input type="text" class="form-control" id="manualLossAmount" placeholder="e.g. 30m, 150000000, 1.2b">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{% trans "Cancel" %}</button>
+                <button type="button" class="btn btn-primary" onclick="submitManualLoss()">{% trans "Add Loss" %}</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}
+
+{% block extra_javascript %}
+{{ block.super }}
+<script>
+    // State management
+    const state = {
+        currentStep: 1,
+        valuationMode: 'buyback',
+        pilots: [],
+        lootItems: [],
+        killmails: [],
+        calculationResult: null
+    };
+
+    function formatIsk(num) {
+        if (num === undefined || num === null || isNaN(num)) return '0.00 ISK';
+        return Number(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ISK';
+    }
+
+    function parseIskString(val) {
+        if (val === undefined || val === null) return 0;
+        if (typeof val === 'number') return isNaN(val) ? 0 : val;
+        let s = String(val).trim().toLowerCase().replace(/,/g, '');
+        if (!s) return 0;
+        let mult = 1;
+        if (s.endsWith('b') || s.endsWith('bil') || s.endsWith('billion')) {
+            mult = 1000000000;
+            s = s.replace(/[^\d.]/g, '');
+        } else if (s.endsWith('m') || s.endsWith('mil') || s.endsWith('million')) {
+            mult = 1000000;
+            s = s.replace(/[^\d.]/g, '');
+        } else if (s.endsWith('k') || s.endsWith('thousand')) {
+            mult = 1000;
+            s = s.replace(/[^\d.]/g, '');
+        } else {
+            s = s.replace(/[^\d.-]/g, '');
+        }
+        const parsed = parseFloat(s);
+        return isNaN(parsed) ? 0 : parsed * mult;
+    }
+
+    function getCsrfToken() {
+        const cookie = document.cookie.split('; ').find(row => row.startsWith('csrftoken='));
+        return cookie ? cookie.split('=')[1] : '';
+    }
+
+    function goToStep(stepNum) {
+        state.currentStep = stepNum;
+        for (let i = 1; i <= 7; i++) {
+            const pane = document.getElementById(`stepPane-${i}`);
+            const btn = document.getElementById(`stepBtn-${i}`);
+            if (pane) {
+                if (i === stepNum) {
+                    pane.classList.remove('d-none');
+                } else {
+                    pane.classList.add('d-none');
+                }
+            }
+            if (btn) {
+                if (i === stepNum) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            }
+        }
+
+        // Hook step rendering
+        if (stepNum === 3) renderValuationTable();
+        if (stepNum === 4) renderKillmailsTable();
+        if (stepNum === 5) renderDeclinedPilots();
+        if (stepNum === 6) renderKeptItemsTable();
+        if (stepNum === 7) runCalculation();
+    }
+
+    // Step 1: Resolve Pilots
+    async function resolvePilots() {
+        const text = document.getElementById('pilotInputText').value.trim();
+        if (!text) {
+            alert('{% trans "Please paste at least one pilot name." %}');
+            return;
+        }
+
+        const btn = document.getElementById('btnResolvePilots');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> {% trans "Resolving..." %}';
+
+        try {
+            const resp = await fetch("{% url 'indy_hub:loot_split_resolve_pilots_api' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                },
+                body: JSON.stringify({ names_text: text })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                state.pilots = data.pilots;
+                renderPilotsList();
+            } else {
+                alert(data.error || '{% trans "Failed to resolve pilots." %}');
+            }
+        } catch (err) {
+            alert('{% trans "Error resolving pilots:" %} ' + err);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-search me-1"></i> {% trans "Resolve Fleet Pilots" %}';
+        }
+    }
+
+    function renderPilotsList() {
+        const container = document.getElementById('pilotsList');
+        const emptyMsg = document.getElementById('pilotsEmptyMsg');
+        const countSpan = document.getElementById('resolvedPilotsCount');
+
+        countSpan.textContent = state.pilots.length;
+
+        if (state.pilots.length === 0) {
+            container.classList.add('d-none');
+            emptyMsg.classList.remove('d-none');
+            return;
+        }
+
+        emptyMsg.classList.add('d-none');
+        container.classList.remove('d-none');
+        container.innerHTML = '';
+
+        state.pilots.forEach((p, index) => {
+            const item = document.createElement('div');
+            item.className = 'list-group-item d-flex align-items-center justify-content-between p-2';
+            
+            const altsBadge = p.alts && p.alts.length > 0 
+                ? `<div class="small text-muted mt-1"><i class="fas fa-link me-1"></i>{% trans "Alts in fleet:" %} ${p.alts.map(a => `<span class="badge bg-secondary me-1">${a}</span>`).join('')}</div>`
+                : '';
+
+            const registeredBadge = p.is_registered 
+                ? '<span class="badge bg-success-subtle text-success ms-2"><i class="fas fa-check-circle me-1"></i>{% trans "Auth" %}</span>' 
+                : '<span class="badge bg-secondary-subtle text-secondary ms-2">{% trans "External" %}</span>';
+
+            item.innerHTML = `
+                <div class="d-flex align-items-center">
+                    <img src="${p.portrait_url}" class="pilot-avatar me-2" alt="${p.name}">
+                    <div>
+                        <div class="fw-bold">${p.name} ${registeredBadge}</div>
+                        ${altsBadge}
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removePilot(${index})">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+            container.appendChild(item);
+        });
+
+        document.getElementById('stepBtn-1').classList.add('completed');
+    }
+
+    function removePilot(index) {
+        state.pilots.splice(index, 1);
+        renderPilotsList();
+    }
+
+    function addCustomPilot() {
+        const name = prompt('{% trans "Enter character name:" %}');
+        if (name && name.trim()) {
+            state.pilots.push({
+                id: `ext_${Date.now()}`,
+                name: name.trim(),
+                character_id: null,
+                portrait_url: 'https://images.evetech.net/characters/1/portrait?size=64',
+                is_registered: false,
+                alts: [],
+                declined: false
+            });
+            renderPilotsList();
+        }
+    }
+
+    // Step 2: Parse Loot Items
+    async function parseLoot() {
+        const text = document.getElementById('lootInputText').value.trim();
+        if (!text) {
+            alert('{% trans "Please paste loot inventory lines." %}');
+            return;
+        }
+
+        const btn = document.getElementById('btnParseLoot');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> {% trans "Pricing..." %}';
+
+        try {
+            const resp = await fetch("{% url 'indy_hub:loot_split_parse_loot_api' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                },
+                body: JSON.stringify({ loot_text: text, valuation_mode: state.valuationMode })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                state.lootItems = data.items;
+                renderLootItemsList();
+                if (data.invalid_lines && data.invalid_lines.length > 0) {
+                    const badge = document.getElementById('invalidLinesBadge');
+                    badge.textContent = `${data.invalid_lines.length} {% trans "unparsed lines" %}`;
+                    badge.style.display = 'inline-block';
+                }
+            } else {
+                alert(data.error || '{% trans "Failed to parse loot." %}');
+            }
+        } catch (err) {
+            alert('{% trans "Error parsing loot:" %} ' + err);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-calculator me-1"></i> {% trans "Parse & Price Loot" %}';
+        }
+    }
+
+    function renderLootItemsList() {
+        const container = document.getElementById('lootItemsList');
+        const emptyMsg = document.getElementById('lootEmptyMsg');
+        const countSpan = document.getElementById('parsedItemsCount');
+
+        countSpan.textContent = state.lootItems.length;
+
+        if (state.lootItems.length === 0) {
+            container.classList.add('d-none');
+            emptyMsg.classList.remove('d-none');
+            return;
+        }
+
+        emptyMsg.classList.add('d-none');
+        container.classList.remove('d-none');
+        container.innerHTML = '';
+
+        state.lootItems.forEach((item, index) => {
+            const row = document.createElement('div');
+            row.className = 'list-group-item d-flex align-items-center justify-content-between p-2';
+            row.innerHTML = `
+                <div class="d-flex align-items-center">
+                    <img src="${item.icon_url}" class="item-icon me-2" alt="${item.name}">
+                    <div>
+                        <div class="fw-bold">${item.name} <span class="badge bg-secondary ms-1">x${item.quantity.toLocaleString()}</span></div>
+                        <div class="small text-muted">
+                            {% trans "Unit:" %} ${formatIsk(item.chosen_unit_price)} | 
+                            {% trans "Total:" %} <span class="text-success">${formatIsk(item.total_value)}</span>
+                        </div>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeLootItem(${index})">
+                    <i class="fas fa-trash"></i>
+                </button>
+            `;
+            container.appendChild(row);
+        });
+
+        document.getElementById('stepBtn-2').classList.add('completed');
+    }
+
+    function removeLootItem(index) {
+        state.lootItems.splice(index, 1);
+        renderLootItemsList();
+    }
+
+    function addManualLootItem() {
+        const name = prompt('{% trans "Item Name:" %}');
+        if (!name || !name.trim()) return;
+        const qtyStr = prompt('{% trans "Quantity:" %}', '1');
+        const qty = parseInt(qtyStr) || 1;
+        const priceStr = prompt('{% trans "Unit Price (ISK):" %}', '1000000');
+        const price = parseFloat(priceStr) || 0;
+
+        state.lootItems.push({
+            id: `manual_item_${Date.now()}`,
+            type_id: 0,
+            name: name.trim(),
+            quantity: qty,
+            icon_url: 'https://images.evetech.net/types/0/icon?size=64',
+            market_unit_price: price,
+            buyback_unit_price: price,
+            chosen_unit_price: price,
+            total_value: qty * price,
+            kept_by_pilot_id: null,
+            kept_quantity: 0
+        });
+        renderLootItemsList();
+    }
+
+    // Step 3: Valuation Table
+    function setValuationMode(mode) {
+        state.valuationMode = mode;
+        state.lootItems.forEach(item => {
+            item.chosen_unit_price = mode === 'market' ? item.market_unit_price : item.buyback_unit_price;
+            item.total_value = item.chosen_unit_price * item.quantity;
+        });
+        renderValuationTable();
+    }
+
+    function updateItemCustomPrice(index, value) {
+        const num = parseIskString(value);
+        state.lootItems[index].chosen_unit_price = num;
+        state.lootItems[index].total_value = num * state.lootItems[index].quantity;
+        renderValuationTable();
+    }
+
+    function renderValuationTable() {
+        const tbody = document.getElementById('valuationTableBody');
+        tbody.innerHTML = '';
+
+        if (state.lootItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">{% trans "No loot items added yet." %}</td></tr>';
+            document.getElementById('step3TotalGross').textContent = '0.00 ISK';
+            return;
+        }
+
+        let totalGross = 0;
+        state.lootItems.forEach((item, index) => {
+            totalGross += item.total_value;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
+                <td class="fw-bold">${item.name}</td>
+                <td class="text-center">${item.quantity.toLocaleString()}</td>
+                <td class="text-end text-muted">${formatIsk(item.market_unit_price)}</td>
+                <td class="text-end text-muted">${formatIsk(item.buyback_unit_price)}</td>
+                <td class="text-end">
+                    <input type="number" step="any" class="form-control form-control-sm text-end" value="${item.chosen_unit_price}" onchange="updateItemCustomPrice(${index}, this.value)">
+                </td>
+                <td class="text-end fw-bold text-success">${formatIsk(item.total_value)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('step3TotalGross').textContent = formatIsk(totalGross);
+        document.getElementById('stepBtn-3').classList.add('completed');
+    }
+
+    // Step 4: Killmail Reimbursements
+    async function addKillmailByUrl() {
+        const input = document.getElementById('killmailUrlInput');
+        const url = input.value.trim();
+        if (!url) {
+            alert('{% trans "Please enter a zKillboard URL or Killmail ID." %}');
+            return;
+        }
+
+        const btn = document.getElementById('btnFetchKm');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>';
+
+        try {
+            const resp = await fetch("{% url 'indy_hub:loot_split_resolve_killmail_api' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                },
+                body: JSON.stringify({ killmail_url: url })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                const km = data.killmail;
+                // Try matching to fleet pilot
+                let matchedPilot = state.pilots.find(p => p.name.toLowerCase() === (km.victim_name || '').toLowerCase());
+                km.assigned_pilot_id = matchedPilot ? matchedPilot.id : (state.pilots[0] ? state.pilots[0].id : null);
+                
+                state.killmails.push(km);
+                input.value = '';
+                renderKillmailsTable();
+            } else {
+                alert(data.error || '{% trans "Failed to fetch killmail." %}');
+            }
+        } catch (err) {
+            alert('{% trans "Error fetching killmail:" %} ' + err);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-download me-1"></i> {% trans "Fetch zKill" %}';
+        }
+    }
+
+    function addManualLossModal() {
+        const select = document.getElementById('manualLossPilotSelect');
+        select.innerHTML = '';
+        state.pilots.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = p.name;
+            select.appendChild(opt);
+        });
+        const modal = new bootstrap.Modal(document.getElementById('manualLossModal'));
+        modal.show();
+    }
+
+    function submitManualLoss() {
+        const pilotId = document.getElementById('manualLossPilotSelect').value;
+        const shipName = document.getElementById('manualLossShipName').value.trim() || '{% trans "Ship Loss" %}';
+        const rawAmount = document.getElementById('manualLossAmount').value;
+        const amount = parseIskString(rawAmount);
+
+        if (amount <= 0) {
+            alert('{% trans "Please enter a positive loss amount." %}');
+            return;
+        }
+
+        state.killmails.push({
+            id: `manual_km_${Date.now()}`,
+            killmail_id: null,
+            ship_name: shipName,
+            ship_icon_url: 'https://images.evetech.net/types/0/render?size=64',
+            assigned_pilot_id: pilotId,
+            loss_value: amount
+        });
+
+        document.getElementById('manualLossShipName').value = '';
+        document.getElementById('manualLossAmount').value = '';
+        bootstrap.Modal.getInstance(document.getElementById('manualLossModal')).hide();
+        renderKillmailsTable();
+    }
+
+    function renderKillmailsTable() {
+        const tbody = document.getElementById('killmailsTableBody');
+        tbody.innerHTML = '';
+
+        if (state.killmails.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">{% trans "No ship losses or reimbursements recorded." %}</td></tr>';
+            document.getElementById('totalLossesAmount').textContent = '0.00 ISK';
+            return;
+        }
+
+        let totalLoss = 0;
+        state.killmails.forEach((km, index) => {
+            totalLoss += km.loss_value;
+            const tr = document.createElement('tr');
+            
+            let pilotOptions = state.pilots.map(p => 
+                `<option value="${p.id}" ${p.id === km.assigned_pilot_id ? 'selected' : ''}>${p.name}</option>`
+            ).join('');
+
+            tr.innerHTML = `
+                <td><img src="${km.ship_icon_url || 'https://images.evetech.net/types/0/render?size=64'}" class="item-icon" alt="${km.ship_name}"></td>
+                <td>
+                    <span class="fw-bold">${km.ship_name}</span>
+                    ${km.killmail_id ? `<a href="${km.url}" target="_blank" class="ms-1 small text-muted"><i class="fas fa-external-link-alt"></i></a>` : ''}
+                </td>
+                <td>
+                    <select class="form-select form-select-sm" onchange="state.killmails[${index}].assigned_pilot_id = this.value; renderKillmailsTable();">
+                        ${pilotOptions}
+                    </select>
+                </td>
+                <td class="text-end">
+                    <input type="number" step="any" class="form-control form-control-sm text-end" value="${km.loss_value}" onchange="state.killmails[${index}].loss_value = parseFloat(this.value) || 0; renderKillmailsTable();">
+                </td>
+                <td class="text-center">
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="state.killmails.splice(${index}, 1); renderKillmailsTable();">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('totalLossesAmount').textContent = formatIsk(totalLoss);
+        document.getElementById('stepBtn-4').classList.add('completed');
+    }
+
+    // Step 5: Declined Repayment
+    function renderDeclinedPilots() {
+        const container = document.getElementById('declinedPilotsContainer');
+        container.innerHTML = '';
+
+        if (state.pilots.length === 0) {
+            container.innerHTML = '<div class="col-12 text-center text-muted py-4">{% trans "No pilots resolved yet." %}</div>';
+            return;
+        }
+
+        state.pilots.forEach((p, index) => {
+            const col = document.createElement('div');
+            col.className = 'col-md-6 col-lg-4 mb-3';
+            col.innerHTML = `
+                <div class="card h-100 ${p.declined ? 'border-warning bg-warning-subtle' : 'border-secondary'}">
+                    <div class="card-body d-flex align-items-center justify-content-between p-3">
+                        <div class="d-flex align-items-center">
+                            <img src="${p.portrait_url}" class="pilot-avatar me-2" alt="${p.name}">
+                            <div>
+                                <span class="fw-bold">${p.name}</span>
+                                <div class="small text-muted">${p.declined ? '{% trans "Opted Out" %}' : '{% trans "Active Participant" %}'}</div>
+                            </div>
+                        </div>
+                        <div class="form-check form-switch ms-2">
+                            <input class="form-check-input" type="checkbox" role="switch" ${p.declined ? 'checked' : ''} onchange="state.pilots[${index}].declined = this.checked; renderDeclinedPilots();">
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(col);
+        });
+
+        document.getElementById('stepBtn-5').classList.add('completed');
+    }
+
+    // Step 6: Kept Items
+    function renderKeptItemsTable() {
+        const tbody = document.getElementById('keptItemsTableBody');
+        tbody.innerHTML = '';
+
+        if (state.lootItems.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">{% trans "No loot items added yet." %}</td></tr>';
+            return;
+        }
+
+        state.lootItems.forEach((item, index) => {
+            const tr = document.createElement('tr');
+            
+            let pilotOptions = '<option value="">{% trans "None (Distribute ISK)" %}</option>';
+            state.pilots.forEach(p => {
+                pilotOptions += `<option value="${p.id}" ${p.id === item.kept_by_pilot_id ? 'selected' : ''}>${p.name}</option>`;
+            });
+
+            const keptVal = (item.kept_quantity || 0) * (item.chosen_unit_price || 0);
+
+            tr.innerHTML = `
+                <td><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
+                <td class="fw-bold">${item.name}</td>
+                <td class="text-center">${item.quantity.toLocaleString()}</td>
+                <td class="text-end text-muted">${formatIsk(item.chosen_unit_price)}</td>
+                <td>
+                    <select class="form-select form-select-sm" onchange="updateKeptPilot(${index}, this.value)">
+                        ${pilotOptions}
+                    </select>
+                </td>
+                <td class="text-center">
+                    <input type="number" min="0" max="${item.quantity}" class="form-control form-control-sm text-center" value="${item.kept_quantity || 0}" onchange="updateKeptQty(${index}, this.value)">
+                </td>
+                <td class="text-end fw-bold text-info">${formatIsk(keptVal)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        document.getElementById('stepBtn-6').classList.add('completed');
+    }
+
+    function updateKeptPilot(index, pilotId) {
+        state.lootItems[index].kept_by_pilot_id = pilotId || null;
+        if (pilotId && (!state.lootItems[index].kept_quantity || state.lootItems[index].kept_quantity <= 0)) {
+            state.lootItems[index].kept_quantity = state.lootItems[index].quantity;
+        } else if (!pilotId) {
+            state.lootItems[index].kept_quantity = 0;
+        }
+        renderKeptItemsTable();
+    }
+
+    function updateKeptQty(index, qty) {
+        let num = parseInt(qty) || 0;
+        num = Math.max(0, Math.min(num, state.lootItems[index].quantity));
+        state.lootItems[index].kept_quantity = num;
+        if (num > 0 && !state.lootItems[index].kept_by_pilot_id && state.pilots.length > 0) {
+            state.lootItems[index].kept_by_pilot_id = state.pilots[0].id;
+        }
+        renderKeptItemsTable();
+    }
+
+    // Step 7: Final Calculation
+    async function runCalculation() {
+        const tbody = document.getElementById('settlementTableBody');
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>{% trans "Calculating settlement distribution..." %}</td></tr>';
+
+        try {
+            const resp = await fetch("{% url 'indy_hub:loot_split_calculate_api' %}", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCsrfToken()
+                },
+                body: JSON.stringify({
+                    pilots: state.pilots,
+                    loot_items: state.lootItems,
+                    killmails: state.killmails,
+                    valuation_mode: state.valuationMode
+                })
+            });
+            const data = await resp.json();
+            if (data.ok) {
+                state.calculationResult = data;
+                renderCalculationResults(data);
+            } else {
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">${data.error || '{% trans "Calculation failed." %}'}</td></tr>`;
+            }
+        } catch (err) {
+            tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-4">{% trans "Error:" %} ${err}</td></tr>`;
+        }
+    }
+
+    function renderCalculationResults(data) {
+        // KPI Cards
+        document.getElementById('kpiGrossLoot').textContent = formatIsk(data.summary.gross_loot_value);
+        document.getElementById('kpiLossReimbursement').textContent = formatIsk(data.summary.total_loss_reimbursements);
+        document.getElementById('kpiNetPot').textContent = formatIsk(data.summary.net_distributable_pot);
+        document.getElementById('kpiBaseShare').textContent = formatIsk(data.summary.base_share_per_pilot);
+
+        // Pilot Breakdown Table
+        const tbody = document.getElementById('settlementTableBody');
+        tbody.innerHTML = '';
+
+        data.pilots.forEach(p => {
+            const tr = document.createElement('tr');
+            
+            let statusBadge = '';
+            let balanceHtml = '';
+
+            if (p.declined) {
+                statusBadge = '<span class="badge bg-warning text-dark"><i class="fas fa-ban me-1"></i>{% trans "Declined" %}</span>';
+                balanceHtml = '<span class="text-muted">0.00 ISK</span>';
+            } else if (p.net_balance > 0) {
+                statusBadge = '<span class="badge bg-success"><i class="fas fa-arrow-down me-1"></i>{% trans "Receives Payout" %}</span>';
+                balanceHtml = `<span class="fw-bold text-success">+${formatIsk(p.payout_received)}</span>`;
+            } else if (p.net_balance < 0) {
+                statusBadge = '<span class="badge bg-danger"><i class="fas fa-arrow-up me-1"></i>{% trans "Owes Balance" %}</span>';
+                balanceHtml = `<span class="fw-bold text-danger">-${formatIsk(p.amount_owed)}</span>`;
+            } else {
+                statusBadge = '<span class="badge bg-secondary">{% trans "Even" %}</span>';
+                balanceHtml = '<span class="text-muted">0.00 ISK</span>';
+            }
+
+            const altsText = p.alts && p.alts.length > 0 ? `<div class="small text-muted"><i class="fas fa-link me-1"></i>${p.alts.join(', ')}</div>` : '';
+
+            tr.innerHTML = `
+                <td><img src="${p.portrait_url}" class="pilot-avatar" alt="${p.name}"></td>
+                <td>
+                    <span class="fw-bold">${p.name}</span>
+                    ${altsText}
+                </td>
+                <td class="text-center">${statusBadge}</td>
+                <td class="text-end">${formatIsk(p.base_share)}</td>
+                <td class="text-end text-success">${p.reimbursement > 0 ? '+' + formatIsk(p.reimbursement) : '-'}</td>
+                <td class="text-end text-info">${p.kept_value > 0 ? '-' + formatIsk(p.kept_value) : '-'}</td>
+                <td class="text-end">${balanceHtml}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Direct Transfers List
+        const transfersContainer = document.getElementById('transfersListContainer');
+        transfersContainer.innerHTML = '';
+        if (data.transfers && data.transfers.length > 0) {
+            const list = document.createElement('ul');
+            list.className = 'list-group list-group-flush';
+            data.transfers.forEach(t => {
+                const li = document.createElement('li');
+                li.className = 'list-group-item d-flex justify-content-between align-items-center px-0';
+                li.innerHTML = `
+                    <div>
+                        <span class="badge bg-danger me-2">{% trans "Pay" %}</span>
+                        <strong>${t.from_pilot}</strong> ➔ <i class="fas fa-arrow-right text-muted mx-2"></i> <strong>${t.to_pilot}</strong>
+                    </div>
+                    <span class="badge bg-primary fs-6">${t.formatted_amount}</span>
+                `;
+                list.appendChild(li);
+            });
+            transfersContainer.appendChild(list);
+        } else {
+            transfersContainer.innerHTML = '<p class="text-muted mb-0">{% trans "No direct peer transfers required (all payouts distributed evenly from pool)." %}</p>';
+        }
+
+        // Export Boxes
+        document.getElementById('discordExportBox').textContent = data.exports.discord || '';
+        document.getElementById('ingameExportBox').textContent = data.exports.ingame || '';
+        document.getElementById('stepBtn-7').classList.add('completed');
+    }
+
+    function copyToClipboard(elementId, btnId) {
+        const text = document.getElementById(elementId).textContent;
+        const btn = btnId ? document.getElementById(btnId) : null;
+        const origHtml = btn ? btn.innerHTML : '';
+        
+        navigator.clipboard.writeText(text).then(() => {
+            if (btn) {
+                btn.innerHTML = '<i class="fas fa-check me-1"></i> {% trans "Copied!" %}';
+                btn.classList.add('btn-success');
+                setTimeout(() => {
+                    btn.innerHTML = origHtml;
+                    btn.classList.remove('btn-success');
+                }, 2000);
+            }
+        }).catch(err => {
+            alert('{% trans "Failed to copy:" %} ' + err);
+        });
+    }
+
+    function resetWizard() {
+        if (confirm('{% trans "Are you sure you want to reset the wizard?" %}')) {
+            state.pilots = [];
+            state.lootItems = [];
+            state.killmails = [];
+            document.getElementById('pilotInputText').value = '';
+            document.getElementById('lootInputText').value = '';
+            renderPilotsList();
+            renderLootItemsList();
+            goToStep(1);
+        }
+    }
+</script>
+{% endblock extra_javascript %}
