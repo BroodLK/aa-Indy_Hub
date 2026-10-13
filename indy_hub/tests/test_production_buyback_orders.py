@@ -336,6 +336,22 @@ class BuybackAvailabilityTests(BuybackFixtureMixin, TestCase):
                 # 20000 units = 200 portions => 200 * 349 = 69800
                 self.assertEqual(s["estimated_mineral_in_stock"], 69800)
 
+        # Test with custom refine_rate parameter override (e.g., 90.0%)
+        # Base yield 415 * 90.0% = 373 per 100 units
+        override_payload = self._availability(type_ids=str(TRITANIUM), refine_rate="90.0")
+        self.assertEqual(override_payload["refine_rate_percent"], 90.0)
+        override_suggestions = override_payload["ore_suggestions"][str(TRITANIUM)]
+        for s in override_suggestions:
+            self.assertEqual(s["refine_rate_percent"], 90.0)
+            self.assertEqual(s["yield_per_portion"], 373)
+            self.assertEqual(s["mineral_yields"], {str(TRITANIUM): 373})
+            if s["type_id"] == compressed_veldspar:
+                # 50 portions * 373 = 18650
+                self.assertEqual(s["estimated_mineral_in_stock"], 18650)
+            elif s["type_id"] == veldspar:
+                # 200 portions * 373 = 74600
+                self.assertEqual(s["estimated_mineral_in_stock"], 74600)
+
 
 class BuybackSubmitTests(BuybackFixtureMixin, TestCase):
     def test_successful_submission_creates_draft_order(self) -> None:

@@ -227,13 +227,23 @@ def production_buyback_availability(request):
 
         all_plain_type_ids = set(plain_rows.keys())
         candidate_type_ids = get_ore_type_ids(all_plain_type_ids)
-        refine_rate_val = getattr(config, "ore_refine_rate_percent", None)
-        try:
-            refine_rate_percent = Decimal(str(refine_rate_val or "0"))
-        except (InvalidOperation, ValueError):
-            refine_rate_percent = Decimal("0")
+        refine_rate_param = str(request.GET.get("refine_rate") or "").strip()
+        refine_rate_percent = Decimal("0")
+        if refine_rate_param:
+            try:
+                parsed_rate = Decimal(refine_rate_param)
+                if Decimal("0") < parsed_rate <= Decimal("100"):
+                    refine_rate_percent = parsed_rate
+            except (InvalidOperation, ValueError):
+                refine_rate_percent = Decimal("0")
         if refine_rate_percent <= Decimal("0"):
-            refine_rate_percent = Decimal("84.2")
+            refine_rate_val = getattr(config, "ore_refine_rate_percent", None)
+            try:
+                refine_rate_percent = Decimal(str(refine_rate_val or "0"))
+            except (InvalidOperation, ValueError):
+                refine_rate_percent = Decimal("0")
+            if refine_rate_percent <= Decimal("0"):
+                refine_rate_percent = Decimal("84.2")
 
         refine_ratio = refine_rate_percent / Decimal("100")
 

@@ -425,7 +425,18 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("Add to order", self.script)
         self.assertIn("craft-buyback-tally", self.script)
         self.assertIn("updateBuybackRunningTallies", self.script)
-        self.assertIn("Order tally", self.script)
+        self.assertIn("Estimated Cost", self.script)
+        self.assertIn("craft-buyback-options-container", self.script)
+
+    def test_craft_buyback_sticky_bar_and_refine_rate_controls_present(self) -> None:
+        self.assertIn('id="buyRefineRate"', self.template)
+        self.assertIn('id="craftBuybackStickyBar"', self.template)
+        self.assertIn('id="stickyBuybackTotalCost"', self.template)
+        self.assertIn('id="clearBuybackSelectionBtn"', self.template)
+        self.assertIn('id="createBuybackOrderStickyBtn"', self.template)
+        self.assertIn("getRefineRateValue", self.script)
+        self.assertIn("setRefineRateValue", self.script)
+        self.assertIn("craft-buyback-sticky-bar", (STATIC / "css" / "craft_bp.css").read_text(encoding="utf-8"))
 
     def test_craft_template_disables_buyback_buttons_by_default(self) -> None:
         self.assertIn('id="createBuybackOrderBtn" class="btn btn-sm btn-success w-100 fw-semibold disabled" disabled', self.template)
@@ -447,6 +458,11 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("Add ore to order", self.script)
         self.assertIn("data-target-mineral-id", self.script)
         self.assertIn("data-mineral-yields", self.script)
+        self.assertIn("craft-buyback-check-all-btn", self.script)
+        self.assertIn("craft-buyback-uncheck-all-btn", self.script)
+        self.assertIn("craft-buyback-ores-toolbar", self.script)
+        self.assertIn("syncBuybackOreVisibilityAndExclusivity", self.script)
+        self.assertIn("Surplus", self.script)
 
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(
         self,

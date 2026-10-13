@@ -186,6 +186,12 @@
                                 </button>
                             </div>
                         </div>
+                        <div id="locationLockNotice" class="alert alert-info py-2 px-3 small mb-3 d-none align-items-center gap-2" role="status" aria-live="polite">
+                            <i class="fas fa-info-circle flex-shrink-0" aria-hidden="true"></i>
+                            <div id="locationLockNoticeText">
+                                {% trans "Items in other locations are greyed out because orders are limited to one location per order." %}
+                            </div>
+                        </div>
                         <form method="post" id="purchaseForm">
                             {% csrf_token %}
                             <div class="mb-3">
@@ -405,6 +411,9 @@
                                 <div id="cartStockWarning" class="alert alert-danger py-2 px-3 small mt-3 mb-0 d-none" role="alert">
                                     <i class="fas fa-exclamation-circle me-1"></i>{% trans "One or more items exceed available stock. Adjust quantities to continue." %}
                                 </div>
+                                <div id="invoiceLocationNotice" class="alert alert-info py-2 px-3 small mt-3 mb-0 d-none" role="status">
+                                    <div id="invoiceLocationNoticeText"></div>
+                                </div>
                                 <div class="invoice-total">
                                     <div class="d-flex justify-content-between align-items-center mb-2">
                                         <span class="fw-bold">{% trans "Total Amount" %}</span>
@@ -504,6 +513,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const buyMultibuySearchBtn = document.getElementById('buyMultibuySearchBtn');
     const buyMultibuyModalElement = document.getElementById('buyMultibuyModal');
     const invoiceItemsList = document.getElementById('itemsList');
+    const locationLockNotice = document.getElementById('locationLockNotice');
+    const locationLockNoticeText = document.getElementById('locationLockNoticeText');
+    const invoiceLocationNotice = document.getElementById('invoiceLocationNotice');
+    const invoiceLocationNoticeText = document.getElementById('invoiceLocationNoticeText');
     const confirmPurchaseBtn = document.getElementById('confirmPurchaseBtn');
     const purchaseSubmitStatus = document.getElementById('purchaseSubmitStatus');
     const purchaseSubmitOverlay = document.getElementById('purchaseSubmitOverlay');
@@ -987,6 +1000,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function applyLocationLocking(lockedLocationIds) {
         let correctedSelection = false;
+        let hasLocationLocked = false;
 
         qtyInputs.forEach(input => {
             const row = input.closest('tr');
@@ -1002,6 +1016,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 rowLocationIds.size > 0 &&
                 !hasIntersection(rowLocationIds, lockedLocationIds)
             );
+
+            if (locationLocked) {
+                hasLocationLocked = true;
+            }
 
             if (locationLocked && (parseInt(input.value, 10) || 0) > 0) {
                 input.value = '0';
@@ -1019,6 +1037,67 @@ document.addEventListener('DOMContentLoaded', function() {
                 button.disabled = buttonBaseDisabled || locationLocked;
             });
         });
+
+        containerRowsByKey.forEach((row, containerKey) => {
+            const childInputs = getContainerChildInputs(containerKey);
+            if (!childInputs.length) {
+                return;
+            }
+            const allLocked = childInputs.every(input => {
+                const itemRow = input.closest('tr');
+                return itemRow && itemRow.classList.contains('location-locked');
+            });
+            row.classList.toggle('location-locked', allLocked);
+            const toggleBtn = row.querySelector('.container-toggle-btn');
+            if (toggleBtn) {
+                const buttonBaseDisabled = toggleBtn.dataset.baseDisabled === '1';
+                toggleBtn.disabled = buttonBaseDisabled || allLocked;
+            }
+        });
+
+        const isLockActive = Boolean(hasLocationLocked && lockedLocationIds && lockedLocationIds.size > 0);
+
+        if (locationLockNotice) {
+            if (isLockActive) {
+                const selectedRows = getSelectedItemRows();
+                const selectedLocLabels = Array.from(new Set(
+                    selectedRows.map(r => (r.dataset.locationLabel || '').trim()).filter(Boolean)
+                ));
+                if (locationLockNoticeText) {
+                    if (selectedLocLabels.length === 1) {
+                        const locName = escapeHtml(selectedLocLabels[0]);
+                        locationLockNoticeText.innerHTML = `<strong>${__('Single location per order:')}</strong> ${__('Your current cart contains items at')} <strong>${locName}</strong>. ${__('Items in other locations are greyed out because orders are limited to one location per order.')}`;
+                    } else {
+                        locationLockNoticeText.innerHTML = `<strong>${__('Single location per order:')}</strong> ${__('Items in other locations are greyed out because orders are limited to one location per order.')}`;
+                    }
+                }
+                locationLockNotice.classList.remove('d-none');
+                locationLockNotice.classList.add('d-flex');
+            } else {
+                locationLockNotice.classList.add('d-none');
+                locationLockNotice.classList.remove('d-flex');
+            }
+        }
+
+        if (invoiceLocationNotice) {
+            if (isLockActive) {
+                const selectedRows = getSelectedItemRows();
+                const selectedLocLabels = Array.from(new Set(
+                    selectedRows.map(r => (r.dataset.locationLabel || '').trim()).filter(Boolean)
+                ));
+                if (invoiceLocationNoticeText) {
+                    if (selectedLocLabels.length === 1) {
+                        const locName = escapeHtml(selectedLocLabels[0]);
+                        invoiceLocationNoticeText.innerHTML = `<i class="fas fa-map-marker-alt me-1"></i>${__('Order location:')} <strong>${locName}</strong> <span class="text-muted d-block small">${__('1 order per location: other locations disabled')}</span>`;
+                    } else {
+                        invoiceLocationNoticeText.innerHTML = `<i class="fas fa-map-marker-alt me-1"></i>${__('1 order per location: other locations disabled')}`;
+                    }
+                }
+                invoiceLocationNotice.classList.remove('d-none');
+            } else {
+                invoiceLocationNotice.classList.add('d-none');
+            }
+        }
 
         return correctedSelection;
     }
