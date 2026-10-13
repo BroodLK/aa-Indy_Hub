@@ -464,6 +464,18 @@ class CraftBuybackAndMaterialExchangeBuyTests(SimpleTestCase):
         self.assertIn("syncBuybackOreVisibilityAndExclusivity", self.script)
         self.assertIn("Surplus", self.script)
 
+    def test_craft_js_commits_buyback_orders_to_real_prices_and_updates_downstream(
+        self,
+    ) -> None:
+        self.assertIn("commitBuybackPurchasesFromChecks", self.script)
+        self.assertIn("applyCommittedBuybackToSimulation", self.script)
+        self.assertIn("applyCommittedBuybackNoteToRow", self.script)
+        self.assertIn("bought from buyback", self.script)
+        self.assertIn("estimated cost left", self.script)
+        self.assertIn("Fulfilled from buyback", self.script)
+        self.assertIn("MINERAL_NAMES", self.script)
+        self.assertIn("committedBuyback", self.script)
+
     def test_material_exchange_buy_page_supports_prefill_and_multi_location_stock(
         self,
     ) -> None:

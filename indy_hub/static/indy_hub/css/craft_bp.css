@@ -2476,6 +2476,11 @@ html[data-theme="darkly"] .craft-header-icon {
     line-height: 1.2;
 }
 
+.craft-buyback-status-note {
+    font-size: 0.725rem;
+    line-height: 1.25;
+}
+
 .craft-buyback-options-container::-webkit-scrollbar {
     width: 4px;
 }

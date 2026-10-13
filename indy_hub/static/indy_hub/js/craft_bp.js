@@ -2378,6 +2378,7 @@ function collectFullUiState() {
         buildSchedule: collectBuildScheduleStateSnapshot(),
         scheduleTracking: { optIn: Boolean(trackingOptIn?.checked) },
         // Private to this user and simulation; never part of share state.
+        committedBuyback: collectCommittedBuybackSnapshot(),
         buybackOrders: collectBuybackOrdersSnapshot(),
         importFees: collectImportFeesStateSnapshot(),
         industryFees: collectIndustryFeeStateSnapshot(),
@@ -2790,7 +2791,11 @@ function applyFullUiState(snapshot, options = {}) {
             }
         }
         applyMineralConversionStateSnapshot(snapshot.mineralConversion);
+        if (snapshot.committedBuyback) {
+            applyCommittedBuybackSnapshot(snapshot.committedBuyback);
+        }
         applyBuybackOrdersSnapshot(snapshot.buybackOrders);
+        applyCommittedBuybackToSimulation();
         applyTreeDetailsState(snapshot.treeDetailsOpen);
         applyConfigureAccordionState(snapshot.configureAccordionOpenIds);
 
@@ -7207,6 +7212,8 @@ function buildFinancialRow(item, pricesMap) {
         attachPriceInputListener(realInput);
     }
 
+    applyCommittedBuybackNoteToRow(row, item.typeId);
+
     return { row, typeId: item.typeId, fuzzInput, realInput, isBpc, isManualFinancial };
 }
 
@@ -7324,6 +7331,8 @@ function updateFinancialRow(row, item) {
             realInput.dataset.fixedPrice = 'false';
         }
     }
+
+    applyCommittedBuybackNoteToRow(row, item.typeId);
 }
 
 // Cache the server-rendered dashboard ordering before any JS re-renders the Materials section.
@@ -11294,12 +11303,26 @@ function buildNeededPurchasesState() {
     const allocation = getOwnedAllocation();
     const plannerItems = getPurchasePlannerItemsFromDom();
     const usingPlannerItems = plannerItems.length > 0;
+    const committedMap = CRAFT_BUYBACK_STATE.committedPurchases || {};
 
     if (!allocation) {
+        const rows = plannerItems.map((item) => {
+            const typeId = Number(item.typeId ?? item.type_id) || 0;
+            const committed = committedMap[String(typeId)];
+            const boughtQty = committed ? (Number(committed.quantity) || 0) : 0;
+            const originalQty = Math.max(0, Math.ceil(Number(item.qty) || 0));
+            const netQty = Math.max(0, originalQty - boughtQty);
+            return {
+                ...item,
+                qty: netQty,
+                requiredQuantity: originalQty,
+                boughtQuantity: boughtQty,
+            };
+        });
         return {
             ownedData: { byName: new Map(), labelsByName: new Map(), malformedLines: [] },
             ownedLookup: { byType: new Map(), matchedNames: new Set(), unresolvedNames: [] },
-            rowsToDisplay: plannerItems,
+            rowsToDisplay: rows,
             usingPlannerItems,
             leftoverOwnedRows: [],
         };
@@ -11312,10 +11335,23 @@ function buildNeededPurchasesState() {
     // No production tree to walk: fall back to the planner rows, which already
     // carry their owned coverage from updateFinancialTabFromState().
     if (!Array.isArray(treeItems)) {
+        const rows = plannerItems.map((item) => {
+            const typeId = Number(item.typeId ?? item.type_id) || 0;
+            const committed = committedMap[String(typeId)];
+            const boughtQty = committed ? (Number(committed.quantity) || 0) : 0;
+            const originalQty = Math.max(0, Math.ceil(Number(item.qty) || 0));
+            const netQty = Math.max(0, originalQty - boughtQty);
+            return {
+                ...item,
+                qty: netQty,
+                requiredQuantity: Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? originalQty) || 0)),
+                boughtQuantity: boughtQty,
+            };
+        }).filter((item) => Number(item.qty) > 0 || item.boughtQuantity > 0);
         return {
             ownedData,
             ownedLookup,
-            rowsToDisplay: plannerItems.filter((item) => Number(item.qty) > 0),
+            rowsToDisplay: rows,
             usingPlannerItems,
             leftoverOwnedRows: getLeftoverOwnedRows(allocation),
         };
@@ -11333,18 +11369,19 @@ function buildNeededPurchasesState() {
             return;
         }
         const qty = Math.max(0, Math.ceil(Number(item.quantity ?? item.qty ?? 0))) || 0;
-        if (!qty) {
-            return;
-        }
         const plannerItem = plannerByType.get(typeId);
         const name = String(item.typeName || item.type_name || '');
         const marketGroup = String(item.marketGroup || item.market_group || '');
+        const committed = committedMap[String(typeId)];
+        const boughtQty = committed ? (Number(committed.quantity) || 0) : 0;
+
         const existing = aggregated.get(typeId) || {
             typeId,
             name,
             qty: 0,
             requiredQuantity: 0,
             ownedQuantity: 0,
+            boughtQuantity: 0,
             surplus: 0,
             marketGroup,
             unitPrice: Number(plannerItem && plannerItem.unitPrice) || 0,
@@ -11352,6 +11389,7 @@ function buildNeededPurchasesState() {
         existing.qty += qty;
         existing.requiredQuantity += Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.quantity ?? qty) || 0));
         existing.ownedQuantity += Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
+        existing.boughtQuantity = boughtQty;
         existing.surplus += Math.max(0, Math.ceil(Number(item.surplus) || 0));
         if (!existing.name && name) {
             existing.name = name;
@@ -11362,10 +11400,18 @@ function buildNeededPurchasesState() {
         aggregated.set(typeId, existing);
     });
 
+    const rows = Array.from(aggregated.values()).map((row) => {
+        const netQty = Math.max(0, row.qty - row.boughtQuantity);
+        return {
+            ...row,
+            qty: netQty,
+        };
+    }).filter((row) => row.qty > 0 || row.boughtQuantity > 0);
+
     return {
         ownedData,
         ownedLookup,
-        rowsToDisplay: sortNeededPurchaseRows(Array.from(aggregated.values())),
+        rowsToDisplay: sortNeededPurchaseRows(rows),
         usingPlannerItems,
         leftoverOwnedRows: getLeftoverOwnedRows(allocation),
     };
@@ -11474,6 +11520,7 @@ function computeNeededPurchases() {
             totalCost += line;
             const needed = Math.max(0, Math.ceil(Number(item.requiredQuantity ?? item.qty) || 0));
             const owned = Math.max(0, Math.ceil(Number(item.ownedQuantity) || 0));
+            const bought = Math.max(0, Math.ceil(Number(item.boughtQuantity) || 0));
             const surplus = Math.max(0, Math.ceil(Number(item.surplus) || 0));
 
             const tr = document.createElement('tr');
@@ -11482,6 +11529,18 @@ function computeNeededPurchases() {
             // deliberately styled as informational because it is excluded from
             // profit; a zero value is muted so the eye goes to real numbers.
             const zero = (value) => (value > 0 ? '' : ' text-muted opacity-50');
+            const buyQtyHtml = item.qty > 0 ? `
+                <span class="badge bg-primary text-white craft-buy-qty" aria-label="${escapeHtml(__('To buy'))}: ${formatInteger(item.qty)}">
+                    <i class="fas fa-cart-plus me-1" aria-hidden="true"></i>${formatInteger(item.qty)}
+                </span>
+                ${bought > 0 ? `<div class="text-xs text-info mt-1"><i class="fas fa-check-circle me-1"></i>${formatInteger(bought)} ${escapeHtml(__('bought from buyback'))}</div>` : ''}
+            ` : `
+                <span class="badge bg-success text-white craft-buy-qty" aria-label="${escapeHtml(__('Fulfilled from buyback'))}">
+                    <i class="fas fa-check-circle me-1" aria-hidden="true"></i>${escapeHtml(__('Fulfilled'))}
+                </span>
+                <div class="text-xs text-success mt-1">${formatInteger(bought)} ${escapeHtml(__('bought from buyback'))}</div>
+            `;
+
             tr.innerHTML = `
                 <td>
                     <div class="d-flex align-items-center gap-2">
@@ -11496,9 +11555,7 @@ function computeNeededPurchases() {
                     ${owned > 0 ? `<i class="fas fa-box-open me-1" aria-hidden="true"></i>` : ''}${formatInteger(owned)}
                 </td>
                 <td class="text-end" data-qty="${item.qty}" data-qty-buy="${item.qty}">
-                    <span class="badge bg-primary text-white craft-buy-qty" aria-label="${escapeHtml(__('To buy'))}: ${formatInteger(item.qty)}">
-                        <i class="fas fa-cart-plus me-1" aria-hidden="true"></i>${formatInteger(item.qty)}
-                    </span>
+                    ${buyQtyHtml}
                 </td>
                 <td class="text-end craft-surplus-qty${zero(surplus)}" data-qty-surplus="${surplus}">
                     ${surplus > 0 ? `<i class="fas fa-arrow-up-right-dots me-1" aria-hidden="true"></i>` : ''}${formatInteger(surplus)}
@@ -11514,9 +11571,10 @@ function computeNeededPurchases() {
 
         // rowsToDisplay.length is the "items still to buy" count; it was already
         // computed here and thrown away.
+        const activeNeededRows = rowsToDisplay.filter((item) => Number(item.qty) > 0);
         const neededCountEl = document.getElementById('shoppingItemsNeededCount');
         if (neededCountEl) {
-            neededCountEl.textContent = formatInteger(rowsToDisplay.length);
+            neededCountEl.textContent = formatInteger(activeNeededRows.length);
         }
 
         if (totalEl) {
@@ -11546,12 +11604,18 @@ const CRAFT_BUYBACK_STATE = {
     fetchedAtMs: 0,
     loading: null,
     orders: [],
+    committedPurchases: {},
 };
 const CRAFT_BUYBACK_AVAILABILITY_TTL_MS = 60000;
 
 function getBuybackStorageKey() {
     const blueprintTypeId = Number(window.BLUEPRINT_DATA?.type_id || window.BLUEPRINT_DATA?.bp_type_id || 0) || 0;
     return `indyHubSimBuybackOrders:${blueprintTypeId}`;
+}
+
+function getBuybackCommittedStorageKey() {
+    const blueprintTypeId = Number(window.BLUEPRINT_DATA?.type_id || window.BLUEPRINT_DATA?.bp_type_id || 0) || 0;
+    return `indyHubSimCommittedBuyback:${blueprintTypeId}`;
 }
 
 function normalizeBuybackOrders(raw) {
@@ -11587,6 +11651,23 @@ function loadBuybackOrdersFromStorage() {
     }
 }
 
+function saveCommittedBuybackToStorage() {
+    try {
+        window.localStorage.setItem(getBuybackCommittedStorageKey(), JSON.stringify(CRAFT_BUYBACK_STATE.committedPurchases || {}));
+    } catch (error) {
+        // Storage can be full or disabled; the saved simulation still has it.
+    }
+}
+
+function loadCommittedBuybackFromStorage() {
+    try {
+        const raw = window.localStorage.getItem(getBuybackCommittedStorageKey());
+        CRAFT_BUYBACK_STATE.committedPurchases = raw ? JSON.parse(raw) : {};
+    } catch (error) {
+        CRAFT_BUYBACK_STATE.committedPurchases = {};
+    }
+}
+
 function collectBuybackOrdersSnapshot() {
     return cloneCraftUiJsonValue(CRAFT_BUYBACK_STATE.orders, []);
 }
@@ -11597,6 +11678,250 @@ function applyBuybackOrdersSnapshot(snapshot) {
     }
     CRAFT_BUYBACK_STATE.orders = normalizeBuybackOrders(snapshot);
     saveBuybackOrders();
+}
+
+function collectCommittedBuybackSnapshot() {
+    return cloneCraftUiJsonValue(CRAFT_BUYBACK_STATE.committedPurchases || {}, {});
+}
+
+function applyCommittedBuybackSnapshot(snapshot) {
+    if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)) {
+        CRAFT_BUYBACK_STATE.committedPurchases = cloneCraftUiJsonValue(snapshot, {});
+        saveCommittedBuybackToStorage();
+    }
+}
+
+function commitSingleBuybackPurchase({ typeId, typeName = '', quantity = 1, unitPrice = 0 }) {
+    const tid = Number(typeId) || 0;
+    const qty = Math.max(1, Math.floor(Number(quantity) || 1));
+    const price = Math.max(0, Number(unitPrice) || 0);
+    if (!tid) return;
+
+    if (!CRAFT_BUYBACK_STATE.committedPurchases) {
+        CRAFT_BUYBACK_STATE.committedPurchases = {};
+    }
+
+    const key = String(tid);
+    const existing = CRAFT_BUYBACK_STATE.committedPurchases[key] || {
+        typeId: tid,
+        typeName: typeName || `Type ${tid}`,
+        quantity: 0,
+        cost: 0,
+        details: [],
+    };
+    existing.quantity += qty;
+    existing.cost += qty * price;
+    existing.details.push({
+        source: 'direct',
+        quantity: qty,
+        unitPrice: price,
+        cost: qty * price,
+    });
+    CRAFT_BUYBACK_STATE.committedPurchases[key] = existing;
+    saveCommittedBuybackToStorage();
+}
+
+function commitBuybackPurchasesFromChecks(checkedBoxes) {
+    if (!checkedBoxes || checkedBoxes.length === 0) return false;
+
+    if (!CRAFT_BUYBACK_STATE.committedPurchases) {
+        CRAFT_BUYBACK_STATE.committedPurchases = {};
+    }
+
+    const directPurchases = [];
+    const orePurchases = [];
+
+    checkedBoxes.forEach((chk) => {
+        const typeId = Number(chk.dataset.typeId) || 0;
+        const typeName = String(chk.dataset.typeName || `Type ${typeId}`);
+        const quantity = Math.max(1, Math.floor(Number(chk.dataset.quantity) || 1));
+        const unitPrice = Math.max(0, Number(chk.dataset.unitPrice) || 0);
+        const isOre = chk.classList.contains('craft-buyback-ore-check') || Boolean(chk.dataset.targetMineralId);
+
+        if (isOre) {
+            const targetMineralId = Number(chk.dataset.targetMineralId) || 0;
+            const portionSize = Math.max(1, Number(chk.dataset.portionSize) || 100);
+            const yieldPerPortion = Math.max(0, Number(chk.dataset.yieldPerPortion) || 0);
+            let mineralYields = {};
+            try {
+                mineralYields = JSON.parse(chk.dataset.mineralYields || '{}');
+            } catch (e) {
+                if (targetMineralId > 0 && yieldPerPortion > 0) {
+                    mineralYields = { [targetMineralId]: yieldPerPortion };
+                }
+            }
+            orePurchases.push({
+                oreTypeId: typeId,
+                oreTypeName: typeName,
+                oreQuantity: quantity,
+                oreUnitPrice: unitPrice,
+                oreCost: quantity * unitPrice,
+                targetMineralId,
+                portionSize,
+                mineralYields,
+            });
+        } else {
+            directPurchases.push({
+                typeId,
+                typeName,
+                quantity,
+                unitPrice,
+                cost: quantity * unitPrice,
+            });
+        }
+    });
+
+    directPurchases.forEach((p) => {
+        const key = String(p.typeId);
+        const existing = CRAFT_BUYBACK_STATE.committedPurchases[key] || {
+            typeId: p.typeId,
+            typeName: p.typeName,
+            quantity: 0,
+            cost: 0,
+            details: [],
+        };
+        existing.quantity += p.quantity;
+        existing.cost += p.cost;
+        existing.details.push({
+            source: 'direct',
+            quantity: p.quantity,
+            unitPrice: p.unitPrice,
+            cost: p.cost,
+        });
+        CRAFT_BUYBACK_STATE.committedPurchases[key] = existing;
+    });
+
+    orePurchases.forEach((p) => {
+        const portions = p.oreQuantity / p.portionSize;
+        const yieldKeys = Object.keys(p.mineralYields);
+        yieldKeys.forEach((mIdStr) => {
+            const mId = Number(mIdStr) || 0;
+            const yieldPerPortion = Number(p.mineralYields[mIdStr]) || 0;
+            const mineralYield = Math.floor(portions * yieldPerPortion);
+            if (mId > 0 && mineralYield > 0) {
+                const key = String(mId);
+                const existing = CRAFT_BUYBACK_STATE.committedPurchases[key] || {
+                    typeId: mId,
+                    typeName: '',
+                    quantity: 0,
+                    cost: 0,
+                    details: [],
+                };
+                existing.quantity += mineralYield;
+                const isPrimary = (p.targetMineralId === mId) || (yieldKeys.length === 1);
+                const allocatedCost = isPrimary ? p.oreCost : 0;
+                existing.cost += allocatedCost;
+                existing.details.push({
+                    source: 'ore',
+                    oreTypeId: p.oreTypeId,
+                    oreTypeName: p.oreTypeName,
+                    oreQuantity: p.oreQuantity,
+                    mineralYield,
+                    cost: allocatedCost,
+                });
+                CRAFT_BUYBACK_STATE.committedPurchases[key] = existing;
+            }
+        });
+    });
+
+    saveCommittedBuybackToStorage();
+    return true;
+}
+
+function applyCommittedBuybackNoteToRow(row, typeId) {
+    if (!row || !typeId) return;
+    const committed = CRAFT_BUYBACK_STATE.committedPurchases?.[String(typeId)];
+    let noteEl = row.querySelector('.craft-buyback-status-note');
+    if (!committed || Number(committed.quantity) <= 0) {
+        if (noteEl) noteEl.remove();
+        return;
+    }
+
+    const boughtQty = Number(committed.quantity) || 0;
+    const boughtCost = Number(committed.cost) || 0;
+    const qtyCell = row.querySelector('.craft-financial-qty-cell') || row.querySelector('td[data-qty]');
+    const payableQty = Math.max(0, Math.ceil(Number(qtyCell?.dataset?.qtyPay || qtyCell?.dataset?.qty || 0)));
+    const requiredQty = Math.max(0, Math.ceil(Number(qtyCell?.dataset?.qtyRequired || payableQty)));
+    const neededQty = payableQty > 0 ? payableQty : requiredQty;
+    const fuzzInput = row.querySelector('.fuzzwork-price');
+    const marketPrice = getCraftPriceInputValue(fuzzInput) || 0;
+
+    if (!noteEl) {
+        const wrap = row.querySelector('.craft-planner-item-name-wrap') || row.querySelector('td:first-child');
+        if (wrap) {
+            noteEl = document.createElement('div');
+            noteEl.className = 'craft-buyback-status-note text-xs mt-1';
+            wrap.appendChild(noteEl);
+        }
+    }
+
+    if (noteEl) {
+        if (neededQty > 0 && boughtQty >= neededQty) {
+            noteEl.className = 'craft-buyback-status-note text-success text-xs mt-1';
+            noteEl.innerHTML = `<i class="fas fa-check-circle me-1"></i>${formatInteger(Math.min(boughtQty, neededQty))} ${escapeHtml(__('bought from buyback'))} (${formatPrice(boughtCost)})`;
+        } else if (neededQty > 0 && boughtQty < neededQty) {
+            const remainingQty = Math.max(0, neededQty - boughtQty);
+            const remainingCost = remainingQty * marketPrice;
+            noteEl.className = 'craft-buyback-status-note text-info text-xs mt-1';
+            noteEl.innerHTML = `<i class="fas fa-info-circle me-1"></i><strong>${formatInteger(boughtQty)}</strong> ${escapeHtml(__('bought from buyback'))}, <strong>${formatPrice(remainingCost)}</strong> ${escapeHtml(__('estimated cost left'))} (${formatInteger(remainingQty)} ${escapeHtml(__('units'))})`;
+        } else {
+            noteEl.className = 'craft-buyback-status-note text-info text-xs mt-1';
+            noteEl.innerHTML = `<i class="fas fa-layer-group me-1"></i><strong>${formatInteger(boughtQty)}</strong> ${escapeHtml(__('bought from buyback'))} (${formatPrice(boughtCost)})`;
+        }
+    }
+}
+
+function applyCommittedBuybackToSimulation() {
+    const committedMap = CRAFT_BUYBACK_STATE.committedPurchases || {};
+    const financialBody = document.getElementById('financialItemsBody');
+    if (!financialBody) return;
+
+    Object.keys(committedMap).forEach((typeIdStr) => {
+        const typeId = Number(typeIdStr) || 0;
+        const committed = committedMap[typeIdStr];
+        if (!typeId || !committed || committed.quantity <= 0) return;
+
+        const row = financialBody.querySelector(`tr[data-type-id="${typeId}"]`);
+        if (!row) return;
+
+        const qtyCell = row.querySelector('.craft-financial-qty-cell') || row.querySelector('[data-qty]');
+        const payableQty = Math.max(0, Math.ceil(Number(qtyCell?.dataset?.qtyPay || qtyCell?.dataset?.qty || 0)));
+        const requiredQty = Math.max(0, Math.ceil(Number(qtyCell?.dataset?.qtyRequired || payableQty)));
+        const neededQty = payableQty > 0 ? payableQty : requiredQty;
+
+        const fuzzInput = row.querySelector('.fuzzwork-price');
+        const realInput = row.querySelector('.real-price');
+        if (!realInput) return;
+
+        const marketPrice = getCraftPriceInputValue(fuzzInput) || 0;
+        const boughtQty = Number(committed.quantity) || 0;
+        const boughtCost = Number(committed.cost) || 0;
+
+        let effectiveUnitPrice = 0;
+
+        if (neededQty > 0) {
+            if (boughtQty >= neededQty) {
+                effectiveUnitPrice = boughtCost > 0 ? (boughtCost / neededQty) : (marketPrice > 0 ? marketPrice : 0);
+            } else {
+                const remainingQty = Math.max(0, neededQty - boughtQty);
+                const remainingCost = remainingQty * marketPrice;
+                const totalLineCost = boughtCost + remainingCost;
+                effectiveUnitPrice = totalLineCost / neededQty;
+            }
+        } else if (boughtQty > 0) {
+            effectiveUnitPrice = boughtCost / boughtQty;
+        }
+
+        if (effectiveUnitPrice > 0) {
+            setCraftPriceInputValue(realInput, effectiveUnitPrice);
+            updatePriceInputManualState(realInput, true);
+            if (window.SimulationAPI && typeof window.SimulationAPI.setPrice === 'function') {
+                window.SimulationAPI.setPrice(typeId, 'real', effectiveUnitPrice);
+            }
+        }
+
+        applyCommittedBuybackNoteToRow(row, typeId);
+    });
 }
 
 function getPendingBuybackQuantity(typeId) {
@@ -11750,6 +12075,26 @@ function handleCreateBuybackOrder(button) {
         return;
     }
 
+    // 1. Commit buyback purchases to simulation state
+    commitBuybackPurchasesFromChecks(checkedBoxes);
+    applyCommittedBuybackToSimulation();
+
+    if (typeof recalcFinancials === 'function') {
+        recalcFinancials();
+    }
+    if (typeof scheduleImportFeesRecalculation === 'function') {
+        scheduleImportFeesRecalculation({ syncActual: false });
+    }
+    if (typeof computeNeededPurchases === 'function') {
+        computeNeededPurchases();
+    }
+    if (typeof updateMineralConversionActionButtons === 'function') {
+        updateMineralConversionActionButtons();
+    }
+    if (typeof scheduleCraftUiStateSave === 'function') {
+        scheduleCraftUiStateSave();
+    }
+
     const itemsMap = new Map();
     checkedBoxes.forEach((chk) => {
         const typeId = Number(chk.dataset.typeId) || 0;
@@ -11769,13 +12114,19 @@ function handleCreateBuybackOrder(button) {
         }
     });
 
+    // Clear staged checkbox state
+    checkedBoxes.forEach((chk) => {
+        chk.checked = false;
+        const opt = chk.closest('.craft-buyback-option');
+        if (opt) {
+            opt.classList.remove('is-selected');
+        }
+    });
+    syncBuybackOreVisibilityAndExclusivity();
+    updateBuybackRunningTallies();
+
     const itemsToPrefill = Array.from(itemsMap.values());
     if (itemsToPrefill.length === 0) {
-        if (typeof showToast === 'function') {
-            showToast(__('Please check at least one buyback item to add to your order.'), false);
-        } else {
-            alert(__('Please check at least one buyback item to add to your order.'));
-        }
         return;
     }
 
@@ -12378,7 +12729,18 @@ async function submitBuybackOrder() {
         }
         bootstrap.Modal.getOrCreateInstance(modalEl).hide();
         CRAFT_BUYBACK_STATE.fetchedAtMs = 0;
+        commitSingleBuybackPurchase({
+            typeId,
+            typeName: item.type_name || `Type ${typeId}`,
+            quantity,
+            unitPrice: Number(item.unit_price) || 0,
+        });
+        applyCommittedBuybackToSimulation();
+        if (typeof recalcFinancials === 'function') recalcFinancials();
+        if (typeof scheduleImportFeesRecalculation === 'function') scheduleImportFeesRecalculation({ syncActual: false });
         computeNeededPurchases();
+        if (typeof updateMineralConversionActionButtons === 'function') updateMineralConversionActionButtons();
+        if (typeof scheduleCraftUiStateSave === 'function') scheduleCraftUiStateSave();
         CRAFT_BUYBACK_STATE.lastCreatedMessage = `${__('Buyback order created')}: ${order.reference} (${order.status_label}). ${__('It shows as reserved until the order workflow completes.')}`;
         return;
     }
@@ -12411,7 +12773,9 @@ async function submitBuybackOrder() {
 
 function initializeBuybackOrders() {
     loadBuybackOrdersFromStorage();
+    loadCommittedBuybackFromStorage();
     initializeBuybackOrderButtons();
+    applyCommittedBuybackToSimulation();
     // Click-triggered popovers do not close on Escape by themselves; keyboard
     // users need a way out that returns focus to the badge.
     document.addEventListener('keydown', (event) => {
@@ -12498,6 +12862,17 @@ const MINERAL_TYPE_IDS = [
     40,    // Megacyte
     11399, // Morphite
 ];
+
+const MINERAL_NAMES = {
+    34: 'Tritanium',
+    35: 'Pyerite',
+    36: 'Mexallon',
+    37: 'Isogen',
+    38: 'Nocxium',
+    39: 'Zydrine',
+    40: 'Megacyte',
+    11399: 'Morphite',
+};
 
 let conversionResultData = null;
 let appliedMineralConversionState = null;
@@ -12633,22 +13008,26 @@ function getMineralsFromFinancialTable() {
 
     const rows = financialBody.querySelectorAll('tr[data-type-id]');
     rows.forEach(row => {
-        const typeId = parseInt(row.getAttribute('data-type-id'));
+        const typeId = parseInt(row.getAttribute('data-type-id'), 10);
         const qtyElement = row.querySelector('[data-qty]');
 
         if (MINERAL_TYPE_IDS.includes(typeId) && qtyElement) {
-            const quantity = parseInt(
+            const rawQuantity = parseInt(
                 qtyElement.getAttribute('data-qty')
                 || qtyElement.dataset?.qty
                 || '0',
                 10
             );
-            if (quantity > 0) {
+            const committed = CRAFT_BUYBACK_STATE.committedPurchases?.[String(typeId)];
+            const boughtQty = committed ? (Number(committed.quantity) || 0) : 0;
+            const remainingQuantity = Math.max(0, rawQuantity - boughtQty);
+
+            if (remainingQuantity > 0) {
                 // Get type name from the row
                 const nameElement = row.querySelector('.craft-planner-item-name');
-                const typeName = nameElement ? nameElement.textContent.trim() : `Type ${typeId}`;
+                const typeName = nameElement ? nameElement.textContent.trim() : (MINERAL_NAMES[typeId] || `Type ${typeId}`);
 
-                minerals.push({ type_id: typeId, type_name: typeName, quantity: quantity });
+                minerals.push({ type_id: typeId, type_name: typeName, quantity: remainingQuantity });
             }
         }
     });
@@ -13080,7 +13459,7 @@ async function copyCompressedOresToClipboard() {
 function getMineralNameById(typeId) {
     const minerals = getMineralsFromFinancialTable();
     const found = minerals.find(m => m.type_id === typeId);
-    return found ? found.type_name : `Mineral ${typeId}`;
+    return found ? found.type_name : (MINERAL_NAMES[typeId] || `Mineral ${typeId}`);
 }
 
 function getCookie(name) {
