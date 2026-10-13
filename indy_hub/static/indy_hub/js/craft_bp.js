@@ -2213,6 +2213,175 @@ function applyImportFeesStateSnapshot(snapshot) {
     }
 }
 
+const CRAFT_REPROCESSOR_STATE = {
+    profiles: [],
+    selectedProfileId: null,
+    selectedProfile: null,
+    loading: null,
+    loaded: false,
+};
+
+function getSelectedReprocessorProfile() {
+    return CRAFT_REPROCESSOR_STATE.selectedProfile;
+}
+
+function getSelectedReprocessorProfileId() {
+    return CRAFT_REPROCESSOR_STATE.selectedProfileId;
+}
+
+async function fetchReprocessorProfiles() {
+    if (CRAFT_REPROCESSOR_STATE.loaded) {
+        return CRAFT_REPROCESSOR_STATE.profiles;
+    }
+    if (CRAFT_REPROCESSOR_STATE.loading) {
+        return CRAFT_REPROCESSOR_STATE.loading;
+    }
+    const endpoint = String(window.BLUEPRINT_DATA?.urls?.reprocessor_profiles || '/indy_hub/api/reprocessor-profiles/').trim();
+    CRAFT_REPROCESSOR_STATE.loading = fetch(endpoint, { credentials: 'same-origin' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+            if (data && Array.isArray(data.profiles)) {
+                CRAFT_REPROCESSOR_STATE.profiles = data.profiles;
+                CRAFT_REPROCESSOR_STATE.loaded = true;
+                populateReprocessorSelectOptions();
+                try {
+                    const savedId = localStorage.getItem('indyHub_lastReprocessorProfileId');
+                    if (savedId && CRAFT_REPROCESSOR_STATE.selectedProfileId === null) {
+                        setReprocessorProfileSelection(savedId, { triggerUpdate: false });
+                    }
+                } catch (e) {
+                    // ignore
+                }
+            }
+            return CRAFT_REPROCESSOR_STATE.profiles;
+        })
+        .catch(() => [])
+        .finally(() => {
+            CRAFT_REPROCESSOR_STATE.loading = null;
+        });
+    return CRAFT_REPROCESSOR_STATE.loading;
+}
+
+function populateReprocessorSelectOptions() {
+    const buySelect = document.getElementById('buyReprocessorSelect');
+    const modalSelect = document.getElementById('oreReprocessorSelect');
+    const selects = [buySelect, modalSelect].filter(Boolean);
+
+    selects.forEach((sel) => {
+        const currentVal = sel.value;
+        sel.innerHTML = '<option value="">Manual Refine Rate</option>';
+
+        if (CRAFT_REPROCESSOR_STATE.profiles.length === 0) {
+            return;
+        }
+
+        const ownGroup = document.createElement('optgroup');
+        ownGroup.label = 'My Reprocessors (0% Fee)';
+        const publicGroup = document.createElement('optgroup');
+        publicGroup.label = 'Public Reprocessing Services';
+
+        let ownCount = 0;
+        let publicCount = 0;
+
+        CRAFT_REPROCESSOR_STATE.profiles.forEach((p) => {
+            const opt = document.createElement('option');
+            opt.value = String(p.id);
+            const feeStr = p.is_own ? '0% fee' : `${p.effective_fee_percent}% fee`;
+            const yieldStr = `${Number(p.estimated_yield_percent || 0).toFixed(1)}% yield`;
+            opt.textContent = `${p.character_name} (${yieldStr}, ${feeStr})`;
+            opt.dataset.yieldPercent = String(p.estimated_yield_percent || '');
+            opt.dataset.feePercent = String(p.effective_fee_percent || 0);
+            opt.dataset.isOwn = p.is_own ? '1' : '0';
+
+            if (p.is_own) {
+                ownGroup.appendChild(opt);
+                ownCount++;
+            } else {
+                publicGroup.appendChild(opt);
+                publicCount++;
+            }
+        });
+
+        if (ownCount > 0) {
+            sel.appendChild(ownGroup);
+        }
+        if (publicCount > 0) {
+            sel.appendChild(publicGroup);
+        }
+
+        if (currentVal && sel.querySelector(`option[value="${currentVal}"]`)) {
+            sel.value = currentVal;
+        } else if (CRAFT_REPROCESSOR_STATE.selectedProfileId !== null) {
+            sel.value = String(CRAFT_REPROCESSOR_STATE.selectedProfileId);
+        }
+    });
+
+    updateReprocessorBadge();
+}
+
+function setReprocessorProfileSelection(profileIdRaw, { triggerUpdate = true } = {}) {
+    const pId = profileIdRaw ? parseInt(profileIdRaw, 10) : null;
+    const profile = pId ? CRAFT_REPROCESSOR_STATE.profiles.find((p) => p.id === pId) : null;
+
+    CRAFT_REPROCESSOR_STATE.selectedProfileId = profile ? profile.id : null;
+    CRAFT_REPROCESSOR_STATE.selectedProfile = profile || null;
+
+    try {
+        if (profile) {
+            localStorage.setItem('indyHub_lastReprocessorProfileId', String(profile.id));
+        } else {
+            localStorage.removeItem('indyHub_lastReprocessorProfileId');
+        }
+    } catch (e) {
+        // ignore
+    }
+
+    const buySelect = document.getElementById('buyReprocessorSelect');
+    const modalSelect = document.getElementById('oreReprocessorSelect');
+    const selVal = profile ? String(profile.id) : '';
+    if (buySelect && buySelect.value !== selVal) {
+        buySelect.value = selVal;
+    }
+    if (modalSelect && modalSelect.value !== selVal) {
+        modalSelect.value = selVal;
+    }
+
+    if (profile && profile.estimated_yield_percent) {
+        setRefineRateValue(profile.estimated_yield_percent, { syncInputs: true, triggerUpdate: false });
+    }
+
+    updateReprocessorBadge();
+
+    if (triggerUpdate) {
+        scheduleCraftUiStateSave();
+        refreshBuybackAvailabilityWithCurrentRefineRate();
+    }
+}
+
+function updateReprocessorBadge() {
+    const badge = document.getElementById('buyReprocessorFeeBadge');
+    if (!badge) return;
+
+    const profile = CRAFT_REPROCESSOR_STATE.selectedProfile;
+    if (!profile) {
+        badge.classList.add('d-none');
+        badge.textContent = '';
+        return;
+    }
+
+    badge.classList.remove('d-none');
+    if (profile.is_own) {
+        badge.className = 'badge bg-success-subtle text-success border border-success-subtle text-xs';
+        badge.textContent = 'Own Character (0% Fee)';
+        badge.title = 'Refining with your own character incurs no service fee.';
+    } else {
+        const fee = Number(profile.effective_fee_percent || 0);
+        badge.className = 'badge bg-warning-subtle text-warning-emphasis border border-warning-subtle text-xs';
+        badge.textContent = `${fee.toFixed(1)}% Service Fee`;
+        badge.title = `Public reprocessor service fee: ${fee.toFixed(1)}% applied to refining orders.`;
+    }
+}
+
 function getRefineRateValue() {
     const buyInput = document.getElementById('buyRefineRate');
     if (buyInput && buyInput.value !== '') {
@@ -2288,6 +2457,7 @@ function refreshBuybackAvailabilityWithCurrentRefineRate() {
 function collectMineralConversionStateSnapshot() {
     return {
         refineRate: String(getRefineRateValue()),
+        reprocessorProfileId: CRAFT_REPROCESSOR_STATE.selectedProfileId !== null ? String(CRAFT_REPROCESSOR_STATE.selectedProfileId) : '',
         result: cloneCraftUiJsonValue(conversionResultData, null),
         appliedState: cloneCraftUiJsonValue(appliedMineralConversionState, null),
     };
@@ -2296,6 +2466,9 @@ function collectMineralConversionStateSnapshot() {
 function applyMineralConversionStateSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== 'object') {
         return;
+    }
+    if (snapshot.reprocessorProfileId !== undefined) {
+        setReprocessorProfileSelection(snapshot.reprocessorProfileId, { triggerUpdate: false });
     }
     if (snapshot.refineRate !== undefined && snapshot.refineRate !== '') {
         setRefineRateValue(snapshot.refineRate, { syncInputs: true, triggerUpdate: false });
@@ -11938,7 +12111,8 @@ async function fetchBuybackAvailability(typeIds, { force = false } = {}) {
     const ids = Array.from(new Set(typeIds.map((id) => Number(id) || 0).filter((id) => id > 0))).sort((a, b) => a - b);
     const orderIds = CRAFT_BUYBACK_STATE.orders.map((entry) => entry.order_id);
     const refineRate = getRefineRateValue();
-    const key = `${ids.join(',')}|${orderIds.join(',')}|${refineRate}`;
+    const reprocessorProfileId = getSelectedReprocessorProfileId();
+    const key = `${ids.join(',')}|${orderIds.join(',')}|${refineRate}|${reprocessorProfileId || ''}`;
     const fresh = Date.now() - CRAFT_BUYBACK_STATE.fetchedAtMs < CRAFT_BUYBACK_AVAILABILITY_TTL_MS;
     if (!force && CRAFT_BUYBACK_STATE.availability && CRAFT_BUYBACK_STATE.availabilityKey === key && fresh) {
         return CRAFT_BUYBACK_STATE.availability;
@@ -11953,6 +12127,9 @@ async function fetchBuybackAvailability(typeIds, { force = false } = {}) {
     }
     if (refineRate > 0) {
         url.searchParams.set('refine_rate', String(refineRate));
+    }
+    if (reprocessorProfileId) {
+        url.searchParams.set('reprocessor_profile_id', String(reprocessorProfileId));
     }
     CRAFT_BUYBACK_STATE.availabilityKey = key;
     CRAFT_BUYBACK_STATE.loading = fetch(url.toString(), { credentials: 'same-origin' })
@@ -12476,11 +12653,14 @@ async function decorateNeededRowsWithBuyback(rows) {
                         const oreKey = `${ore.type_id}_${typeId}`;
                         const isChecked = currentlyCheckedKeys.has(oreKey);
                         const mineralYieldsJson = JSON.stringify(ore.mineral_yields || { [typeId]: yieldPerPortion });
+                        const oreRefineRateBadge = ore.refine_rate_percent
+                            ? `<span class="badge bg-secondary-subtle text-body-secondary border ms-1" title="${escapeHtml(__('Effective refine rate for this ore'))}">${Number(ore.refine_rate_percent).toFixed(1)}% ${escapeHtml(__('refine'))}</span>`
+                            : '';
                         oreParts.push(`
                             <div class="craft-buyback-option craft-buyback-ore-option mb-1${isChecked ? ' is-selected' : ''}${isOreFullStock ? ' is-full-stock' : ' is-partial-stock'}">
                                 <div class="craft-buyback-desc ${isOreFullStock ? 'text-success' : 'text-danger'}">
                                     <i class="fas ${isOreFullStock ? 'fa-check-circle' : 'fa-exclamation-circle'} me-1" aria-hidden="true"></i>${escapeHtml(__('Stock available'))}: <strong>${formatInteger(mineralYieldQty)} / ${formatInteger(neededMineralQty)} ${escapeHtml(mineralName)}</strong>
-                                    <div class="small text-muted font-monospace mt-1">${escapeHtml(oreTypeName)}: ${formatInteger(oreStockQty)} ${escapeHtml(__('in stock'))} &rarr; ${escapeHtml(__('yields'))} ${formatInteger(mineralYieldQty)} ${escapeHtml(mineralName)}</div>
+                                    <div class="small text-muted font-monospace mt-1">${escapeHtml(oreTypeName)}: ${formatInteger(oreStockQty)} ${escapeHtml(__('in stock'))} &rarr; ${escapeHtml(__('yields'))} ${formatInteger(mineralYieldQty)} ${escapeHtml(mineralName)}${oreRefineRateBadge}</div>
                                 </div>
                                 <label class="craft-buyback-check-row" for="${checkId}">
                                     <input class="form-check-input craft-buyback-order-check craft-buyback-ore-check" type="checkbox" id="${checkId}" data-type-id="${ore.type_id}" data-type-name="${escapeHtml(ore.type_name || '')}" data-quantity="${oreUnitsToOrder}" data-unit-price="${oreUnitPrice}" data-volume="${oreTotalVolume}" data-portion-size="${portionSize}" data-yield-per-portion="${yieldPerPortion}" data-mineral-yields="${escapeHtml(mineralYieldsJson)}" data-target-mineral-id="${typeId}" data-location-id="${ore.location_id || ''}" data-location-label="${escapeHtml(ore.location_label || '')}"${isChecked ? ' checked' : ''}>
@@ -12878,13 +13058,28 @@ let conversionResultData = null;
 let appliedMineralConversionState = null;
 
 function initMineralConversion() {
+    fetchReprocessorProfiles();
+
     const buyRefineRate = document.getElementById('buyRefineRate');
     const modalRefineRate = document.getElementById('refineRate');
+    const buyReprocessorSelect = document.getElementById('buyReprocessorSelect');
+    const modalReprocessorSelect = document.getElementById('oreReprocessorSelect');
     const convertBtn = document.getElementById('convertMineralsToOreBtn');
     const resetBtn = document.getElementById('resetCompressedOresBtn');
     const calculateBtn = document.getElementById('calculateOresBtn');
     const copyBtn = document.getElementById('copyOresBtn');
     const applyBtn = document.getElementById('applyOresBtn');
+
+    if (buyReprocessorSelect) {
+        buyReprocessorSelect.addEventListener('change', function() {
+            setReprocessorProfileSelection(this.value, { triggerUpdate: true });
+        });
+    }
+    if (modalReprocessorSelect) {
+        modalReprocessorSelect.addEventListener('change', function() {
+            setReprocessorProfileSelection(this.value, { triggerUpdate: true });
+        });
+    }
 
     const initialRefineRate = getRefineRateValue();
     if (buyRefineRate) {
@@ -13096,6 +13291,10 @@ function openMineralConversionModal() {
     scheduleCraftUiStateSave();
 
     // Show modal
+    const modalSelect = document.getElementById('oreReprocessorSelect');
+    if (modalSelect) {
+        modalSelect.value = CRAFT_REPROCESSOR_STATE.selectedProfileId !== null ? String(CRAFT_REPROCESSOR_STATE.selectedProfileId) : '';
+    }
     const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('convertMineralsModal'));
     modal.show();
 }
@@ -13136,6 +13335,8 @@ function calculateCompressedOres() {
     document.getElementById('conversionLoading').style.display = 'block';
     document.getElementById('calculateOresBtn').disabled = true;
 
+    const reprocessorProfileId = getSelectedReprocessorProfileId();
+
     fetch('/indy_hub/api/convert-minerals-to-ore/', {
         method: 'POST',
         headers: {
@@ -13149,6 +13350,7 @@ function calculateCompressedOres() {
             facility_tax_percent: facilityTax,
             reclaim_byproducts: reclaimByproducts,
             mineral_prices: mineralPrices,
+            reprocessor_profile_id: reprocessorProfileId,
         }),
     })
     .then(response => {
@@ -13196,6 +13398,8 @@ function displayConversionResults(data) {
     // Financial breakdown elements
     const oresGrossCostEl = document.getElementById('oresGrossCost');
     const facilityTaxAmountEl = document.getElementById('facilityTaxAmount');
+    const reprocessorFeeRow = document.getElementById('reprocessorFeeRow');
+    const reprocessorFeeAmountEl = document.getElementById('reprocessorFeeAmount');
     const byproductValueRow = document.getElementById('byproductValueRow');
     const byproductValueAmountEl = document.getElementById('byproductValueAmount');
     const netEffectiveCostEl = document.getElementById('netEffectiveCost');
@@ -13216,13 +13420,22 @@ function displayConversionResults(data) {
 
     const oresCost = Number(data.ores_cost ?? data.total_cost) || 0;
     const facilityTax = Number(data.facility_tax) || 0;
+    const repFee = Number(data.reprocessor_fee) || 0;
     const byproductVal = Number(data.excess_minerals_value) || 0;
-    const netCost = Number(data.net_effective_cost ?? (oresCost + facilityTax)) || 0;
+    const netCost = Number(data.net_effective_cost ?? (oresCost + facilityTax + repFee)) || 0;
     const mineralsCost = getMineralsBuyCostFromFinancialTable();
     const priceDifference = netCost - mineralsCost;
 
     if (oresGrossCostEl) oresGrossCostEl.textContent = formatPrice(oresCost);
     if (facilityTaxAmountEl) facilityTaxAmountEl.textContent = formatPrice(facilityTax);
+    if (reprocessorFeeRow && reprocessorFeeAmountEl) {
+        if (repFee > 0) {
+            reprocessorFeeRow.style.display = 'flex';
+            reprocessorFeeAmountEl.textContent = formatPrice(repFee);
+        } else {
+            reprocessorFeeRow.style.display = 'none';
+        }
+    }
     if (byproductValueRow && byproductValueAmountEl) {
         if (byproductVal > 0) {
             byproductValueRow.style.display = 'flex';
@@ -13256,7 +13469,10 @@ function displayConversionResults(data) {
                 <tbody>
                     ${data.compressed_ores.map(ore => `
                         <tr>
-                            <td class="fw-semibold">${escapeHtml(ore.type_name)}</td>
+                            <td class="fw-semibold">
+                                ${escapeHtml(ore.type_name)}
+                                ${ore.refine_rate_percent ? `<span class="badge bg-secondary-subtle text-body-secondary border ms-1 small" title="${escapeHtml(__('Effective refine rate'))}">${Number(ore.refine_rate_percent).toFixed(1)}%</span>` : ''}
+                            </td>
                             <td class="text-end font-monospace">${Number(ore.quantity).toLocaleString()}</td>
                             <td class="text-end text-muted font-monospace">${Number(ore.portions || Math.floor(ore.quantity / (ore.portion_size || 100))).toLocaleString()} × ${ore.portion_size || 100}</td>
                             <td class="text-end font-monospace">${Number(ore.unit_price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} ISK</td>

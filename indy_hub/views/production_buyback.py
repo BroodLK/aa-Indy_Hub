@@ -59,6 +59,17 @@ _ERROR_STATUS = {
 }
 
 
+def _to_decimal(val) -> Decimal:
+    if val is None:
+        return Decimal("0.00")
+    if isinstance(val, Decimal):
+        return val
+    try:
+        return Decimal(str(val).strip() or "0")
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal("0.00")
+
+
 def _error(code: str, message: str, status: int, **details) -> JsonResponse:
     return JsonResponse({"error": code, "message": message, **details}, status=status)
 
@@ -187,6 +198,69 @@ def production_buyback_availability(request):
     type_ids = _parse_int_list(request.GET.get("type_ids", ""), MAX_TYPE_IDS)
     items: dict[str, dict] = {}
     ore_suggestions: dict[str, list[dict]] = {}
+
+    from django.db import models
+    from ..models import ReprocessingServiceProfile
+    from ..services.reprocessing import (
+        compute_profile_yield_for_type,
+        get_ore_type_ids,
+        get_portion_size_map,
+        get_reprocessing_outputs_map,
+    )
+
+    refine_rate_param = str(request.GET.get("refine_rate") or "").strip()
+    reprocessor_profile_id_raw = (
+        request.GET.get("reprocessor_profile_id")
+        or request.GET.get("profile_id")
+        or ""
+    ).strip()
+    reprocessor_profile = None
+    if reprocessor_profile_id_raw:
+        try:
+            p_id = int(reprocessor_profile_id_raw)
+            if p_id > 0:
+                reprocessor_profile = (
+                    ReprocessingServiceProfile.objects.filter(id=p_id)
+                    .filter(
+                        models.Q(user=request.user)
+                        | models.Q(
+                            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+                            is_available=True,
+                            admin_force_unavailable=False,
+                        )
+                    )
+                    .first()
+                )
+        except (TypeError, ValueError):
+            reprocessor_profile = None
+
+    refine_rate_percent = Decimal("0")
+    if reprocessor_profile:
+        refine_rate_percent = _to_decimal(
+            reprocessor_profile.estimated_yield_percent
+        )
+    elif refine_rate_param:
+        try:
+            parsed_rate = Decimal(refine_rate_param)
+            if Decimal("0") < parsed_rate <= Decimal("100"):
+                refine_rate_percent = parsed_rate
+        except (InvalidOperation, ValueError):
+            refine_rate_percent = Decimal("0")
+
+    if refine_rate_percent <= Decimal("0"):
+        refine_rate_val = getattr(config, "ore_refine_rate_percent", None)
+        try:
+            refine_rate_percent = Decimal(str(refine_rate_val or "0"))
+        except (InvalidOperation, ValueError):
+            refine_rate_percent = Decimal("0")
+        if refine_rate_percent <= Decimal("0"):
+            refine_rate_percent = Decimal("84.2")
+
+    default_refine_ratio = refine_rate_percent / Decimal("100")
+    reprocessor_fee_percent = Decimal("0.00")
+    if reprocessor_profile and reprocessor_profile.user_id != request.user.id:
+        reprocessor_fee_percent = _to_decimal(reprocessor_profile.margin_percent)
+
     if type_ids:
         snapshot = _get_buy_stock_snapshot_for_submission(
             config=config,
@@ -219,33 +293,8 @@ def production_buyback_availability(request):
                 "location_label": str(row.get("buy_location_label") or ""),
             }
 
-        from ..services.reprocessing import (
-            get_ore_type_ids,
-            get_portion_size_map,
-            get_reprocessing_outputs_map,
-        )
-
         all_plain_type_ids = set(plain_rows.keys())
         candidate_type_ids = get_ore_type_ids(all_plain_type_ids)
-        refine_rate_param = str(request.GET.get("refine_rate") or "").strip()
-        refine_rate_percent = Decimal("0")
-        if refine_rate_param:
-            try:
-                parsed_rate = Decimal(refine_rate_param)
-                if Decimal("0") < parsed_rate <= Decimal("100"):
-                    refine_rate_percent = parsed_rate
-            except (InvalidOperation, ValueError):
-                refine_rate_percent = Decimal("0")
-        if refine_rate_percent <= Decimal("0"):
-            refine_rate_val = getattr(config, "ore_refine_rate_percent", None)
-            try:
-                refine_rate_percent = Decimal(str(refine_rate_val or "0"))
-            except (InvalidOperation, ValueError):
-                refine_rate_percent = Decimal("0")
-            if refine_rate_percent <= Decimal("0"):
-                refine_rate_percent = Decimal("84.2")
-
-        refine_ratio = refine_rate_percent / Decimal("100")
 
         if candidate_type_ids:
             outputs_map = get_reprocessing_outputs_map(candidate_type_ids)
@@ -273,11 +322,22 @@ def production_buyback_availability(request):
                 if unit_price <= 0:
                     continue
 
+                if reprocessor_profile:
+                    ore_refine_pct = compute_profile_yield_for_type(
+                        reprocessor_profile, stock_type_id
+                    )
+                    ore_refine_ratio = ore_refine_pct / Decimal("100")
+                else:
+                    ore_refine_pct = refine_rate_percent
+                    ore_refine_ratio = default_refine_ratio
+
                 # Precompute all refined mineral yields per portion for this ore
                 all_mineral_yields: dict[str, int] = {}
                 for m_id, b_yield in outputs.items():
                     if b_yield > 0:
-                        r_yield = int(math.floor(Decimal(str(b_yield)) * refine_ratio))
+                        r_yield = int(
+                            math.floor(Decimal(str(b_yield)) * ore_refine_ratio)
+                        )
                         if r_yield > 0:
                             all_mineral_yields[str(m_id)] = r_yield
 
@@ -307,11 +367,15 @@ def production_buyback_availability(request):
                     ):
                         continue
                     refined_yield_per_portion = int(
-                        math.floor(Decimal(str(base_yield_per_portion)) * refine_ratio)
+                        math.floor(
+                            Decimal(str(base_yield_per_portion)) * ore_refine_ratio
+                        )
                     )
                     if refined_yield_per_portion <= 0:
                         continue
-                    est_mineral_in_stock = portions_in_stock * refined_yield_per_portion
+                    est_mineral_in_stock = (
+                        portions_in_stock * refined_yield_per_portion
+                    )
                     if est_mineral_in_stock <= 0:
                         continue
                     suggestion = {
@@ -327,12 +391,13 @@ def production_buyback_availability(request):
                             else "buyback_market"
                         ),
                         "location_label": str(row.get("buy_location_label") or ""),
-                        "refine_rate_percent": float(refine_rate_percent),
+                        "refine_rate_percent": float(ore_refine_pct),
                         "base_yield_per_portion": int(base_yield_per_portion),
                         "yield_per_portion": int(refined_yield_per_portion),
                         "portions_in_stock": int(portions_in_stock),
                         "estimated_mineral_in_stock": int(est_mineral_in_stock),
                         "mineral_yields": all_mineral_yields,
+                        "reprocessor_fee_percent": float(reprocessor_fee_percent),
                     }
                     ore_suggestions.setdefault(str(mineral_type_id), []).append(
                         suggestion
@@ -346,6 +411,20 @@ def production_buyback_availability(request):
                     ),
                     reverse=True,
                 )
+
+    reprocessor_payload = None
+    if reprocessor_profile:
+        reprocessor_payload = {
+            "id": reprocessor_profile.id,
+            "character_id": reprocessor_profile.character_id,
+            "character_name": reprocessor_profile.character_name,
+            "is_own": reprocessor_profile.user_id == request.user.id,
+            "margin_percent": float(reprocessor_profile.margin_percent or 0),
+            "effective_fee_percent": float(reprocessor_fee_percent),
+            "estimated_yield_percent": float(
+                reprocessor_profile.estimated_yield_percent or 0
+            ),
+        }
 
     last_sync = getattr(config, "last_stock_sync", None)
     stock_age = (timezone.now() - last_sync).total_seconds() if last_sync else None
@@ -364,6 +443,7 @@ def production_buyback_availability(request):
                 if "refine_rate_percent" in locals()
                 else Decimal("84.2")
             ),
+            "reprocessor_profile": reprocessor_payload,
         }
     )
 

@@ -544,6 +544,10 @@ class BuybackUiTests(SimpleTestCase):
             'id="buybackOrderConfirm"',
             'id="buybackOrderSubmit"',
             'id="neededBuybackStatus"',
+            'id="buyReprocessorSelect"',
+            'id="buyReprocessorFeeBadge"',
+            'id="oreReprocessorSelect"',
+            'id="reprocessorFeeRow"',
         ):
             self.assertIn(marker, template)
 
@@ -552,8 +556,89 @@ class BuybackUiTests(SimpleTestCase):
         self.assertIn("function reconcileBuybackOrders(serverOrders)", source)
         self.assertIn("Reserved (pending)", source)
         self.assertIn("buybackOrders: collectBuybackOrdersSnapshot()", source)
+        self.assertIn("CRAFT_REPROCESSOR_STATE", source)
+        self.assertIn("fetchReprocessorProfiles", source)
+        self.assertIn("setReprocessorProfileSelection", source)
         # The share allowlist must not pick buyback orders up.
         share_builder = source.split("function collectCraftShareState", 1)[1].split(
             "\nfunction ", 1
         )[0]
         self.assertNotIn("buyback", share_builder.lower())
+
+
+class ReprocessorCharacterServiceTests(BuybackFixtureMixin, TestCase):
+    def test_reprocessor_profiles_and_yield_and_fees(self) -> None:
+        from indy_hub.models import ReprocessingServiceProfile
+        from indy_hub.services.reprocessing import (
+            compute_profile_yield_for_type,
+            get_available_reprocessor_profiles_for_user,
+        )
+
+        other_user = User.objects.create_user("reprocessor_owner", password="x")
+
+        # Own profile
+        own_profile = ReprocessingServiceProfile.objects.create(
+            user=self.user,
+            character_id=9001,
+            character_name="My Refiner",
+            reprocessing_skill_level=5,
+            reprocessing_efficiency_level=5,
+            processing_skill_level=5,
+            beancounter_bonus_percent=Decimal("4.000"),
+            structure_bonus_percent=Decimal("0.500"),
+            rig_bonus_percent=Decimal("1.000"),
+            margin_percent=Decimal("5.00"),
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+
+        # Public profile belonging to another user
+        public_profile = ReprocessingServiceProfile.objects.create(
+            user=other_user,
+            character_id=9002,
+            character_name="Public Refiner",
+            reprocessing_skill_level=5,
+            reprocessing_efficiency_level=4,
+            processing_skill_level=4,
+            beancounter_bonus_percent=Decimal("2.000"),
+            structure_bonus_percent=Decimal("0.500"),
+            rig_bonus_percent=Decimal("1.000"),
+            margin_percent=Decimal("10.00"),
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+        )
+
+        # Pending unapproved profile of other user (should be excluded)
+        ReprocessingServiceProfile.objects.create(
+            user=other_user,
+            character_id=9003,
+            character_name="Hidden Refiner",
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.PENDING,
+            is_available=True,
+        )
+
+        profiles = get_available_reprocessor_profiles_for_user(self.user)
+        self.assertEqual(len(profiles), 2)
+        own_p = next(p for p in profiles if p["id"] == own_profile.id)
+        pub_p = next(p for p in profiles if p["id"] == public_profile.id)
+
+        self.assertTrue(own_p["is_own"])
+        self.assertEqual(own_p["effective_fee_percent"], 0.0)
+
+        self.assertFalse(pub_p["is_own"])
+        self.assertEqual(pub_p["effective_fee_percent"], 10.0)
+
+        # Compute specific yields
+        yield_own = compute_profile_yield_for_type(own_profile, 28388)  # Compressed Veldspar
+        self.assertGreater(yield_own, Decimal("80.0"))
+
+        # Test API endpoint
+        from indy_hub.views.api import get_reprocessor_profiles
+        request = self.factory.get("/api/reprocessor-profiles/")
+        request.user = self.user
+        request.session = SessionStore()
+        request._messages = FallbackStorage(request)
+        response = get_reprocessor_profiles.__wrapped__.__wrapped__.__wrapped__(request)
+        self.assertEqual(response.status_code, 200)
+        api_data = json.loads(response.content)
+        self.assertEqual(len(api_data["profiles"]), 2)

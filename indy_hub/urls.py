@@ -13,6 +13,7 @@ from .views.api import (
     craft_sync_owned_bpcs,
     fuzzwork_price,
     get_character_slots,
+    get_reprocessor_profiles,
     load_production_config,
     menu_badge_count,
     production_bpc_sources,
@@ -298,6 +299,11 @@ urlpatterns = [
         "api/character-slots/",
         get_character_slots,
         name="get_character_slots",
+    ),
+    path(
+        "api/reprocessor-profiles/",
+        get_reprocessor_profiles,
+        name="get_reprocessor_profiles",
     ),
     path(
         "api/craft-build-environment/",

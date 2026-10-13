@@ -2023,6 +2023,50 @@ def convert_minerals_to_compressed_ore(request):
                 except (TypeError, ValueError):
                     continue
 
+        # Check for reprocessor profile selection
+        reprocessor_profile_id_raw = data.get("reprocessor_profile_id") or data.get(
+            "profile_id"
+        )
+        reprocessor_profile = None
+        yield_percent_by_type = None
+        reprocessor_fee_percent = Decimal("0.00")
+        if reprocessor_profile_id_raw:
+            try:
+                p_id = int(reprocessor_profile_id_raw)
+                if p_id > 0:
+                    from indy_hub.models import ReprocessingServiceProfile
+
+                    reprocessor_profile = (
+                        ReprocessingServiceProfile.objects.filter(id=p_id)
+                        .filter(
+                            models.Q(user=request.user)
+                            | models.Q(
+                                approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+                                is_available=True,
+                                admin_force_unavailable=False,
+                            )
+                        )
+                        .first()
+                    )
+            except (TypeError, ValueError):
+                reprocessor_profile = None
+
+        if reprocessor_profile:
+            from indy_hub.models import CompressedOreCache
+            from indy_hub.services.reprocessing import compute_profile_yield_for_type
+
+            cached_ore_ids = list(
+                CompressedOreCache.objects.values_list("ore_type_id", flat=True)
+            )
+            yield_percent_by_type = {
+                tid: compute_profile_yield_for_type(reprocessor_profile, tid)
+                for tid in cached_ore_ids
+            }
+            if reprocessor_profile.user_id != request.user.id:
+                reprocessor_fee_percent = Decimal(
+                    str(reprocessor_profile.margin_percent or 0)
+                )
+
         # Perform calculation
         result = calculate_compressed_ore_for_minerals(
             mineral_requirements=mineral_requirements,
@@ -2031,6 +2075,8 @@ def convert_minerals_to_compressed_ore(request):
             facility_tax_percent=Decimal(str(facility_tax_percent or 0)),
             reclaim_byproducts=reclaim_byproducts,
             mineral_prices=mineral_prices_map if mineral_prices_map else None,
+            yield_percent_by_type=yield_percent_by_type,
+            reprocessor_fee_percent=reprocessor_fee_percent,
         )
 
         # Convert Decimal values to float for JSON serialization
@@ -2053,6 +2099,8 @@ def convert_minerals_to_compressed_ore(request):
             "ores_cost": float(result.get("ores_cost", result["total_cost"])),
             "facility_tax": float(result.get("facility_tax", 0.0)),
             "facility_tax_percent": float(result.get("facility_tax_percent", 0.0)),
+            "reprocessor_fee": float(result.get("reprocessor_fee", 0.0)),
+            "reprocessor_fee_percent": float(result.get("reprocessor_fee_percent", 0.0)),
             "gross_cost": float(result.get("gross_cost", result["total_cost"])),
             "excess_minerals": {
                 str(k): v for k, v in result["excess_minerals"].items()
@@ -2095,6 +2143,24 @@ def convert_minerals_to_compressed_ore(request):
     except Exception as e:
         logger.error(f"Error converting minerals to compressed ore: {e}")
         return JsonResponse({"error": str(e)}, status=500)
+
+
+@indy_hub_access_required
+@indy_hub_permission_required("can_access_indy_hub")
+@login_required
+@require_http_methods(["GET"])
+def get_reprocessor_profiles(request):
+    """Return available reprocessor character profiles for the user."""
+    try:
+        from ..services.reprocessing import (
+            get_available_reprocessor_profiles_for_user,
+        )
+
+        profiles = get_available_reprocessor_profiles_for_user(request.user)
+        return JsonResponse({"profiles": profiles})
+    except Exception as e:
+        logger.error(f"Error fetching reprocessor profiles: {e}")
+        return JsonResponse({"error": str(e), "profiles": []}, status=500)
 
 
 @indy_hub_access_required

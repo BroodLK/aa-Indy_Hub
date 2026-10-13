@@ -992,6 +992,163 @@ def resolve_processing_skill_level_for_item(
     return int(fallback_level or 0)
 
 
+def compute_profile_yield_for_type(
+    profile: object,
+    type_id: int,
+) -> Decimal:
+    """Compute estimated yield percent for a specific item type using a reprocessor profile."""
+    if not profile:
+        return Decimal("84.2")
+
+    profile_skill_map = (
+        getattr(profile, "skill_levels", {})
+        if isinstance(getattr(profile, "skill_levels", None), dict)
+        else {}
+    )
+    raw_skill_levels_by_id = profile_skill_map.get("skill_levels_by_id") or {}
+    skill_levels_by_id: dict[int, int] = {}
+    if isinstance(raw_skill_levels_by_id, dict):
+        for raw_skill_id, raw_level in raw_skill_levels_by_id.items():
+            try:
+                skill_id = int(raw_skill_id)
+                level = int(raw_level or 0)
+            except (TypeError, ValueError):
+                continue
+            if skill_id > 0 and level > 0:
+                skill_levels_by_id[skill_id] = level
+
+    fallback_processing = int(
+        getattr(profile, "processing_skill_level", 0)
+        or profile_skill_map.get("processing")
+        or 0
+    )
+    processing_level = resolve_processing_skill_level_for_item(
+        type_id=int(type_id),
+        skill_levels_by_id=skill_levels_by_id,
+        fallback_level=fallback_processing,
+    )
+
+    security_bonus_percent = _to_decimal(
+        profile_skill_map.get("security_bonus_percent")
+    )
+
+    rig_bonus_percent = _to_decimal(getattr(profile, "rig_bonus_percent", Decimal("0.000")))
+    rig_key = str(getattr(profile, "rig_profile_key", "") or "").lower()
+    if rig_bonus_percent > Decimal("0") and rig_key and rig_key != "none":
+        context = _get_reprocessing_item_context(int(type_id))
+        context_str = " ".join([
+            context.get("type_name", ""),
+            context.get("group_name", ""),
+            context.get("market_group_name", ""),
+            context.get("category_name", ""),
+        ]).lower()
+        is_moon_item = "moon" in context_str
+        if "moon" in rig_key and not is_moon_item:
+            rig_bonus_percent = Decimal("0.000")
+        elif "ore" in rig_key and is_moon_item:
+            rig_bonus_percent = Decimal("0.000")
+
+    return compute_estimated_yield_percent(
+        skill_snapshot={
+            "reprocessing": int(
+                getattr(profile, "reprocessing_skill_level", 0)
+                or profile_skill_map.get("reprocessing")
+                or 0
+            ),
+            "reprocessing_efficiency": int(
+                getattr(profile, "reprocessing_efficiency_level", 0)
+                or profile_skill_map.get("reprocessing_efficiency")
+                or 0
+            ),
+            "processing": int(processing_level),
+            "scrapmetal_processing": int(profile_skill_map.get("scrapmetal_processing") or 0),
+        },
+        implant_bonus_percent=_to_decimal(getattr(profile, "beancounter_bonus_percent", Decimal("0.000"))),
+        structure_bonus_percent=_to_decimal(getattr(profile, "structure_bonus_percent", Decimal("0.000"))),
+        rig_bonus_percent=rig_bonus_percent,
+        security_bonus_percent=security_bonus_percent,
+    )
+
+
+def compute_profile_yields_for_types(
+    profile: object,
+    type_ids: Iterable[int],
+) -> dict[int, Decimal]:
+    """Compute yield percentages for multiple item types for a reprocessor profile."""
+    return {
+        int(tid): compute_profile_yield_for_type(profile, int(tid))
+        for tid in type_ids
+        if int(tid) > 0
+    }
+
+
+def get_available_reprocessor_profiles_for_user(user: object) -> list[dict]:
+    """Retrieve all reprocessor character profiles available to a user.
+
+    Includes:
+    - User's own profiles (approval status regardless, 0% fee)
+    - Approved public service profiles (is_available=True, profile margin fee)
+    """
+    # AA Example App
+    from indy_hub.models import ReprocessingServiceProfile
+
+    profiles: list[dict] = []
+    seen_profile_ids = set()
+
+    if user and getattr(user, "is_authenticated", False):
+        own_qs = (
+            ReprocessingServiceProfile.objects.filter(user=user)
+            .order_by("character_name")
+        )
+        for profile in own_qs:
+            seen_profile_ids.add(profile.id)
+            profiles.append(
+                {
+                    "id": profile.id,
+                    "character_id": profile.character_id,
+                    "character_name": profile.character_name,
+                    "is_own": True,
+                    "margin_percent": float(profile.margin_percent or 0),
+                    "effective_fee_percent": 0.0,
+                    "estimated_yield_percent": float(profile.estimated_yield_percent or 0),
+                    "structure_name": profile.structure_name or "",
+                    "structure_location_name": profile.structure_location_name or "",
+                    "rig_profile_name": profile.rig_profile_name or "",
+                    "approval_status": profile.approval_status,
+                    "is_available": profile.is_available,
+                }
+            )
+
+    public_qs = (
+        ReprocessingServiceProfile.objects.filter(
+            approval_status=ReprocessingServiceProfile.ApprovalStatus.APPROVED,
+            is_available=True,
+            admin_force_unavailable=False,
+        )
+        .exclude(id__in=seen_profile_ids)
+        .order_by("character_name")
+    )
+    for profile in public_qs:
+        profiles.append(
+            {
+                "id": profile.id,
+                "character_id": profile.character_id,
+                "character_name": profile.character_name,
+                "is_own": False,
+                "margin_percent": float(profile.margin_percent or 0),
+                "effective_fee_percent": float(profile.margin_percent or 0),
+                "estimated_yield_percent": float(profile.estimated_yield_percent or 0),
+                "structure_name": profile.structure_name or "",
+                "structure_location_name": profile.structure_location_name or "",
+                "rig_profile_name": profile.rig_profile_name or "",
+                "approval_status": profile.approval_status,
+                "is_available": profile.is_available,
+            }
+        )
+
+    return profiles
+
+
 def build_reprocessing_estimate(
     *,
     input_items: list[dict[str, int]],
@@ -1654,6 +1811,8 @@ def calculate_compressed_ore_for_minerals(
     facility_tax_percent: Decimal = Decimal("0.00"),
     reclaim_byproducts: bool = False,
     mineral_prices: dict[int, Decimal] | None = None,
+    yield_percent_by_type: dict[int, Decimal] | None = None,
+    reprocessor_fee_percent: Decimal = Decimal("0.00"),
     progress_callback=None,
 ) -> dict[str, object]:
     """Calculate optimal compressed ore purchases needed to satisfy mineral requirements.
@@ -1677,6 +1836,8 @@ def calculate_compressed_ore_for_minerals(
             "ores_cost": Decimal("0.00"),
             "facility_tax": Decimal("0.00"),
             "facility_tax_percent": Decimal("0.00"),
+            "reprocessor_fee": Decimal("0.00"),
+            "reprocessor_fee_percent": Decimal("0.00"),
             "gross_cost": Decimal("0.00"),
             "excess_minerals": {},
             "excess_minerals_details": [],
@@ -1708,6 +1869,8 @@ def calculate_compressed_ore_for_minerals(
             "ores_cost": Decimal("0.00"),
             "facility_tax": Decimal("0.00"),
             "facility_tax_percent": Decimal("0.00"),
+            "reprocessor_fee": Decimal("0.00"),
+            "reprocessor_fee_percent": Decimal("0.00"),
             "gross_cost": Decimal("0.00"),
             "excess_minerals": {},
             "excess_minerals_details": [],
@@ -1781,6 +1944,8 @@ def calculate_compressed_ore_for_minerals(
             "ores_cost": Decimal("0.00"),
             "facility_tax": Decimal("0.00"),
             "facility_tax_percent": Decimal("0.00"),
+            "reprocessor_fee": Decimal("0.00"),
+            "reprocessor_fee_percent": Decimal("0.00"),
             "gross_cost": Decimal("0.00"),
             "excess_minerals": {},
             "excess_minerals_details": [],
@@ -1824,9 +1989,17 @@ def calculate_compressed_ore_for_minerals(
         ore_unit_vol = get_type_volume(ore_type_id)
         vol_per_portion = ore_unit_vol * float(portion_size)
 
+        if yield_percent_by_type and ore_type_id in yield_percent_by_type:
+            ore_rate = _to_decimal(yield_percent_by_type[ore_type_id])
+            ore_refine_ratio = ore_rate / Decimal("100")
+            if ore_refine_ratio <= Decimal("0") or ore_refine_ratio > Decimal("1"):
+                ore_refine_ratio = refine_ratio
+        else:
+            ore_refine_ratio = refine_ratio
+
         refined_per_portion: dict[int, Decimal] = {}
         for mineral_id, base_qty in mineral_outputs.items():
-            refined_qty = _to_decimal(base_qty) * refine_ratio
+            refined_qty = _to_decimal(base_qty) * ore_refine_ratio
             if refined_qty > 0:
                 refined_per_portion[mineral_id] = refined_qty
 
@@ -1900,6 +2073,12 @@ def calculate_compressed_ore_for_minerals(
         line_vol = round(unit_vol * ore_qty, 2)
         total_ore_vol_m3 += line_vol
 
+        ore_refine_rate = float(
+            yield_percent_by_type[ore_type_id]
+            if (yield_percent_by_type and ore_type_id in yield_percent_by_type)
+            else refine_rate_percent
+        )
+
         compressed_ore_list.append(
             {
                 "type_id": ore_type_id,
@@ -1908,6 +2087,7 @@ def calculate_compressed_ore_for_minerals(
                 "portion_size": int(ore_portion_data[ore_type_id]["portion_size"]),
                 "portions": ore_qty
                 // int(ore_portion_data[ore_type_id]["portion_size"]),
+                "refine_rate_percent": ore_refine_rate,
                 "unit_price": ore_unit_price,
                 "total_cost": ore_total_cost,
                 "unit_volume_m3": unit_vol,
@@ -1921,7 +2101,11 @@ def calculate_compressed_ore_for_minerals(
 
     # Facility tax calculation
     facility_tax = (ores_cost * (tax_rate / Decimal("100"))).quantize(Decimal("0.01"))
-    gross_cost = (ores_cost + facility_tax).quantize(Decimal("0.01"))
+    rep_fee_rate = max(Decimal("0.00"), _to_decimal(reprocessor_fee_percent))
+    reprocessor_fee = (ores_cost * (rep_fee_rate / Decimal("100"))).quantize(
+        Decimal("0.01")
+    )
+    gross_cost = (ores_cost + facility_tax + reprocessor_fee).quantize(Decimal("0.01"))
 
     # Excess mineral valuation
     excess_minerals_details = []
@@ -1970,6 +2154,8 @@ def calculate_compressed_ore_for_minerals(
         "ores_cost": ores_cost.quantize(Decimal("0.01")),
         "facility_tax": facility_tax,
         "facility_tax_percent": tax_rate,
+        "reprocessor_fee": reprocessor_fee,
+        "reprocessor_fee_percent": rep_fee_rate,
         "gross_cost": gross_cost,
         "excess_minerals": excess_minerals,
         "excess_minerals_details": excess_minerals_details,

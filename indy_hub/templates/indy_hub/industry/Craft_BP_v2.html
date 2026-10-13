@@ -466,10 +466,19 @@
                                 </div>
                             </div>
                             <div class="craft-financial-table-header d-flex flex-wrap justify-content-between align-items-center gap-2">
-                                <div class="d-flex align-items-center gap-3 flex-wrap">
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
                                     <h4 class="text-sm fw-semibold mb-0">
                                         <i class="fas fa-list-ul me-2"></i>{% trans "Purchase Planner" %}
                                     </h4>
+                                    <div class="d-flex align-items-center gap-1 craft-reprocessor-select-wrap border rounded px-2 py-1 bg-body-tertiary" title="{% trans 'Select a reprocessor character from the Reprocessing Service (your own characters or public service providers) to apply their specific refining yields and service fees.' %}">
+                                        <label for="buyReprocessorSelect" class="text-xs fw-semibold mb-0 text-nowrap text-body-secondary">
+                                            <i class="fas fa-user-astronaut me-1 text-primary"></i>{% trans "Reprocessor:" %}
+                                        </label>
+                                        <select id="buyReprocessorSelect" class="form-select form-select-sm text-xs py-0 px-2" style="max-width: 220px;">
+                                            <option value="">{% trans "Manual Refine Rate" %}</option>
+                                        </select>
+                                        <span id="buyReprocessorFeeBadge" class="badge bg-warning text-dark text-xs d-none" title="{% trans 'Reprocessing service fee applied to ore purchases' %}"></span>
+                                    </div>
                                     <div class="d-flex align-items-center gap-1 craft-refine-rate-wrap border rounded px-2 py-1 bg-body-tertiary" title="{% trans 'Ore to mineral refining yield rate percentage used for buyback suggestions and compressed ore calculations' %}">
                                         <label for="buyRefineRate" class="text-xs fw-semibold mb-0 text-nowrap text-body-secondary">
                                             <i class="fas fa-filter me-1 text-primary"></i>{% trans "Refine Rate:" %}
@@ -2540,30 +2549,41 @@
                 <div class="modal-body">
                     <form id="convertMineralsForm">
                         <div class="row g-3 mb-3">
-                            <div class="col-md-4">
+                            <div class="col-md-5">
+                                <label for="oreReprocessorSelect" class="form-label fw-semibold">{% trans "Reprocessor Character" %}</label>
+                                <select class="form-select form-select-sm" id="oreReprocessorSelect">
+                                    <option value="">{% trans "Manual Refine Rate" %}</option>
+                                </select>
+                                <div class="form-text">{% trans "Select a reprocessor character from the Reprocessing Service" %}</div>
+                            </div>
+                            <div class="col-md-3">
                                 <label for="refineRate" class="form-label fw-semibold">{% trans "Refine Rate (%)" %}</label>
-                                <input type="number" class="form-control" id="refineRate" min="0" max="100" step="0.01" value="84.20" required>
+                                <input type="number" class="form-control form-control-sm" id="refineRate" min="0" max="100" step="0.01" value="84.20" required>
                                 <div class="form-text">{% trans "Refining yield percentage (0-100)" %}</div>
                             </div>
                             <div class="col-md-4">
+                                <label for="oreFacilityTax" class="form-label fw-semibold">{% trans "Facility Refining Tax (%)" %}</label>
+                                <input type="number" class="form-control form-control-sm" id="oreFacilityTax" min="0" max="100" step="0.01" value="0.00">
+                                <div class="form-text">{% trans "Structure tax & SCC job installation surcharge" %}</div>
+                            </div>
+                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
                                 <label for="oreOptimizationStrategy" class="form-label fw-semibold">{% trans "Optimization Priority" %}</label>
-                                <select class="form-select" id="oreOptimizationStrategy">
+                                <select class="form-select form-select-sm" id="oreOptimizationStrategy">
                                     <option value="cost" selected>{% trans "Lowest Total ISK Cost (Default)" %}</option>
                                     <option value="volume">{% trans "Lowest Freight Volume (m³)" %}</option>
                                 </select>
                                 <div class="form-text">{% trans "Target absolute lowest price or lowest hauling volume" %}</div>
                             </div>
-                            <div class="col-md-4">
-                                <label for="oreFacilityTax" class="form-label fw-semibold">{% trans "Facility Refining Tax (%)" %}</label>
-                                <input type="number" class="form-control" id="oreFacilityTax" min="0" max="100" step="0.01" value="0.00">
-                                <div class="form-text">{% trans "Structure tax & SCC job installation surcharge" %}</div>
+                            <div class="col-md-6 d-flex align-items-center">
+                                <div class="form-check form-switch mt-3">
+                                    <input class="form-check-input" type="checkbox" id="oreReclaimByproducts">
+                                    <label class="form-check-label" for="oreReclaimByproducts">
+                                        {% trans "Deduct market value of excess/byproduct minerals from net cost" %}
+                                    </label>
+                                </div>
                             </div>
-                        </div>
-                        <div class="form-check form-switch mb-3">
-                            <input class="form-check-input" type="checkbox" id="oreReclaimByproducts">
-                            <label class="form-check-label" for="oreReclaimByproducts">
-                                {% trans "Deduct market value of excess/byproduct minerals from net cost" %}
-                            </label>
                         </div>
                         <div id="mineralsList" class="alert alert-info py-2">
                             <strong>{% trans "Minerals to convert:" %}</strong>
@@ -2607,6 +2627,10 @@
                                         <div class="d-flex justify-content-between mb-1" id="facilityTaxRow">
                                             <span class="text-muted">{% trans "Refining Facility Tax:" %}</span>
                                             <span id="facilityTaxAmount">0 ISK</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-1 text-warning" id="reprocessorFeeRow" style="display: none;">
+                                            <span>{% trans "Reprocessing Service Fee:" %}</span>
+                                            <span id="reprocessorFeeAmount">0 ISK</span>
                                         </div>
                                         <div class="d-flex justify-content-between mb-1 text-success" id="byproductValueRow" style="display: none;">
                                             <span>{% trans "Byproduct Mineral Credit:" %}</span>
