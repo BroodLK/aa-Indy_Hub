@@ -43,7 +43,7 @@ ______________________________________________________________________
 ## Requirements
 
 - **Alliance Auth v4+**
-- **Python 3.10+**
+- **Python 3.11+**
 - **Django** (as required by AA)
 - **Alliance Auth AppUtils**
 - **django-esi** (OpenAPI client, >=8)
