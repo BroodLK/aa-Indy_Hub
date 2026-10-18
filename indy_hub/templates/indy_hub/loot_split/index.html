@@ -128,6 +128,7 @@
 {% endblock extra_css %}
 
 {% block content %}
+{% csrf_token %}
 <div class="container-fluid py-3" id="lootSplitterApp">
     <!-- Page Header -->
     <div class="d-flex align-items-center justify-content-between mb-3 border-bottom pb-3">
@@ -225,7 +226,7 @@
                 <div class="row">
                     <div class="col-lg-5 mb-3">
                         <label class="form-label fw-semibold">{% trans "Paste Loot Items (EVE Format):" %}</label>
-                        <textarea class="form-control" id="lootInputText" rows="10" placeholder="Tritanium&#9;500000&#10;Pyerite&#9;100000&#10;Squall&#9;1"></textarea>
+                        <textarea class="form-control" id="lootInputText" rows="7" placeholder="Tritanium&#9;500000&#10;Pyerite&#9;100000&#10;Squall&#9;1"></textarea>
                         <div class="mt-2 d-flex gap-2">
                             <button type="button" class="btn btn-primary" id="btnParseLoot" onclick="parseLoot()">
                                 <i class="fas fa-calculator me-1"></i>{% trans "Parse & Price Loot" %}
@@ -233,6 +234,24 @@
                             <button type="button" class="btn btn-outline-secondary" onclick="addManualLootItem()">
                                 <i class="fas fa-plus me-1"></i>{% trans "Add Item Manually" %}
                             </button>
+                        </div>
+
+                        <hr class="my-3">
+
+                        <div class="card bg-body-tertiary border">
+                            <div class="card-body p-2">
+                                <label class="form-label fw-semibold mb-1" for="rawIskAmountInput">
+                                    <i class="fas fa-coins text-warning me-1"></i>{% trans "Raw ISK Pool (Abyssals / Bounties / ESS):" %}
+                                </label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control fw-semibold" id="rawIskAmountInput" placeholder="{% trans "e.g. 150m, 1.5b, 50,000,000" %}" oninput="updateRawIskAmount(this.value)">
+                                    <span class="input-group-text">ISK</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mt-1">
+                                    <span class="text-muted small">{% trans "Added directly to split pot" %}</span>
+                                    <span class="text-success small fw-bold" id="rawIskParsedDisplay">0.00 ISK</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="col-lg-7">
@@ -279,7 +298,11 @@
                         {% trans "Review item valuations. You can toggle global valuation between Buyback and Market prices, or override prices per item." %}
                     </p>
                     <div class="text-end">
-                        <span class="text-muted small">{% trans "Gross Loot Value:" %}</span>
+                        <div class="small text-muted mb-1" id="step3BreakdownText" style="display: none;">
+                            <span>{% trans "Loot:" %} <strong id="step3LootSubtotal">0.00 ISK</strong></span>
+                            <span class="ms-2">| {% trans "Raw ISK:" %} <strong id="step3RawIskSubtotal" class="text-warning">0.00 ISK</strong></span>
+                        </div>
+                        <span class="text-muted small">{% trans "Total Gross Pool:" %}</span>
                         <span class="h5 ms-2 text-success fw-bold" id="step3TotalGross">0.00 ISK</span>
                     </div>
                 </div>
@@ -472,8 +495,9 @@
             <div class="col-md-3 col-sm-6">
                 <div class="card shadow-sm kpi-card">
                     <div class="card-body py-2">
-                        <span class="text-muted small">{% trans "Gross Loot Value" %}</span>
+                        <span class="text-muted small" id="kpiGrossTitle">{% trans "Gross Pool Value" %}</span>
                         <h4 class="mb-0 text-primary" id="kpiGrossLoot">0.00 ISK</h4>
+                        <div class="small text-muted mt-1" id="kpiGrossSubtext" style="display: none;"></div>
                     </div>
                 </div>
             </div>
@@ -626,9 +650,21 @@
         bagManPilotId: null,
         pilots: [],
         lootItems: [],
+        rawIskAmount: 0,
         killmails: [],
         calculationResult: null
     };
+
+    function updateRawIskAmount(val) {
+        state.rawIskAmount = parseIskString(val);
+        const display = document.getElementById('rawIskParsedDisplay');
+        if (display) {
+            display.textContent = formatIsk(state.rawIskAmount);
+        }
+        if (state.currentStep === 3) {
+            renderValuationTable();
+        }
+    }
 
     function formatIsk(num) {
         if (num === undefined || num === null || isNaN(num)) return '0.00 ISK';
@@ -658,8 +694,11 @@
     }
 
     function getCsrfToken() {
+        const input = document.querySelector('[name=csrfmiddlewaretoken]');
+        if (input && input.value) return input.value;
         const cookie = document.cookie.split('; ').find(row => row.startsWith('csrftoken='));
-        return cookie ? cookie.split('=')[1] : '';
+        if (cookie) return cookie.split('=')[1];
+        return '{{ csrf_token }}';
     }
 
     function goToStep(stepNum) {
@@ -742,7 +781,7 @@
                 },
                 body: JSON.stringify({ names_text: text })
             });
-            const data = await resp.json();
+            const data = await resp.json().catch(() => ({ ok: false, error: 'Server returned error ' + resp.status }));
             if (data.ok) {
                 state.pilots = data.pilots;
                 if (!state.bagManPilotId && state.pilots.length > 0) {
@@ -870,14 +909,21 @@
                 },
                 body: JSON.stringify({ loot_text: text, valuation_mode: state.valuationMode })
             });
-            const data = await resp.json();
+            const data = await resp.json().catch(() => ({ ok: false, error: 'Server returned error ' + resp.status }));
             if (data.ok) {
-                state.lootItems = data.items;
+                state.lootItems = data.items || [];
                 renderLootItemsList();
-                if (data.invalid_lines && data.invalid_lines.length > 0) {
-                    const badge = document.getElementById('invalidLinesBadge');
-                    badge.textContent = `${data.invalid_lines.length} {% trans "unparsed lines" %}`;
-                    badge.style.display = 'inline-block';
+                const badge = document.getElementById('invalidLinesBadge');
+                if (badge) {
+                    if (data.invalid_lines && data.invalid_lines.length > 0) {
+                        badge.textContent = `${data.invalid_lines.length} {% trans "unparsed lines" %}`;
+                        badge.style.display = 'inline-block';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+                }
+                if (!state.lootItems || state.lootItems.length === 0) {
+                    alert('{% trans "No recognized loot items found. Please verify the pasted lines or add items manually." %}');
                 }
             } else {
                 alert(data.error || '{% trans "Failed to parse loot." %}');
@@ -981,30 +1027,44 @@
         const tbody = document.getElementById('valuationTableBody');
         tbody.innerHTML = '';
 
+        let totalLoot = 0;
         if (state.lootItems.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">{% trans "No loot items added yet." %}</td></tr>';
-            document.getElementById('step3TotalGross').textContent = '0.00 ISK';
-            return;
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">' +
+                (state.rawIskAmount > 0 ? '{% trans "No physical loot items added (Raw ISK pool active)." %}' : '{% trans "No loot items added yet." %}') +
+                '</td></tr>';
+        } else {
+            state.lootItems.forEach((item, index) => {
+                totalLoot += item.total_value;
+                const tr = document.createElement('tr');
+                const formattedUnitPrice = Number(item.chosen_unit_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                tr.innerHTML = `
+                    <td class="text-center"><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
+                    <td class="fw-bold">${item.name}</td>
+                    <td class="text-center">${item.quantity.toLocaleString()}</td>
+                    <td class="text-end text-muted">${formatIsk(item.market_unit_price)}</td>
+                    <td class="text-end text-muted">${formatIsk(item.buyback_unit_price)}</td>
+                    <td class="text-end">
+                        <input type="text" class="form-control form-control-sm text-end fw-semibold" value="${formattedUnitPrice}" onfocus="this.select()" onblur="updateItemCustomPrice(${index}, this.value)" onkeydown="if(event.key==='Enter') this.blur();">
+                    </td>
+                    <td class="text-end fw-bold text-success">${formatIsk(item.total_value)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
         }
 
-        let totalGross = 0;
-        state.lootItems.forEach((item, index) => {
-            totalGross += item.total_value;
-            const tr = document.createElement('tr');
-            const formattedUnitPrice = Number(item.chosen_unit_price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            tr.innerHTML = `
-                <td class="text-center"><img src="${item.icon_url}" class="item-icon" alt="${item.name}"></td>
-                <td class="fw-bold">${item.name}</td>
-                <td class="text-center">${item.quantity.toLocaleString()}</td>
-                <td class="text-end text-muted">${formatIsk(item.market_unit_price)}</td>
-                <td class="text-end text-muted">${formatIsk(item.buyback_unit_price)}</td>
-                <td class="text-end">
-                    <input type="text" class="form-control form-control-sm text-end fw-semibold" value="${formattedUnitPrice}" onfocus="this.select()" onblur="updateItemCustomPrice(${index}, this.value)" onkeydown="if(event.key==='Enter') this.blur();">
-                </td>
-                <td class="text-end fw-bold text-success">${formatIsk(item.total_value)}</td>
-            `;
-            tbody.appendChild(tr);
-        });
+        const rawIsk = state.rawIskAmount || 0;
+        const totalGross = totalLoot + rawIsk;
+
+        const breakdown = document.getElementById('step3BreakdownText');
+        if (breakdown) {
+            if (rawIsk > 0 && totalLoot > 0) {
+                breakdown.style.display = 'block';
+                document.getElementById('step3LootSubtotal').textContent = formatIsk(totalLoot);
+                document.getElementById('step3RawIskSubtotal').textContent = formatIsk(rawIsk);
+            } else {
+                breakdown.style.display = 'none';
+            }
+        }
 
         document.getElementById('step3TotalGross').textContent = formatIsk(totalGross);
         document.getElementById('stepBtn-3').classList.add('completed');
@@ -1032,7 +1092,7 @@
                 },
                 body: JSON.stringify({ killmail_url: url })
             });
-            const data = await resp.json();
+            const data = await resp.json().catch(() => ({ ok: false, error: 'Server returned error ' + resp.status }));
             if (data.ok) {
                 const km = data.killmail;
                 // Try matching to fleet pilot
@@ -1258,12 +1318,13 @@
                 body: JSON.stringify({
                     pilots: state.pilots,
                     loot_items: state.lootItems,
+                    raw_isk_amount: state.rawIskAmount,
                     killmails: state.killmails,
                     valuation_mode: state.valuationMode,
                     bag_man_pilot_id: state.bagManPilotId
                 })
             });
-            const data = await resp.json();
+            const data = await resp.json().catch(() => ({ ok: false, error: 'Server returned error ' + resp.status }));
             if (data.ok) {
                 state.calculationResult = data;
                 renderCalculationResults(data);
@@ -1280,7 +1341,22 @@
         updateBagManDropdown();
 
         // KPI Cards
-        document.getElementById('kpiGrossLoot').textContent = formatIsk(data.summary.gross_loot_value);
+        const totalGross = (data.summary.total_gross_pool !== undefined) ? data.summary.total_gross_pool : data.summary.gross_loot_value;
+        document.getElementById('kpiGrossLoot').textContent = formatIsk(totalGross);
+
+        const subtext = document.getElementById('kpiGrossSubtext');
+        if (subtext) {
+            if (data.summary.raw_isk_amount > 0 && data.summary.gross_loot_value > 0) {
+                subtext.textContent = `{% trans "Loot:" %} ${formatIsk(data.summary.gross_loot_value)} | {% trans "Raw ISK:" %} ${formatIsk(data.summary.raw_isk_amount)}`;
+                subtext.style.display = 'block';
+            } else if (data.summary.raw_isk_amount > 0) {
+                subtext.textContent = `{% trans "Raw ISK Pool" %}`;
+                subtext.style.display = 'block';
+            } else {
+                subtext.style.display = 'none';
+            }
+        }
+
         document.getElementById('kpiLossReimbursement').textContent = formatIsk(data.summary.total_loss_reimbursements);
         document.getElementById('kpiNetPot').textContent = formatIsk(data.summary.net_distributable_pot);
         document.getElementById('kpiBaseShare').textContent = formatIsk(data.summary.base_share_per_pilot);

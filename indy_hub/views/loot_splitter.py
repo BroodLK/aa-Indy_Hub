@@ -124,6 +124,7 @@ def loot_splitter_calculate_api(request):
     pilots = data.get("pilots") or []
     loot_items = data.get("loot_items") or []
     killmails = data.get("killmails") or []
+    raw_isk_amount = data.get("raw_isk_amount", 0)
     valuation_mode = str(data.get("valuation_mode") or "buyback").strip().lower()
     bag_man_pilot_id = data.get("bag_man_pilot_id")
 
@@ -135,6 +136,7 @@ def loot_splitter_calculate_api(request):
             pilots=pilots,
             loot_items=loot_items,
             killmails=killmails,
+            raw_isk_amount=raw_isk_amount,
             valuation_mode=valuation_mode,
             bag_man_pilot_id=bag_man_pilot_id,
         )

@@ -103,6 +103,43 @@ class FleetLootSplitterServiceTests(TestCase):
         self.assertFalse(ext_pilot["is_registered"])
         self.assertIsNone(ext_pilot["character_id"])
 
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
+    def test_parse_and_price_loot_various_eve_formats(self, mock_resolve):
+        def resolve_side_effect(values):
+            mapping = {
+                "tritanium": 34,
+                "pyerite": 35,
+                "damage control ii": 2048,
+            }
+            return {str(v).strip().lower(): mapping.get(str(v).strip().lower()) for v in values}
+        mock_resolve.side_effect = resolve_side_effect
+
+        # Multi-column cargo window
+        cargo_lines = "Tritanium\t500,000\tMineral\t0.01 m3\t2,500,000.00 ISK\nDamage Control II\t1\tLow Slot\t5 m3"
+        items, invalid = parse_and_price_loot(cargo_lines, valuation_mode="market")
+        self.assertEqual(len(items), 2)
+        self.assertEqual(invalid, [])
+        self.assertEqual(items[0]["type_id"], 34)
+        self.assertEqual(items[0]["quantity"], 500000)
+        self.assertEqual(items[1]["type_id"], 2048)
+        self.assertEqual(items[1]["quantity"], 1)
+
+        # Single item name without quantity
+        single_item_lines = "Damage Control II"
+        items, invalid = parse_and_price_loot(single_item_lines, valuation_mode="market")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["type_id"], 2048)
+        self.assertEqual(items[0]["quantity"], 1)
+
+        # Multiplier and parenthesized formats
+        mult_lines = "1x Tritanium\nPyerite x100,000\nTritanium (500000)\n[Pyerite, 2000]"
+        items, invalid = parse_and_price_loot(mult_lines, valuation_mode="market")
+        self.assertEqual(len(items), 2)
+        trit = next(i for i in items if i["type_id"] == 34)
+        pyer = next(i for i in items if i["type_id"] == 35)
+        self.assertEqual(trit["quantity"], 500001)
+        self.assertEqual(pyer["quantity"], 102000)
+
     @patch("indy_hub.services.loot_splitter.fetch_fuzzwork_prices")
     @patch("indy_hub.views.material_exchange._parse_sell_estimate_input")
     def test_parse_and_price_loot(self, mock_parse_input, mock_fuzz):
@@ -426,6 +463,23 @@ class FleetLootSplitterViewTests(TestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(len(data["pilots"]), 2)
 
+    @patch("indy_hub.views.material_exchange._resolve_type_ids_for_sell_estimate_texts")
+    def test_parse_loot_api(self, mock_resolve):
+        mock_resolve.return_value = {"tritanium": 34}
+
+        url = reverse("indy_hub:loot_split_parse_loot_api")
+        response = self.client.post(
+            url,
+            data={"loot_text": "Tritanium\t500000", "valuation_mode": "buyback"},
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(len(data["items"]), 1)
+        self.assertEqual(data["items"][0]["type_id"], 34)
+        self.assertEqual(data["items"][0]["quantity"], 500000)
+
     def test_calculate_api(self):
         url = reverse("indy_hub:loot_split_calculate_api")
         payload = {
@@ -439,6 +493,130 @@ class FleetLootSplitterViewTests(TestCase):
         data = response.json()
         self.assertTrue(data["ok"])
         self.assertEqual(data["summary"]["gross_loot_value"], 5000000.0)
+
+    def test_calculate_api_with_raw_isk_amount(self):
+        url = reverse("indy_hub:loot_split_calculate_api")
+        payload = {
+            "pilots": [
+                {"id": "p1", "name": "Pilot 1", "declined": False},
+                {"id": "p2", "name": "Pilot 2", "declined": False},
+            ],
+            "loot_items": [{"id": "i1", "quantity": 1, "chosen_unit_price": 20000000.0}],
+            "raw_isk_amount": "80m",
+            "killmails": [],
+            "valuation_mode": "buyback",
+        }
+        response = self.client.post(url, data=payload, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["summary"]["gross_loot_value"], 20000000.0)
+        self.assertEqual(data["summary"]["raw_isk_amount"], 80000000.0)
+        self.assertEqual(data["summary"]["total_gross_pool"], 100000000.0)
+        self.assertEqual(data["summary"]["net_distributable_pot"], 100000000.0)
+        self.assertEqual(data["summary"]["base_share_per_pilot"], 50000000.0)
+
+    def test_calculate_fleet_loot_split_with_raw_isk_and_loot(self):
+        """Test calculation with both physical loot and raw ISK input (e.g. from Abyssals)."""
+        pilots = [
+            {"id": "p1", "name": "Pilot 1", "declined": False},
+            {"id": "p2", "name": "Pilot 2", "declined": False},
+            {"id": "p3", "name": "Pilot 3", "declined": False},
+        ]
+        loot_items = [
+            {"id": "i1", "quantity": 1, "chosen_unit_price": 100000000.0}
+        ]
+        result = calculate_fleet_loot_split(
+            pilots=pilots,
+            loot_items=loot_items,
+            killmails=[],
+            raw_isk_amount="50m",
+        )
+
+        summary = result["summary"]
+        self.assertEqual(summary["gross_loot_value"], 100000000.0)
+        self.assertEqual(summary["raw_isk_amount"], 50000000.0)
+        self.assertEqual(summary["total_gross_pool"], 150000000.0)
+        self.assertEqual(summary["net_distributable_pot"], 150000000.0)
+        self.assertEqual(summary["base_share_per_pilot"], 50000000.0)
+
+        # Discord and In-Game export summaries should mention raw ISK pool
+        discord_export = result["exports"]["discord"]
+        self.assertIn("Raw ISK / Bounty Pool", discord_export)
+        self.assertIn("50,000,000.00 ISK", discord_export)
+        self.assertIn("Total Gross Pool", discord_export)
+        self.assertIn("150,000,000.00 ISK", discord_export)
+
+        ingame_export = result["exports"]["ingame"]
+        self.assertIn("Raw ISK Pool: 50,000,000.00 ISK", ingame_export)
+        self.assertIn("Total Gross Pool: 150,000,000.00 ISK", ingame_export)
+
+    def test_calculate_fleet_loot_split_raw_isk_only(self):
+        """Test splitting raw ISK alone without any physical loot items."""
+        pilots = [
+            {"id": "p1", "name": "Pilot 1", "declined": False},
+            {"id": "p2", "name": "Pilot 2", "declined": False},
+            {"id": "p3", "name": "Pilot 3", "declined": False},
+        ]
+        result = calculate_fleet_loot_split(
+            pilots=pilots,
+            loot_items=[],
+            killmails=[],
+            raw_isk_amount=90000000.0,
+        )
+
+        summary = result["summary"]
+        self.assertEqual(summary["gross_loot_value"], 0.0)
+        self.assertEqual(summary["raw_isk_amount"], 90000000.0)
+        self.assertEqual(summary["total_gross_pool"], 90000000.0)
+        self.assertEqual(summary["net_distributable_pot"], 90000000.0)
+        self.assertEqual(summary["base_share_per_pilot"], 30000000.0)
+
+        p_map = {p["id"]: p for p in result["pilots"]}
+        self.assertEqual(p_map["p1"]["payout_received"], 30000000.0)
+        self.assertEqual(p_map["p2"]["payout_received"], 30000000.0)
+        self.assertEqual(p_map["p3"]["payout_received"], 30000000.0)
+
+    def test_calculate_fleet_loot_split_raw_isk_with_losses_and_bag_man(self):
+        """Test splitting raw ISK with ship loss reimbursements and a designated Bag Man."""
+        pilots = [
+            {"id": "p1", "name": "Pilot 1 (Bag Man)", "is_bag_man": True},
+            {"id": "p2", "name": "Pilot 2"},
+            {"id": "p3", "name": "Pilot 3"},
+        ]
+        killmails = [
+            {"id": "km1", "loss_value": 30000000.0, "assigned_pilot_id": "p2"}
+        ]
+        result = calculate_fleet_loot_split(
+            pilots=pilots,
+            loot_items=[],
+            killmails=killmails,
+            raw_isk_amount=150000000.0,
+            bag_man_pilot_id="p1",
+        )
+
+        summary = result["summary"]
+        self.assertEqual(summary["raw_isk_amount"], 150000000.0)
+        self.assertEqual(summary["total_loss_reimbursements"], 30000000.0)
+        self.assertEqual(summary["net_distributable_pot"], 120000000.0)
+        # 120M / 3 = 40M base share
+        self.assertEqual(summary["base_share_per_pilot"], 40000000.0)
+
+        p_map = {p["id"]: p for p in result["pilots"]}
+        # P1: 40M
+        self.assertEqual(p_map["p1"]["payout_received"], 40000000.0)
+        # P2: 40M base + 30M loss = 70M
+        self.assertEqual(p_map["p2"]["payout_received"], 70000000.0)
+        # P3: 40M
+        self.assertEqual(p_map["p3"]["payout_received"], 40000000.0)
+
+        # Bag man transfers to P2 (70M) and P3 (40M)
+        transfers = result["transfers"]
+        self.assertEqual(len(transfers), 2)
+        t_p2 = next(t for t in transfers if t["to_pilot"] == "Pilot 2")
+        t_p3 = next(t for t in transfers if t["to_pilot"] == "Pilot 3")
+        self.assertEqual(t_p2["amount"], 70000000.0)
+        self.assertEqual(t_p3["amount"], 40000000.0)
 
 
 class FleetLootSplitMenuTests(TestCase):

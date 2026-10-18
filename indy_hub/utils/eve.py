@@ -230,6 +230,17 @@ def get_type_name(type_id: int | None) -> str:
         except ItemType.DoesNotExist:  # type: ignore[attr-defined]
             pass
 
+    # Try looking up in eveuniverse EveType
+    try:
+        from eveuniverse.models import EveType
+
+        eve_type = EveType.objects.filter(id=type_id).only("name").first()
+        if eve_type and eve_type.name:
+            _TYPE_NAME_CACHE[type_id] = eve_type.name
+            return eve_type.name
+    except Exception:
+        pass
+
     # Try looking up in the Blueprint model
     try:
         from ..models import Blueprint
@@ -301,6 +312,25 @@ def get_type_volume(type_id: int | None) -> float:
                     return val
         except Exception:
             pass
+
+    try:
+        from eveuniverse.models import EveType
+
+        eve_item = (
+            EveType.objects.filter(id=tid)
+            .values("packaged_volume", "volume")
+            .first()
+        )
+        if eve_item:
+            pkg_vol = eve_item.get("packaged_volume")
+            reg_vol = eve_item.get("volume")
+            resolved = pkg_vol if pkg_vol is not None else reg_vol
+            if resolved is not None and float(resolved) > 0:
+                val = float(resolved)
+                _TYPE_VOLUME_CACHE[tid] = val
+                return val
+    except Exception:
+        pass
 
     # Standard fallback: 0.15 m3 for standard compressed ores
     _TYPE_VOLUME_CACHE[tid] = 0.15
@@ -423,13 +453,22 @@ def batch_cache_type_names(type_ids: Iterable[int]) -> Mapping[int, str]:
     if not ids:
         return {}
 
-    if ItemType is None:
-        return {pk: str(pk) for pk in ids}
-
     result: dict[int, str] = {}
-    for item_type in ItemType.objects.filter(id__in=ids).only("id", "name"):
-        _TYPE_NAME_CACHE[item_type.id] = item_type.name
-        result[item_type.id] = item_type.name
+    if ItemType is not None:
+        for item_type in ItemType.objects.filter(id__in=ids).only("id", "name"):
+            _TYPE_NAME_CACHE[item_type.id] = item_type.name
+            result[item_type.id] = item_type.name
+
+    missing = ids - result.keys()
+    if missing:
+        try:
+            from eveuniverse.models import EveType
+
+            for eve_type in EveType.objects.filter(id__in=missing).only("id", "name"):
+                _TYPE_NAME_CACHE[eve_type.id] = eve_type.name
+                result[eve_type.id] = eve_type.name
+        except Exception:
+            pass
 
     missing = ids - result.keys()
     for pk in missing:

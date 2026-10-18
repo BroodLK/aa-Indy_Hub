@@ -2252,12 +2252,17 @@ def _parse_sell_estimate_positive_quantity(raw_value: str | int | None) -> int |
         .replace("_", "")
         .replace("'", "")
     )
-    compact = normalized.replace(" ", "")
+    cleaned = re.sub(r"(?i)\bunits?\b", "", normalized).strip()
+    cleaned = re.sub(r"^[xX*(\[]+\s*|\s*[xX*)\]]+$", "", cleaned).strip()
+    compact = cleaned.replace(" ", "")
     if compact.isdigit():
         parsed = int(compact)
         return parsed if parsed > 0 else None
     if re.match(r"^\d{1,3}(?:[.,]\d{3})+$", compact):
         parsed = int(compact.replace(",", "").replace(".", ""))
+        return parsed if parsed > 0 else None
+    if re.match(r"^\d+\.0+$", compact):
+        parsed = int(compact.split(".")[0])
         return parsed if parsed > 0 else None
     return None
 
@@ -2325,8 +2330,8 @@ def _resolve_type_ids_for_sell_estimate_texts(
     }
     resolved_candidate_map: dict[str, int] = {}
 
+    # 1. Try eve_sde ItemType
     try:
-        # Alliance Auth (External Libs)
         from eve_sde.models import ItemType
 
         exact_rows = (
@@ -2367,7 +2372,102 @@ def _resolve_type_ids_for_sell_estimate_texts(
                 if raw_lookup_key not in resolved_candidate_map:
                     resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
     except Exception:
-        resolved_candidate_map = {}
+        pass
+
+    # 2. Try eveuniverse EveType
+    unresolved_keys = {key for key in candidate_keys if key not in resolved_candidate_map}
+    if unresolved_keys:
+        try:
+            from eveuniverse.models import EveType
+
+            exact_rows = (
+                EveType.objects.annotate(name_lookup_key=Lower("name"))
+                .filter(name_lookup_key__in=unresolved_keys)
+                .values_list("id", "name_lookup_key")
+            )
+            for raw_type_id, raw_lookup_key in exact_rows:
+                if raw_lookup_key not in resolved_candidate_map:
+                    resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+
+            unresolved_keys = {key for key in candidate_keys if key not in resolved_candidate_map}
+            if unresolved_keys:
+                normalized_rows = (
+                    EveType.objects.annotate(
+                        name_lookup_key=Lower(
+                            Replace(
+                                Replace(
+                                    Replace(
+                                        Replace("name", Value("\u2011"), Value("-")),
+                                        Value("\u2013"),
+                                        Value("-"),
+                                    ),
+                                    Value("\u2014"),
+                                    Value("-"),
+                                ),
+                                Value("\u2212"),
+                                Value("-"),
+                            )
+                        )
+                    )
+                    .filter(name_lookup_key__in=unresolved_keys)
+                    .values_list("id", "name_lookup_key")
+                )
+                for raw_type_id, raw_lookup_key in normalized_rows:
+                    if raw_lookup_key not in resolved_candidate_map:
+                        resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+        except Exception:
+            pass
+
+    # 3. Try Blueprint model
+    unresolved_keys = {key for key in candidate_keys if key not in resolved_candidate_map}
+    if unresolved_keys:
+        try:
+            from ..models import Blueprint
+
+            bp_rows = (
+                Blueprint.objects.annotate(name_lookup_key=Lower("type_name"))
+                .filter(name_lookup_key__in=unresolved_keys)
+                .exclude(type_name="")
+                .values_list("type_id", "name_lookup_key")
+            )
+            for raw_type_id, raw_lookup_key in bp_rows:
+                if raw_lookup_key not in resolved_candidate_map and raw_type_id:
+                    resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+        except Exception:
+            pass
+
+    # 4. Try raw SQL on eve_sde_itemtype / eveuniverse_evetype
+    unresolved_keys = {key for key in candidate_keys if key not in resolved_candidate_map}
+    if unresolved_keys:
+        try:
+            from django.db import connection
+
+            with connection.cursor() as cursor:
+                try:
+                    cursor.execute(
+                        "SELECT id, LOWER(name) FROM eve_sde_itemtype WHERE LOWER(name) IN %s",
+                        [tuple(unresolved_keys)],
+                    )
+                    for raw_type_id, raw_lookup_key in cursor.fetchall():
+                        if raw_lookup_key not in resolved_candidate_map:
+                            resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+                except Exception:
+                    pass
+
+                unresolved_keys = {key for key in candidate_keys if key not in resolved_candidate_map}
+                if unresolved_keys:
+                    try:
+                        cursor.execute(
+                            "SELECT id, LOWER(name) FROM eveuniverse_evetype WHERE LOWER(name) IN %s",
+                            [tuple(unresolved_keys)],
+                        )
+                        for raw_type_id, raw_lookup_key in cursor.fetchall():
+                            if raw_lookup_key not in resolved_candidate_map:
+                                resolved_candidate_map[str(raw_lookup_key)] = int(raw_type_id)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     for cache_key, lookup_keys in unresolved_candidate_keys.items():
         resolved_type_id: int | None = None
@@ -2413,38 +2513,73 @@ def _parse_sell_estimate_input(raw_text: str) -> tuple[list[dict[str, int]], lis
             if str(part or "").strip()
         ]
         if len(tab_parts) >= 2:
-            item_part = tab_parts[0]
-            for quantity_candidate in tab_parts[1:]:
-                quantity = _parse_sell_estimate_positive_quantity(quantity_candidate)
-                if quantity is not None:
-                    break
+            qty_first = _parse_sell_estimate_positive_quantity(tab_parts[0])
+            if qty_first is not None and not tab_parts[1].isdigit():
+                item_part = tab_parts[1]
+                quantity = qty_first
+            else:
+                item_part = tab_parts[0]
+                for quantity_candidate in tab_parts[1:]:
+                    quantity = _parse_sell_estimate_positive_quantity(quantity_candidate)
+                    if quantity is not None:
+                        break
+
+        normalized_line = (
+            line.replace("\u00a0", " ")
+            .replace("\u202f", " ")
+            .replace("\u2009", " ")
+            .strip()
+        )
 
         if not item_part or quantity is None:
-            normalized_line = (
-                line.replace("\u00a0", " ")
-                .replace("\u202f", " ")
-                .replace("\u2009", " ")
-                .strip()
-            )
+            # e.g. "Tritanium (500000)" or "Tritanium (500,000 units)"
+            match = re.match(r"^(.*\S)\s*\(([0-9][0-9\s,._']*)\s*(?:units?)?\)$", normalized_line, re.I)
+            if match:
+                item_part = str(match.group(1) or "").strip()
+                quantity = _parse_sell_estimate_positive_quantity(match.group(2))
+
+        if not item_part or quantity is None:
+            # e.g. "[Tritanium, 500000]" or "Tritanium, 500000"
+            match = re.match(r"^\[?(.*?)[,;]\s*([0-9][0-9\s,._']*)\]?$", normalized_line)
+            if match:
+                item_part = str(match.group(1) or "").strip()
+                quantity = _parse_sell_estimate_positive_quantity(match.group(2))
+
+        if not item_part or quantity is None:
+            # e.g. "500000x Tritanium" or "500,000 x Tritanium" or "10 * Tritanium"
+            match = re.match(r"^([0-9][0-9\s,._']*)\s*[xX*]\s+(.*\S)$", normalized_line)
+            if match:
+                quantity = _parse_sell_estimate_positive_quantity(match.group(1))
+                item_part = str(match.group(2) or "").strip()
+
+        if not item_part or quantity is None:
+            # e.g. "Tritanium x500000" or "Tritanium x 500,000" or "Tritanium * 10"
+            match = re.match(r"^(.*\S)\s+[xX*]\s*([0-9][0-9\s,._']*)$", normalized_line)
+            if match:
+                item_part = str(match.group(1) or "").strip()
+                quantity = _parse_sell_estimate_positive_quantity(match.group(2))
+
+        if not item_part or quantity is None:
+            # e.g. "Tritanium 500000" (item then quantity)
             match = re.match(r"^(.*\S)[ \t]+([0-9][0-9\s,._']*)$", normalized_line)
             if match:
                 item_part = str(match.group(1) or "").strip()
                 quantity = _parse_sell_estimate_positive_quantity(match.group(2))
 
         if not item_part or quantity is None:
-            normalized_line = (
-                line.replace("\u00a0", " ")
-                .replace("\u202f", " ")
-                .replace("\u2009", " ")
-                .strip()
-            )
+            # e.g. "500000 Tritanium" (quantity then item)
             match = re.match(r"^([0-9][0-9\s,._']*)[ \t]+(.*\S)$", normalized_line)
             if match:
                 quantity = _parse_sell_estimate_positive_quantity(match.group(1))
                 item_part = str(match.group(2) or "").strip()
 
-        item_part = str(item_part or "").strip()
+        # If still no quantity, allow single item without quantity defaulting to 1
         if not item_part or quantity is None:
+            item_part = normalized_line
+            quantity = 1
+
+        item_part = str(item_part or "").strip()
+        if not item_part or quantity is None or quantity <= 0:
             invalid_lines.append(line)
             continue
 

@@ -374,6 +374,7 @@ def calculate_fleet_loot_split(
     pilots: list[dict[str, Any]],
     loot_items: list[dict[str, Any]],
     killmails: list[dict[str, Any]],
+    raw_isk_amount: Any = 0,
     valuation_mode: str = "buyback",
     bag_man_pilot_id: str | None = None,
 ) -> dict[str, Any]:
@@ -382,8 +383,10 @@ def calculate_fleet_loot_split(
     
     Formula:
       Gross Loot Value = sum(item.quantity * item.chosen_price)
+      Raw ISK Amount = parsed raw ISK amount (e.g. from Abyssals, Bounties, ESS, or Fleet Wallet)
+      Total Gross Pool = Gross Loot Value + Raw ISK Amount
       Total Loss Reimbursements = sum(killmail.loss_value)
-      Net Distributable Pot = max(0, Gross Loot Value - Total Loss Reimbursements)
+      Net Distributable Pot = max(0, Total Gross Pool - Total Loss Reimbursements)
       Eligible Participants = pilots who have not declined repayment
       Base Share per Eligible Pilot = Net Distributable Pot / len(Eligible Participants)
       
@@ -397,12 +400,15 @@ def calculate_fleet_loot_split(
         If a Bag Man is designated, they liquidate the unkept loot and handle all
         outgoing payouts to creditors and receive balances owed from debtors.
     """
-    # 1. Calculate Gross Loot Value
+    # 1. Calculate Gross Loot Value & Raw ISK Pool
     gross_loot_value = Decimal("0.00")
     for item in loot_items:
         unit_price = _to_decimal(item.get("chosen_unit_price", 0))
         qty = int(item.get("quantity", 0))
         gross_loot_value += (unit_price * qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    raw_isk_dec = _to_decimal(raw_isk_amount)
+    total_gross_pool = (gross_loot_value + raw_isk_dec).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     # 2. Calculate Total Loss Reimbursements
     total_loss_reimbursements = Decimal("0.00")
@@ -431,7 +437,7 @@ def calculate_fleet_loot_split(
     liquidated_loot_value = max(Decimal("0.00"), gross_loot_value - total_kept_value)
 
     # 4. Calculate Net Distributable Pot
-    net_distributable_pot = max(Decimal("0.00"), gross_loot_value - total_loss_reimbursements)
+    net_distributable_pot = max(Decimal("0.00"), total_gross_pool - total_loss_reimbursements)
 
     # 5. Eligible (Non-declined) Pilots
     eligible_pilots = [p for p in pilots if not p.get("declined", False)]
@@ -562,6 +568,7 @@ def calculate_fleet_loot_split(
         bag_man_name=bag_man_name,
         pilot_settlements=pilot_settlements,
         transfers=transfers,
+        raw_isk_amount=raw_isk_dec,
     )
 
     ingame_summary = _generate_ingame_summary(
@@ -573,11 +580,14 @@ def calculate_fleet_loot_split(
         bag_man_name=bag_man_name,
         pilot_settlements=pilot_settlements,
         transfers=transfers,
+        raw_isk_amount=raw_isk_dec,
     )
 
     return {
         "summary": {
             "gross_loot_value": float(gross_loot_value),
+            "raw_isk_amount": float(raw_isk_dec),
+            "total_gross_pool": float(total_gross_pool),
             "total_loss_reimbursements": float(total_loss_reimbursements),
             "total_kept_value": float(total_kept_value),
             "liquidated_loot_value": float(liquidated_loot_value),
@@ -607,18 +617,37 @@ def _generate_discord_summary(
     bag_man_name: str | None,
     pilot_settlements: list[dict[str, Any]],
     transfers: list[dict[str, Any]],
+    raw_isk_amount: Decimal = Decimal("0.00"),
 ) -> str:
     """Generate Markdown export formatted for Discord."""
+    total_gross = (gross_loot_value + raw_isk_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     lines = [
         "**__FLEET LOOT & REIMBURSEMENT SUMMARY__**",
-        f"**Gross Loot Value:** `{gross_loot_value:,.2f} ISK`",
+    ]
+    if raw_isk_amount > 0 and gross_loot_value > 0:
+        lines.extend([
+            f"**Gross Loot Value:** `{gross_loot_value:,.2f} ISK`",
+            f"**Raw ISK / Bounty Pool:** `{raw_isk_amount:,.2f} ISK`",
+            f"**Total Gross Pool:** `{total_gross:,.2f} ISK`",
+        ])
+    elif raw_isk_amount > 0:
+        lines.append(f"**Raw ISK Pool:** `{raw_isk_amount:,.2f} ISK`")
+    else:
+        lines.append(f"**Gross Loot Value:** `{gross_loot_value:,.2f} ISK`")
+
+    lines.extend([
         f"**Ship Losses Reimbursed:** `{total_loss_reimbursements:,.2f} ISK`",
         f"**Net Distributable Pot:** `{net_distributable_pot:,.2f} ISK`",
         f"**Base Share Per Pilot:** `{base_share_per_pilot:,.2f} ISK`",
-    ]
+    ])
 
     if bag_man_name:
-        lines.append(f"**Bag Man (Liquidator):** `{bag_man_name}` *(Liquidating `{liquidated_loot_value:,.2f} ISK`)*")
+        if raw_isk_amount > 0 and liquidated_loot_value > 0:
+            lines.append(f"**Bag Man (Liquidator):** `{bag_man_name}` *(Liquidating `{liquidated_loot_value:,.2f} ISK` loot + `{raw_isk_amount:,.2f} ISK` raw ISK)*")
+        elif raw_isk_amount > 0:
+            lines.append(f"**Bag Man (Liquidator):** `{bag_man_name}` *(Holding `{raw_isk_amount:,.2f} ISK` raw ISK)*")
+        else:
+            lines.append(f"**Bag Man (Liquidator):** `{bag_man_name}` *(Liquidating `{liquidated_loot_value:,.2f} ISK`)*")
 
     lines.append("")
     lines.append("**__PILOT PAYOUTS__**")
@@ -657,18 +686,37 @@ def _generate_ingame_summary(
     bag_man_name: str | None,
     pilot_settlements: list[dict[str, Any]],
     transfers: list[dict[str, Any]],
+    raw_isk_amount: Decimal = Decimal("0.00"),
 ) -> str:
     """Generate clean text summary for EVE In-Game Mail or Fleet Chat."""
+    total_gross = (gross_loot_value + raw_isk_amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     lines = [
         "=== FLEET LOOT & REIMBURSEMENT SPLIT ===",
-        f"Gross Loot: {gross_loot_value:,.2f} ISK",
+    ]
+    if raw_isk_amount > 0 and gross_loot_value > 0:
+        lines.extend([
+            f"Gross Loot: {gross_loot_value:,.2f} ISK",
+            f"Raw ISK Pool: {raw_isk_amount:,.2f} ISK",
+            f"Total Gross Pool: {total_gross:,.2f} ISK",
+        ])
+    elif raw_isk_amount > 0:
+        lines.append(f"Raw ISK Pool: {raw_isk_amount:,.2f} ISK")
+    else:
+        lines.append(f"Gross Loot: {gross_loot_value:,.2f} ISK")
+
+    lines.extend([
         f"Ship Loss Reimbursements: {total_loss_reimbursements:,.2f} ISK",
         f"Net Pot: {net_distributable_pot:,.2f} ISK",
         f"Base Share: {base_share_per_pilot:,.2f} ISK",
-    ]
+    ])
 
     if bag_man_name:
-        lines.append(f"Bag Man (Liquidator): {bag_man_name} (Liquidating {liquidated_loot_value:,.2f} ISK)")
+        if raw_isk_amount > 0 and liquidated_loot_value > 0:
+            lines.append(f"Bag Man (Liquidator): {bag_man_name} (Liquidating {liquidated_loot_value:,.2f} ISK loot + {raw_isk_amount:,.2f} ISK raw ISK)")
+        elif raw_isk_amount > 0:
+            lines.append(f"Bag Man (Liquidator): {bag_man_name} (Holding {raw_isk_amount:,.2f} ISK raw ISK)")
+        else:
+            lines.append(f"Bag Man (Liquidator): {bag_man_name} (Liquidating {liquidated_loot_value:,.2f} ISK)")
 
     lines.append("")
     lines.append("--- PAYOUTS ---")
